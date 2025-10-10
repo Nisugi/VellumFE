@@ -11,6 +11,8 @@ on:
 jobs:
   sync-wiki:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to push to wiki
 
     steps:
       - name: Checkout main repo
