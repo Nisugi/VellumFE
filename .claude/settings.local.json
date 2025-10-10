@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/shawn/.profanity-rs/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
