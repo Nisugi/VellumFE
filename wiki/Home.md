@@ -44,25 +44,25 @@ Built in Rust for speed and reliability:
 
 ## Getting Started
 
-1. **[Installation](Installation.md)** - Build from source
-2. **[Quick Start](Quick-Start.md)** - Launch and connect
-3. **[Window Management](Window-Management.md)** - Create your first windows
-4. **[Widget Reference](Widget-Reference.md)** - Explore all available widgets
+1. **[Installation](https://github.com/Nisugi/Profanitui/wiki/Installation)** - Build from source
+2. **[Quick Start](https://github.com/Nisugi/Profanitui/wiki/Quick-Start)** - Launch and connect
+3. **[Window Management](https://github.com/Nisugi/Profanitui/wiki/Window-Management)** - Create your first windows
+4. **[Widget Reference](https://github.com/Nisugi/Profanitui/wiki/Widget-Reference)** - Explore all available widgets
 
 ## Documentation
 
-- [Installation](Installation.md)
-- [Quick Start](Quick-Start.md)
-- [Window Management](Window-Management.md)
-- [Widget Reference](Widget-Reference.md)
-- [Layout Management](Layout-Management.md)
-- [Commands Reference](Commands-Reference.md)
-- [Configuration Guide](Configuration-Guide.md)
-- [Stream Routing](Stream-Routing.md)
-- [Mouse and Keyboard](Mouse-and-Keyboard.md)
-- [Troubleshooting](Troubleshooting.md)
-- [Development Guide](Development-Guide.md)
-- [Feature Roadmap](Feature-Roadmap.md)
+- [Installation](https://github.com/Nisugi/Profanitui/wiki/Installation)
+- [Quick Start](https://github.com/Nisugi/Profanitui/wiki/Quick-Start)
+- [Window Management](https://github.com/Nisugi/Profanitui/wiki/Window-Management)
+- [Widget Reference](https://github.com/Nisugi/Profanitui/wiki/Widget-Reference)
+- [Layout Management](https://github.com/Nisugi/Profanitui/wiki/Layout-Management)
+- [Commands Reference](https://github.com/Nisugi/Profanitui/wiki/Commands-Reference)
+- [Configuration Guide](https://github.com/Nisugi/Profanitui/wiki/Configuration-Guide)
+- [Stream Routing](https://github.com/Nisugi/Profanitui/wiki/Stream-Routing)
+- [Mouse and Keyboard](https://github.com/Nisugi/Profanitui/wiki/Mouse-and-Keyboard)
+- [Troubleshooting](https://github.com/Nisugi/Profanitui/wiki/Troubleshooting)
+- [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide)
+- [Feature Roadmap](https://github.com/Nisugi/Profanitui/wiki/Feature-Roadmap)
 
 ## Quick Example
 
@@ -92,9 +92,9 @@ ruby ~/lich5/lich.rbw --login YourChar --gemstone --without-frontend --detachabl
 
 ## Community & Support
 
-- **Issues** - [GitHub Issues](https://github.com/yourusername/profanity-rs/issues)
-- **Troubleshooting** - See [Troubleshooting Guide](Troubleshooting.md)
-- **Contributing** - See [Development Guide](Development-Guide.md)
+- **Issues** - [GitHub Issues](https://github.com/Nisugi/Profanitui/issues)
+- **Troubleshooting** - See [Troubleshooting Guide](https://github.com/Nisugi/Profanitui/wiki/Troubleshooting)
+- **Contributing** - See [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide)
 
 ## Credits
 
@@ -104,4 +104,4 @@ ruby ~/lich5/lich.rbw --login YourChar --gemstone --without-frontend --detachabl
 
 ---
 
-**Next:** [Installation Guide](Installation.md) →
+**Next:** [Installation Guide](https://github.com/Nisugi/Profanitui/wiki/Installation) →
