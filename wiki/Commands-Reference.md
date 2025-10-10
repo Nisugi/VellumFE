@@ -1,0 +1,520 @@
+# Commands Reference
+
+This page documents all dot commands available in profanity-rs. Dot commands are local commands that are not sent to the game server.
+
+## Table of Contents
+
+- [Application Commands](#application-commands)
+- [Window Commands](#window-commands)
+- [Layout Commands](#layout-commands)
+- [Progress Bar Commands](#progress-bar-commands)
+- [Countdown Commands](#countdown-commands)
+- [Indicator Commands](#indicator-commands)
+- [Active Effects Commands](#active-effects-commands)
+- [Debug Commands](#debug-commands)
+
+---
+
+## Application Commands
+
+### `.quit` / `.q`
+
+Exit the application.
+
+**Syntax:**
+```
+.quit
+.q
+```
+
+**Example:**
+```
+.quit
+```
+
+---
+
+## Window Commands
+
+### `.createwindow` / `.createwin`
+
+Create a new window from a built-in template.
+
+**Syntax:**
+```
+.createwindow <template_name>
+.createwin <template_name>
+```
+
+**Parameters:**
+- `template_name` - Name of the window template to create
+
+**Examples:**
+```
+.createwindow loot
+.createwindow health
+.createwindow compass
+.createwin thoughts
+```
+
+**See also:** `.templates` to list available templates
+
+---
+
+### `.customwindow` / `.customwin`
+
+Create a custom text window with specified stream routing.
+
+**Syntax:**
+```
+.customwindow <name> <stream1,stream2,...>
+.customwin <name> <stream1,stream2,...>
+```
+
+**Parameters:**
+- `name` - Name for the new window
+- `stream1,stream2,...` - Comma-separated list of streams to route to this window
+
+**Examples:**
+```
+.customwindow combat death
+.customwindow chatter speech,whisper
+.customwin mywindow main,thoughts
+```
+
+**Notes:**
+- The window will be created at position (0,0) with default size 10x40
+- Use mouse to move and resize the window
+- Available streams: main, thoughts, speech, whisper, familiar, room, logons, deaths, arrivals, ambients, announcements, loot
+
+**See also:** [Stream Routing Guide](Stream-Routing.md)
+
+---
+
+### `.deletewindow` / `.deletewin`
+
+Delete an existing window.
+
+**Syntax:**
+```
+.deletewindow <window_name>
+.deletewin <window_name>
+```
+
+**Parameters:**
+- `window_name` - Name of the window to delete
+
+**Examples:**
+```
+.deletewindow loot
+.deletewin health
+```
+
+---
+
+### `.windows` / `.listwindows`
+
+List all active windows.
+
+**Syntax:**
+```
+.windows
+.listwindows
+```
+
+**Example:**
+```
+.windows
+→ Windows: main, thoughts, health, mana, roundtime
+```
+
+---
+
+### `.templates` / `.availablewindows`
+
+List all available window templates.
+
+**Syntax:**
+```
+.templates
+.availablewindows
+```
+
+**Example:**
+```
+.templates
+→ Available window templates: main, thoughts, speech, familiar, room, logons, deaths, arrivals, ambients, announcements, loot, health, mana, stamina, spirit, mindstate, encumbrance, stance, bloodpoints, roundtime, casttime, stun, compass, injuries, poisoned, diseased, bleeding, stunned, webbed, status, activeeffects, performancestats
+```
+
+---
+
+### `.rename`
+
+Change the title of a window.
+
+**Syntax:**
+```
+.rename <window_name> <new_title>
+```
+
+**Parameters:**
+- `window_name` - Name of the window to rename
+- `new_title` - New title (can contain spaces)
+
+**Examples:**
+```
+.rename loot My Precious Loot
+.rename main Game Output
+```
+
+---
+
+### `.border`
+
+Change the border style and color of a window.
+
+**Syntax:**
+```
+.border <window_name> <style> [color] [sides...]
+```
+
+**Parameters:**
+- `window_name` - Name of the window
+- `style` - Border style: `single`, `double`, `rounded`, `thick`, `none`
+- `color` - (Optional) Border color in hex format (e.g., `#00ff00`)
+- `sides` - (Optional) Which sides to show: `top`, `bottom`, `left`, `right`, `all`, `none` (default: `all`)
+
+**Examples:**
+```
+.border main rounded
+.border health double #00ff00
+.border loot single #ffaa00 top bottom
+.border thoughts none
+```
+
+---
+
+## Layout Commands
+
+### `.savelayout`
+
+Save the current window layout.
+
+**Syntax:**
+```
+.savelayout [layout_name]
+```
+
+**Parameters:**
+- `layout_name` - (Optional) Name for the layout (default: "default")
+
+**Examples:**
+```
+.savelayout
+.savelayout hunting
+.savelayout combat
+```
+
+**Notes:**
+- Layouts are saved to `~/.profanity-rs/layouts/<name>.toml`
+- The layout includes all window positions, sizes, and configurations
+- An autosave layout is created when you exit the application
+
+---
+
+### `.loadlayout`
+
+Load a previously saved layout.
+
+**Syntax:**
+```
+.loadlayout [layout_name]
+```
+
+**Parameters:**
+- `layout_name` - (Optional) Name of the layout to load (default: "default")
+
+**Examples:**
+```
+.loadlayout
+.loadlayout hunting
+.loadlayout combat
+```
+
+**Notes:**
+- Loading a layout will replace all current windows
+- The autosave layout is loaded automatically on startup if it exists
+
+---
+
+### `.layouts`
+
+List all saved layouts.
+
+**Syntax:**
+```
+.layouts
+```
+
+**Example:**
+```
+.layouts
+→ Saved layouts: default, hunting, combat, roleplay
+```
+
+---
+
+## Progress Bar Commands
+
+### `.setprogress`
+
+Manually set the value of a progress bar widget.
+
+**Syntax:**
+```
+.setprogress <window_name> <current> <max>
+```
+
+**Parameters:**
+- `window_name` - Name of the progress bar window
+- `current` - Current value
+- `max` - Maximum value
+
+**Examples:**
+```
+.setprogress health 150 200
+.setprogress mana 50 100
+.setprogress stamina 200 250
+```
+
+**Notes:**
+- This is primarily for testing; progress bars are normally auto-updated from game data
+- Progress bars: health, mana, stamina, spirit, mindstate, encumbrance, stance, bloodpoints
+
+---
+
+### `.setbarcolor`
+
+Change the colors of a progress bar.
+
+**Syntax:**
+```
+.setbarcolor <window_name> <bar_color> [background_color]
+```
+
+**Parameters:**
+- `window_name` - Name of the progress bar window
+- `bar_color` - Color for the filled portion (hex format, e.g., `#00ff00`)
+- `background_color` - (Optional) Color for the unfilled portion
+
+**Examples:**
+```
+.setbarcolor health #00ff00
+.setbarcolor mana #0000ff #333333
+.setbarcolor stamina #ffff00 #222222
+```
+
+---
+
+## Countdown Commands
+
+### `.setcountdown`
+
+Manually set a countdown timer.
+
+**Syntax:**
+```
+.setcountdown <window_name> <seconds>
+```
+
+**Parameters:**
+- `window_name` - Name of the countdown window
+- `seconds` - Number of seconds for the countdown
+
+**Examples:**
+```
+.setcountdown roundtime 5
+.setcountdown casttime 3
+.setcountdown stun 10
+```
+
+**Notes:**
+- This is primarily for testing; countdown timers are normally auto-updated from game data
+- Countdown widgets: roundtime, casttime, stun
+
+---
+
+## Indicator Commands
+
+### `.indicatoron`
+
+Force all status indicators ON (for testing).
+
+**Syntax:**
+```
+.indicatoron
+```
+
+**Example:**
+```
+.indicatoron
+→ Forced all status indicators ON
+```
+
+**Notes:**
+- Affects indicators: poisoned, diseased, bleeding, stunned, webbed
+- Also updates dashboard indicators if present
+
+---
+
+### `.indicatoroff`
+
+Force all status indicators OFF (for testing).
+
+**Syntax:**
+```
+.indicatoroff
+```
+
+**Example:**
+```
+.indicatoroff
+→ Forced all status indicators OFF
+```
+
+---
+
+## Active Effects Commands
+
+### `.togglespellid` / `.toggleeffectid`
+
+Toggle between displaying spell names and spell IDs in active effects windows.
+
+**Syntax:**
+```
+.togglespellid <window_name>
+.toggleeffectid <window_name>
+```
+
+**Parameters:**
+- `window_name` - Name of the active effects window
+
+**Examples:**
+```
+.togglespellid activeeffects
+.toggleeffectid activeeffects
+```
+
+**Notes:**
+- Only works on active effects widgets
+- Useful for debugging or when you need to reference spell IDs
+
+---
+
+## Debug Commands
+
+### `.randominjuries` / `.randinjuries`
+
+Generate random injuries/scars on the injury doll (for testing).
+
+**Syntax:**
+```
+.randominjuries
+.randinjuries
+```
+
+**Example:**
+```
+.randominjuries
+→ Randomized 5 injuries/scars
+```
+
+**Notes:**
+- Generates 3-8 random injuries/scars on various body parts
+- 30% chance each injury is a scar instead of a wound
+- Wounds are levels 1-3, scars are levels 4-6
+
+---
+
+### `.randomcompass` / `.randcompass`
+
+Generate random compass directions (for testing).
+
+**Syntax:**
+```
+.randomcompass
+.randcompass
+```
+
+**Example:**
+```
+.randomcompass
+→ Randomized 4 compass exits
+```
+
+**Notes:**
+- Generates 2-6 random exits
+- Possible directions: n, ne, e, se, s, sw, w, nw, out
+
+---
+
+### `.randomprogress` / `.randprog`
+
+Randomize all progress bars (for testing).
+
+**Syntax:**
+```
+.randomprogress
+.randprog
+```
+
+**Example:**
+```
+.randomprogress
+→ Randomized all progress bars
+```
+
+**Notes:**
+- Sets random values for: health, mana, stamina, spirit, blood points, mind state, encumbrance, stance
+- Each bar uses realistic maximum values for the stat
+
+---
+
+### `.randomcountdowns` / `.randcountdowns`
+
+Randomize all countdown timers (for testing).
+
+**Syntax:**
+```
+.randomcountdowns
+.randcountdowns
+```
+
+**Example:**
+```
+.randomcountdowns
+→ Randomized countdowns: RT=18s, Cast=22s, Stun=15s
+```
+
+**Notes:**
+- Sets each countdown to a random duration between 15-25 seconds
+
+---
+
+## Command Tips
+
+1. **Case Sensitivity**: Command names are case-sensitive. Use lowercase.
+
+2. **Aliases**: Many commands have shorter aliases (e.g., `.q` for `.quit`, `.createwin` for `.createwindow`)
+
+3. **Tab Completion**: (Not yet implemented) Will autocomplete command names and window names
+
+4. **Command History**: Use Up/Down arrow keys to navigate through previous commands
+
+5. **Error Messages**: If a command fails, check the main window for error messages explaining why
+
+6. **Testing**: Debug commands (`.random*`) are useful for testing layouts without needing to be in-game
+
+---
+
+[← Back to Wiki Home](Home.md) | [Next: Configuration Guide →](Configuration-Guide.md)
