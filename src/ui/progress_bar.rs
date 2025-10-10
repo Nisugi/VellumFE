@@ -14,6 +14,7 @@ pub struct ProgressBar {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,  // Which borders to show: ["top", "bottom", "left", "right"]
     bar_color: Option<String>,
     background_color: Option<String>,
     transparent_background: bool,  // If true, unfilled portion is transparent; if false, use background_color
@@ -31,6 +32,7 @@ impl ProgressBar {
             show_border: true,
             border_style: None,
             border_color: None,
+            border_sides: None,  // Default: all borders
             bar_color: Some("#00ff00".to_string()), // Green by default
             background_color: None,
             transparent_background: true, // Transparent by default
@@ -60,6 +62,10 @@ impl ProgressBar {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -98,7 +104,7 @@ impl ProgressBar {
     }
 
     /// Parse a hex color string to ratatui Color
-    fn parse_color(hex: &str) -> Color {
+    pub fn parse_color(hex: &str) -> Color {
         let hex = hex.trim_start_matches('#');
         if hex.len() != 6 {
             return Color::White;
@@ -112,14 +118,21 @@ impl ProgressBar {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        if area.width < 3 || area.height < 1 {
+        // Only enforce minimum width if we have a border (needs space for border chars)
+        if (self.show_border && area.width < 3) || area.height < 1 {
+            return;
+        }
+
+        // Without border, allow even 1-char width for very narrow windows
+        if !self.show_border && area.width == 0 {
             return;
         }
 
         let mut block = Block::default();
 
         if self.show_border {
-            block = block.borders(Borders::ALL);
+            let borders = crate::config::parse_border_sides(&self.border_sides);
+            block = block.borders(borders);
 
             // Apply border style
             if let Some(ref style) = self.border_style {
@@ -214,47 +227,72 @@ impl ProgressBar {
         // Calculate split point based on percentage
         let split_position = ((percentage as f64 / 100.0) * available_width as f64) as u16;
 
-        if text_width > 0 && text_width <= available_width {
-            // Center the text
-            let text_start_x = inner_area.x + (available_width.saturating_sub(text_width)) / 2;
-
-            // First pass: Fill the background
-            for i in 0..available_width {
-                let x = inner_area.x + i;
-                buf[(x, inner_area.y)].set_char(' ');
-                if i < split_position {
-                    // Filled portion - use bar color as background
-                    buf[(x, inner_area.y)].set_bg(bar_color);
-                } else if !self.transparent_background {
-                    // Empty portion - use background color only if not transparent
-                    buf[(x, inner_area.y)].set_bg(bg_color);
+        if text_width > 0 {
+            // Truncate text if it's too wide for available space
+            let (final_text, final_text_width) = if text_width > available_width {
+                // Text is too wide, truncate it to fit
+                let chars_that_fit = (available_width as usize).saturating_sub(1); // Reserve 1 for ellipsis
+                if chars_that_fit > 0 {
+                    let truncated: String = display_text.chars().take(chars_that_fit).collect();
+                    let truncated_with_ellipsis = format!("{}…", truncated);
+                    (truncated_with_ellipsis.clone(), truncated_with_ellipsis.chars().count() as u16)
+                } else if available_width > 0 {
+                    // Only room for ellipsis
+                    ("…".to_string(), 1)
+                } else {
+                    (String::new(), 0)
                 }
-                // If transparent_background is true, don't set background for empty portion
-            }
+            } else {
+                // Text fits, use as-is
+                (display_text.clone(), text_width)
+            };
 
-            // Second pass: Render text on top with appropriate colors
-            for (i, c) in display_text.chars().enumerate() {
-                let x = text_start_x + i as u16;
-                if x < inner_area.x + inner_area.width {
-                    let char_position = x - inner_area.x;
+            if final_text_width > 0 && final_text_width <= available_width {
+                // Left-align when we have custom text (for spell names, etc), otherwise center
+                let text_start_x = if self.custom_text.is_some() {
+                    inner_area.x  // Left-aligned
+                } else {
+                    inner_area.x + (available_width.saturating_sub(final_text_width)) / 2  // Centered
+                };
 
-                    if char_position < split_position {
-                        // On filled portion: white text on colored background
-                        buf[(x, inner_area.y)].set_char(c);
-                        buf[(x, inner_area.y)].set_fg(Color::White);
+                // First pass: Fill the background
+                for i in 0..available_width {
+                    let x = inner_area.x + i;
+                    buf[(x, inner_area.y)].set_char(' ');
+                    if i < split_position {
+                        // Filled portion - use bar color as background
                         buf[(x, inner_area.y)].set_bg(bar_color);
-                    } else {
-                        // On empty portion: gray text, background depends on transparent_background
-                        buf[(x, inner_area.y)].set_char(c);
-                        buf[(x, inner_area.y)].set_fg(Color::DarkGray);
-                        if !self.transparent_background {
-                            buf[(x, inner_area.y)].set_bg(bg_color);
+                    } else if !self.transparent_background {
+                        // Empty portion - use background color only if not transparent
+                        buf[(x, inner_area.y)].set_bg(bg_color);
+                    }
+                    // If transparent_background is true, don't set background for empty portion
+                }
+
+                // Second pass: Render text on top with appropriate colors
+                for (i, c) in final_text.chars().enumerate() {
+                    let x = text_start_x + i as u16;
+                    if x < inner_area.x + inner_area.width {
+                        let char_position = x - inner_area.x;
+
+                        if char_position < split_position {
+                            // On filled portion: white text on colored background
+                            buf[(x, inner_area.y)].set_char(c);
+                            buf[(x, inner_area.y)].set_fg(Color::White);
+                            buf[(x, inner_area.y)].set_bg(bar_color);
+                        } else {
+                            // On empty portion: gray text, background depends on transparent_background
+                            buf[(x, inner_area.y)].set_char(c);
+                            buf[(x, inner_area.y)].set_fg(Color::DarkGray);
+                            if !self.transparent_background {
+                                buf[(x, inner_area.y)].set_bg(bg_color);
+                            }
                         }
                     }
                 }
             }
         } else if available_width > 0 {
-            // No text or text too wide - just show the colored bar
+            // No text - just show the colored bar
             for i in 0..available_width {
                 let x = inner_area.x + i;
                 buf[(x, inner_area.y)].set_char(' ');

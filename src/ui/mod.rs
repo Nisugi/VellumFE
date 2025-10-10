@@ -9,6 +9,9 @@ mod injury_doll;
 mod hands;
 mod hand;
 mod dashboard;
+mod scrollable_container;
+mod active_effects;
+mod performance_stats;
 
 pub use text_window::{TextWindow, StyledText};
 pub use command_input::CommandInput;
@@ -29,6 +32,7 @@ pub use hands::Hands;
 pub use hand::{Hand, HandType};
 #[allow(unused_imports)]
 pub use dashboard::{Dashboard, DashboardLayout};
+pub use performance_stats::PerformanceStatsWidget;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

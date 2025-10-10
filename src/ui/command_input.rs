@@ -62,6 +62,73 @@ impl CommandInput {
         self.cursor_pos = self.input.chars().count();
     }
 
+    pub fn move_cursor_word_left(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut pos = self.cursor_pos;
+
+        // Skip spaces to the left
+        while pos > 0 && chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        // Skip word characters to the left
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_pos = pos;
+    }
+
+    pub fn move_cursor_word_right(&mut self) {
+        let chars: Vec<char> = self.input.chars().collect();
+        let char_count = chars.len();
+
+        if self.cursor_pos >= char_count {
+            return;
+        }
+
+        let mut pos = self.cursor_pos;
+
+        // Skip word characters to the right
+        while pos < char_count && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        // Skip spaces to the right
+        while pos < char_count && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_pos = pos;
+    }
+
+    pub fn delete_word(&mut self) {
+        // Delete from cursor to end of current word
+        let chars: Vec<char> = self.input.chars().collect();
+        let char_count = chars.len();
+
+        if self.cursor_pos >= char_count {
+            return;
+        }
+
+        let mut end_pos = self.cursor_pos;
+
+        // Skip word characters
+        while end_pos < char_count && !chars[end_pos].is_whitespace() {
+            end_pos += 1;
+        }
+
+        // Convert positions to byte indices
+        let start_byte = self.char_pos_to_byte_idx(self.cursor_pos);
+        let end_byte = self.char_pos_to_byte_idx(end_pos);
+
+        self.input.drain(start_byte..end_byte);
+    }
+
     /// Convert character position to byte index
     fn char_pos_to_byte_idx(&self, char_pos: usize) -> usize {
         self.input
@@ -75,6 +142,22 @@ impl CommandInput {
         self.input.clear();
         self.cursor_pos = 0;
         self.history_index = None;
+    }
+
+    pub fn get_input(&self) -> Option<String> {
+        if self.input.is_empty() {
+            None
+        } else {
+            Some(self.input.clone())
+        }
+    }
+
+    pub fn get_last_command(&self) -> Option<String> {
+        self.history.get(0).cloned()
+    }
+
+    pub fn get_second_last_command(&self) -> Option<String> {
+        self.history.get(1).cloned()
     }
 
     pub fn submit(&mut self) -> Option<String> {

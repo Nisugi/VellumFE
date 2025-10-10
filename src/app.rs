@@ -1,7 +1,8 @@
-use crate::config::Config;
+use crate::config::{Config, KeyAction, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
-use crate::ui::{CommandInput, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
+use crate::performance::PerformanceStats;
+use crate::ui::{CommandInput, PerformanceStatsWidget, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -10,7 +11,9 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    style::Color,
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Modifier, Style},
     Terminal,
 };
 use std::collections::HashMap;
@@ -21,10 +24,18 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 use rand::Rng;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum InputMode {
+    Normal,   // Normal text input to command window
+    Command,  // Command input mode (typing a command)
+    Search,   // Search mode (typing search query)
+}
+
 pub struct App {
     config: Config,
     window_manager: WindowManager,
     command_input: CommandInput,
+    search_input: CommandInput,  // Separate input for search
     parser: XmlParser,
     running: bool,
     prompt_shown: bool, // Track if we've shown a prompt since last real text
@@ -33,6 +44,10 @@ pub struct App {
     mouse_mode_enabled: bool, // Whether mouse features are enabled (vs text selection)
     resize_state: Option<ResizeState>, // Track active resize operation
     move_state: Option<MoveState>, // Track active window move operation
+    input_mode: InputMode,  // Track current input mode
+    keybind_map: HashMap<(KeyCode, KeyModifiers), KeyAction>,  // Parsed keybindings
+    perf_stats: PerformanceStats,  // Performance statistics
+    show_perf_stats: bool,  // Whether to show performance stats window
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +111,7 @@ impl App {
                 show_border: w.show_border,
                 border_style: w.border_style.clone(),
                 border_color: w.border_color.clone(),
+                border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
@@ -106,6 +122,8 @@ impl App {
                 dashboard_indicators: w.dashboard_indicators.clone(),
                 dashboard_spacing: w.dashboard_spacing,
                 dashboard_hide_inactive: w.dashboard_hide_inactive,
+                visible_count: w.visible_count,
+                effect_category: w.effect_category.clone(),
             })
             .collect();
 
@@ -115,10 +133,37 @@ impl App {
                 wc.name, wc.widget_type, wc.streams, wc.row, wc.col, wc.rows, wc.cols, wc.buffer_size);
         }
 
+        // Build keybind map
+        let mut keybind_map = HashMap::new();
+        for keybind in &config.keybinds {
+            if let Some((key_code, modifiers)) = parse_key_string(&keybind.key) {
+                let action = if let Some(ref action_str) = keybind.action {
+                    KeyAction::from_str(action_str)
+                } else if let Some(ref macro_text) = keybind.macro_text {
+                    Some(KeyAction::SendMacro(macro_text.clone()))
+                } else {
+                    None
+                };
+
+                if let Some(action) = action {
+                    keybind_map.insert((key_code, modifiers), action);
+                } else {
+                    tracing::warn!("Invalid keybind: {} -> {:?}/{:?}",
+                        keybind.key, keybind.action, keybind.macro_text);
+                }
+            } else {
+                tracing::warn!("Could not parse key string: {}", keybind.key);
+            }
+        }
+
+        debug!("Loaded {} keybindings", keybind_map.len());
+
         Ok(Self {
             window_manager: WindowManager::new(window_configs),
             command_input: CommandInput::new(100),
+            search_input: CommandInput::new(50),  // Smaller history for search
             parser: XmlParser::with_presets(presets),
+            keybind_map,
             config,
             running: true,
             prompt_shown: false,
@@ -127,6 +172,9 @@ impl App {
             mouse_mode_enabled: false, // Start with mouse mode off (text selection enabled)
             resize_state: None, // No active resize initially
             move_state: None, // No active move initially
+            input_mode: InputMode::Normal,  // Start in normal mode
+            perf_stats: PerformanceStats::new(),  // Initialize performance stats
+            show_perf_stats: false,  // Hidden by default
         })
     }
 
@@ -261,6 +309,7 @@ impl App {
                 show_border: w.show_border,
                 border_style: w.border_style.clone(),
                 border_color: w.border_color.clone(),
+                border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
@@ -271,6 +320,8 @@ impl App {
                 dashboard_indicators: w.dashboard_indicators.clone(),
                 dashboard_spacing: w.dashboard_spacing,
                 dashboard_hide_inactive: w.dashboard_hide_inactive,
+                visible_count: w.visible_count,
+                effect_category: w.effect_category.clone(),
             })
             .collect();
 
@@ -514,6 +565,7 @@ impl App {
                     show_border: true,
                     border_style: Some("single".to_string()),
                     border_color: None,
+                    border_sides: None,
                     title: Some(window_name.to_string()),
                     bar_color: None,
                     bar_background_color: None,
@@ -523,6 +575,8 @@ impl App {
                     dashboard_indicators: None,
                     dashboard_spacing: None,
                     dashboard_hide_inactive: None,
+                    visible_count: None,
+                    effect_category: None,
                 };
 
                 self.config.ui.windows.push(window_def);
@@ -547,6 +601,21 @@ impl App {
                     if self.focused_window_index >= self.config.ui.windows.len() && self.focused_window_index > 0 {
                         self.focused_window_index = self.config.ui.windows.len() - 1;
                     }
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "togglespellid" | "toggleeffectid" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .togglespellid <window_name>");
+                    self.add_system_message("Toggles between spell name and spell ID for active effects windows");
+                    return;
+                }
+
+                let window_name = parts[1];
+                if let Some(window) = self.window_manager.get_window(window_name) {
+                    window.toggle_effect_display();
+                    self.add_system_message(&format!("Toggled display for '{}'", window_name));
                 } else {
                     self.add_system_message(&format!("Window '{}' not found", window_name));
                 }
@@ -773,15 +842,33 @@ impl App {
             }
             "border" => {
                 if parts.len() < 3 {
-                    self.add_system_message("Usage: .border <window> <style> [color]");
+                    self.add_system_message("Usage: .border <window> <style> [color] [sides...]");
                     self.add_system_message("Styles: single, double, rounded, thick, none");
-                    self.add_system_message("Example: .border main rounded #00ff00");
+                    self.add_system_message("Sides: top, bottom, left, right, all, none (default: all)");
+                    self.add_system_message("Example: .border main rounded #00ff00 top bottom");
                     return;
                 }
 
                 let window_name = parts[1];
                 let style = parts[2];
-                let color = parts.get(3).map(|s| s.to_string());
+
+                // Parse color and sides - color is a hex string starting with #
+                let mut color: Option<String> = None;
+                let mut sides: Vec<String> = Vec::new();
+
+                for i in 3..parts.len() {
+                    if parts[i].starts_with('#') {
+                        color = Some(parts[i].to_string());
+                    } else {
+                        sides.push(parts[i].to_string());
+                    }
+                }
+
+                let border_sides = if sides.is_empty() {
+                    None  // Default to all sides
+                } else {
+                    Some(sides)
+                };
 
                 // Validate style
                 let valid_styles = vec!["single", "double", "rounded", "thick", "none"];
@@ -807,6 +894,8 @@ impl App {
                             window_def.border_color = Some(c.clone());
                         }
 
+                        window_def.border_sides = border_sides.clone();
+
                         found = true;
                         break;
                     }
@@ -814,12 +903,16 @@ impl App {
 
                 if found {
                     self.update_window_manager_config();
+                    let sides_str = border_sides.as_ref()
+                        .map(|s| format!(" [{}]", s.join(", ")))
+                        .unwrap_or_default();
+
                     if style == "none" {
                         self.add_system_message(&format!("Removed border from '{}'", window_name));
                     } else if let Some(ref c) = color {
-                        self.add_system_message(&format!("Set '{}' border to {} ({})", window_name, style, c));
+                        self.add_system_message(&format!("Set '{}' border to {} ({}){}", window_name, style, c, sides_str));
                     } else {
-                        self.add_system_message(&format!("Set '{}' border to {}", window_name, style));
+                        self.add_system_message(&format!("Set '{}' border to {}{}", window_name, style, sides_str));
                     }
                 } else {
                     self.add_system_message(&format!("Window '{}' not found", window_name));
@@ -1024,8 +1117,11 @@ impl App {
             let window_layouts = self.window_manager.calculate_layout(layout.main_area);
             self.window_manager.update_widths(&window_layouts);
 
-            // Draw UI
+            // Draw UI and track render time
+            let render_start = std::time::Instant::now();
             terminal.draw(|f| {
+                let ui_render_start = std::time::Instant::now();
+
                 let layout = UiLayout::calculate(f.area());
                 let window_layouts = self.window_manager.calculate_layout(layout.main_area);
 
@@ -1040,11 +1136,45 @@ impl App {
                     }
                 }
 
-                self.command_input.render(layout.input_area, f.buffer_mut());
+                // Render performance stats if enabled
+                if self.show_perf_stats {
+                    // Create a larger window in the top-right corner for expanded stats
+                    let perf_rect = Rect {
+                        x: f.area().width.saturating_sub(35),
+                        y: 0,
+                        width: 35,
+                        height: 23,  // Increased from 13 to 23 for more stats
+                    };
+                    let perf_widget = PerformanceStatsWidget::new();
+                    perf_widget.render(perf_rect, f.buffer_mut(), &self.perf_stats);
+                }
+
+                // Render input based on mode
+                match self.input_mode {
+                    InputMode::Search => {
+                        // Render search input with prompt
+                        self.render_search_input(layout.input_area, f.buffer_mut());
+                    }
+                    _ => {
+                        self.command_input.render(layout.input_area, f.buffer_mut());
+                    }
+                }
+
+                // Record UI render time
+                let ui_render_duration = ui_render_start.elapsed();
+                self.perf_stats.record_ui_render_time(ui_render_duration);
             })?;
+
+            // Record total render time
+            let render_duration = render_start.elapsed();
+            self.perf_stats.record_render_time(render_duration);
+
+            // Record frame completion
+            self.perf_stats.record_frame();
 
             // Handle events with timeout
             if event::poll(std::time::Duration::from_millis(100))? {
+                let event_start = std::time::Instant::now();
                 match event::read()? {
                     Event::Key(key) => {
                         // Only handle key press events, not release or repeat
@@ -1057,12 +1187,25 @@ impl App {
                     }
                     _ => {}
                 }
+                let event_duration = event_start.elapsed();
+                self.perf_stats.record_event_process_time(event_duration);
             }
 
             // Handle server messages
             while let Ok(msg) = server_rx.try_recv() {
                 self.handle_server_message(msg);
             }
+
+            // Update memory stats periodically (count total lines buffered)
+            let window_names = self.window_manager.get_window_names();
+            let mut total_lines = 0;
+            for name in &window_names {
+                if let Some(window) = self.window_manager.get_window(name) {
+                    total_lines += window.line_count();
+                }
+            }
+            let window_count = self.config.ui.windows.len();
+            self.perf_stats.update_memory_stats(total_lines, window_count);
         }
 
         // Autosave layout before exiting
@@ -1086,51 +1229,190 @@ impl App {
         modifiers: KeyModifiers,
         command_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        // Handle global keys first (work in any mode)
         match (key, modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.running = false;
+                return Ok(());
             }
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                // Enter search mode
+                self.input_mode = InputMode::Search;
+                self.search_input.clear();
+                return Ok(());
+            }
+            (KeyCode::Esc, _) => {
+                // Exit search mode, clear search
+                if self.input_mode == InputMode::Search {
+                    self.input_mode = InputMode::Normal;
+                    if let Some(window) = self.get_focused_window() {
+                        window.clear_search();
+                    }
+                }
+                return Ok(());
+            }
+            (KeyCode::PageUp, KeyModifiers::CONTROL) => {
+                // Previous search match
+                if let Some(window) = self.get_focused_window() {
+                    window.prev_match();
+                }
+                return Ok(());
+            }
+            (KeyCode::PageDown, KeyModifiers::CONTROL) => {
+                // Next search match
+                if let Some(window) = self.get_focused_window() {
+                    window.next_match();
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // Handle mode-specific keys
+        match self.input_mode {
+            InputMode::Search => self.handle_search_input(key, modifiers),
+            InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
+        }
+    }
+
+    fn handle_search_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        match (key, modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                self.search_input.insert_char(c);
+            }
+            (KeyCode::Backspace, _) => {
+                self.search_input.delete_char();
+            }
+            (KeyCode::Left, _) => {
+                self.search_input.move_cursor_left();
+            }
+            (KeyCode::Right, _) => {
+                self.search_input.move_cursor_right();
+            }
+            (KeyCode::Home, _) => {
+                self.search_input.move_cursor_home();
+            }
+            (KeyCode::End, _) => {
+                self.search_input.move_cursor_end();
+            }
+            (KeyCode::Enter, _) => {
+                // Execute search
+                if let Some(pattern) = self.search_input.get_input() {
+                    if !pattern.is_empty() {
+                        if let Some(window) = self.get_focused_window() {
+                            match window.start_search(&pattern) {
+                                Ok(count) => {
+                                    if count > 0 {
+                                        self.add_system_message(&format!("Found {} matches", count));
+                                    } else {
+                                        self.add_system_message("No matches found");
+                                    }
+                                }
+                                Err(e) => {
+                                    self.add_system_message(&format!("Invalid regex: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn render_search_input(&self, area: Rect, buf: &mut Buffer) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget};
+
+        // Get search info from focused window
+        let search_info = self.get_focused_window_const()
+            .and_then(|w| w.search_info())
+            .map(|(current, total)| format!(" [{}/{}]", current, total))
+            .unwrap_or_default();
+
+        // Create search prompt with info
+        let prompt = format!("Search{}: ", search_info);
+        let input_text = self.search_input.get_input().unwrap_or_default();
+
+        let line = Line::from(vec![
+            Span::styled(prompt, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(input_text),
+        ]);
+
+        let paragraph = Paragraph::new(line)
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)));
+
+        paragraph.render(area, buf);
+    }
+
+    fn get_focused_window_const(&self) -> Option<&Widget> {
+        let names = self.window_manager.get_window_names();
+        if self.focused_window_index < names.len() {
+            self.window_manager.get_window_const(&names[self.focused_window_index])
+        } else {
+            None
+        }
+    }
+
+    fn handle_normal_input(
+        &mut self,
+        key: KeyCode,
+        modifiers: KeyModifiers,
+        command_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        // Debug: Log ALL key events to help diagnose numpad vs regular keys
+        match key {
+            KeyCode::Char(c) if matches!(c, '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '.' | '+' | '-' | '*' | '/') => {
+                debug!("KEY EVENT: KeyCode::Char('{}'), modifiers={:?}", c, modifiers);
+            }
+            KeyCode::Keypad0 | KeyCode::Keypad1 | KeyCode::Keypad2 | KeyCode::Keypad3 |
+            KeyCode::Keypad4 | KeyCode::Keypad5 | KeyCode::Keypad6 | KeyCode::Keypad7 |
+            KeyCode::Keypad8 | KeyCode::Keypad9 | KeyCode::KeypadPeriod | KeyCode::KeypadPlus |
+            KeyCode::KeypadMinus | KeyCode::KeypadMultiply | KeyCode::KeypadDivide => {
+                debug!("KEY EVENT: {:?}, modifiers={:?}", key, modifiers);
+            }
+            _ => {
+                // Log non-char/numpad keys too
+                debug!("KEY EVENT: {:?}, modifiers={:?}", key, modifiers);
+            }
+        }
+
+        // Check if this key has a bound action (exact match first)
+        if let Some(action) = self.keybind_map.get(&(key, modifiers)).cloned() {
+            return self.execute_action(action, command_tx);
+        }
+
+        // For character keys with SHIFT, try without SHIFT modifier (for numpad +, -, *, /)
+        // BUT: only if we don't have a specific shift+key binding
+        if modifiers == KeyModifiers::SHIFT {
+            if let Some(action) = self.keybind_map.get(&(key, KeyModifiers::NONE)).cloned() {
+                return self.execute_action(action, command_tx);
+            }
+        }
+
+        // No keybind found - if it's a printable character, insert it
+        match (key, modifiers) {
             (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                 self.command_input.insert_char(c);
             }
-            (KeyCode::Backspace, _) => {
-                self.command_input.delete_char();
+            _ => {
+                // Key not bound and not a printable character - ignore
             }
-            (KeyCode::Left, _) => {
-                self.command_input.move_cursor_left();
-            }
-            (KeyCode::Right, _) => {
-                self.command_input.move_cursor_right();
-            }
-            (KeyCode::Home, _) => {
-                self.command_input.move_cursor_home();
-            }
-            (KeyCode::End, _) => {
-                self.command_input.move_cursor_end();
-            }
-            (KeyCode::Up, _) => {
-                self.command_input.history_previous();
-            }
-            (KeyCode::Down, _) => {
-                self.command_input.history_next();
-            }
-            (KeyCode::PageUp, _) => {
-                if let Some(window) = self.get_focused_window() {
-                    window.scroll_up(10);
-                }
-            }
-            (KeyCode::PageDown, _) => {
-                if let Some(window) = self.get_focused_window() {
-                    window.scroll_down(10);
-                }
-            }
-            (KeyCode::Tab, KeyModifiers::NONE) => {
-                self.cycle_focused_window();
-            }
-            (KeyCode::Enter, _) => {
-                if let Some(command) = self.command_input.submit() {
-                    debug!("Sending command: {}", command);
+        }
 
+        Ok(())
+    }
+
+    fn execute_action(
+        &mut self,
+        action: KeyAction,
+        command_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        match action {
+            // Command input actions
+            KeyAction::SendCommand => {
+                if let Some(command) = self.command_input.submit() {
                     // Check if it's a local dot command
                     if command.starts_with('.') {
                         self.handle_dot_command(&command);
@@ -1169,12 +1451,155 @@ impl App {
                         // Reset prompt_shown so next prompt will display
                         self.prompt_shown = false;
 
+                        // Track bytes sent (+1 for newline added by network module)
+                        self.perf_stats.record_bytes_sent((command.len() + 1) as u64);
                         let _ = command_tx.send(command);
                     }
                 }
             }
-            _ => {}
+            KeyAction::CursorLeft => {
+                self.command_input.move_cursor_left();
+            }
+            KeyAction::CursorRight => {
+                self.command_input.move_cursor_right();
+            }
+            KeyAction::CursorWordLeft => {
+                self.command_input.move_cursor_word_left();
+            }
+            KeyAction::CursorWordRight => {
+                self.command_input.move_cursor_word_right();
+            }
+            KeyAction::CursorHome => {
+                self.command_input.move_cursor_home();
+            }
+            KeyAction::CursorEnd => {
+                self.command_input.move_cursor_end();
+            }
+            KeyAction::CursorBackspace => {
+                self.command_input.delete_char();
+            }
+            KeyAction::CursorDelete => {
+                self.command_input.delete_word();
+            }
+
+            // History actions
+            KeyAction::PreviousCommand => {
+                self.command_input.history_previous();
+            }
+            KeyAction::NextCommand => {
+                self.command_input.history_next();
+            }
+            KeyAction::SendLastCommand => {
+                if let Some(cmd) = self.command_input.get_last_command() {
+                    self.perf_stats.record_bytes_sent((cmd.len() + 1) as u64);
+                    let _ = command_tx.send(cmd);
+                }
+            }
+            KeyAction::SendSecondLastCommand => {
+                if let Some(cmd) = self.command_input.get_second_last_command() {
+                    self.perf_stats.record_bytes_sent((cmd.len() + 1) as u64);
+                    let _ = command_tx.send(cmd);
+                }
+            }
+
+            // Window actions
+            KeyAction::SwitchCurrentWindow => {
+                self.cycle_focused_window();
+            }
+            KeyAction::ScrollCurrentWindowUpOne => {
+                if let Some(window) = self.get_focused_window() {
+                    window.scroll_up(1);
+                }
+            }
+            KeyAction::ScrollCurrentWindowDownOne => {
+                if let Some(window) = self.get_focused_window() {
+                    window.scroll_down(1);
+                }
+            }
+            KeyAction::ScrollCurrentWindowUpPage => {
+                if let Some(window) = self.get_focused_window() {
+                    window.scroll_up(10);
+                }
+            }
+            KeyAction::ScrollCurrentWindowDownPage => {
+                if let Some(window) = self.get_focused_window() {
+                    window.scroll_down(10);
+                }
+            }
+
+            // Search actions
+            KeyAction::StartSearch => {
+                self.input_mode = InputMode::Search;
+                self.search_input.clear();
+            }
+            KeyAction::NextSearchMatch => {
+                if let Some(window) = self.get_focused_window() {
+                    window.next_match();
+                }
+            }
+            KeyAction::PrevSearchMatch => {
+                if let Some(window) = self.get_focused_window() {
+                    window.prev_match();
+                }
+            }
+            KeyAction::ClearSearch => {
+                if self.input_mode == InputMode::Search {
+                    self.input_mode = InputMode::Normal;
+                    if let Some(window) = self.get_focused_window() {
+                        window.clear_search();
+                    }
+                }
+            }
+
+            // Debug/Performance actions
+            KeyAction::TogglePerformanceStats => {
+                self.show_perf_stats = !self.show_perf_stats;
+            }
+
+            // Macro - send literal text
+            KeyAction::SendMacro(text) => {
+                // Echo the command (strip \r for display)
+                let display_text = text.replace('\r', "");
+                if !display_text.is_empty() {
+                    // Echo ">" with prompt color
+                    let prompt_color = self.config.ui.prompt_colors
+                        .iter()
+                        .find(|pc| pc.character == ">")
+                        .and_then(|pc| Self::parse_hex_color(&pc.color))
+                        .unwrap_or(Color::DarkGray);
+
+                    let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
+
+                    self.get_current_window().add_text(StyledText {
+                        content: ">".to_string(),
+                        fg: Some(prompt_color),
+                        bg: None,
+                        bold: false,
+                    });
+
+                    self.get_current_window().add_text(StyledText {
+                        content: display_text,
+                        fg: echo_color,
+                        bg: None,
+                        bold: false,
+                    });
+
+                    // Finish the line
+                    if let Ok(size) = crossterm::terminal::size() {
+                        let inner_width = size.0.saturating_sub(2);
+                        self.get_current_window().finish_line(inner_width);
+                    }
+
+                    // Reset prompt_shown so next prompt will display
+                    self.prompt_shown = false;
+                }
+
+                // Track bytes sent (+1 for newline added by network module)
+                self.perf_stats.record_bytes_sent((text.len() + 1) as u64);
+                let _ = command_tx.send(text);
+            }
         }
+
         Ok(())
     }
 
@@ -1331,8 +1756,15 @@ impl App {
                 self.running = false;
             }
             ServerMessage::Text(line) => {
-                // Parse XML and add to window
+                // Track network bytes received
+                self.perf_stats.record_bytes_received(line.len() as u64);
+
+                // Parse XML and add to window (with timing)
+                let parse_start = std::time::Instant::now();
                 let elements = self.parser.parse_line(&line);
+                let parse_duration = parse_start.elapsed();
+                self.perf_stats.record_parse(parse_duration);
+                self.perf_stats.record_elements_parsed(elements.len() as u64);
 
                 // Check if this line has Text elements with actual content (not just empty strings)
                 let has_text = elements.iter().any(|e| {
@@ -1594,6 +2026,44 @@ impl App {
 
                             // Update any dashboard widgets that contain this indicator
                             self.window_manager.update_dashboard_indicator(&id, value);
+                        }
+                        ParsedElement::ActiveEffect { category, id, value, text, time } => {
+                            // Update active effects widgets
+                            // Find all windows that accept this category
+                            let window_names = self.window_manager.get_window_names();
+                            for window_name in window_names {
+                                if let Some(effect_category) = self.window_manager.get_window_effect_category(&window_name) {
+                                    // Window accepts this category if it matches exactly or is "All"
+                                    if effect_category == *category || effect_category == "All" {
+                                        if let Some(window) = self.window_manager.get_window(&window_name) {
+                                            window.add_or_update_effect(
+                                                id.clone(),
+                                                text.clone(),
+                                                value,
+                                                time.clone()
+                                            );
+                                            debug!("Updated active effect {} in window {}: {} ({}%)", id, window_name, text, value);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        ParsedElement::ClearActiveEffects { category } => {
+                            // Clear active effects in matching windows
+                            let window_names = self.window_manager.get_window_names();
+                            for window_name in window_names {
+                                if let Some(config) = self.config.ui.windows.iter().find(|w| w.name == window_name) {
+                                    if let Some(ref effect_category) = config.effect_category {
+                                        // Clear if window's category matches or is "All"
+                                        if *effect_category == *category || *effect_category == "All" {
+                                            if let Some(window) = self.window_manager.get_window(&window_name) {
+                                                window.clear_active_effects();
+                                                debug!("Cleared active effects in window {} for category {}", window_name, category);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         _ => {
                             // Other element types don't add visible content

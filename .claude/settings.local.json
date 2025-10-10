@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/shawn/.profanity-rs/**)"
+      "Read(//c/Users/shawn/.profanity-rs/**)",
+      "Read(//c/Gemstone/ProfanityFE-master/hilite/**)",
+      "Read(//c/Gemstone/ProfanityFE-master/ui/**)",
+      "Bash(cargo build:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(git checkout:*)",
+      "Bash(taskkill:*)",
+      "Bash(dir \"C:\\Gemstone\\profanity-next\")",
+      "Bash(del \"C:\\Users\\shawn\\.profanity-rs\\debug.log\")"
     ],
     "deny": [],
     "ask": []

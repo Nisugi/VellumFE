@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod network;
 mod parser;
+mod performance;
 mod ui;
 
 use anyhow::Result;

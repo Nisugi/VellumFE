@@ -13,6 +13,7 @@ pub struct Indicator {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,
     // Colors for different states (index by value)
     // For injuries: [none, injury1, injury2, injury3, scar1, scar2, scar3]
     // For boolean: [off, on]
@@ -27,6 +28,7 @@ impl Indicator {
             show_border: false,  // Indicators typically don't have borders
             border_style: None,
             border_color: None,
+            border_sides: None,
             colors: vec![
                 "#555555".to_string(),  // 0: none/off (dark gray)
                 "#9BA2B2".to_string(),  // 1: injury 1 (light gray)
@@ -60,6 +62,10 @@ impl Indicator {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -98,7 +104,8 @@ impl Indicator {
         let mut block = Block::default();
 
         if self.show_border {
-            block = block.borders(Borders::ALL);
+            let borders = crate::config::parse_border_sides(&self.border_sides);
+            block = block.borders(borders);
 
             if let Some(ref style) = self.border_style {
                 use ratatui::widgets::BorderType;

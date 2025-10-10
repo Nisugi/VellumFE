@@ -70,6 +70,16 @@ pub enum ParsedElement {
         id: String,      // Status type: "poisoned", "diseased", "bleeding", "stunned"
         active: bool,    // true = active, false = clear
     },
+    ActiveEffect {
+        category: String,  // "ActiveSpells", "Buffs", "Debuffs", "Cooldowns"
+        id: String,
+        value: u32,
+        text: String,
+        time: String,      // Format: "HH:MM:SS"
+    },
+    ClearActiveEffects {
+        category: String,  // Which category to clear
+    },
 }
 
 // Color/style tracking for nested tags
@@ -281,8 +291,9 @@ impl XmlParser {
         } else if tag.starts_with("<image ") {
             self.handle_injury_image(tag, elements);
         } else if tag.starts_with("<dialogData ") {
-            if tag.contains("progressBar") {
-                tracing::debug!("Parser received dialogData with progressBar");
+            // Log all dialogData tags to help debug
+            if let Some(id) = Self::extract_attribute(tag, "id") {
+                tracing::debug!("Parser received dialogData id='{}'", id);
             }
             self.handle_dialog_data(tag, elements);
         } else if tag.starts_with("<progressBar ") {
@@ -454,6 +465,8 @@ impl XmlParser {
         // <dialogData id='IconBLEEDING' value='active'/>
         // <dialogData id='IconSTUNNED' value='clear'/>
         // <dialogData id='minivitals'><progressBar id='mana' value='94' text='mana 386/407' .../></dialogData>
+        // <dialogData id='Buffs' clear='t'></dialogData>
+        // <dialogData id='Buffs'><progressBar id='115' value='74' text="Fasthr's Reward" time='03:06:54'/></dialogData>
 
         if let Some(id) = Self::extract_attribute(tag, "id") {
             // Handle Icon* status indicators
@@ -464,9 +477,61 @@ impl XmlParser {
                     elements.push(ParsedElement::StatusIndicator { id: status, active });
                 }
             }
+
+            // Handle Active Effects (Active Spells, Buffs, Debuffs, Cooldowns)
+            if id == "Active Spells" || id == "Buffs" || id == "Debuffs" || id == "Cooldowns" {
+                tracing::debug!("Parser found dialogData for active effects category: {}", id);
+
+                // Check for clear='t' attribute
+                if let Some(clear) = Self::extract_attribute(tag, "clear") {
+                    if clear == "t" {
+                        tracing::debug!("Clearing active effects for category: {}", id);
+                        elements.push(ParsedElement::ClearActiveEffects {
+                            category: id.clone()
+                        });
+                        return;
+                    }
+                }
+
+                // Extract all progressBar tags for this category
+                let mut remaining = tag;
+                let mut count = 0;
+                while let Some(pb_start) = remaining.find("<progressBar ") {
+                    if let Some(pb_end) = remaining[pb_start..].find("/>") {
+                        let pb_tag = &remaining[pb_start..pb_start + pb_end + 2];
+
+                        // Extract attributes for active effect
+                        if let (Some(effect_id), Some(value_str), Some(text), Some(time)) = (
+                            Self::extract_attribute(pb_tag, "id"),
+                            Self::extract_attribute(pb_tag, "value"),
+                            Self::extract_attribute(pb_tag, "text"),
+                            Self::extract_attribute(pb_tag, "time"),
+                        ) {
+                            if let Ok(value) = value_str.parse::<u32>() {
+                                tracing::debug!("Parsed active effect: category={}, id={}, text='{}', value={}%, time={}",
+                                    id, effect_id, text, value, time);
+                                elements.push(ParsedElement::ActiveEffect {
+                                    category: id.clone(),
+                                    id: effect_id,
+                                    value,
+                                    text,
+                                    time,
+                                });
+                                count += 1;
+                            }
+                        }
+
+                        remaining = &remaining[pb_start + pb_end + 2..];
+                    } else {
+                        break;
+                    }
+                }
+                tracing::debug!("Parsed {} active effect(s) for category {}", count, id);
+                return;
+            }
         }
 
-        // Extract progressBar tags from within dialogData
+        // Extract progressBar tags from within dialogData (for minivitals, etc.)
         if tag.contains("<progressBar ") {
             let mut remaining = tag;
             while let Some(pb_start) = remaining.find("<progressBar ") {

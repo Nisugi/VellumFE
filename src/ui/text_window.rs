@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 use std::collections::VecDeque;
+use regex::Regex;
 
 #[derive(Clone)]
 pub struct StyledText {
@@ -27,6 +28,20 @@ struct LogicalLine {
     spans: Vec<(String, Style)>,
 }
 
+// Match location: (line_index, start_char, end_char)
+#[derive(Clone, Debug)]
+struct SearchMatch {
+    line_idx: usize,      // Index in wrapped_lines
+    start: usize,         // Character offset in the line text
+    end: usize,           // Character offset (exclusive)
+}
+
+struct SearchState {
+    regex: Regex,
+    matches: Vec<SearchMatch>,
+    current_match_idx: usize,  // Which match is currently selected
+}
+
 pub struct TextWindow {
     // Store original logical lines (for re-wrapping)
     logical_lines: VecDeque<LogicalLine>,
@@ -35,7 +50,9 @@ pub struct TextWindow {
     // Accumulate styled chunks for current logical line
     current_line_spans: Vec<(String, Style)>,
     max_lines: usize,
-    scroll_offset: usize,
+    scroll_offset: usize,  // Lines back from end when at bottom (0 = live view)
+    scroll_position: Option<usize>,  // Absolute line position when scrolled back (None = following live)
+    last_visible_height: usize,  // Track the visible height from last render
     title: String,
     last_width: u16,
     needs_rewrap: bool, // Flag to trigger re-wrapping
@@ -43,6 +60,9 @@ pub struct TextWindow {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,
+    // Search functionality
+    search_state: Option<SearchState>,
 }
 
 impl TextWindow {
@@ -59,6 +79,10 @@ impl TextWindow {
             show_border: true,
             border_style: None,
             border_color: None,
+            border_sides: None,
+            scroll_position: None,  // Start in live view mode
+            last_visible_height: 20,  // Reasonable default
+            search_state: None,  // No active search
         }
     }
 
@@ -84,6 +108,10 @@ impl TextWindow {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     /// Update the window title
@@ -269,16 +297,42 @@ impl TextWindow {
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
-        // Scrolling up = viewing older lines = increase offset from bottom
-        // scroll_offset = how many lines back from the end we are
-        let max_offset = self.wrapped_lines.len();
-        self.scroll_offset = self.scroll_offset.saturating_add(amount).min(max_offset);
+        // Scrolling up = viewing older lines
+        let total_lines = self.wrapped_lines.len();
+
+        if let Some(pos) = self.scroll_position {
+            // Already scrolled - move the absolute position up (to older lines)
+            self.scroll_position = Some(pos.saturating_sub(amount));
+        } else {
+            // First scroll up from live view - convert to absolute position
+            // We're currently viewing the last last_visible_height lines
+            // The view starts at (total_lines - visible_height)
+            let current_start = total_lines.saturating_sub(self.last_visible_height);
+            // Scroll up means move the start position back
+            self.scroll_position = Some(current_start.saturating_sub(amount));
+        }
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
-        // Scrolling down = viewing newer lines = decrease offset
-        // offset 0 = at the bottom, viewing live
-        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+        // Scrolling down = viewing newer lines
+        let total_lines = self.wrapped_lines.len();
+
+        if let Some(pos) = self.scroll_position {
+            let new_pos = pos.saturating_add(amount);
+
+            // Check if we've scrolled back to the bottom (within visible_height of end)
+            let bottom_threshold = total_lines.saturating_sub(self.last_visible_height);
+            if new_pos >= bottom_threshold {
+                // Return to live view mode
+                self.scroll_position = None;
+                self.scroll_offset = 0;
+            } else {
+                self.scroll_position = Some(new_pos);
+            }
+        } else {
+            // Already in live view, just decrease offset (shouldn't normally happen)
+            self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+        }
     }
 
     pub fn set_width(&mut self, width: u16) {
@@ -288,6 +342,222 @@ impl TextWindow {
 
         self.last_width = width;
         self.needs_rewrap = true; // Mark that we need to re-wrap all lines
+    }
+
+    /// Start a new search with the given regex pattern
+    /// Returns Ok(match_count) or Err(regex_error)
+    pub fn start_search(&mut self, pattern: &str) -> Result<usize, regex::Error> {
+        let regex = Regex::new(pattern)?;
+
+        // Search through all wrapped lines
+        let mut matches = Vec::new();
+
+        for (line_idx, wrapped_line) in self.wrapped_lines.iter().enumerate() {
+            // Combine all spans into a single text string for searching
+            let line_text: String = wrapped_line.spans.iter()
+                .map(|(text, _)| text.as_str())
+                .collect();
+
+            // Find all matches in this line
+            for mat in regex.find_iter(&line_text) {
+                matches.push(SearchMatch {
+                    line_idx,
+                    start: mat.start(),
+                    end: mat.end(),
+                });
+            }
+        }
+
+        let match_count = matches.len();
+
+        if !matches.is_empty() {
+            self.search_state = Some(SearchState {
+                regex,
+                matches,
+                current_match_idx: 0,
+            });
+
+            // Scroll to first match
+            self.scroll_to_match(0);
+        } else {
+            self.search_state = None;
+        }
+
+        Ok(match_count)
+    }
+
+    /// Clear the current search
+    pub fn clear_search(&mut self) {
+        self.search_state = None;
+    }
+
+    /// Get the number of wrapped lines (for memory tracking)
+    pub fn wrapped_line_count(&self) -> usize {
+        self.wrapped_lines.len()
+    }
+
+    /// Jump to the next match
+    pub fn next_match(&mut self) -> bool {
+        let new_idx = if let Some(state) = &mut self.search_state {
+            if !state.matches.is_empty() {
+                state.current_match_idx = (state.current_match_idx + 1) % state.matches.len();
+                Some(state.current_match_idx)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(idx) = new_idx {
+            self.scroll_to_match(idx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Jump to the previous match
+    pub fn prev_match(&mut self) -> bool {
+        let new_idx = if let Some(state) = &mut self.search_state {
+            if !state.matches.is_empty() {
+                if state.current_match_idx == 0 {
+                    state.current_match_idx = state.matches.len() - 1;
+                } else {
+                    state.current_match_idx -= 1;
+                }
+                Some(state.current_match_idx)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(idx) = new_idx {
+            self.scroll_to_match(idx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get search info for display: (current_idx, total_matches)
+    pub fn search_info(&self) -> Option<(usize, usize)> {
+        self.search_state.as_ref().map(|state| {
+            (state.current_match_idx + 1, state.matches.len())
+        })
+    }
+
+    /// Scroll to show a specific match
+    fn scroll_to_match(&mut self, match_idx: usize) {
+        if let Some(state) = &self.search_state {
+            if let Some(m) = state.matches.get(match_idx) {
+                // Set scroll position to show this line
+                // Try to center the match in the view
+                let target_line = m.line_idx;
+                let offset = self.last_visible_height / 2;
+                let scroll_pos = target_line.saturating_sub(offset);
+
+                self.scroll_position = Some(scroll_pos);
+            }
+        }
+    }
+
+    /// Create spans for a line with highlighted search matches
+    fn create_highlighted_spans(
+        &self,
+        wrapped: &WrappedLine,
+        line_matches: &[&SearchMatch],
+        current_match: Option<&SearchMatch>,
+    ) -> Vec<Span> {
+        // Build the full line text to know character positions
+        let full_text: String = wrapped.spans.iter()
+            .map(|(text, _)| text.as_str())
+            .collect();
+
+        // Collect all character positions that should be highlighted
+        let mut highlight_ranges: Vec<(usize, usize, bool)> = Vec::new();  // (start, end, is_current)
+
+        for m in line_matches {
+            let is_current = current_match.map_or(false, |cm| {
+                cm.line_idx == m.line_idx && cm.start == m.start && cm.end == m.end
+            });
+            highlight_ranges.push((m.start, m.end, is_current));
+        }
+
+        // Sort ranges by start position
+        highlight_ranges.sort_by_key(|(start, _, _)| *start);
+
+        // Reconstruct spans, splitting where highlights occur
+        let mut result_spans = Vec::new();
+        let mut char_pos = 0;
+        let mut highlight_idx = 0;
+
+        for (text, style) in &wrapped.spans {
+            let text_len = text.len();
+            let span_start = char_pos;
+            let span_end = char_pos + text_len;
+
+            let mut current_pos = span_start;
+
+            // Check for highlights that overlap this span
+            while highlight_idx < highlight_ranges.len() && highlight_ranges[highlight_idx].0 < span_end {
+                let (hl_start, hl_end, is_current) = highlight_ranges[highlight_idx];
+
+                if hl_end <= span_start {
+                    // Highlight is before this span
+                    highlight_idx += 1;
+                    continue;
+                }
+
+                // Add non-highlighted part before the match
+                if current_pos < hl_start && hl_start >= span_start {
+                    let offset = current_pos - span_start;
+                    let length = hl_start - current_pos;
+                    let substr = &text[offset..offset + length];
+                    result_spans.push(Span::styled(substr.to_string(), *style));
+                    current_pos = hl_start;
+                }
+
+                // Add highlighted part
+                if current_pos < hl_end && current_pos >= span_start {
+                    let offset = current_pos - span_start;
+                    let end_pos = hl_end.min(span_end);
+                    let length = end_pos - current_pos;
+                    let substr = &text[offset..offset + length];
+
+                    // Use different colors for current match vs other matches
+                    let highlight_style = if is_current {
+                        Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().bg(Color::DarkGray).fg(Color::White)
+                    };
+
+                    result_spans.push(Span::styled(substr.to_string(), highlight_style));
+                    current_pos = end_pos;
+                }
+
+                if hl_end <= span_end {
+                    highlight_idx += 1;
+                }
+
+                if current_pos >= span_end {
+                    break;
+                }
+            }
+
+            // Add remaining non-highlighted part
+            if current_pos < span_end {
+                let offset = current_pos - span_start;
+                let substr = &text[offset..];
+                result_spans.push(Span::styled(substr.to_string(), *style));
+            }
+
+            char_pos = span_end;
+        }
+
+        result_spans
     }
 
     /// Re-wrap all logical lines with the current width
@@ -332,46 +602,71 @@ impl TextWindow {
         // scroll_offset>0 means scrolled back to view older lines
 
         let visible_height = area.height.saturating_sub(2) as usize; // Account for borders
+        self.last_visible_height = visible_height;  // Save for scroll calculations
         let total_lines = self.wrapped_lines.len();
 
         if total_lines == 0 {
             // No lines to display
+            let borders = crate::config::parse_border_sides(&self.border_sides);
             let paragraph = Paragraph::new(vec![])
                 .block(
                     if focused {
                         Block::default()
                             .title(self.title.as_str())
-                            .borders(Borders::ALL)
+                            .borders(borders)
                             .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
                     } else {
                         Block::default()
                             .title(self.title.as_str())
-                            .borders(Borders::ALL)
+                            .borders(borders)
                     }
                 );
             paragraph.render(area, buf);
             return;
         }
 
-        // Calculate which lines to display
-        // We want to show the last visible_height lines, minus scroll_offset
-        // Example: 100 total lines, visible_height=20, scroll_offset=0
-        //   -> show lines 80-99 (the last 20)
-        // Example: 100 total lines, visible_height=20, scroll_offset=10
-        //   -> show lines 70-89 (20 lines, but 10 back from the end)
-
-        let end_line = total_lines.saturating_sub(self.scroll_offset);
-        let start_line = end_line.saturating_sub(visible_height);
+        // Calculate which lines to display based on scroll mode
+        let (start_line, end_line) = if let Some(pos) = self.scroll_position {
+            // Scrolled back - use absolute position (frozen view)
+            // Display visible_height lines starting from scroll_position
+            let start = pos;
+            let end = (pos + visible_height).min(total_lines);
+            (start, end)
+        } else {
+            // Live view mode - show the last visible_height lines
+            // Example: 100 total lines, visible_height=20, scroll_offset=0
+            //   -> show lines 80-99 (the last 20)
+            let end = total_lines.saturating_sub(self.scroll_offset);
+            let start = end.saturating_sub(visible_height);
+            (start, end)
+        };
 
         // Collect lines from buffer (oldest to newest order)
         let mut display_lines: Vec<Line> = Vec::new();
         for idx in start_line..end_line {
             if let Some(wrapped) = self.wrapped_lines.get(idx) {
-                let spans: Vec<Span> = wrapped
-                    .spans
-                    .iter()
-                    .map(|(text, style)| Span::styled(text.clone(), *style))
-                    .collect();
+                // Check if this line has search matches
+                let line_matches: Vec<&SearchMatch> = self.search_state.as_ref()
+                    .map(|state| {
+                        state.matches.iter()
+                            .filter(|m| m.line_idx == idx)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let current_match = self.search_state.as_ref()
+                    .and_then(|state| state.matches.get(state.current_match_idx));
+
+                let spans: Vec<Span> = if line_matches.is_empty() {
+                    // No matches on this line - render normally
+                    wrapped.spans.iter()
+                        .map(|(text, style)| Span::styled(text.clone(), *style))
+                        .collect()
+                } else {
+                    // Has matches - need to highlight them
+                    self.create_highlighted_spans(wrapped, &line_matches, current_match)
+                };
+
                 display_lines.push(Line::from(spans));
             }
         }
@@ -380,8 +675,11 @@ impl TextWindow {
         // No need to reverse!
 
         // Build block with focus indicator and scroll position
-        // Show "[scrolled back X lines]" when not at bottom
-        let title = if self.scroll_offset > 0 {
+        // Show scroll indicator when not in live view
+        let title = if let Some(pos) = self.scroll_position {
+            let lines_from_end = total_lines.saturating_sub(pos);
+            format!("{} [↑{}]", self.title, lines_from_end)
+        } else if self.scroll_offset > 0 {
             format!("{} [↑{}]", self.title, self.scroll_offset)
         } else {
             self.title.clone()
@@ -389,9 +687,10 @@ impl TextWindow {
 
         // Create block based on border configuration
         let mut block = if self.show_border {
+            let borders = crate::config::parse_border_sides(&self.border_sides);
             Block::default()
                 .title(title.as_str())
-                .borders(Borders::ALL)
+                .borders(borders)
         } else {
             Block::default() // No borders
         };

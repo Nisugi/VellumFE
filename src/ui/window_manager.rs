@@ -1,6 +1,8 @@
 use ratatui::layout::Rect;
 use std::collections::HashMap;
 use super::{TextWindow, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText};
+use super::scrollable_container;
+use super::active_effects;
 use ratatui::buffer::Buffer;
 
 /// Enum to hold different widget types
@@ -14,6 +16,7 @@ pub enum Widget {
     Hands(Hands),
     Hand(Hand),
     Dashboard(Dashboard),
+    ActiveEffects(active_effects::ActiveEffects),
 }
 
 impl Widget {
@@ -29,6 +32,7 @@ impl Widget {
             Widget::Hands(w) => w.render_with_focus(area, buf, focused),
             Widget::Hand(w) => w.render_with_focus(area, buf, focused),
             Widget::Dashboard(w) => w.render_with_focus(area, buf, focused),
+            Widget::ActiveEffects(w) => w.render_with_focus(area, buf, focused),
         }
     }
 
@@ -46,17 +50,29 @@ impl Widget {
         }
     }
 
-    /// Scroll up (only applicable for text windows)
+    /// Scroll up (only applicable for text windows and scrollable containers)
     pub fn scroll_up(&mut self, lines: usize) {
-        if let Widget::Text(w) = self {
-            w.scroll_up(lines);
+        match self {
+            Widget::Text(w) => w.scroll_up(lines),
+            Widget::ActiveEffects(w) => {
+                for _ in 0..lines {
+                    w.scroll_up();
+                }
+            }
+            _ => {}
         }
     }
 
-    /// Scroll down (only applicable for text windows)
+    /// Scroll down (only applicable for text windows and scrollable containers)
     pub fn scroll_down(&mut self, lines: usize) {
-        if let Widget::Text(w) = self {
-            w.scroll_down(lines);
+        match self {
+            Widget::Text(w) => w.scroll_down(lines),
+            Widget::ActiveEffects(w) => {
+                for _ in 0..lines {
+                    w.scroll_down();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -79,6 +95,61 @@ impl Widget {
             Widget::Hands(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Hand(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Dashboard(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::ActiveEffects(w) => w.set_border_config(show_border, border_style, border_color),
+        }
+    }
+
+    /// Search methods - only work for Text windows
+    pub fn start_search(&mut self, pattern: &str) -> Result<usize, regex::Error> {
+        match self {
+            Widget::Text(w) => w.start_search(pattern),
+            _ => Ok(0), // Non-text widgets don't support search
+        }
+    }
+
+    pub fn clear_search(&mut self) {
+        if let Widget::Text(w) = self {
+            w.clear_search();
+        }
+    }
+
+    pub fn next_match(&mut self) -> bool {
+        if let Widget::Text(w) = self {
+            w.next_match()
+        } else {
+            false
+        }
+    }
+
+    pub fn prev_match(&mut self) -> bool {
+        if let Widget::Text(w) = self {
+            w.prev_match()
+        } else {
+            false
+        }
+    }
+
+    pub fn search_info(&self) -> Option<(usize, usize)> {
+        if let Widget::Text(w) = self {
+            w.search_info()
+        } else {
+            None
+        }
+    }
+
+    /// Set border sides
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        match self {
+            Widget::Text(w) => w.set_border_sides(border_sides),
+            Widget::Progress(w) => w.set_border_sides(border_sides),
+            Widget::Countdown(w) => w.set_border_sides(border_sides),
+            Widget::Indicator(w) => w.set_border_sides(border_sides),
+            Widget::Compass(w) => w.set_border_sides(border_sides),
+            Widget::InjuryDoll(w) => w.set_border_sides(border_sides),
+            Widget::Hands(w) => w.set_border_sides(border_sides),
+            Widget::Hand(w) => w.set_border_sides(border_sides),
+            Widget::Dashboard(w) => w.set_border_sides(border_sides),
+            Widget::ActiveEffects(w) => w.set_border_sides(border_sides),
         }
     }
 
@@ -94,6 +165,7 @@ impl Widget {
             Widget::Hands(w) => w.set_title(title),
             Widget::Hand(w) => w.set_title(title),
             Widget::Dashboard(w) => w.set_title(title),
+            Widget::ActiveEffects(w) => w.set_title(title),
         }
     }
 
@@ -125,7 +197,38 @@ impl Widget {
         match self {
             Widget::Progress(w) => w.set_transparent_background(transparent),
             Widget::Countdown(w) => w.set_transparent_background(transparent),
+            Widget::ActiveEffects(w) => w.set_transparent_background(transparent),
             _ => {}
+        }
+    }
+
+    /// Add or update an active effect (only for ActiveEffects widgets)
+    pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String) {
+        if let Widget::ActiveEffects(w) = self {
+            w.add_or_update_effect(id, name, value, time);
+        }
+    }
+
+    /// Clear all active effects (only for ActiveEffects widgets)
+    pub fn clear_active_effects(&mut self) {
+        if let Widget::ActiveEffects(w) = self {
+            w.clear();
+        }
+    }
+
+    /// Toggle display between spell ID and name (only for ActiveEffects widgets)
+    pub fn toggle_effect_display(&mut self) {
+        if let Widget::ActiveEffects(w) = self {
+            w.toggle_display();
+        }
+    }
+
+    /// Get total line count (for memory tracking)
+    pub fn line_count(&self) -> usize {
+        match self {
+            Widget::Text(w) => w.wrapped_line_count(),
+            Widget::ActiveEffects(_) => 0,  // Active effects don't store lines
+            _ => 0,  // Other widgets don't store significant line data
         }
     }
 
@@ -226,6 +329,7 @@ pub struct WindowConfig {
     pub show_border: bool,     // Whether to show border
     pub border_style: Option<String>, // Border style
     pub border_color: Option<String>, // Hex color for border
+    pub border_sides: Option<Vec<String>>, // Which sides to show borders on
     pub title: Option<String>, // Custom title
     pub bar_color: Option<String>,  // Progress bar color
     pub bar_background_color: Option<String>, // Progress bar background
@@ -236,6 +340,8 @@ pub struct WindowConfig {
     pub dashboard_indicators: Option<Vec<crate::config::DashboardIndicatorDef>>, // Dashboard indicators
     pub dashboard_spacing: Option<u16>,  // Dashboard spacing
     pub dashboard_hide_inactive: Option<bool>,  // Hide inactive in dashboard
+    pub visible_count: Option<usize>,  // For scrollable containers: items to show
+    pub effect_category: Option<String>,  // For active_effects: filter category
 }
 
 pub struct WindowManager {
@@ -386,6 +492,29 @@ impl WindowManager {
 
                     Widget::Dashboard(dashboard)
                 }
+                "active_effects" => {
+                    let mut active_effects = active_effects::ActiveEffects::new(
+                        &title,
+                        config.effect_category.clone().unwrap_or_else(|| "All".to_string())
+                    );
+
+                    active_effects.set_border_config(
+                        config.show_border,
+                        config.border_style.clone(),
+                        config.border_color.clone(),
+                    );
+                    active_effects.set_border_sides(config.border_sides.clone());
+
+                    if let Some(ref color) = config.bar_color {
+                        active_effects.set_bar_color(color.clone());
+                    }
+
+                    active_effects.set_visible_count(config.visible_count);
+
+                    active_effects.set_transparent_background(config.transparent_background);
+
+                    Widget::ActiveEffects(active_effects)
+                }
                 _ => {
                     // Default to text window
                     let text_window = TextWindow::new(&title, config.buffer_size)
@@ -444,9 +573,21 @@ impl WindowManager {
         self.windows.get_mut(name)
     }
 
+    pub fn get_window_const(&self, name: &str) -> Option<&Widget> {
+        self.windows.get(name)
+    }
+
     /// Get window names in configured order
     pub fn get_window_names(&self) -> Vec<String> {
         self.config.iter().map(|c| c.name.clone()).collect()
+    }
+
+    /// Get window's effect_category from config
+    pub fn get_window_effect_category(&self, name: &str) -> Option<String> {
+        self.config
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.effect_category.clone())
     }
 
     /// Calculate layout rectangles for all windows
@@ -650,6 +791,7 @@ impl WindowManager {
                         config.border_style.clone(),
                         config.border_color.clone(),
                     );
+                    window.set_border_sides(config.border_sides.clone());
 
                     let title = config.title.clone().unwrap_or_else(|| config.name.clone());
                     window.set_title(title);

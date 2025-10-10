@@ -9,7 +9,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # TUI framework
 ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
+# Using PR #1013 for numpad key support on Windows
+crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

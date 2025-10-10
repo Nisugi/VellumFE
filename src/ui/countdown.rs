@@ -13,6 +13,7 @@ pub struct Countdown {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,
     bar_color: Option<String>,
     background_color: Option<String>,
     transparent_background: bool,  // If true, empty portion is transparent; if false, use background_color
@@ -27,6 +28,7 @@ impl Countdown {
             show_border: true,
             border_style: None,
             border_color: None,
+            border_sides: None,
             bar_color: Some("#00ff00".to_string()),
             background_color: None,
             transparent_background: true, // Transparent by default
@@ -59,6 +61,10 @@ impl Countdown {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -113,7 +119,8 @@ impl Countdown {
         let mut block = Block::default();
 
         if self.show_border {
-            block = block.borders(Borders::ALL);
+            let borders = crate::config::parse_border_sides(&self.border_sides);
+            block = block.borders(borders);
 
             if let Some(ref style) = self.border_style {
                 use ratatui::widgets::BorderType;

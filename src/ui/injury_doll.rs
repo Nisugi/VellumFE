@@ -21,6 +21,7 @@ pub struct InjuryDoll {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,
     // ProfanityFE injury colors: none, injury1-3, scar1-3
     colors: Vec<String>,
 }
@@ -33,6 +34,7 @@ impl InjuryDoll {
             show_border: false,
             border_style: None,
             border_color: None,
+            border_sides: None,
             colors: vec![
                 "#333333".to_string(),  // 0: none
                 "#aa5500".to_string(),  // 1: injury 1 (brown)
@@ -66,6 +68,10 @@ impl InjuryDoll {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -106,7 +112,8 @@ impl InjuryDoll {
         let mut block = Block::default();
 
         if self.show_border {
-            block = block.borders(Borders::ALL);
+            let borders = crate::config::parse_border_sides(&self.border_sides);
+            block = block.borders(borders);
 
             if let Some(ref style) = self.border_style {
                 let border_type = match style.as_str() {

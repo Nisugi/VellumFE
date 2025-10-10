@@ -17,6 +17,7 @@ pub struct Compass {
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
+    border_sides: Option<Vec<String>>,
     active_color: Option<String>,   // Color for available exits
     inactive_color: Option<String>, // Color for unavailable exits
 }
@@ -29,6 +30,7 @@ impl Compass {
             show_border: false,
             border_style: None,
             border_color: None,
+            border_sides: None,
             active_color: Some("#00ff00".to_string()),   // Green for available
             inactive_color: Some("#333333".to_string()), // Dark gray for unavailable
         }
@@ -55,6 +57,10 @@ impl Compass {
         self.show_border = show_border;
         self.border_style = border_style;
         self.border_color = border_color;
+    }
+
+    pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
+        self.border_sides = border_sides;
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -92,7 +98,8 @@ impl Compass {
         let mut block = Block::default();
 
         if self.show_border {
-            block = block.borders(Borders::ALL);
+            let borders = crate::config::parse_border_sides(&self.border_sides);
+            block = block.borders(borders);
 
             if let Some(ref style) = self.border_style {
                 let border_type = match style.as_str() {
