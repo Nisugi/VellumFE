@@ -1,0 +1,65 @@
+name: Sync Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'wiki/**'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout wiki repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync wiki files
+        run: |
+          # Remove old files (except .git)
+          find wiki-repo -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+          # Copy new files
+          cp -r wiki/* wiki-repo/
+
+          # Get commit info for attribution
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          COMMIT_AUTHOR=$(git log -1 --pretty='%an <%ae>')
+
+          cd wiki-repo
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes
+          if [[ -n $(git status --porcelain) ]]; then
+            git add -A
+            git commit -m "Auto-sync from main repo
+
+            Triggered by: $COMMIT_MSG
+            Author: $COMMIT_AUTHOR
+
+            🤖 Auto-synced by GitHub Actions"
+            git push
+            echo "✓ Wiki synced successfully"
+          else
+            echo "✓ No changes to sync"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Wiki Sync Complete! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View wiki at: https://github.com/${{ github.repository }}/wiki" >> $GITHUB_STEP_SUMMARY
