@@ -1782,8 +1782,9 @@ impl App {
                 for element in elements {
                     match element {
                         ParsedElement::Text { content, fg_color, bg_color, bold, .. } => {
-                            // Only add text if it has actual content
-                            if !content.trim().is_empty() {
+                            // Add text even if empty or only whitespace (preserves leading spaces and blank lines)
+                            // Don't use trim() here - it would strip leading spaces that matter for formatting
+                            if !content.is_empty() {
                                 self.get_current_window().add_text(StyledText {
                                     content: content.clone(),
                                     fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
@@ -1791,8 +1792,10 @@ impl App {
                                     bold,
                                 });
                                 added_content = true;
-                                // Reset prompt_shown flag when we see actual text content
-                                self.prompt_shown = false;
+                                // Reset prompt_shown flag when we see actual text content (not just whitespace)
+                                if !content.trim().is_empty() {
+                                    self.prompt_shown = false;
+                                }
                             }
                         }
                         ParsedElement::Prompt { text, .. } => {
@@ -2071,9 +2074,10 @@ impl App {
                     }
                 }
 
-                // Only finish the line if we actually added visible content
-                if added_content {
-                    // Finish the line after processing all elements
+                // Finish the line after processing all elements from this server line
+                // This preserves blank lines when the server sends empty lines
+                // (like ProfanityFE does with add_string(String.new))
+                if added_content || line.trim().is_empty() {
                     // Get current terminal width for wrapping
                     if let Ok(size) = crossterm::terminal::size() {
                         let inner_width = size.0.saturating_sub(2); // Account for borders
