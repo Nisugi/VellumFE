@@ -1,1 +1,23 @@
 /target
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+debug.log
+
+# Config (user-specific)
+.profanity-rs/
+
+# Wiki sync temporary directory
+.wiki-repo/

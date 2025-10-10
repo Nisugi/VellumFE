@@ -50,18 +50,18 @@ The client will connect to Lich on `localhost:8000` by default.
 
 ## Documentation
 
-**📖 [Read the full documentation in the Wiki](wiki/Home.md)**
+**📖 [Read the full documentation in the Wiki](https://github.com/Nisugi/Profanitui/wiki)**
 
 ### Quick Links
 
-- [Installation Guide](wiki/Installation.md)
-- [Window Management](wiki/Window-Management.md)
-- [Widget Reference](wiki/Widget-Reference.md) - All 40+ widgets documented
-- [Commands Reference](wiki/Commands-Reference.md) - Complete list of dot commands
-- [Configuration Guide](wiki/Configuration-Guide.md)
-- [Troubleshooting](wiki/Troubleshooting.md)
-- [Development Guide](wiki/Development-Guide.md)
-- [Feature Roadmap](wiki/Feature-Roadmap.md)
+- [Installation Guide](https://github.com/Nisugi/Profanitui/wiki/Installation)
+- [Window Management](https://github.com/Nisugi/Profanitui/wiki/Window-Management)
+- [Widget Reference](https://github.com/Nisugi/Profanitui/wiki/Widget-Reference) - All 40+ widgets documented
+- [Commands Reference](https://github.com/Nisugi/Profanitui/wiki/Commands-Reference) - Complete list of dot commands
+- [Configuration Guide](https://github.com/Nisugi/Profanitui/wiki/Configuration-Guide)
+- [Troubleshooting](https://github.com/Nisugi/Profanitui/wiki/Troubleshooting)
+- [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide)
+- [Feature Roadmap](https://github.com/Nisugi/Profanitui/wiki/Feature-Roadmap)
 
 ## Creating Your First Window
 
@@ -74,7 +74,7 @@ The client will connect to Lich on `localhost:8000` by default.
 
 ## Configuration
 
-On first run, a default config is created at `~/.profanity-rs/config.toml`. See the [Configuration Guide](wiki/Configuration-Guide.md) for details.
+On first run, a default config is created at `~/.profanity-rs/config.toml`. See the [Configuration Guide](https://github.com/Nisugi/Profanitui/wiki/Configuration-Guide) for details.
 
 ## Development
 
@@ -90,7 +90,7 @@ RUST_LOG=debug cargo run
 cargo build --release
 ```
 
-See [Development Guide](wiki/Development-Guide.md) for architecture details and contribution guidelines.
+See [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide) for architecture details and contribution guidelines.
 
 ## Requirements
 
