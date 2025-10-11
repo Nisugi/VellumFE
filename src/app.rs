@@ -1,3 +1,4 @@
+use crate::cmdlist::CmdList;
 use crate::config::{Config, KeyAction, KeyBindAction, Layout, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
@@ -60,6 +61,7 @@ pub struct App {
     keybind_form: Option<crate::ui::KeybindFormWidget>,  // Keybind form (None when not shown)
     selection_state: Option<SelectionState>,  // Current text selection (None when no selection)
     selection_drag_start: Option<(u16, u16)>,  // Mouse position when drag started (for detecting drag vs click)
+    cmdlist: Option<CmdList>,  // Command list for context menus (None if failed to load)
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +213,18 @@ impl App {
             tracing::warn!("Failed to load command history: {}", e);
         }
 
+        // Load command list for context menus
+        let cmdlist = match CmdList::load() {
+            Ok(list) => {
+                tracing::info!("Command list loaded successfully");
+                Some(list)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load command list: {}. Context menus will not be available.", e);
+                None
+            }
+        };
+
         Ok(Self {
             window_manager: WindowManager::new(window_configs, config.highlights.clone()),
             command_input,
@@ -236,6 +250,7 @@ impl App {
             keybind_form: None,  // No form shown initially
             selection_state: None,  // No selection initially
             selection_drag_start: None,  // No drag initially
+            cmdlist,  // Command list (may be None if failed to load)
         })
     }
 

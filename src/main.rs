@@ -1,4 +1,5 @@
 mod app;
+mod cmdlist;
 mod config;
 mod network;
 mod parser;
