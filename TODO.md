@@ -19,41 +19,41 @@
   - [ ] Visual warnings for critical missing buffs
 
 ### Target System (targetlist)
-- [ ] Create Targets widget - compact mode
-  - [ ] Display format: `Targets [XX]` with count
-  - [ ] Parse target data from game
-  - [ ] Update count in real-time
-  - [ ] Click to expand to full list
+- [x] Create Targets widget - compact mode
+  - [x] Display format: `Targets [XX]` with count
+  - [x] Parse target data from game
+  - [x] Update count in real-time
+  - [x] Click to expand to full list
 
-- [ ] Create Targets widget - expanded mode
-  - [ ] Show header with count
-  - [ ] List all targets beneath header
-  - [ ] Color-code by threat level if available
-  - [ ] Show target health bars if available
-  - [ ] Support filtering/sorting
+- [x] Create Targets widget - expanded mode
+  - [x] Show header with count
+  - [x] List all targets beneath header
+  - [x] Color-code by threat level if available
+  - [x] Show target health bars if available
+  - [x] Support filtering/sorting
 
 ### Players Widget (targetlist)
-- [ ] Create Players widget - compact mode
-  - [ ] Display format: `Players [XX]` with count
-  - [ ] Parse player arrival/departure
-  - [ ] Update count in real-time
+- [x] Create Players widget - compact mode
+  - [x] Display format: `Players [XX]` with count
+  - [x] Parse player arrival/departure
+  - [x] Update count in real-time
 
-- [ ] Create Players widget - expanded mode
-  - [ ] List all players in room
-  - [ ] Show player names
-  - [ ] Optionally show profession/level if available
-  - [ ] Color-code by group/friend status
-  - [ ] Support player notes/tags
+- [x] Create Players widget - expanded mode
+  - [x] List all players in room
+  - [x] Show player names
+  - [x] Optionally show profession/level if available
+  - [x] Color-code by group/friend status
+  - [x] Support player notes/tags
 
 ### Experience Window (exp)
+⚠️ **Note**: Need to research ProfanityFE behavior before implementing
 - [ ] Create Experience/Skills widget
   - [ ] Parse skill experience data
   - [ ] Display format: `SkillName: ranks percent% [mindstate/34]`
   - [ ] Color-code by skill category (armor, weapon, magic, survival, lore)
   - [ ] Color-code mindstate (0=white, 1-10=cyan, 11-20=green, 21-30=yellow, 31-34=red)
   - [ ] Sort skills by category or mindstate
-  - [ ] Show pulsing indicator
- for actively learning skills
+  - [ ] Show pulsing indicator for actively learning skills
   - [ ] Track skill gains over time
   - [ ] Support skill filtering/grouping
 
@@ -127,45 +127,123 @@
   - [ ] Test macro execution
 
 ### Keybind Support
-- [ ] Design keybind system
-  - [ ] Map keys to commands
-  - [ ] Support modifier keys (Ctrl, Alt, Shift)
-  - [ ] Function key support
-  - [ ] Configurable per character/global
+- [x] Design keybind system
+  - [x] Map keys to commands
+  - [x] Support modifier keys (Ctrl, Alt, Shift)
+  - [x] Function key support
+  - [x] Numpad key support
+  - [x] Configurable per character/global
 
-- [ ] Implement keybind handler
-  - [ ] Capture key events
-  - [ ] Execute bound commands
-  - [ ] Show keybind help/cheatsheet
-  - [ ] Conflict detection
+- [x] Implement keybind handler
+  - [x] Capture key events
+  - [x] Execute bound commands (actions + macros)
+  - [x] Support macro text with \r for enter
+  - [x] HashMap-based keybind lookup
 
-- [ ] Common keybind defaults
-  - [ ] F1-F12 for common commands
-  - [ ] Number pad for directional movement
-  - [ ] Customizable combat hotkeys
+- [x] Common keybind defaults
+  - [x] F1-F12 for common commands
+  - [x] Number pad for directional movement
+  - [x] Customizable combat hotkeys
+
+⚠️ **Known Limitation**: Shift + Numpad combinations not supported (terminal/crossterm limitation)
 
 ## Highlighting & Text Features
 
 ### Advanced Highlighting System
-- [ ] Implement regex-based highlighting
-  - [ ] Load highlight patterns from config
-  - [ ] Support foreground/background colors
-  - [ ] Support underline/bold/italic
-  - [ ] Priority system for overlapping highlights
+- [x] Implement regex-based highlighting
+  - [x] Load highlight patterns from config
+  - [x] Support foreground/background colors
+  - [x] Support bold styling
+  - [x] Aho-Corasick optimization for fast_parse mode
+  - [x] Color entire line option
 
-- [ ] Create highlight configuration format (XML or TOML)
-  - [ ] Pattern definitions
-  - [ ] Color specifications
-  - [ ] Enable/disable per highlight
-  - [ ] Inherit from other highlight files
+- [x] Create highlight configuration format (TOML)
+  - [x] Pattern definitions
+  - [x] Color specifications
+  - [x] fast_parse option for literal patterns
+  - [x] color_entire_line option
 
-- [ ] Highlighting presets
-  - [ ] Combat messages
-  - [ ] Player names
-  - [ ] Important items/loot
-  - [ ] NPC names
-  - [ ] Room directions
-  - [ ] Spell casts
+- [ ] Highlighting presets (user can create custom)
+  - [ ] Document example patterns for combat messages
+  - [ ] Document example patterns for player names
+  - [ ] Document example patterns for important items/loot
+  - [ ] Document example patterns for NPC names
+  - [ ] Document example patterns for room directions
+  - [ ] Document example patterns for spell casts
+
+### Sound System
+- [x] Add cross-platform sound support (using `rodio` crate)
+  - [x] Add `rodio` dependency to Cargo.toml
+  - [x] Create `~/.vellum-fe/sounds/` directory structure
+  - [x] Support WAV, MP3, OGG, FLAC formats
+  - [x] Async/non-blocking sound playback
+  - [x] Volume control configuration
+  - [x] Global sound enable/disable toggle
+
+- [x] Integrate sounds with highlights
+  - [x] Add `sound` field to highlight config entries
+  - [x] Play sound when highlight pattern matches
+  - [x] Support per-highlight volume override
+  - [x] Prevent sound spam (cooldown/debounce)
+  - [x] Fallback gracefully if sound file missing
+
+- [ ] Sound presets and examples
+  - [x] Document sound file naming conventions (README in defaults/sounds/)
+  - [x] Create framework for embedding default sounds in binary
+  - [ ] Include sample sounds for common events (infrastructure ready, needs actual sound files)
+  - [ ] Create sound pack repository/sharing format (future enhancement)
+  - [ ] Support character-specific sound overrides (future enhancement)
+
+### Highlight Management UI
+- [ ] Create in-app highlight management system
+  - [ ] `.addhighlight` command - Create new highlight with interactive prompts
+  - [ ] `.edithighlight <name>` command - Edit existing highlight
+  - [ ] `.removehighlight <name>` command - Delete highlight
+  - [ ] `.listhighlights` command - Show all configured highlights
+  - [ ] `.testhighlight <name>` command - Test pattern against recent text
+  - [ ] Hot reload highlights without restarting VellumFE
+  - [ ] Auto-save highlights to config file
+  - [ ] Validation for regex patterns (catch errors before saving)
+  - [ ] Visual preview of highlight colors
+  - [ ] Support for creating sound-enabled highlights
+
+### Text Selection
+⚠️ **Note**: Investigate ratatui capabilities for custom text selection
+- [ ] Implement VellumFE-aware text selection
+  - [ ] Research ratatui support for custom selection handling
+  - [ ] Override terminal's native text selection (Shift+Mouse)
+  - [ ] Respect window boundaries (don't select across windows)
+  - [ ] Select text within single focused window only
+  - [ ] Copy to clipboard with proper line breaks
+  - [ ] Visual selection highlighting
+  - [ ] Support multi-line selection within window
+  - [ ] Fallback to native selection if VellumFE selection disabled
+
+### Terminal Size Management & Responsive Layouts
+⚠️ **Note**: Currently crashes if terminal smaller than layout dimensions
+- [ ] Terminal size detection and management
+  - [ ] Detect terminal dimensions on startup
+  - [ ] Investigate setting terminal size programmatically before launching
+  - [ ] Handle terminal resize events gracefully (don't crash)
+  - [ ] Show error/warning if terminal too small for layout
+  - [ ] Minimum terminal size requirements (e.g., 80x24)
+
+- [ ] Responsive layout system
+  - [ ] Create default layouts for common terminal sizes:
+    - [ ] 80x24 (minimum VT100 size)
+    - [ ] 120x40 (medium terminal)
+    - [ ] 160x50 (large terminal)
+    - [ ] 200x60 (full screen)
+  - [ ] Auto-select appropriate layout based on terminal size
+  - [ ] Scale/adjust windows when terminal resized
+  - [ ] Option to lock layout (prevent auto-scaling)
+  - [ ] Document how to resize terminal to specific dimensions (platform-specific)
+
+- [ ] Layout validation
+  - [ ] Check layout dimensions fit within terminal on load
+  - [ ] Warn if windows would be off-screen
+  - [ ] Auto-adjust window positions/sizes if needed
+  - [ ] Provide helpful error messages for invalid layouts
 
 ### Timestamp Support
 - [ ] Add optional timestamps to text windows
