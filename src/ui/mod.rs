@@ -16,6 +16,7 @@ mod performance_stats;
 mod targets;
 mod players;
 mod highlight_form;
+mod keybind_form;
 
 pub use text_window::{TextWindow, StyledText, SpanType, LineSegments, TextSegment};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
@@ -43,6 +44,7 @@ pub use targets::Targets;
 #[allow(unused_imports)]
 pub use players::Players;
 pub use highlight_form::{HighlightFormWidget, FormResult};
+pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
 
 use ratatui::{
     layout::Rect,

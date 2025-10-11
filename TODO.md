@@ -127,6 +127,16 @@
   - [x] Number pad for directional movement
   - [x] Customizable combat hotkeys
 
+- [x] Keybind Management UI
+  - [x] `.addkeybind` / `.addkey` - Create new keybind with form
+  - [x] `.editkeybind <key>` / `.editkey` - Edit existing keybind
+  - [x] `.deletekeybind <key>` / `.delkey` - Delete keybind
+  - [x] `.listkeybinds` / `.listkeys` / `.keybinds` - List all keybinds
+  - [x] Interactive form with key validation
+  - [x] Action dropdown (24 built-in actions)
+  - [x] Macro text input for custom commands
+  - [x] Auto-save to config and hot-reload keybind_map
+
 ⚠️ **Known Limitation**: Shift + Numpad combinations not supported (terminal/crossterm limitation)
 
 ## Highlighting & Text Features

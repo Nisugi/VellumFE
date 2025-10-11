@@ -13,6 +13,7 @@ This page documents all dot commands available in vellum-fe. Dot commands are lo
 - [Indicator Commands](#indicator-commands)
 - [Active Effects Commands](#active-effects-commands)
 - [Highlight Commands](#highlight-commands)
+- [Keybind Commands](#keybind-commands)
 - [Combat Tracking Commands](#combat-tracking-commands)
 - [Debug Commands](#debug-commands)
 
@@ -798,6 +799,105 @@ Test a highlight pattern against sample text to see if it matches.
 - Reports what styling would be applied (colors, bold, etc.)
 
 **See also:** [Highlight Management Guide](Highlight-Management.md)
+
+---
+
+## Keybind Commands
+
+### `.addkeybind` / `.addkey`
+
+Open the interactive keybind management form to create a new keybind.
+
+**Syntax:**
+```
+.addkeybind
+.addkey
+```
+
+**Example:**
+```
+.addkeybind
+```
+
+**Notes:**
+- Opens a full-screen form for creating keybinds
+- Use Tab to navigate between fields
+- Press Enter on Save button or Escape to exit
+- See [Keybind Management Guide](Keybind-Management.md) for detailed form usage
+
+---
+
+### `.editkeybind` / `.editkey`
+
+Edit an existing keybind.
+
+**Syntax:**
+```
+.editkeybind <key_combo>
+.editkey <key_combo>
+```
+
+**Parameters:**
+- `key_combo` - Key combination to edit (e.g., `ctrl+e`, `f5`, `alt+shift+a`)
+
+**Examples:**
+```
+.editkeybind ctrl+e
+.editkey f5
+.editkey alt+shift+a
+```
+
+**Notes:**
+- Opens the keybind form pre-filled with existing values
+- Save to update the keybind or Cancel to discard changes
+- Delete button available to remove the keybind
+
+---
+
+### `.deletekeybind` / `.delkey`
+
+Delete a keybind.
+
+**Syntax:**
+```
+.deletekeybind <key_combo>
+.delkey <key_combo>
+```
+
+**Parameters:**
+- `key_combo` - Key combination to delete (e.g., `ctrl+e`, `f5`)
+
+**Examples:**
+```
+.deletekeybind ctrl+e
+.delkey f5
+```
+
+**Notes:**
+- Deletes immediately without confirmation
+- Saves config automatically after deletion
+- Cannot be undone (unless you reload config from backup)
+
+---
+
+### `.listkeybinds` / `.listkeys` / `.keybinds`
+
+List all configured keybinds.
+
+**Syntax:**
+```
+.listkeybinds
+.listkeys
+.keybinds
+```
+
+**Example:**
+```
+.listkeybinds
+→ 8 keybinds: alt+1, alt+2, ctrl+e, ctrl+f, f1, f5, shift+f1, shift+up
+```
+
+**See also:** [Keybind Management Guide](Keybind-Management.md)
 
 ---
 

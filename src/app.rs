@@ -32,6 +32,7 @@ enum InputMode {
     Command,  // Command input mode (typing a command)
     Search,   // Search mode (typing search query)
     HighlightForm,  // Highlight management form
+    KeybindForm,  // Keybind management form
 }
 
 pub struct App {
@@ -56,6 +57,7 @@ pub struct App {
     stream_buffer: String,  // Buffer for accumulating stream text (used for combat/playerlist)
     sound_player: Option<SoundPlayer>,  // Sound player (None if initialization failed)
     highlight_form: Option<crate::ui::HighlightFormWidget>,  // Highlight form (None when not shown)
+    keybind_form: Option<crate::ui::KeybindFormWidget>,  // Keybind form (None when not shown)
     selection_state: Option<SelectionState>,  // Current text selection (None when no selection)
     selection_drag_start: Option<(u16, u16)>,  // Mouse position when drag started (for detecting drag vs click)
 }
@@ -226,6 +228,7 @@ impl App {
             stream_buffer: String::new(),  // Initialize empty stream buffer
             sound_player,  // Sound player (may be None if initialization failed)
             highlight_form: None,  // No form shown initially
+            keybind_form: None,  // No form shown initially
             selection_state: None,  // No selection initially
             selection_drag_start: None,  // No drag initially
         })
@@ -1795,6 +1798,69 @@ impl App {
                     self.add_system_message("Use .listhighlights to see all highlights");
                 }
             }
+            "addkeybind" | "addkey" => {
+                // Open keybind form in Create mode
+                let form = crate::ui::KeybindFormWidget::new();
+                self.keybind_form = Some(form);
+                self.input_mode = InputMode::KeybindForm;
+                self.add_system_message("Opening keybind form (Tab to navigate, Esc to cancel)");
+            }
+            "editkeybind" | "editkey" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .editkeybind <key_combo>");
+                    self.add_system_message("Example: .editkeybind ctrl+e");
+                    return;
+                }
+
+                let key_combo = parts[1];
+
+                if let Some(keybind_action) = self.config.keybinds.get(key_combo) {
+                    use crate::config::KeyBindAction;
+                    use crate::ui::KeybindActionType;
+
+                    let (action_type, value) = match keybind_action {
+                        KeyBindAction::Action(action_str) => (KeybindActionType::Action, action_str.clone()),
+                        KeyBindAction::Macro(macro_action) => (KeybindActionType::Macro, macro_action.macro_text.clone()),
+                    };
+
+                    let form = crate::ui::KeybindFormWidget::new_edit(key_combo.to_string(), action_type, value);
+                    self.keybind_form = Some(form);
+                    self.input_mode = InputMode::KeybindForm;
+                    self.add_system_message(&format!("Editing keybind '{}' (Tab to navigate, Esc to cancel)", key_combo));
+                } else {
+                    self.add_system_message(&format!("Keybind '{}' not found", key_combo));
+                }
+            }
+            "deletekeybind" | "delkey" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .deletekeybind <key_combo>");
+                    self.add_system_message("Example: .deletekeybind ctrl+e");
+                    return;
+                }
+
+                let key_combo = parts[1];
+
+                if self.config.keybinds.remove(key_combo).is_some() {
+                    if let Err(e) = self.config.save(None) {
+                        self.add_system_message(&format!("Failed to delete keybind: {}", e));
+                    } else {
+                        self.rebuild_keybind_map();
+                        self.add_system_message(&format!("Keybind '{}' deleted", key_combo));
+                    }
+                } else {
+                    self.add_system_message(&format!("Keybind '{}' not found", key_combo));
+                }
+            }
+            "listkeybinds" | "listkeys" | "keybinds" => {
+                let count = self.config.keybinds.len();
+                if count == 0 {
+                    self.add_system_message("No custom keybinds configured");
+                } else {
+                    let mut names: Vec<String> = self.config.keybinds.keys().cloned().collect();
+                    names.sort();
+                    self.add_system_message(&format!("{} keybinds: {}", count, names.join(", ")));
+                }
+            }
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
             }
@@ -1944,7 +2010,7 @@ impl App {
                         // Render search input with prompt
                         self.render_search_input(layout.input_area, f.buffer_mut());
                     }
-                    InputMode::HighlightForm => {
+                    InputMode::HighlightForm | InputMode::KeybindForm => {
                         // Hide command input when form is open
                     }
                     _ => {
@@ -1954,6 +2020,11 @@ impl App {
 
                 // Render highlight form as popup (if open)
                 if let Some(ref mut form) = self.highlight_form {
+                    form.render(f.area(), f.buffer_mut());
+                }
+
+                // Render keybind form as popup (if open)
+                if let Some(ref mut form) = self.keybind_form {
                     form.render(f.area(), f.buffer_mut());
                 }
 
@@ -2067,6 +2138,17 @@ impl App {
             return self.handle_highlight_form_input(key, modifiers);
         }
 
+        // In KeybindForm mode, handle in the form directly (except Ctrl+C to quit)
+        if self.input_mode == InputMode::KeybindForm {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the form
+            return self.handle_keybind_form_input(key, modifiers);
+        }
+
         // Handle global keys first (work in any mode except HighlightForm)
         match (key, modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
@@ -2116,6 +2198,7 @@ impl App {
             InputMode::Search => self.handle_search_input(key, modifiers),
             InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
             InputMode::HighlightForm => unreachable!(), // Handled above
+            InputMode::KeybindForm => unreachable!(), // Handled above
         }
     }
 
@@ -2202,6 +2285,103 @@ impl App {
                     FormResult::Cancel => {
                         // Close form without saving
                         self.highlight_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_keybind_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        if let Some(ref mut form) = self.keybind_form {
+            // Convert crossterm KeyCode to ratatui::crossterm KeyCode
+            use ratatui::crossterm::event as rt_event;
+
+            let rt_key_code = match key {
+                KeyCode::Backspace => rt_event::KeyCode::Backspace,
+                KeyCode::Enter => rt_event::KeyCode::Enter,
+                KeyCode::Left => rt_event::KeyCode::Left,
+                KeyCode::Right => rt_event::KeyCode::Right,
+                KeyCode::Up => rt_event::KeyCode::Up,
+                KeyCode::Down => rt_event::KeyCode::Down,
+                KeyCode::Home => rt_event::KeyCode::Home,
+                KeyCode::End => rt_event::KeyCode::End,
+                KeyCode::PageUp => rt_event::KeyCode::PageUp,
+                KeyCode::PageDown => rt_event::KeyCode::PageDown,
+                KeyCode::Tab => rt_event::KeyCode::Tab,
+                KeyCode::BackTab => rt_event::KeyCode::BackTab,
+                KeyCode::Delete => rt_event::KeyCode::Delete,
+                KeyCode::Insert => rt_event::KeyCode::Insert,
+                KeyCode::F(n) => rt_event::KeyCode::F(n),
+                KeyCode::Char(c) => rt_event::KeyCode::Char(c),
+                KeyCode::Null => rt_event::KeyCode::Null,
+                KeyCode::Esc => rt_event::KeyCode::Esc,
+                _ => rt_event::KeyCode::Null,
+            };
+
+            let mut rt_modifiers = rt_event::KeyModifiers::empty();
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                rt_modifiers |= rt_event::KeyModifiers::SHIFT;
+            }
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                rt_modifiers |= rt_event::KeyModifiers::CONTROL;
+            }
+            if modifiers.contains(KeyModifiers::ALT) {
+                rt_modifiers |= rt_event::KeyModifiers::ALT;
+            }
+
+            let key_event = rt_event::KeyEvent {
+                code: rt_key_code,
+                modifiers: rt_modifiers,
+                kind: rt_event::KeyEventKind::Press,
+                state: rt_event::KeyEventState::empty(),
+            };
+
+            if let Some(result) = form.handle_key(key_event) {
+                use crate::ui::{KeybindFormResult, KeybindActionType};
+                use crate::config::{KeyBindAction, MacroAction};
+
+                match result {
+                    KeybindFormResult::Save { key_combo, action_type, value } => {
+                        // Create the KeyBindAction
+                        let keybind_action = match action_type {
+                            KeybindActionType::Action => KeyBindAction::Action(value.clone()),
+                            KeybindActionType::Macro => KeyBindAction::Macro(MacroAction { macro_text: value.clone() }),
+                        };
+
+                        // Save to config
+                        self.config.keybinds.insert(key_combo.clone(), keybind_action);
+                        if let Err(e) = self.config.save(None) {
+                            self.add_system_message(&format!("Failed to save keybind: {}", e));
+                        } else {
+                            // Rebuild keybind_map
+                            self.rebuild_keybind_map();
+                            self.add_system_message(&format!("Keybind '{}' saved", key_combo));
+                        }
+
+                        // Close form
+                        self.keybind_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeybindFormResult::Delete { key_combo } => {
+                        // Delete from config
+                        self.config.keybinds.remove(&key_combo);
+                        if let Err(e) = self.config.save(None) {
+                            self.add_system_message(&format!("Failed to delete keybind: {}", e));
+                        } else {
+                            // Rebuild keybind_map
+                            self.rebuild_keybind_map();
+                            self.add_system_message(&format!("Keybind '{}' deleted", key_combo));
+                        }
+
+                        // Close form
+                        self.keybind_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    KeybindFormResult::Cancel => {
+                        // Close form without saving
+                        self.keybind_form = None;
                         self.input_mode = InputMode::Normal;
                     }
                 }
@@ -3208,6 +3388,36 @@ impl App {
             let inner_width = size.0.saturating_sub(2);
             self.finish_current_line(inner_width);
         }
+    }
+
+    /// Rebuild the keybind_map from config (called after adding/deleting keybinds)
+    fn rebuild_keybind_map(&mut self) {
+        use crate::config::{KeyBindAction, parse_key_string};
+
+        let mut keybind_map = HashMap::new();
+        for (key_str, keybind_action) in &self.config.keybinds {
+            if let Some((key_code, modifiers)) = parse_key_string(key_str) {
+                let action = match keybind_action {
+                    KeyBindAction::Action(action_str) => {
+                        KeyAction::from_str(action_str)
+                    }
+                    KeyBindAction::Macro(macro_action) => {
+                        Some(KeyAction::SendMacro(macro_action.macro_text.clone()))
+                    }
+                };
+
+                if let Some(action) = action {
+                    keybind_map.insert((key_code, modifiers), action);
+                } else {
+                    tracing::warn!("Invalid keybind: {} -> {:?}", key_str, keybind_action);
+                }
+            } else {
+                tracing::warn!("Failed to parse key string: {}", key_str);
+            }
+        }
+
+        self.keybind_map = keybind_map;
+        debug!("Rebuilt keybind map: {} keybindings", self.keybind_map.len());
     }
 
     fn parse_hex_color(hex: &str) -> Option<Color> {
