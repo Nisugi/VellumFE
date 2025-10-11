@@ -18,7 +18,7 @@ mod players;
 mod highlight_form;
 mod keybind_form;
 
-pub use text_window::{TextWindow, StyledText, SpanType, LineSegments, TextSegment};
+pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
 pub use command_input::CommandInput;
 pub use window_manager::{WindowManager, WindowConfig, Widget};

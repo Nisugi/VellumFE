@@ -1,6 +1,6 @@
 use regex::Regex;
 use std::collections::HashMap;
-use crate::ui::SpanType;
+use crate::ui::{SpanType, LinkData};
 
 #[derive(Debug, Clone)]
 pub enum ParsedElement {
@@ -11,6 +11,7 @@ pub enum ParsedElement {
         bg_color: Option<String>,
         bold: bool,
         span_type: SpanType,
+        link_data: Option<LinkData>,
     },
     Prompt {
         time: String,
@@ -115,6 +116,7 @@ pub struct XmlParser {
     // Semantic type tracking
     link_depth: usize,      // Track nested links
     spell_depth: usize,     // Track nested spells
+    current_link_data: Option<LinkData>,  // Current link metadata (exist_id, noun)
 }
 
 impl XmlParser {
@@ -139,6 +141,7 @@ impl XmlParser {
             bold_stack: vec![],
             link_depth: 0,
             spell_depth: 0,
+            current_link_data: None,
         }
     }
 
@@ -681,9 +684,20 @@ impl XmlParser {
     }
 
     fn handle_link_open(&mut self, tag: &str) {
-        // <a exist="..." noun="..."> - apply links preset color
+        // <a exist="..." noun="..."> - apply links preset color and extract metadata
         // Track link depth for semantic type
         self.link_depth += 1;
+
+        // Extract link metadata (exist_id and noun)
+        let exist_id = Self::extract_attribute(tag, "exist");
+        let noun = Self::extract_attribute(tag, "noun");
+
+        if let (Some(exist), Some(n)) = (exist_id, noun) {
+            self.current_link_data = Some(LinkData {
+                exist_id: exist,
+                noun: n,
+            });
+        }
 
         // But don't apply color if we're inside monsterbold (bold has priority)
         if !self.bold_stack.is_empty() {
@@ -717,6 +731,11 @@ impl XmlParser {
         // Decrease link depth
         if self.link_depth > 0 {
             self.link_depth -= 1;
+        }
+
+        // Clear link data when closing link tag
+        if self.link_depth == 0 {
+            self.current_link_data = None;
         }
 
         // Only pop color if we're not inside monsterbold (matching handle_link_open behavior)
@@ -791,6 +810,7 @@ impl XmlParser {
             bg_color: bg,
             bold,
             span_type,
+            link_data: self.current_link_data.clone(),
         }
     }
 

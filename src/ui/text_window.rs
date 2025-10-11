@@ -27,6 +27,13 @@ pub enum SpanType {
     Spell,       // <spell> tag from parser
 }
 
+/// Link metadata for clickable game objects
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkData {
+    pub exist_id: String,  // Unique ID for this game object
+    pub noun: String,      // The noun/name of the object
+}
+
 #[derive(Clone)]
 pub struct StyledText {
     pub content: String,
@@ -34,6 +41,7 @@ pub struct StyledText {
     pub bg: Option<Color>,
     pub bold: bool,
     pub span_type: SpanType,  // Semantic type for priority layering
+    pub link_data: Option<LinkData>,  // Link metadata if span_type is Link
 }
 
 // One display line (post-wrapping) with multiple styled spans

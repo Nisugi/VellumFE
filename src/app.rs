@@ -2560,6 +2560,7 @@ impl App {
                             bg: None,
                             bold: false,
                             span_type: SpanType::Normal,
+                            link_data: None,
                         });
 
                         // Add command with echo color
@@ -2569,6 +2570,7 @@ impl App {
                             bg: None,
                             bold: false,
                             span_type: SpanType::Normal,
+                            link_data: None,
                         });
 
                         // Finish the line so command appears before server response
@@ -2716,6 +2718,7 @@ impl App {
                         bg: None,
                         bold: false,
                         span_type: SpanType::Normal,
+                            link_data: None,
                     });
 
                     self.add_text_to_current_stream(StyledText {
@@ -2724,6 +2727,7 @@ impl App {
                         bg: None,
                         bold: false,
                         span_type: SpanType::Normal,
+                            link_data: None,
                     });
 
                     // Finish the line
@@ -2985,6 +2989,7 @@ impl App {
                         bg: None,
                         bold: false,
                         span_type: SpanType::Normal,
+                            link_data: None,
                     });
                     if let Ok(size) = crossterm::terminal::size() {
                         let inner_width = size.0.saturating_sub(2);
@@ -3012,7 +3017,7 @@ impl App {
 
                 for element in elements {
                     match element {
-                        ParsedElement::Text { content, fg_color, bg_color, bold, span_type, .. } => {
+                        ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } => {
                             // Special handling for target/player streams
                             match self.current_stream.as_str() {
                                 "targetcount" => {
@@ -3049,6 +3054,7 @@ impl App {
                                             bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
                                             bold,
                                             span_type,
+                                            link_data,
                                         });
                                         // Reset prompt_shown flag when we see actual text content (not just whitespace)
                                         if !content.trim().is_empty() {
@@ -3096,6 +3102,7 @@ impl App {
                                         bg: None,
                                         bold: false,
                                         span_type: SpanType::Normal,
+                            link_data: None,
                                     });
                                 }
                                 self.prompt_shown = true;
@@ -3405,6 +3412,7 @@ impl App {
             bg: None,
             bold: true,
             span_type: SpanType::Normal,
+                            link_data: None,
         });
         // Finish the line
         if let Ok(size) = crossterm::terminal::size() {
