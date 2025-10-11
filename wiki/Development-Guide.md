@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide is for developers who want to contribute to profanity-rs or understand its internals.
+This guide is for developers who want to contribute to vellum-fe or understand its internals.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ This guide is for developers who want to contribute to profanity-rs or understan
 
 ## Project Overview
 
-**profanity-rs** is a modern, Rust-based terminal client for GemStone IV, built with [Ratatui](https://github.com/ratatui-org/ratatui). It connects to the [Lich scripting engine](https://github.com/elanthia-online/lich-5) via detached mode and provides a terminal user interface (TUI) with dynamic window management, mouse support, and XML stream parsing.
+**vellum-fe** is a modern, Rust-based terminal client for GemStone IV, built with [Ratatui](https://github.com/ratatui-org/ratatui). It connects to the [Lich scripting engine](https://github.com/elanthia-online/lich-5) via detached mode and provides a terminal user interface (TUI) with dynamic window management, mouse support, and XML stream parsing.
 
 ### Key Technologies
 
@@ -41,7 +41,7 @@ This guide is for developers who want to contribute to profanity-rs or understan
 ## Project Structure
 
 ```
-profanity-rs/
+vellum-fe/
 ├── src/
 │   ├── main.rs                 # Entry point, logging setup
 │   ├── app.rs                  # Main application loop and state
@@ -252,8 +252,8 @@ pub struct XmlParser {
 ### src/main.rs
 
 **Responsibilities:**
-- Initialize tracing (debug logs to `~/.profanity-rs/debug.log`)
-- Load configuration from `~/.profanity-rs/config.toml`
+- Initialize tracing (debug logs to `~/.vellum-fe/debug.log`)
+- Load configuration from `~/.vellum-fe/config.toml`
 - Create and run `App`
 - Save autosave layout on exit
 
@@ -523,8 +523,8 @@ pub struct Countdown {
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/profanity-rs.git
-cd profanity-rs
+git clone https://github.com/yourusername/vellum-fe.git
+cd vellum-fe
 
 # Build
 cargo build
@@ -534,11 +534,11 @@ cargo run
 
 # Run with debug logs
 RUST_LOG=debug cargo run
-# Logs: ~/.profanity-rs/debug.log
+# Logs: ~/.vellum-fe/debug.log
 
 # Build release
 cargo build --release
-# Binary: target/release/profanity-rs
+# Binary: target/release/vellum-fe
 ```
 
 ### Code Style
@@ -836,7 +836,7 @@ cargo test
 ### Integration Testing
 
 1. Start Lich in detached mode
-2. Launch profanity-rs
+2. Launch vellum-fe
 3. Perform in-game actions
 4. Verify UI updates correctly
 5. Check debug logs for errors
@@ -851,18 +851,18 @@ cargo test
 RUST_LOG=debug cargo run
 ```
 
-Logs go to: `~/.profanity-rs/debug.log`
+Logs go to: `~/.vellum-fe/debug.log`
 
 ### View Logs in Real-Time
 
 **Linux/Mac:**
 ```bash
-tail -f ~/.profanity-rs/debug.log
+tail -f ~/.vellum-fe/debug.log
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Get-Content ~/.profanity-rs/debug.log -Tail 50 -Wait
+Get-Content ~/.vellum-fe/debug.log -Tail 50 -Wait
 ```
 
 ### Add Debug Logging
@@ -908,9 +908,9 @@ debug!("Focused window: {}", self.focused_window_index);
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug profanity-rs",
+            "name": "Debug vellum-fe",
             "cargo": {
-                "args": ["build", "--bin=profanity-rs"]
+                "args": ["build", "--bin=vellum-fe"]
             },
             "args": [],
             "cwd": "${workspaceFolder}"
@@ -927,7 +927,7 @@ debug!("Focused window: {}", self.focused_window_index);
 
 ### Before You Start
 
-1. Check existing issues: https://github.com/yourusername/profanity-rs/issues
+1. Check existing issues: https://github.com/yourusername/vellum-fe/issues
 2. Discuss major changes in an issue first
 3. Read this development guide
 4. Set up development environment

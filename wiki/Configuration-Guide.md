@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This guide covers all configuration options for profanity-rs, including the config file structure, window definitions, colors, presets, highlights, and keybinds.
+This guide covers all configuration options for vellum-fe, including the config file structure, window definitions, colors, presets, highlights, and keybinds.
 
 ## Table of Contents
 
@@ -20,15 +20,15 @@ This guide covers all configuration options for profanity-rs, including the conf
 
 ### Location
 
-**Main Config:** `~/.profanity-rs/config.toml`
-**Layouts:** `~/.profanity-rs/layouts/<name>.toml`
-**Debug Logs:** `~/.profanity-rs/debug.log`
+**Main Config:** `~/.vellum-fe/config.toml`
+**Layouts:** `~/.vellum-fe/layouts/<name>.toml`
+**Debug Logs:** `~/.vellum-fe/debug.log`
 
 On Windows, `~` expands to your user directory (e.g., `C:\Users\YourName`)
 
 ### First Run
 
-On first launch, profanity-rs creates a default `config.toml` with sensible defaults. You can edit this file with any text editor.
+On first launch, vellum-fe creates a default `config.toml` with sensible defaults. You can edit this file with any text editor.
 
 ### Reloading Configuration
 
@@ -467,7 +467,7 @@ title = "Active Effects"
 
 ## Color Format Reference
 
-All colors in profanity-rs use hexadecimal RGB format.
+All colors in vellum-fe use hexadecimal RGB format.
 
 ### Format
 

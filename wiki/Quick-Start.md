@@ -1,10 +1,10 @@
 # Quick Start Guide
 
-Get up and running with profanity-rs in 5 minutes.
+Get up and running with vellum-fe in 5 minutes.
 
 ## Step 1: Start Lich in Detached Mode
 
-profanity-rs connects to Lich via its detached client mode. You **must** start Lich first.
+vellum-fe connects to Lich via its detached client mode. You **must** start Lich first.
 
 ### Windows (PowerShell)
 
@@ -18,16 +18,16 @@ C:\Ruby4Lich5\3.4.5\bin\rubyw.exe C:\Ruby4Lich5\Lich5\lich.rbw --login Character
 ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
 ```
 
-**Important:** Wait 5-10 seconds after launching Lich before starting profanity-rs.
+**Important:** Wait 5-10 seconds after launching Lich before starting vellum-fe.
 
-## Step 2: Launch profanity-rs
+## Step 2: Launch vellum-fe
 
 ```bash
 # From the project directory
 cargo run --release
 
 # Or run the binary directly
-./target/release/profanity-rs
+./target/release/vellum-fe
 ```
 
 You should see:
@@ -37,7 +37,7 @@ You should see:
 
 ## Step 3: Create Your First Windows
 
-profanity-rs starts with just a main window. Let's add more:
+vellum-fe starts with just a main window. Let's add more:
 
 ```
 .createwindow health
@@ -69,7 +69,7 @@ Once you have windows positioned how you like:
 .savelayout default
 ```
 
-This saves your layout to `~/.profanity-rs/layouts/default.toml`.
+This saves your layout to `~/.vellum-fe/layouts/default.toml`.
 
 On next launch, your layout will be restored automatically (autosave).
 
@@ -110,12 +110,12 @@ You're ready! Type commands as normal. Game output will route to the appropriate
 .templates                   # List available templates
 .savelayout <name>           # Save current layout
 .loadlayout <name>           # Load a saved layout
-.quit                        # Exit profanity-rs
+.quit                        # Exit vellum-fe
 ```
 
 ## Explore More Widgets
 
-profanity-rs has 40+ pre-built widgets. Try these:
+vellum-fe has 40+ pre-built widgets. Try these:
 
 ```
 .createwindow compass        # Visual exit compass
@@ -133,7 +133,7 @@ Use `.templates` to see the full list.
 2. **Windows can overlap** - This is intentional (absolute positioning)
 3. **Autosave on exit** - Use `.quit` or Ctrl+C to save layout
 4. **Closing terminal with X button kills the process** - Layout won't save!
-5. **Config file** - `~/.profanity-rs/config.toml` for advanced customization
+5. **Config file** - `~/.vellum-fe/config.toml` for advanced customization
 
 ## Next Steps
 

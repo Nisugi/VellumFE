@@ -1,6 +1,6 @@
 # Stream Routing Guide
 
-This guide explains how stream routing works in profanity-rs, including what streams are, how they're routed to windows, and how to create custom routing configurations.
+This guide explains how stream routing works in vellum-fe, including what streams are, how they're routed to windows, and how to create custom routing configurations.
 
 ## Table of Contents
 
@@ -106,7 +106,7 @@ streams = ["thoughts"]  # Only show thoughts stream
 # ...
 ```
 
-When text arrives on a stream, profanity-rs checks which window(s) subscribe to that stream and routes the text accordingly.
+When text arrives on a stream, vellum-fe checks which window(s) subscribe to that stream and routes the text accordingly.
 
 ---
 

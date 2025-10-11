@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This guide helps you diagnose and fix common issues with profanity-rs.
+This guide helps you diagnose and fix common issues with vellum-fe.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ This guide helps you diagnose and fix common issues with profanity-rs.
 #### 1. Lich Not Running
 
 **Solution:**
-- Start Lich in detached mode **before** launching profanity-rs
+- Start Lich in detached mode **before** launching vellum-fe
 - Wait 5-10 seconds after starting Lich before connecting
 
 **Windows:**
@@ -81,7 +81,7 @@ host = "192.168.1.100"  # IP of machine running Lich
 **Solution:**
 - Check if Lich is still running
 - Restart Lich if needed
-- Restart profanity-rs
+- Restart vellum-fe
 
 #### 2. Network Interruption
 
@@ -95,7 +95,7 @@ host = "192.168.1.100"  # IP of machine running Lich
 **Solution:**
 - If GemStone IV disconnects you, Lich may close the connection
 - Log back in through Lich
-- Restart profanity-rs
+- Restart vellum-fe
 
 ---
 
@@ -151,7 +151,7 @@ See [Stream Routing Guide](Stream-Routing.md) for details.
 **Solution:**
 ```bash
 RUST_LOG=debug cargo run
-# Check ~/.profanity-rs/debug.log for stream names
+# Check ~/.vellum-fe/debug.log for stream names
 ```
 
 ### Cannot Move or Resize Window
@@ -330,7 +330,7 @@ buffer_size = 5000  # Not 50000 or unlimited
 #### 2. Memory Leak (Bug)
 
 **Solution:**
-- Restart profanity-rs periodically
+- Restart vellum-fe periodically
 - Report issue on GitHub with steps to reproduce
 
 ---
@@ -421,7 +421,7 @@ See [Configuration Guide](Configuration-Guide.md#preset-colors) for common prese
 ```bash
 RUST_LOG=debug cargo run
 ```
-- Check `~/.profanity-rs/debug.log` for `progressBar` entries
+- Check `~/.vellum-fe/debug.log` for `progressBar` entries
 - Report if tags are being received but not updating bars
 
 ### Countdown Timers Not Working
@@ -540,8 +540,8 @@ RUST_LOG=debug cargo run
 
 **Solution:**
 - Verify config location:
-  - Linux/Mac: `~/.profanity-rs/config.toml`
-  - Windows: `C:\Users\YourName\.profanity-rs\config.toml`
+  - Linux/Mac: `~/.vellum-fe/config.toml`
+  - Windows: `C:\Users\YourName\.vellum-fe\config.toml`
 - Use absolute path to be sure
 
 #### 2. Syntax Error in Config
@@ -577,13 +577,13 @@ streams = ["main", "thoughts"]
 **Solution:**
 - Create layouts directory:
 ```bash
-mkdir -p ~/.profanity-rs/layouts
+mkdir -p ~/.vellum-fe/layouts
 ```
 
 #### 2. Permission Issue
 
 **Solution:**
-- Check file permissions on `~/.profanity-rs/` directory
+- Check file permissions on `~/.vellum-fe/` directory
 - Ensure application has write access
 
 #### 3. Invalid Layout Name
@@ -677,16 +677,16 @@ For any issue, debug logs help diagnose the problem:
 RUST_LOG=debug cargo run
 ```
 
-Logs are written to: `~/.profanity-rs/debug.log`
+Logs are written to: `~/.vellum-fe/debug.log`
 
 ### Check Debug Log
 
 ```bash
 # Linux/Mac
-tail -f ~/.profanity-rs/debug.log
+tail -f ~/.vellum-fe/debug.log
 
 # Windows (PowerShell)
-Get-Content ~/.profanity-rs/debug.log -Tail 50 -Wait
+Get-Content ~/.vellum-fe/debug.log -Tail 50 -Wait
 ```
 
 Look for:
@@ -699,7 +699,7 @@ Look for:
 
 If you found a bug:
 
-1. **Check existing issues:** https://github.com/yourusername/profanity-rs/issues
+1. **Check existing issues:** https://github.com/yourusername/vellum-fe/issues
 2. **Gather information:**
    - Your OS and terminal emulator
    - Steps to reproduce the issue

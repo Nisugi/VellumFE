@@ -1,6 +1,6 @@
 # Mouse and Keyboard Guide
 
-This guide covers all keyboard shortcuts and mouse operations available in profanity-rs.
+This guide covers all keyboard shortcuts and mouse operations available in vellum-fe.
 
 ## Table of Contents
 
@@ -360,7 +360,7 @@ Not all terminals support mouse operations. Works best with:
 - ⚠️ PowerShell ISE (Limited support)
 
 **Testing Mouse Support:**
-1. Launch profanity-rs
+1. Launch vellum-fe
 2. Ensure mouse mode is on (press `F11` if needed)
 3. Try clicking on a window border and dragging
 4. If it works, your terminal supports mouse operations

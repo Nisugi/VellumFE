@@ -1,6 +1,6 @@
 # Commands Reference
 
-This page documents all dot commands available in profanity-rs. Dot commands are local commands that are not sent to the game server.
+This page documents all dot commands available in vellum-fe. Dot commands are local commands that are not sent to the game server.
 
 ## Table of Contents
 
@@ -394,7 +394,7 @@ Save the current window layout.
 ```
 
 **Notes:**
-- Layouts are saved to `~/.profanity-rs/layouts/<name>.toml`
+- Layouts are saved to `~/.vellum-fe/layouts/<name>.toml`
 - The layout includes all window positions, sizes, and configurations
 - An autosave layout is created when you exit the application
 

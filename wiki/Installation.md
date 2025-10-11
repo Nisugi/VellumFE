@@ -1,12 +1,12 @@
 # Installation Guide
 
-This guide will walk you through installing profanity-rs from source.
+This guide will walk you through installing vellum-fe from source.
 
 ## Prerequisites
 
 ### 1. Rust Toolchain
 
-profanity-rs requires Rust 1.70 or newer.
+vellum-fe requires Rust 1.70 or newer.
 
 **Install Rust:**
 ```bash
@@ -25,7 +25,7 @@ cargo --version
 
 ### 2. Lich Scripting Engine
 
-You need Lich to connect to GemStone IV. profanity-rs connects to Lich via its detached mode.
+You need Lich to connect to GemStone IV. vellum-fe connects to Lich via its detached mode.
 
 **Install Lich:**
 - Follow the [Lich installation guide](https://github.com/elanthia-online/lich-5)
@@ -48,8 +48,8 @@ For the best experience, use a terminal with mouse support:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/profanity-rs.git
-cd profanity-rs
+git clone https://github.com/yourusername/vellum-fe.git
+cd vellum-fe
 ```
 
 ### 2. Build the Project
@@ -59,14 +59,14 @@ cd profanity-rs
 cargo build
 ```
 
-Binary location: `target/debug/profanity-rs`
+Binary location: `target/debug/vellum-fe`
 
 **Release build (slower compile, optimized runtime):**
 ```bash
 cargo build --release
 ```
 
-Binary location: `target/release/profanity-rs`
+Binary location: `target/release/vellum-fe`
 
 **Note:** Always use `--release` for actual gameplay. The debug build is significantly slower.
 
@@ -81,7 +81,7 @@ cargo run
 cargo run --release
 
 # Or run the binary directly
-./target/release/profanity-rs
+./target/release/vellum-fe
 ```
 
 **From anywhere (optional):**
@@ -90,23 +90,23 @@ You can copy the binary to a directory in your PATH:
 
 ```bash
 # Linux/Mac
-sudo cp target/release/profanity-rs /usr/local/bin/
+sudo cp target/release/vellum-fe /usr/local/bin/
 
 # Windows (PowerShell as Administrator)
-Copy-Item target\release\profanity-rs.exe C:\Windows\System32\
+Copy-Item target\release\vellum-fe.exe C:\Windows\System32\
 ```
 
 ## First Launch
 
-On first launch, profanity-rs will:
-1. Create `~/.profanity-rs/` directory
+On first launch, vellum-fe will:
+1. Create `~/.vellum-fe/` directory
 2. Generate a default `config.toml`
 3. Create an `autosave` layout
 4. Start logging to `debug.log` (if `RUST_LOG=debug` is set)
 
 **Default config location:**
-- **Linux/Mac:** `~/.profanity-rs/config.toml`
-- **Windows:** `C:\Users\YourName\.profanity-rs\config.toml`
+- **Linux/Mac:** `~/.vellum-fe/config.toml`
+- **Windows:** `C:\Users\YourName\.vellum-fe\config.toml`
 
 ## Enabling Debug Logs
 
@@ -125,7 +125,7 @@ set RUST_LOG=debug
 cargo run --release
 ```
 
-Logs are written to `~/.profanity-rs/debug.log`.
+Logs are written to `~/.vellum-fe/debug.log`.
 
 ## Platform-Specific Notes
 
@@ -145,24 +145,24 @@ Logs are written to `~/.profanity-rs/debug.log`.
 - iTerm2 has excellent mouse and color support
 - Terminal.app works but has limited mouse features
 
-## Updating profanity-rs
+## Updating vellum-fe
 
 To update to the latest version:
 
 ```bash
-cd profanity-rs
+cd vellum-fe
 git pull origin main
 cargo build --release
 ```
 
-Your config and layouts in `~/.profanity-rs/` are preserved across updates.
+Your config and layouts in `~/.vellum-fe/` are preserved across updates.
 
 ## Uninstalling
 
-To remove profanity-rs:
+To remove vellum-fe:
 
 1. Delete the project directory
-2. (Optional) Remove your config: `rm -rf ~/.profanity-rs`
+2. (Optional) Remove your config: `rm -rf ~/.vellum-fe`
 3. (Optional) Remove binary from PATH if you copied it there
 
 ## Next Steps

@@ -1,6 +1,6 @@
 # Widget Reference
 
-This page documents all 42+ widgets available in profanity-rs. Widgets are the building blocks of your interface - they can be text windows, progress bars, countdown timers, status indicators, combat tracking, and more.
+This page documents all 42+ widgets available in vellum-fe. Widgets are the building blocks of your interface - they can be text windows, progress bars, countdown timers, status indicators, combat tracking, and more.
 
 All widgets can be created using the `.createwindow <template>` command (or its alias `.createwin`). Once created, widgets can be moved, resized, and styled to your liking.
 

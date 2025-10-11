@@ -1,6 +1,6 @@
 # Window Management
 
-Learn how to create, move, resize, and customize windows in profanity-rs.
+Learn how to create, move, resize, and customize windows in vellum-fe.
 
 ## Table of Contents
 
@@ -247,7 +247,7 @@ Example: `.setcountdown roundtime 5`
 
 ### Absolute Positioning
 
-profanity-rs uses **absolute positioning** for windows:
+vellum-fe uses **absolute positioning** for windows:
 - Each window has a fixed position: `(row, col)`
 - Each window has a fixed size: `(rows, cols)`
 - Windows are independent - no grid or layout constraints
@@ -282,7 +282,7 @@ Windows are rendered in the order they appear in the config file:
 
 **To change z-order:**
 1. Save your layout: `.savelayout temp`
-2. Edit `~/.profanity-rs/layouts/temp.toml`
+2. Edit `~/.vellum-fe/layouts/temp.toml`
 3. Reorder the `[[windows]]` sections
 4. Load layout: `.loadlayout temp`
 
@@ -321,7 +321,7 @@ See [Layout Management](Layout-Management.md) for:
 
 ### Configuration File
 
-For advanced window customization, edit `~/.profanity-rs/config.toml` directly:
+For advanced window customization, edit `~/.vellum-fe/config.toml` directly:
 
 ```toml
 [[ui.windows]]

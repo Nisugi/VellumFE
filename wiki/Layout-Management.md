@@ -61,11 +61,11 @@ Layouts let you:
 
 ### Layout Storage Location
 
-Layouts are saved to: `~/.profanity-rs/layouts/<name>.toml`
+Layouts are saved to: `~/.vellum-fe/layouts/<name>.toml`
 
 **Example paths:**
-- Linux/Mac: `~/.profanity-rs/layouts/hunting.toml`
-- Windows: `C:\Users\YourName\.profanity-rs\layouts\hunting.toml`
+- Linux/Mac: `~/.vellum-fe/layouts/hunting.toml`
+- Windows: `C:\Users\YourName\.vellum-fe\layouts\hunting.toml`
 
 ## Loading Layouts
 
@@ -108,7 +108,7 @@ If you create a layout named `default`, it will be loaded automatically when you
 .layouts
 ```
 
-Shows all layout files in `~/.profanity-rs/layouts/`.
+Shows all layout files in `~/.vellum-fe/layouts/`.
 
 **Example output:**
 ```
@@ -122,12 +122,12 @@ Available layouts:
 
 ## Autosave
 
-profanity-rs automatically saves your layout when you exit gracefully.
+vellum-fe automatically saves your layout when you exit gracefully.
 
 ### How Autosave Works
 
 1. When you exit with `.quit` or `Ctrl+C`:
-   - Current layout is saved to `~/.profanity-rs/layouts/autosave.toml`
+   - Current layout is saved to `~/.vellum-fe/layouts/autosave.toml`
    - Autosave is created automatically
 
 2. On next launch:
@@ -143,7 +143,7 @@ profanity-rs automatically saves your layout when you exit gracefully.
 - ❌ Kill process with Task Manager/`kill -9`
 
 **To disable autosave:**
-- Delete `~/.profanity-rs/layouts/autosave.toml`
+- Delete `~/.vellum-fe/layouts/autosave.toml`
 - It will be recreated on next exit
 
 **To prevent autosave overwrite:**
@@ -189,10 +189,10 @@ bar_background_color = "#000000"
 
 You can edit layout files directly:
 
-1. Open layout file: `~/.profanity-rs/layouts/hunting.toml`
+1. Open layout file: `~/.vellum-fe/layouts/hunting.toml`
 2. Modify window positions, sizes, colors, etc.
 3. Save file
-4. Load in profanity-rs: `.loadlayout hunting`
+4. Load in vellum-fe: `.loadlayout hunting`
 
 **Use cases for manual editing:**
 - Fine-tune window positions with pixel precision
@@ -205,9 +205,9 @@ You can edit layout files directly:
 Layout files can be shared with other users:
 
 1. Save your layout: `.savelayout mysetup`
-2. Copy layout file: `~/.profanity-rs/layouts/mysetup.toml`
+2. Copy layout file: `~/.vellum-fe/layouts/mysetup.toml`
 3. Share with friend
-4. Friend places in their `~/.profanity-rs/layouts/` directory
+4. Friend places in their `~/.vellum-fe/layouts/` directory
 5. Friend loads: `.loadlayout mysetup`
 
 **Note:** Shared layouts may need adjustment if users have different terminal sizes.
@@ -329,7 +329,7 @@ Periodically delete old layouts:
 .layouts
 
 # Delete unused layout files manually
-rm ~/.profanity-rs/layouts/old-layout.toml
+rm ~/.vellum-fe/layouts/old-layout.toml
 ```
 
 ### 5. Terminal Size Matters
@@ -354,7 +354,7 @@ Since autosave is recreated on every exit:
 
 **Solutions:**
 - Check layout exists: `.layouts`
-- Check filename: `~/.profanity-rs/layouts/mysetup.toml` (must be exact)
+- Check filename: `~/.vellum-fe/layouts/mysetup.toml` (must be exact)
 - Check file syntax: Open in text editor, look for TOML errors
 - Try autosave: `.loadlayout autosave`
 
@@ -374,7 +374,7 @@ Since autosave is recreated on every exit:
 
 **Solutions:**
 - Exit with `.quit` or `Ctrl+C` (not window X button)
-- Check file exists: `~/.profanity-rs/layouts/autosave.toml`
+- Check file exists: `~/.vellum-fe/layouts/autosave.toml`
 - Check file permissions (must be writable)
 - Check terminal output for save errors
 

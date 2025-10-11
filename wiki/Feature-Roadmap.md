@@ -1,6 +1,6 @@
 # Feature Roadmap
 
-This roadmap outlines planned features for profanity-rs, organized by priority. Features are subject to change based on community feedback and development priorities.
+This roadmap outlines planned features for vellum-fe, organized by priority. Features are subject to change based on community feedback and development priorities.
 
 ## Table of Contents
 
@@ -471,7 +471,7 @@ Save command history across sessions.
 **Configuration:**
 ```toml
 [ui]
-history_file = "~/.profanity-rs/history.txt"
+history_file = "~/.vellum-fe/history.txt"
 history_size = 1000
 ```
 
@@ -495,7 +495,7 @@ Update terminal title with game state.
 **Configuration:**
 ```toml
 [ui]
-terminal_title_format = "profanity-rs - {character} - {room} - HP: {health}%"
+terminal_title_format = "vellum-fe - {character} - {room} - HP: {health}%"
 ```
 
 **Related:** Issue #XX
