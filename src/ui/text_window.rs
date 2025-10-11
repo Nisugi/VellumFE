@@ -411,34 +411,114 @@ impl TextWindow {
         let mut current_line_spans: Vec<(String, Style, SpanType)> = Vec::new();
         let mut current_line_len = 0;
 
+        // Track word buffer for smart wrapping
+        let mut word_buffer: Vec<(String, Style, SpanType)> = Vec::new();
+        let mut word_buffer_len = 0;
+        let mut in_word = false;
+
         for (text, style, span_type) in spans {
-            // Simple approach: just add text as-is, preserving ALL spaces
-            // Only wrap if we exceed width
             for ch in text.chars() {
-                // Check if adding this character would exceed width
-                if current_line_len >= width {
-                    // Wrap to new line
+                let is_whitespace = ch.is_whitespace();
+
+                if is_whitespace {
+                    // Flush word buffer if we have one
+                    if in_word && !word_buffer.is_empty() {
+                        // Check if word fits on current line
+                        if current_line_len + word_buffer_len <= width {
+                            // Word fits - add it to current line
+                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                            }
+                            current_line_len += word_buffer_len;
+                        } else if word_buffer_len <= width {
+                            // Word doesn't fit on current line, but fits on new line - wrap
+                            if !current_line_spans.is_empty() {
+                                result.push(WrappedLine {
+                                    spans: current_line_spans.clone(),
+                                });
+                                current_line_spans.clear();
+                                current_line_len = 0;
+                            }
+                            // Add word to new line
+                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                            }
+                            current_line_len += word_buffer_len;
+                        } else {
+                            // Word is longer than width - must break it mid-word
+                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
+                                for word_ch in word_text.chars() {
+                                    if current_line_len >= width {
+                                        result.push(WrappedLine {
+                                            spans: current_line_spans.clone(),
+                                        });
+                                        current_line_spans.clear();
+                                        current_line_len = 0;
+                                    }
+                                    Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type);
+                                    current_line_len += 1;
+                                }
+                            }
+                        }
+                        word_buffer_len = 0;
+                        in_word = false;
+                    }
+
+                    // Add whitespace immediately (don't buffer it)
+                    if current_line_len >= width {
+                        // Wrap before whitespace
+                        result.push(WrappedLine {
+                            spans: current_line_spans.clone(),
+                        });
+                        current_line_spans.clear();
+                        current_line_len = 0;
+                        // Don't add whitespace at start of new line
+                        continue;
+                    }
+                    Self::append_to_line(&mut current_line_spans, ch.to_string(), *style, *span_type);
+                    current_line_len += 1;
+                } else {
+                    // Non-whitespace character - add to word buffer
+                    in_word = true;
+                    Self::append_to_buffer(&mut word_buffer, ch.to_string(), *style, *span_type);
+                    word_buffer_len += 1;
+                }
+            }
+        }
+
+        // Flush remaining word buffer
+        if !word_buffer.is_empty() {
+            if current_line_len + word_buffer_len <= width {
+                // Word fits on current line
+                for (word_text, word_style, word_type) in word_buffer {
+                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                }
+            } else if word_buffer_len <= width {
+                // Word needs new line
+                if !current_line_spans.is_empty() {
                     result.push(WrappedLine {
                         spans: current_line_spans.clone(),
                     });
                     current_line_spans.clear();
-                    current_line_len = 0;
                 }
-
-                // Add character to current line
-                if let Some((last_text, last_style, last_type)) = current_line_spans.last_mut() {
-                    if last_style == style && last_type == span_type {
-                        // Same style and type - append to last span
-                        last_text.push(ch);
-                    } else {
-                        // Different style or type - new span
-                        current_line_spans.push((ch.to_string(), *style, *span_type));
+                for (word_text, word_style, word_type) in word_buffer {
+                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                }
+            } else {
+                // Word is too long - must break it
+                for (word_text, word_style, word_type) in word_buffer {
+                    for word_ch in word_text.chars() {
+                        if current_line_len >= width {
+                            result.push(WrappedLine {
+                                spans: current_line_spans.clone(),
+                            });
+                            current_line_spans.clear();
+                            current_line_len = 0;
+                        }
+                        Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type);
+                        current_line_len += 1;
                     }
-                } else {
-                    // First character on line
-                    current_line_spans.push((ch.to_string(), *style, *span_type));
                 }
-                current_line_len += 1;
             }
         }
 
@@ -455,6 +535,32 @@ impl TextWindow {
         }
 
         result
+    }
+
+    // Helper to append text to a span list, merging with last span if style matches
+    fn append_to_line(spans: &mut Vec<(String, Style, SpanType)>, text: String, style: Style, span_type: SpanType) {
+        if let Some((last_text, last_style, last_type)) = spans.last_mut() {
+            if last_style == &style && last_type == &span_type {
+                last_text.push_str(&text);
+            } else {
+                spans.push((text, style, span_type));
+            }
+        } else {
+            spans.push((text, style, span_type));
+        }
+    }
+
+    // Helper to append text to buffer, merging with last entry if style matches
+    fn append_to_buffer(buffer: &mut Vec<(String, Style, SpanType)>, text: String, style: Style, span_type: SpanType) {
+        if let Some((last_text, last_style, last_type)) = buffer.last_mut() {
+            if last_style == &style && last_type == &span_type {
+                last_text.push_str(&text);
+            } else {
+                buffer.push((text, style, span_type));
+            }
+        } else {
+            buffer.push((text, style, span_type));
+        }
     }
 
     pub fn update_inner_width(&mut self, width: u16) {
