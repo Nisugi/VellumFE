@@ -83,6 +83,10 @@ pub enum ParsedElement {
     ClearActiveEffects {
         category: String,  // Which category to clear
     },
+    MenuResponse {
+        id: String,           // Correlation ID (counter)
+        coords: Vec<String>,  // List of coord values from <mi coord="..."/> tags
+    },
 }
 
 // Color/style tracking for nested tags
@@ -324,6 +328,8 @@ impl XmlParser {
             self.handle_link_open(tag);
         } else if tag == "</a>" {
             self.handle_link_close();
+        } else if tag.starts_with("<menu ") {
+            self.handle_menu(tag, elements);
         }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ") || tag == "</compDef>" ||
@@ -742,6 +748,41 @@ impl XmlParser {
         if self.bold_stack.is_empty() && !self.color_stack.is_empty() {
             self.color_stack.pop();
         }
+    }
+
+    fn handle_menu(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // Parse <menu id="123" ...><mi coord="2524,1898"/><mi coord="2524,2061"/>...</menu>
+        // Extract id attribute
+        let id = Self::extract_attribute(tag, "id");
+
+        if id.is_none() {
+            tracing::warn!("Menu tag missing id attribute: {}", tag);
+            return;
+        }
+
+        // Find all <mi coord="..."/> tags within this tag
+        let mut coords = Vec::new();
+        let mut remaining = tag;
+
+        while let Some(mi_start) = remaining.find("<mi ") {
+            remaining = &remaining[mi_start + 4..];
+            if let Some(mi_end) = remaining.find("/>") {
+                let mi_tag = &remaining[..mi_end];
+                if let Some(coord) = Self::extract_attribute(&format!("<mi {}/>", mi_tag), "coord") {
+                    coords.push(coord);
+                }
+                remaining = &remaining[mi_end + 2..];
+            } else {
+                break;
+            }
+        }
+
+        tracing::debug!("Parsed menu response: id={}, {} coords", id.as_ref().unwrap(), coords.len());
+
+        elements.push(ParsedElement::MenuResponse {
+            id: id.unwrap(),
+            coords,
+        });
     }
 
     fn handle_push_bold(&mut self) {

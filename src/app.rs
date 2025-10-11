@@ -62,6 +62,15 @@ pub struct App {
     selection_state: Option<SelectionState>,  // Current text selection (None when no selection)
     selection_drag_start: Option<(u16, u16)>,  // Mouse position when drag started (for detecting drag vs click)
     cmdlist: Option<CmdList>,  // Command list for context menus (None if failed to load)
+    menu_request_counter: u32,  // Counter for menu request correlation IDs
+    pending_menu_requests: HashMap<String, PendingMenuRequest>,  // counter -> (exist_id, noun)
+}
+
+/// Pending menu request information
+#[derive(Debug, Clone)]
+struct PendingMenuRequest {
+    exist_id: String,
+    noun: String,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +260,8 @@ impl App {
             selection_state: None,  // No selection initially
             selection_drag_start: None,  // No drag initially
             cmdlist,  // Command list (may be None if failed to load)
+            menu_request_counter: 0,  // Start counter at 0
+            pending_menu_requests: HashMap::new(),  // No pending requests initially
         })
     }
 
@@ -780,7 +791,7 @@ impl App {
     }
 
     /// Handle local dot commands
-    fn handle_dot_command(&mut self, command: &str) {
+    fn handle_dot_command(&mut self, command: &str, command_tx: Option<&mpsc::UnboundedSender<String>>) {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         if parts.is_empty() {
             return;
@@ -1881,10 +1892,89 @@ impl App {
                     self.add_system_message(&format!("{} keybinds: {}", count, names.join(", ")));
                 }
             }
+            "testmenu" => {
+                // Test command: .testmenu <exist_id> [noun]
+                // Example: .testmenu 12345 pendant
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .testmenu <exist_id> [noun]");
+                    return;
+                }
+
+                let exist_id = parts[1].to_string();
+                let noun = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| "item".to_string());
+
+                // Generate counter and store pending request
+                self.menu_request_counter += 1;
+                let counter = self.menu_request_counter.to_string();
+
+                self.pending_menu_requests.insert(counter.clone(), PendingMenuRequest {
+                    exist_id: exist_id.clone(),
+                    noun: noun.clone(),
+                });
+
+                // Send _menu command to server
+                let menu_cmd = format!("_menu #{} {}", exist_id, counter);
+                self.add_system_message(&format!("Requesting context menu for #{} (counter: {})", exist_id, counter));
+
+                if let Some(tx) = command_tx {
+                    let _ = tx.send(menu_cmd);
+                    tracing::debug!("Sent menu request for exist_id {} with counter {}", exist_id, counter);
+                } else {
+                    self.add_system_message("Error: Cannot send menu request (no command channel)");
+                }
+            }
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
             }
         }
+    }
+
+    /// Handle menu response from server
+    fn handle_menu_response(&mut self, counter: &str, coords: &[String]) {
+        // Look up the pending request
+        let pending = self.pending_menu_requests.remove(counter);
+
+        if pending.is_none() {
+            tracing::warn!("Received menu response for unknown counter: {}", counter);
+            return;
+        }
+
+        let pending = pending.unwrap();
+        tracing::info!("Menu response for exist_id {} (noun: {}): {} coords",
+            pending.exist_id, pending.noun, coords.len());
+
+        // Look up each coord in cmdlist and build menu items
+        if self.cmdlist.is_none() {
+            self.add_system_message("Context menu received but cmdlist not loaded");
+            return;
+        }
+
+        // Build menu items list (to avoid borrowing issues)
+        let mut menu_items = Vec::new();
+        if let Some(ref cmdlist) = self.cmdlist {
+            for coord in coords.iter() {
+                if let Some(entry) = cmdlist.get(coord) {
+                    // Substitute placeholders in menu text and command
+                    let menu_text = crate::cmdlist::CmdList::substitute_menu(&entry.menu, &pending.noun);
+                    let command = crate::cmdlist::CmdList::substitute_command(
+                        &entry.command,
+                        &pending.noun,
+                        &pending.exist_id,
+                        None, // No secondary item for now
+                    );
+                    menu_items.push((menu_text, command));
+                } else {
+                    tracing::debug!("Coord {} not found in cmdlist", coord);
+                }
+            }
+        }
+
+        // Now output the menu (after releasing cmdlist borrow)
+        self.add_system_message(&format!("=== Context Menu for {} (#{}) ===", pending.noun, pending.exist_id));
+        for (idx, (menu_text, command)) in menu_items.iter().enumerate() {
+            self.add_system_message(&format!("  {}. {} -> {}", idx + 1, menu_text, command));
+        }
+        self.add_system_message("=================================");
     }
 
     /// Toggle mouse mode on/off
@@ -2557,7 +2647,7 @@ impl App {
                 if let Some(command) = self.command_input.submit() {
                     // Check if it's a local dot command
                     if command.starts_with('.') {
-                        self.handle_dot_command(&command);
+                        self.handle_dot_command(&command, Some(command_tx));
                     } else {
                         // Echo ">" with prompt color, then command with command echo color
                         let prompt_color = self.config.ui.prompt_colors
@@ -3403,6 +3493,10 @@ impl App {
                                     }
                                 }
                             }
+                        }
+                        ParsedElement::MenuResponse { id, coords } => {
+                            // Handle menu response
+                            self.handle_menu_response(&id, &coords);
                         }
                         _ => {
                             // Other element types don't add visible content
