@@ -224,7 +224,7 @@ Create a new tabbed text window with multiple tabs for different streams.
 - Window created at position (0,0) with default size 20x60
 - Use mouse to move and resize
 
-**See also:** `.addtab`, `.removetab`, `.switchtab`
+**See also:** `.addtab`, `.removetab`, `.switchtab`, `.movetab`, `.tabcolors`
 
 ---
 
@@ -306,6 +306,68 @@ Switch to a specific tab in a tabbed window.
 - Tab indices are 0-based (first tab is 0)
 - Can also click tabs with mouse to switch
 - Clears unread indicator when switching to a tab
+
+---
+
+### `.movetab` / `.reordertab`
+
+Reorder tabs within a tabbed window.
+
+**Syntax:**
+```
+.movetab <window_name> <tab_name> <new_position>
+.reordertab <window_name> <tab_name> <new_position>
+```
+
+**Parameters:**
+- `window_name` - Name of the tabbed window
+- `tab_name` - Name of the tab to move
+- `new_position` - New position index (0-based)
+
+**Examples:**
+```
+.movetab chat Speech 0
+.movetab chat Whisper 2
+.reordertab comms Deaths 1
+```
+
+**Notes:**
+- Position indices are 0-based (0 = first position)
+- Changes take effect immediately
+- The tab order is persisted when you save the layout
+
+---
+
+### `.tabcolors` / `.settabcolors`
+
+Configure colors for tabbed window tabs.
+
+**Syntax:**
+```
+.tabcolors <window_name> <active_color> [unread_color] [inactive_color]
+.settabcolors <window_name> <active_color> [unread_color] [inactive_color]
+```
+
+**Parameters:**
+- `window_name` - Name of the tabbed window
+- `active_color` - Hex color for the active/selected tab (e.g., `#ffff00`)
+- `unread_color` - (Optional) Hex color for tabs with unread messages (default: `#ffffff`)
+- `inactive_color` - (Optional) Hex color for inactive tabs (default: `#808080`)
+
+**Examples:**
+```
+.tabcolors chat #ffff00
+.tabcolors chat #ffff00 #ffffff
+.tabcolors chat #ffff00 #ffffff #808080
+.settabcolors comms #00ff00 #ffaa00 #555555
+```
+
+**Notes:**
+- Colors must be in hex format with `#` prefix
+- Active tab is the currently visible tab (bold, colored)
+- Unread tabs show with prefix (default `* `) and color
+- Inactive tabs are read but not currently visible
+- Changes take effect immediately
 
 ---
 
