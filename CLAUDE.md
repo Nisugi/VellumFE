@@ -56,7 +56,7 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Windows use **absolute positioning** (row, col, rows, cols) - each window is independent
 - No grid layout - windows can overlap, have gaps, be moved/resized freely
 - WindowManager maintains windows and stream routing mappings
-- Three widget types: `text`, `progress`, `countdown`
+- Widget types: `text`, `progress`, `countdown`, `tabbed`, `indicator`, `compass`, `injury_doll`, `hands`, `dashboard`, `active_effects`
 
 **Stream Routing:**
 - Game output is divided into named streams (main, thoughts, speech, familiar, etc.)
@@ -102,10 +102,14 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Autosave layout created on exit, loaded on startup if exists
 
 **Mouse Operations:**
+- Mouse support is enabled by default on application start
 - Click title bar (top border, excluding corners) to move window
 - Click edges/corners to resize (corners resize from that corner, edges resize one dimension)
+- Click tabs in tabbed windows to switch between tabs
+- Mouse scroll over windows to scroll up/down in text history
 - Title bar detection excludes corners (leaves 1 cell margin on each side)
 - Resize/move use incremental deltas, not absolute positions
+- Text selection: Hold Shift while using mouse to select text (disables window interaction)
 
 ## Module Structure
 
@@ -183,6 +187,26 @@ Countdown timer widget. Contains:
 - Character-based fill animation (fills N chars where N = seconds remaining)
 - Automatic countdown via system time comparisons
 
+### src/ui/tabbed_text_window.rs
+Tabbed text window widget with activity indicators. Contains:
+- `new()` - Create empty tabbed window (tabs added later)
+- `with_tabs()` - Create tabbed window with initial tabs
+- `add_tab()` - Dynamically add new tab
+- `remove_tab()` - Remove tab by name
+- `switch_to_tab()` / `switch_to_tab_by_name()` - Change active tab
+- `add_text_to_stream()` - Route text to correct tab, set unread flag if inactive
+- `finish_line_for_stream()` - Finish line for specific tab's stream
+- Activity tracking: tabs show unread indicator when receiving messages while inactive
+- Tab bar can be positioned at top or bottom
+- Mouse click support for tab switching
+
+**Key Features:**
+- Each tab contains its own TextWindow instance
+- Tabs route to specific game streams (speech, thoughts, whisper, etc.)
+- Unread indicators: inactive tabs with new messages show configurable prefix and color
+- Clicking a tab clears its unread status
+- Customizable colors for active, inactive, and unread tabs
+
 ## Configuration
 
 **Config location:** `~/.profanity-rs/config.toml`
@@ -197,7 +221,6 @@ port = 8000
 
 [ui]
 command_echo_color = "#ffffff"
-mouse_mode_toggle_key = "F11"
 countdown_icon = "\u{f0c8}"  # Nerd Font icon for countdown blocks (default)
 
 [[ui.prompt_colors]]
@@ -210,7 +233,7 @@ fg = "#53a684"
 
 [[ui.windows]]
 name = "main"
-widget_type = "text"  # or "progress" or "countdown"
+widget_type = "text"  # or "progress", "countdown", "tabbed", etc.
 streams = ["main"]
 row = 0
 col = 0
@@ -220,21 +243,65 @@ buffer_size = 10000
 show_border = true
 border_style = "single"  # or "double", "rounded", "thick", "none"
 title = "Main"
+
+# Tabbed window example
+[[ui.windows]]
+name = "chat"
+widget_type = "tabbed"
+streams = []  # Tabs handle their own streams
+row = 0
+col = 120
+rows = 24
+cols = 60
+buffer_size = 5000
+show_border = true
+title = "Chat"
+tab_bar_position = "top"  # or "bottom"
+tab_active_color = "#ffff00"  # Yellow for active tab
+tab_inactive_color = "#808080"  # Gray for inactive tabs
+tab_unread_color = "#ffffff"  # White/bold for unread tabs
+tab_unread_prefix = "* "  # Prefix shown on tabs with unread
+
+[[ui.windows.tabs]]
+name = "Speech"
+stream = "speech"
+
+[[ui.windows.tabs]]
+name = "Thoughts"
+stream = "thoughts"
+
+[[ui.windows.tabs]]
+name = "Whisper"
+stream = "whisper"
 ```
 
 ## Dot Commands (Local, Not Sent to Game)
 
+### Window Management
 - `.quit` - Exit application
 - `.createwindow <template>` - Create window from template
-- `.customwindow <name> <stream1,stream2,...>` - Create custom window
+- `.customwindow <name> <stream1,stream2,...>` - Create custom text window
 - `.deletewindow <name>` - Delete window
 - `.windows` / `.listwindows` - List active windows
 - `.templates` - List available templates
 - `.rename <window> <new title>` - Change window title
 - `.border <window> <style> [color]` - Change border style/color
+
+### Tabbed Windows
+- `.createtabbed <name> <tab1:stream1,tab2:stream2,...>` - Create tabbed window
+  - Example: `.createtabbed chat Speech:speech,Thoughts:thoughts,Whisper:whisper`
+- `.addtab <window> <tab_name> <stream>` - Add tab to tabbed window
+  - Example: `.addtab chat LNet logons`
+- `.removetab <window> <tab_name>` - Remove tab from tabbed window
+- `.switchtab <window> <tab_name|index>` - Switch to specific tab
+  - Example: `.switchtab chat Speech` or `.switchtab chat 0`
+
+### Widget-Specific Commands
 - `.setprogress <window> <current> <max>` - Update progress bar
 - `.setbarcolor <window> <color> [bg_color]` - Change progress bar colors
 - `.setcountdown <window> <seconds>` - Set countdown timer
+
+### Layout Management
 - `.savelayout [name]` - Save current layout (default: "default")
 - `.loadlayout [name]` - Load saved layout
 - `.layouts` - List saved layouts

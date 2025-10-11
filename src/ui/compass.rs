@@ -2,7 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, BorderType},
+    widgets::{Block, BorderType},
 };
 use std::collections::HashSet;
 

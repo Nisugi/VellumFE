@@ -13,6 +13,10 @@ pub struct CommandInput {
     history: VecDeque<String>,
     history_index: Option<usize>,
     max_history: usize,
+    show_border: bool,
+    border_style: Option<String>,
+    border_color: Option<String>,
+    title: String,
 }
 
 impl CommandInput {
@@ -23,7 +27,21 @@ impl CommandInput {
             history: VecDeque::with_capacity(max_history),
             history_index: None,
             max_history,
+            show_border: true,
+            border_style: None,
+            border_color: None,
+            title: "Command".to_string(),
         }
+    }
+
+    pub fn set_border_config(&mut self, show_border: bool, border_style: Option<String>, border_color: Option<String>) {
+        self.show_border = show_border;
+        self.border_style = border_style;
+        self.border_color = border_color;
+    }
+
+    pub fn set_title(&mut self, title: String) {
+        self.title = title;
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -138,6 +156,31 @@ impl CommandInput {
             .unwrap_or(self.input.len())
     }
 
+    /// Parse color string (hex or named)
+    fn parse_color(color_str: &str) -> Option<Color> {
+        if color_str.starts_with('#') && color_str.len() == 7 {
+            // Hex color
+            let r = u8::from_str_radix(&color_str[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&color_str[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&color_str[5..7], 16).ok()?;
+            Some(Color::Rgb(r, g, b))
+        } else {
+            // Named color
+            match color_str.to_lowercase().as_str() {
+                "black" => Some(Color::Black),
+                "red" => Some(Color::Red),
+                "green" => Some(Color::Green),
+                "yellow" => Some(Color::Yellow),
+                "blue" => Some(Color::Blue),
+                "magenta" => Some(Color::Magenta),
+                "cyan" => Some(Color::Cyan),
+                "gray" | "grey" => Some(Color::Gray),
+                "white" => Some(Color::White),
+                _ => None,
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         self.input.clear();
         self.cursor_pos = 0;
@@ -220,14 +263,37 @@ impl CommandInput {
 
     pub fn render_with_status(&self, area: Rect, buf: &mut Buffer, status: Option<&str>) {
         let title = if let Some(status_text) = status {
-            format!("Command [{}]", status_text)
+            format!("{} [{}]", self.title, status_text)
         } else {
-            "Command".to_string()
+            self.title.clone()
         };
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
+        let mut block = Block::default();
+
+        if self.show_border {
+            block = block.borders(Borders::ALL);
+
+            // Apply border style if specified
+            if let Some(style_str) = &self.border_style {
+                use ratatui::widgets::BorderType;
+                let border_type = match style_str.as_str() {
+                    "double" => BorderType::Double,
+                    "rounded" => BorderType::Rounded,
+                    "thick" => BorderType::Thick,
+                    _ => BorderType::Plain,
+                };
+                block = block.border_type(border_type);
+            }
+
+            // Apply border color if specified
+            if let Some(color_str) = &self.border_color {
+                if let Some(color) = Self::parse_color(color_str) {
+                    block = block.border_style(Style::default().fg(color));
+                }
+            }
+        }
+
+        block = block.title(title);
 
         let inner = block.inner(area);
         block.render(area, buf);

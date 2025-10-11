@@ -1,4 +1,5 @@
 mod text_window;
+mod tabbed_text_window;
 mod command_input;
 mod window_manager;
 mod progress_bar;
@@ -14,10 +15,11 @@ mod active_effects;
 mod performance_stats;
 
 pub use text_window::{TextWindow, StyledText};
+pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
 pub use command_input::CommandInput;
 pub use window_manager::{WindowManager, WindowConfig, Widget};
 #[allow(unused_imports)]
-pub use progress_bar::ProgressBar;
+pub use progress_bar::{ProgressBar, TextAlignment};
 #[allow(unused_imports)]
 pub use countdown::Countdown;
 #[allow(unused_imports)]
@@ -35,7 +37,7 @@ pub use dashboard::{Dashboard, DashboardLayout};
 pub use performance_stats::PerformanceStatsWidget;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
 };
 
 pub struct UiLayout {
@@ -44,18 +46,40 @@ pub struct UiLayout {
 }
 
 impl UiLayout {
-    pub fn calculate(area: Rect) -> Self {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),      // Main text area
-                Constraint::Length(3),   // Input area
-            ])
-            .split(area);
+    pub fn calculate(area: Rect, cmd_row: u16, cmd_col: u16, cmd_height: u16, cmd_width: u16) -> Self {
+        // Calculate actual command input area based on config
+        let input_row = if cmd_row == 0 {
+            // Default: bottom of screen
+            area.height.saturating_sub(cmd_height)
+        } else {
+            cmd_row.min(area.height.saturating_sub(cmd_height))
+        };
+
+        let input_width = if cmd_width == 0 {
+            // 0 means use full width
+            area.width
+        } else {
+            cmd_width.min(area.width)
+        };
+
+        let input_area = Rect {
+            x: area.x + cmd_col,
+            y: area.y + input_row,
+            width: input_width,
+            height: cmd_height.min(area.height),
+        };
+
+        // Main area is everything above the command input
+        let main_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: input_row.saturating_sub(area.y),
+        };
 
         Self {
-            main_area: chunks[0],
-            input_area: chunks[1],
+            main_area,
+            input_area,
         }
     }
 }

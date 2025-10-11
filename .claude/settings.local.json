@@ -10,7 +10,12 @@
       "Bash(git checkout:*)",
       "Bash(taskkill:*)",
       "Bash(dir \"C:\\Gemstone\\profanity-next\")",
-      "Bash(del \"C:\\Users\\shawn\\.profanity-rs\\debug.log\")"
+      "Bash(del \"C:\\Users\\shawn\\.profanity-rs\\debug.log\")",
+      "Read(//c/Gemstone/ProfanityFE-master/**)",
+      "Read(//c/Gemstone/Lich5/lib/common/**)",
+      "Bash(dir \"C:\\Ruby4Lich5\\Lich5\\logs\\GSIV-Zoleta\\2025\\10\" /B /O-D)",
+      "Read(//c/Ruby4Lich5/Lich5/logs/GSIV-Zoleta/2025/10/**)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

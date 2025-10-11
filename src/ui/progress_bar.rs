@@ -2,8 +2,15 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Widget},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlignment {
+    Left,
+    Center,
+    Right,
+}
 
 /// A progress bar widget for displaying vitals, spell durations, etc.
 pub struct ProgressBar {
@@ -20,6 +27,7 @@ pub struct ProgressBar {
     transparent_background: bool,  // If true, unfilled portion is transparent; if false, use background_color
     show_percentage: bool,
     show_values: bool,
+    text_alignment: TextAlignment,  // How to align the text (left, center, right)
 }
 
 impl ProgressBar {
@@ -38,6 +46,7 @@ impl ProgressBar {
             transparent_background: true, // Transparent by default
             show_percentage: true,
             show_values: true,
+            text_alignment: TextAlignment::Center,  // Center by default (for vitals)
         }
     }
 
@@ -97,6 +106,10 @@ impl ProgressBar {
     pub fn set_display_options(&mut self, show_percentage: bool, show_values: bool) {
         self.show_percentage = show_percentage;
         self.show_values = show_values;
+    }
+
+    pub fn set_text_alignment(&mut self, alignment: TextAlignment) {
+        self.text_alignment = alignment;
     }
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
@@ -248,11 +261,11 @@ impl ProgressBar {
             };
 
             if final_text_width > 0 && final_text_width <= available_width {
-                // Left-align when we have custom text (for spell names, etc), otherwise center
-                let text_start_x = if self.custom_text.is_some() {
-                    inner_area.x  // Left-aligned
-                } else {
-                    inner_area.x + (available_width.saturating_sub(final_text_width)) / 2  // Centered
+                // Calculate text position based on alignment
+                let text_start_x = match self.text_alignment {
+                    TextAlignment::Left => inner_area.x,
+                    TextAlignment::Center => inner_area.x + (available_width.saturating_sub(final_text_width)) / 2,
+                    TextAlignment::Right => inner_area.x + available_width.saturating_sub(final_text_width),
                 };
 
                 // First pass: Fill the background

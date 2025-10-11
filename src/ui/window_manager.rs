@@ -1,13 +1,13 @@
 use ratatui::layout::Rect;
 use std::collections::HashMap;
-use super::{TextWindow, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText};
-use super::scrollable_container;
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
 /// Enum to hold different widget types
 pub enum Widget {
     Text(TextWindow),
+    Tabbed(TabbedTextWindow),
     Progress(ProgressBar),
     Countdown(Countdown),
     Indicator(Indicator),
@@ -24,6 +24,7 @@ impl Widget {
     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         match self {
             Widget::Text(w) => w.render_with_focus(area, buf, focused),
+            Widget::Tabbed(w) => w.render_with_focus(area, buf, focused),
             Widget::Progress(w) => w.render_with_focus(area, buf, focused),
             Widget::Countdown(w) => w.render_with_focus(area, buf, focused),
             Widget::Indicator(w) => w.render_with_focus(area, buf, focused),
@@ -54,6 +55,7 @@ impl Widget {
     pub fn scroll_up(&mut self, lines: usize) {
         match self {
             Widget::Text(w) => w.scroll_up(lines),
+            Widget::Tabbed(w) => w.scroll_up(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_up();
@@ -67,6 +69,7 @@ impl Widget {
     pub fn scroll_down(&mut self, lines: usize) {
         match self {
             Widget::Text(w) => w.scroll_down(lines),
+            Widget::Tabbed(w) => w.scroll_down(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_down();
@@ -78,8 +81,10 @@ impl Widget {
 
     /// Set width (for text windows)
     pub fn set_width(&mut self, width: u16) {
-        if let Widget::Text(w) = self {
-            w.set_width(width);
+        match self {
+            Widget::Text(w) => w.set_width(width),
+            Widget::Tabbed(w) => w.update_inner_width(width),
+            _ => {}
         }
     }
 
@@ -87,6 +92,7 @@ impl Widget {
     pub fn set_border_config(&mut self, show_border: bool, border_style: Option<String>, border_color: Option<String>) {
         match self {
             Widget::Text(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::Tabbed(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Progress(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Countdown(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Indicator(w) => w.set_border_config(show_border, border_style, border_color),
@@ -141,6 +147,7 @@ impl Widget {
     pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
         match self {
             Widget::Text(w) => w.set_border_sides(border_sides),
+            Widget::Tabbed(_) => {}, // Tabbed windows don't support custom border sides
             Widget::Progress(w) => w.set_border_sides(border_sides),
             Widget::Countdown(w) => w.set_border_sides(border_sides),
             Widget::Indicator(w) => w.set_border_sides(border_sides),
@@ -157,6 +164,7 @@ impl Widget {
     pub fn set_title(&mut self, title: String) {
         match self {
             Widget::Text(w) => w.set_title(title),
+            Widget::Tabbed(w) => w.set_title(title),
             Widget::Progress(w) => w.set_title(title),
             Widget::Countdown(w) => w.set_title(title),
             Widget::Indicator(w) => w.set_title(title),
@@ -342,6 +350,12 @@ pub struct WindowConfig {
     pub dashboard_hide_inactive: Option<bool>,  // Hide inactive in dashboard
     pub visible_count: Option<usize>,  // For scrollable containers: items to show
     pub effect_category: Option<String>,  // For active_effects: filter category
+    pub tabs: Option<Vec<crate::config::TabConfig>>,  // For tabbed windows: tab configurations
+    pub tab_bar_position: Option<String>,  // "top" or "bottom"
+    pub tab_active_color: Option<String>,  // Color for active tab
+    pub tab_inactive_color: Option<String>,  // Color for inactive tabs
+    pub tab_unread_color: Option<String>,  // Color for tabs with unread messages
+    pub tab_unread_prefix: Option<String>,  // Prefix for tabs with unread (e.g., "* ")
 }
 
 pub struct WindowManager {
@@ -515,6 +529,60 @@ impl WindowManager {
 
                     Widget::ActiveEffects(active_effects)
                 }
+                "tabbed" => {
+                    // Parse tab bar position
+                    let tab_bar_position = if let Some(ref pos_str) = config.tab_bar_position {
+                        match pos_str.to_lowercase().as_str() {
+                            "bottom" => TabBarPosition::Bottom,
+                            _ => TabBarPosition::Top,
+                        }
+                    } else {
+                        TabBarPosition::Top
+                    };
+
+                    let mut tabbed_window = TabbedTextWindow::new(
+                        &title,
+                        tab_bar_position,
+                    );
+
+                    // Set border config
+                    tabbed_window.set_border_config(
+                        config.show_border,
+                        config.border_style.clone(),
+                        config.border_color.clone(),
+                    );
+
+                    // Set tab colors if specified
+                    if let Some(ref color) = config.tab_active_color {
+                        tabbed_window.set_tab_active_color(color.clone());
+                    }
+                    if let Some(ref color) = config.tab_inactive_color {
+                        tabbed_window.set_tab_inactive_color(color.clone());
+                    }
+                    if let Some(ref color) = config.tab_unread_color {
+                        tabbed_window.set_tab_unread_color(color.clone());
+                    }
+                    if let Some(ref prefix) = config.tab_unread_prefix {
+                        tabbed_window.set_unread_prefix(prefix.clone());
+                    }
+
+                    // Add tabs from config
+                    if let Some(ref tabs) = config.tabs {
+                        tracing::debug!("Creating tabbed window '{}' with {} tabs", config.name, tabs.len());
+                        for tab in tabs {
+                            tracing::debug!("  Adding tab '{}' -> stream '{}'", tab.name, tab.stream);
+                            tabbed_window.add_tab(
+                                tab.name.clone(),
+                                tab.stream.clone(),
+                                config.buffer_size,
+                            );
+                        }
+                    } else {
+                        tracing::warn!("Tabbed window '{}' has no tabs configured!", config.name);
+                    }
+
+                    Widget::Tabbed(tabbed_window)
+                }
                 _ => {
                     // Default to text window
                     let text_window = TextWindow::new(&title, config.buffer_size)
@@ -532,6 +600,15 @@ impl WindowManager {
             // Map each stream to this window
             for stream in &config.streams {
                 stream_map.insert(stream.clone(), config.name.clone());
+            }
+
+            // For tabbed windows, also map all tab streams
+            if config.widget_type == "tabbed" {
+                if let Some(ref tabs) = config.tabs {
+                    for tab in tabs {
+                        stream_map.insert(tab.stream.clone(), config.name.clone());
+                    }
+                }
             }
         }
 
@@ -765,6 +842,60 @@ impl WindowManager {
 
                         Widget::Dashboard(dashboard)
                     }
+                    "tabbed" => {
+                        // Parse tab bar position
+                        let tab_bar_position = if let Some(ref pos_str) = config.tab_bar_position {
+                            match pos_str.to_lowercase().as_str() {
+                                "bottom" => TabBarPosition::Bottom,
+                                _ => TabBarPosition::Top,
+                            }
+                        } else {
+                            TabBarPosition::Top
+                        };
+
+                        let mut tabbed_window = TabbedTextWindow::new(
+                            &title,
+                            tab_bar_position,
+                        );
+
+                        // Set border config
+                        tabbed_window.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+
+                        // Set tab colors if specified
+                        if let Some(ref color) = config.tab_active_color {
+                            tabbed_window.set_tab_active_color(color.clone());
+                        }
+                        if let Some(ref color) = config.tab_inactive_color {
+                            tabbed_window.set_tab_inactive_color(color.clone());
+                        }
+                        if let Some(ref color) = config.tab_unread_color {
+                            tabbed_window.set_tab_unread_color(color.clone());
+                        }
+                        if let Some(ref prefix) = config.tab_unread_prefix {
+                            tabbed_window.set_unread_prefix(prefix.clone());
+                        }
+
+                        // Add tabs from config
+                        if let Some(ref tabs) = config.tabs {
+                            tracing::debug!("Creating tabbed window '{}' with {} tabs (update_config)", config.name, tabs.len());
+                            for tab in tabs {
+                                tracing::debug!("  Adding tab '{}' -> stream '{}'", tab.name, tab.stream);
+                                tabbed_window.add_tab(
+                                    tab.name.clone(),
+                                    tab.stream.clone(),
+                                    config.buffer_size,
+                                );
+                            }
+                        } else {
+                            tracing::warn!("Tabbed window '{}' has no tabs configured! (update_config)", config.name);
+                        }
+
+                        Widget::Tabbed(tabbed_window)
+                    }
                     _ => {
                         // Default to text window
                         let text_window = TextWindow::new(&title, config.buffer_size)
@@ -783,6 +914,15 @@ impl WindowManager {
                 for stream in &config.streams {
                     self.stream_map.insert(stream.clone(), config.name.clone());
                 }
+
+                // For tabbed windows, also map all tab streams
+                if config.widget_type == "tabbed" {
+                    if let Some(ref tabs) = config.tabs {
+                        for tab in tabs {
+                            self.stream_map.insert(tab.stream.clone(), config.name.clone());
+                        }
+                    }
+                }
             } else {
                 // Window exists - update its border config and title
                 if let Some(window) = self.windows.get_mut(&config.name) {
@@ -795,6 +935,42 @@ impl WindowManager {
 
                     let title = config.title.clone().unwrap_or_else(|| config.name.clone());
                     window.set_title(title);
+
+                    // For tabbed windows, sync tabs from config
+                    if config.widget_type == "tabbed" {
+                        if let Widget::Tabbed(tabbed) = window {
+                            if let Some(ref tabs) = config.tabs {
+                                // Get current tab names
+                                let current_tabs = tabbed.get_tab_names();
+                                let config_tab_names: Vec<String> = tabs.iter().map(|t| t.name.clone()).collect();
+
+                                // Add new tabs that don't exist
+                                for tab in tabs {
+                                    if !current_tabs.contains(&tab.name) {
+                                        tracing::debug!("Adding new tab '{}' to existing window '{}'", tab.name, config.name);
+                                        tabbed.add_tab(
+                                            tab.name.clone(),
+                                            tab.stream.clone(),
+                                            config.buffer_size,
+                                        );
+                                        // Map the new tab's stream
+                                        self.stream_map.insert(tab.stream.clone(), config.name.clone());
+                                    }
+                                }
+
+                                // Remove tabs that are no longer in config
+                                for current_tab_name in &current_tabs {
+                                    if !config_tab_names.contains(current_tab_name) {
+                                        tracing::debug!("Removing tab '{}' from existing window '{}'", current_tab_name, config.name);
+                                        tabbed.remove_tab(current_tab_name);
+                                    }
+                                }
+
+                                // Reorder tabs to match config order
+                                tabbed.reorder_tabs(&config_tab_names);
+                            }
+                        }
+                    }
                 }
             }
         }

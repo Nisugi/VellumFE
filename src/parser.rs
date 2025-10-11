@@ -405,7 +405,7 @@ impl XmlParser {
         }
     }
 
-    fn handle_spell(&mut self, whole_tag: &str, text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
+    fn handle_spell(&mut self, whole_tag: &str, _text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
         // <spell>text</spell> or <spell exist="...">text</spell>
         // Extract text content between tags
         if let Some(start) = whole_tag.find('>') {
@@ -418,7 +418,7 @@ impl XmlParser {
         }
     }
 
-    fn handle_left_hand(&mut self, whole_tag: &str, text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
+    fn handle_left_hand(&mut self, whole_tag: &str, _text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
         // <left>text</left> or <left exist="...">text</left>
         if let Some(start) = whole_tag.find('>') {
             if let Some(end) = whole_tag.rfind("</left>") {
@@ -428,7 +428,7 @@ impl XmlParser {
         }
     }
 
-    fn handle_right_hand(&mut self, whole_tag: &str, text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
+    fn handle_right_hand(&mut self, whole_tag: &str, _text_buffer: &mut String, elements: &mut Vec<ParsedElement>) {
         // <right>text</right> or <right exist="...">text</right>
         if let Some(start) = whole_tag.find('>') {
             if let Some(end) = whole_tag.rfind("</right>") {

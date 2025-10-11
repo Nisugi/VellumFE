@@ -6,6 +6,7 @@ This page documents all dot commands available in profanity-rs. Dot commands are
 
 - [Application Commands](#application-commands)
 - [Window Commands](#window-commands)
+  - [Tabbed Window Commands](#createtabbed--tabbedwindow)
 - [Layout Commands](#layout-commands)
 - [Progress Bar Commands](#progress-bar-commands)
 - [Countdown Commands](#countdown-commands)
@@ -191,6 +192,120 @@ Change the border style and color of a window.
 .border loot single #ffaa00 top bottom
 .border thoughts none
 ```
+
+---
+
+### `.createtabbed` / `.tabbedwindow`
+
+Create a new tabbed text window with multiple tabs for different streams.
+
+**Syntax:**
+```
+.createtabbed <window_name> <tab1:stream1,tab2:stream2,...>
+.tabbedwindow <window_name> <tab1:stream1,tab2:stream2,...>
+```
+
+**Parameters:**
+- `window_name` - Name for the new tabbed window
+- `tab1:stream1,...` - Comma-separated list of tab definitions in format `TabName:stream`
+
+**Examples:**
+```
+.createtabbed chat Speech:speech,Thoughts:thoughts,Whisper:whisper
+.createtabbed comms LNet:logons,Deaths:deaths,Arrivals:arrivals
+.tabbedwindow msgs Speech:speech,Whisper:whisper
+```
+
+**Notes:**
+- Creates a window with tabs at the top by default
+- Each tab routes to its specified stream
+- Click tabs to switch between them
+- Inactive tabs show `* ` prefix when they receive new messages
+- Window created at position (0,0) with default size 20x60
+- Use mouse to move and resize
+
+**See also:** `.addtab`, `.removetab`, `.switchtab`
+
+---
+
+### `.addtab`
+
+Add a new tab to an existing tabbed window.
+
+**Syntax:**
+```
+.addtab <window_name> <tab_name> <stream>
+```
+
+**Parameters:**
+- `window_name` - Name of the tabbed window
+- `tab_name` - Display name for the new tab
+- `stream` - Game stream to route to this tab
+
+**Examples:**
+```
+.addtab chat LNet logons
+.addtab comms Announcements announcements
+.addtab msgs Loot loot
+```
+
+**Notes:**
+- The tab appears immediately in the window
+- Stream routing is updated automatically
+- Cannot add duplicate tab names to the same window
+
+---
+
+### `.removetab`
+
+Remove a tab from a tabbed window.
+
+**Syntax:**
+```
+.removetab <window_name> <tab_name>
+```
+
+**Parameters:**
+- `window_name` - Name of the tabbed window
+- `tab_name` - Name of the tab to remove
+
+**Examples:**
+```
+.removetab chat LNet
+.removetab comms Arrivals
+```
+
+**Notes:**
+- Cannot remove the last tab from a window
+- If viewing the removed tab, switches to first remaining tab
+- Stream routing is updated automatically
+
+---
+
+### `.switchtab`
+
+Switch to a specific tab in a tabbed window.
+
+**Syntax:**
+```
+.switchtab <window_name> <tab_name|index>
+```
+
+**Parameters:**
+- `window_name` - Name of the tabbed window
+- `tab_name|index` - Either the tab name or 0-based index number
+
+**Examples:**
+```
+.switchtab chat Speech
+.switchtab chat 0
+.switchtab comms 2
+```
+
+**Notes:**
+- Tab indices are 0-based (first tab is 0)
+- Can also click tabs with mouse to switch
+- Clears unread indicator when switching to a tab
 
 ---
 

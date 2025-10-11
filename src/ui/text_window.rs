@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Paragraph, Widget},
 };
 use std::collections::VecDeque;
 use regex::Regex;
@@ -177,72 +177,12 @@ impl TextWindow {
         let mut current_line_len = 0;
 
         for (text, style) in spans {
-            // Process text character by character to preserve exact spacing
-            let mut chars = text.chars().peekable();
-            let mut word_buffer = String::new();
-
-            while let Some(ch) = chars.next() {
-                if ch.is_whitespace() {
-                    // Flush word buffer if we have one
-                    if !word_buffer.is_empty() {
-                        let word_len = word_buffer.len();
-
-                        // Check if we need to wrap before adding this word
-                        if current_line_len > 0 && current_line_len + 1 + word_len > width {
-                            // Wrap to new line
-                            result.push(WrappedLine {
-                                spans: current_line_spans.clone(),
-                            });
-                            current_line_spans.clear();
-                            current_line_len = 0;
-                        }
-
-                        // Add word to current line
-                        if current_line_len > 0 {
-                            // Check if word starts with punctuation (don't add space before punctuation)
-                            let needs_space = !word_buffer.starts_with(|c: char| c.is_ascii_punctuation());
-
-                            // Append to last span if same style
-                            if let Some((last_text, last_style)) = current_line_spans.last_mut() {
-                                if last_style == style {
-                                    if needs_space {
-                                        last_text.push(' ');
-                                    }
-                                    last_text.push_str(&word_buffer);
-                                } else {
-                                    if needs_space {
-                                        current_line_spans.push((format!(" {}", word_buffer), *style));
-                                    } else {
-                                        current_line_spans.push((word_buffer.clone(), *style));
-                                    }
-                                }
-                            } else {
-                                if needs_space {
-                                    current_line_spans.push((format!(" {}", word_buffer), *style));
-                                } else {
-                                    current_line_spans.push((word_buffer.clone(), *style));
-                                }
-                            }
-                            current_line_len += if needs_space { 1 } else { 0 } + word_len;
-                        } else {
-                            current_line_spans.push((word_buffer.clone(), *style));
-                            current_line_len += word_len;
-                        }
-                        word_buffer.clear();
-                    }
-                    // Skip trailing whitespace (don't add to output)
-                } else {
-                    word_buffer.push(ch);
-                }
-            }
-
-            // Flush any remaining word
-            if !word_buffer.is_empty() {
-                let word_len = word_buffer.len();
-                let needs_space = !word_buffer.starts_with(|c: char| c.is_ascii_punctuation());
-                let space_len = if needs_space { 1 } else { 0 };
-
-                if current_line_len > 0 && current_line_len + space_len + word_len > width {
+            // Simple approach: just add text as-is, preserving ALL spaces
+            // Only wrap if we exceed width
+            for ch in text.chars() {
+                // Check if adding this character would exceed width
+                if current_line_len >= width {
+                    // Wrap to new line
                     result.push(WrappedLine {
                         spans: current_line_spans.clone(),
                     });
@@ -250,32 +190,20 @@ impl TextWindow {
                     current_line_len = 0;
                 }
 
-                if current_line_len > 0 {
-                    if let Some((last_text, last_style)) = current_line_spans.last_mut() {
-                        if last_style == style {
-                            if needs_space {
-                                last_text.push(' ');
-                            }
-                            last_text.push_str(&word_buffer);
-                        } else {
-                            if needs_space {
-                                current_line_spans.push((format!(" {}", word_buffer), *style));
-                            } else {
-                                current_line_spans.push((word_buffer.clone(), *style));
-                            }
-                        }
+                // Add character to current line
+                if let Some((last_text, last_style)) = current_line_spans.last_mut() {
+                    if last_style == style {
+                        // Same style - append to last span
+                        last_text.push(ch);
                     } else {
-                        if needs_space {
-                            current_line_spans.push((format!(" {}", word_buffer), *style));
-                        } else {
-                            current_line_spans.push((word_buffer.clone(), *style));
-                        }
+                        // Different style - new span
+                        current_line_spans.push((ch.to_string(), *style));
                     }
-                    current_line_len += space_len + word_len;
                 } else {
-                    current_line_spans.push((word_buffer.clone(), *style));
-                    current_line_len += word_len;
+                    // First character on line
+                    current_line_spans.push((ch.to_string(), *style));
                 }
+                current_line_len += 1;
             }
         }
 
@@ -286,14 +214,17 @@ impl TextWindow {
             });
         }
 
-        // Handle empty line case
         if result.is_empty() {
-            result.push(WrappedLine {
-                spans: vec![("".to_string(), Style::default())],
-            });
+            // Return at least one empty line
+            result.push(WrappedLine { spans: vec![] });
         }
 
         result
+    }
+
+    pub fn update_inner_width(&mut self, width: u16) {
+        self.last_width = width;
+        // Note: No rewrapping needed - lines are already character-wrapped at exact width
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -472,7 +403,7 @@ impl TextWindow {
         current_match: Option<&SearchMatch>,
     ) -> Vec<Span> {
         // Build the full line text to know character positions
-        let full_text: String = wrapped.spans.iter()
+        let _full_text: String = wrapped.spans.iter()
             .map(|(text, _)| text.as_str())
             .collect();
 

@@ -2,7 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Widget},
 };
 
 /// An indicator widget for displaying boolean status or multi-level states

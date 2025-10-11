@@ -3,15 +3,15 @@
 ## High Priority Features
 
 ### Active Effects System (effectmon)
-- [ ] Create ActiveEffects widget for displaying active spells/buffs/debuffs
-  - [ ] Parse `<spell>` XML tags for active spells
-  - [ ] Parse buff/debuff indicators from game
-  - [ ] Display spell names with remaining duration
-  - [ ] Color-code by type (buff=green, debuff=red, utility=blue)
-  - [ ] Show cooldown timers for abilities
-  - [ ] Support multiple display modes (list, grid, compact)
+- [x] Create ActiveEffects widget for displaying active spells/buffs/debuffs
+  - [x] Parse `<spell>` XML tags for active spells
+  - [x] Parse buff/debuff indicators from game
+  - [x] Display spell names with remaining duration
+  - [x] Color-code by type (buff=green, debuff=red, utility=blue)
+  - [x] Show cooldown timers for abilities
+  - [x] Support multiple display modes (list, compact)
 
-- [ ] Create MissingSpells widget
+- [ ] Create MissingSpells widget (future enhancement)
   - [ ] Track known spell list per character/profession
   - [ ] Highlight missing defensive spells
   - [ ] Highlight missing offensive spells
@@ -66,16 +66,10 @@
 ## Parser Improvements
 
 ### XML Parser Enhancements
-- [ ] Fix blank line handling
-  - [ ] Preserve intentional blank lines (like from `mana` command output)
-  - [ ] Distinguish between XML artifact blanks and content blanks
-  - [ ] Add test cases for various blank line scenarios
-
-- [ ] Improve `<pushStream>` / prompt handling
-  - [ ] Track active stream destinations
-  - [ ] Skip duplicate prompts when thoughts stream is active
-  - [ ] Only show prompt in main if thoughts window doesn't exist
-  - [ ] Test with various stream combinations
+- [x] Improve `<pushStream>` / prompt handling
+  - [x] Track active stream destinations
+  - [x] Skip duplicate prompts after popStream
+  - [x] Works with all streams (thoughts, speech, etc.)
 
 - [ ] Add missing XML tag support
   - [ ] Parse `<spell>` tags for active effects
@@ -196,15 +190,17 @@
   - [ ] Learn from usage patterns
 
 ### Window Management
+- [x] Window groups/tabs
+  - [x] Tab similar windows together (tabbed text windows)
+  - [x] Switch between tabs (click or .switchtab)
+  - [x] Activity indicators on inactive tabs
+  - [x] Configurable tab colors
+  - [x] Tab reordering (.movetab)
+
 - [ ] Window snapping
   - [ ] Snap to edges when moving
   - [ ] Snap to other windows
   - [ ] Configurable snap distance
-
-- [ ] Window groups/tabs
-  - [ ] Tab similar windows together
-  - [ ] Switch between tabs
-  - [ ] Detach tabs to separate windows
 
 - [ ] Window presets
   - [ ] Save/load window arrangements
@@ -309,10 +305,8 @@
 ## Priority Levels
 
 **P0 - Critical (Do First)**
-- Active Effects widget (effectmon)
 - Target/Player widgets
 - Complete indicators
-- Parser improvements (blank lines, prompts)
 - Highlighting system
 
 **P1 - High Priority**

@@ -7,6 +7,7 @@ All widgets can be created using the `.createwindow <template>` command (or its 
 ## Table of Contents
 
 - [Text Windows](#text-windows)
+- [Tabbed Text Windows](#tabbed-text-windows)
 - [Progress Bars](#progress-bars)
 - [Countdown Timers](#countdown-timers)
 - [Compass](#compass)
@@ -259,6 +260,138 @@ Text windows display scrolling game text from specific streams. They support scr
 **Buffer Size:** 500 lines
 
 **Notes:** Useful for tracking what items you've picked up during hunting or looting sessions.
+
+---
+
+## Tabbed Text Windows
+
+Tabbed text windows combine multiple text streams into a single window with tabs, allowing you to switch between different streams (like thoughts, speech, whispers, etc.) in one location. Each tab acts as its own text window with activity indicators to show when inactive tabs receive new messages.
+
+### Creating Tabbed Windows
+
+Tabbed windows are created using the `.createtabbed` command:
+
+```
+.createtabbed chat Speech:speech,Thoughts:thoughts,Whisper:whisper
+```
+
+This creates a window named "chat" with three tabs:
+- **Speech** tab showing the `speech` stream
+- **Thoughts** tab showing the `thoughts` stream
+- **Whisper** tab showing the `whisper` stream
+
+**Default Size:** 20 rows x 60 cols
+
+**Features:**
+- Click on tabs to switch between them (mouse support)
+- Inactive tabs show unread indicator (`* ` prefix) when they receive new messages
+- Tab colors change based on state (active/inactive/unread)
+- Each tab maintains its own scrollback buffer
+- Tab bar can be positioned at top or bottom
+
+### Activity Indicators
+
+When you're viewing one tab and a message arrives in another tab, the inactive tab will:
+- Show a prefix (default: `* `) before the tab name
+- Change color to indicate unread status (default: white/bold)
+- Clear the indicator when you switch to that tab
+
+**Example:**
+```
+Thoughts | Speech | * Whisper
+```
+In this example, you're viewing the Thoughts tab, and the Whisper tab has unread messages.
+
+### Tab Management Commands
+
+**Add a new tab to an existing tabbed window:**
+```
+.addtab chat Announcements announcements
+```
+
+**Remove a tab:**
+```
+.removetab chat Announcements
+```
+
+**Switch to a specific tab (by name or index):**
+```
+.switchtab chat Speech
+.switchtab chat 0
+```
+
+### Configuration Options
+
+Tabbed windows can be customized in your `config.toml`:
+
+```toml
+[[ui.windows]]
+name = "chat"
+widget_type = "tabbed"
+streams = []  # Tabs handle their own streams
+row = 0
+col = 120
+rows = 24
+cols = 60
+buffer_size = 5000
+show_border = true
+title = "Chat"
+tab_bar_position = "top"  # or "bottom"
+tab_active_color = "#ffff00"  # Yellow for active tab
+tab_inactive_color = "#808080"  # Gray for inactive tabs
+tab_unread_color = "#ffffff"  # White/bold for unread tabs
+tab_unread_prefix = "* "  # Prefix shown on tabs with unread
+
+[[ui.windows.tabs]]
+name = "Speech"
+stream = "speech"
+
+[[ui.windows.tabs]]
+name = "Thoughts"
+stream = "thoughts"
+
+[[ui.windows.tabs]]
+name = "Whisper"
+stream = "whisper"
+```
+
+**Configuration Fields:**
+- `widget_type` - Must be `"tabbed"`
+- `streams` - Leave empty (tabs manage their own streams)
+- `tab_bar_position` - `"top"` or `"bottom"` (default: `"top"`)
+- `tab_active_color` - Hex color for the active tab (default: yellow)
+- `tab_inactive_color` - Hex color for inactive tabs (default: gray)
+- `tab_unread_color` - Hex color for tabs with unread messages (default: white)
+- `tab_unread_prefix` - Text shown before tab name when it has unread (default: `"* "`)
+
+**Each tab is defined with:**
+- `name` - Display name shown in the tab bar
+- `stream` - Game stream that routes to this tab
+
+### Use Cases
+
+**Communication Hub:**
+```
+.createtabbed chat Speech:speech,Thoughts:thoughts,Whisper:whisper,LNet:logons
+```
+Combines all communication streams into one window.
+
+**Combat and Tracking:**
+```
+.createtabbed combat Main:main,Deaths:deaths,Arrivals:arrivals
+```
+Switch between main combat view and tracking arrivals/deaths.
+
+**Custom Stream Organization:**
+Create any combination of streams that makes sense for your workflow. Tabbed windows work with any text stream from the game.
+
+### Notes
+
+- Stream routing: Once a stream is assigned to a tabbed window, it will no longer route to its standalone window
+- Scrollback: Each tab maintains its own scrollback buffer (configured via `buffer_size`)
+- Mouse support: Click tabs to switch, drag title bar to move, drag edges to resize
+- Dynamic management: Add or remove tabs on the fly without recreating the window
+- Multiple tabbed windows: You can have multiple tabbed windows for different purposes
 
 ---
 

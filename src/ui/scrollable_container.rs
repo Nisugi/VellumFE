@@ -1,4 +1,4 @@
-use ratatui::{buffer::Buffer, layout::Rect, widgets::Block, widgets::Borders, widgets::Widget};
+use ratatui::{buffer::Buffer, layout::Rect, widgets::Block, widgets::Widget};
 use super::progress_bar::ProgressBar;
 use std::collections::HashMap;
 
@@ -259,6 +259,7 @@ impl ScrollableContainer {
                 pb.set_transparent_background(self.transparent_background);
                 pb.set_border_config(false, None, None);
                 pb.set_display_options(self.show_values, self.show_percentage);
+                pb.set_text_alignment(crate::ui::TextAlignment::Left);  // Left-align for effect lists
 
                 // Render this progress bar in its row
                 let row_area = Rect {

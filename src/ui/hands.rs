@@ -2,7 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, BorderType},
+    widgets::{Block, BorderType},
 };
 
 /// Hands widget showing left/right/spell hand contents

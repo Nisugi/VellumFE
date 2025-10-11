@@ -40,6 +40,7 @@ pub struct App {
     running: bool,
     prompt_shown: bool, // Track if we've shown a prompt since last real text
     current_stream: String, // Track which stream we're currently writing to
+    skip_next_prompt: bool, // Skip the next prompt (after returning from a non-main stream)
     focused_window_index: usize, // Index of currently focused window for scrolling
     mouse_mode_enabled: bool, // Whether mouse features are enabled (vs text selection)
     resize_state: Option<ResizeState>, // Track active resize operation
@@ -124,6 +125,12 @@ impl App {
                 dashboard_hide_inactive: w.dashboard_hide_inactive,
                 visible_count: w.visible_count,
                 effect_category: w.effect_category.clone(),
+                tabs: w.tabs.clone(),
+                tab_bar_position: w.tab_bar_position.clone(),
+                tab_active_color: w.tab_active_color.clone(),
+                tab_inactive_color: w.tab_inactive_color.clone(),
+                tab_unread_color: w.tab_unread_color.clone(),
+                tab_unread_prefix: w.tab_unread_prefix.clone(),
             })
             .collect();
 
@@ -158,9 +165,20 @@ impl App {
 
         debug!("Loaded {} keybindings", keybind_map.len());
 
+        // Create command input with config
+        let mut command_input = CommandInput::new(100);
+        command_input.set_border_config(
+            config.ui.command_input.show_border,
+            config.ui.command_input.border_style.clone(),
+            config.ui.command_input.border_color.clone(),
+        );
+        if let Some(title) = &config.ui.command_input.title {
+            command_input.set_title(title.clone());
+        }
+
         Ok(Self {
             window_manager: WindowManager::new(window_configs),
-            command_input: CommandInput::new(100),
+            command_input,
             search_input: CommandInput::new(50),  // Smaller history for search
             parser: XmlParser::with_presets(presets),
             keybind_map,
@@ -168,6 +186,7 @@ impl App {
             running: true,
             prompt_shown: false,
             current_stream: "main".to_string(),
+            skip_next_prompt: false,
             focused_window_index: 0, // Start with first window focused
             mouse_mode_enabled: false, // Start with mouse mode off (text selection enabled)
             resize_state: None, // No active resize initially
@@ -194,6 +213,62 @@ impl App {
         self.window_manager
             .get_window(&window_name)
             .expect("Window must exist")
+    }
+
+    /// Add text to the appropriate window/tab for the current stream
+    fn add_text_to_current_stream(&mut self, text: StyledText) {
+        let stream = self.current_stream.clone();
+
+        // Find which window this stream maps to
+        let window_name = self.window_manager
+            .stream_map
+            .get(&stream)
+            .cloned()
+            .unwrap_or_else(|| "main".to_string());
+
+        // Get the window
+        if let Some(widget) = self.window_manager.get_window(&window_name) {
+            match widget {
+                Widget::Tabbed(tabbed) => {
+                    // Route to specific tab based on stream
+                    tabbed.add_text_to_stream(&stream, text);
+                }
+                Widget::Text(text_window) => {
+                    text_window.add_text(text);
+                }
+                _ => {
+                    // Other widget types don't support text
+                }
+            }
+        }
+    }
+
+    /// Finish the current line in the appropriate window/tab
+    fn finish_current_line(&mut self, inner_width: u16) {
+        let stream = self.current_stream.clone();
+
+        // Find which window this stream maps to
+        let window_name = self.window_manager
+            .stream_map
+            .get(&stream)
+            .cloned()
+            .unwrap_or_else(|| "main".to_string());
+
+        // Get the window
+        if let Some(widget) = self.window_manager.get_window(&window_name) {
+            match widget {
+                Widget::Tabbed(tabbed) => {
+                    // Finish line for specific tab based on stream
+                    tabbed.finish_line_for_stream(&stream, inner_width);
+                }
+                Widget::Text(text_window) => {
+                    text_window.finish_line(inner_width);
+                }
+                _ => {
+                    // Other widget types don't support text
+                }
+            }
+        }
     }
 
     /// Get the focused window for scrolling
@@ -322,6 +397,12 @@ impl App {
                 dashboard_hide_inactive: w.dashboard_hide_inactive,
                 visible_count: w.visible_count,
                 effect_category: w.effect_category.clone(),
+                tabs: w.tabs.clone(),
+                tab_bar_position: w.tab_bar_position.clone(),
+                tab_active_color: w.tab_active_color.clone(),
+                tab_inactive_color: w.tab_inactive_color.clone(),
+                tab_unread_color: w.tab_unread_color.clone(),
+                tab_unread_prefix: w.tab_unread_prefix.clone(),
             })
             .collect();
 
@@ -577,11 +658,312 @@ impl App {
                     dashboard_hide_inactive: None,
                     visible_count: None,
                     effect_category: None,
+                    tabs: None,
+                    tab_bar_position: None,
+                    tab_active_color: None,
+                    tab_inactive_color: None,
+                    tab_unread_color: None,
+                    tab_unread_prefix: None,
                 };
 
                 self.config.ui.windows.push(window_def);
                 self.update_window_manager_config();
                 self.add_system_message(&format!("Created custom window '{}' - use mouse to move/resize", window_name));
+            }
+            "createtabbed" | "tabbedwindow" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .createtabbed <name> <tab1:stream1,tab2:stream2,...>");
+                    self.add_system_message("Example: .createtabbed chat Speech:speech,Thoughts:thoughts,Whisper:whisper");
+                    self.add_system_message("Creates a tabbed window with specified tabs");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let tabs_str = parts[2];
+
+                // Check if window already exists
+                if self.config.ui.windows.iter().any(|w| w.name == window_name) {
+                    self.add_system_message(&format!("Window '{}' already exists", window_name));
+                    return;
+                }
+
+                // Parse tab definitions: "TabName:stream,TabName2:stream2"
+                use crate::config::{WindowDef, TabConfig};
+                let mut tabs = Vec::new();
+                for tab_def in tabs_str.split(',') {
+                    let tab_parts: Vec<&str> = tab_def.split(':').collect();
+                    if tab_parts.len() != 2 {
+                        self.add_system_message(&format!("Invalid tab format: '{}' (expected name:stream)", tab_def));
+                        return;
+                    }
+                    tabs.push(TabConfig {
+                        name: tab_parts[0].trim().to_string(),
+                        stream: tab_parts[1].trim().to_string(),
+                    });
+                }
+
+                if tabs.is_empty() {
+                    self.add_system_message("Error: At least one tab required");
+                    return;
+                }
+
+                let window_def = WindowDef {
+                    name: window_name.to_string(),
+                    widget_type: "tabbed".to_string(),
+                    streams: vec![],  // Tabs handle their own streams
+                    row: 0,
+                    col: 0,
+                    rows: 20,
+                    cols: 60,
+                    buffer_size: 5000,
+                    show_border: true,
+                    border_style: Some("rounded".to_string()),
+                    border_color: None,
+                    border_sides: None,
+                    title: Some(window_name.to_string()),
+                    bar_color: None,
+                    bar_background_color: None,
+                    transparent_background: true,
+                    indicator_colors: None,
+                    dashboard_layout: None,
+                    dashboard_indicators: None,
+                    dashboard_spacing: None,
+                    dashboard_hide_inactive: None,
+                    visible_count: None,
+                    effect_category: None,
+                    tabs: Some(tabs.clone()),
+                    tab_bar_position: Some("top".to_string()),
+                    tab_active_color: Some("#ffff00".to_string()),
+                    tab_inactive_color: Some("#808080".to_string()),
+                    tab_unread_color: Some("#ffffff".to_string()),
+                    tab_unread_prefix: Some("* ".to_string()),
+                };
+
+                self.config.ui.windows.push(window_def);
+                self.update_window_manager_config();
+
+                let tab_names: Vec<String> = tabs.iter().map(|t| t.name.clone()).collect();
+                self.add_system_message(&format!("Created tabbed window '{}' with tabs: {}", window_name, tab_names.join(", ")));
+                self.add_system_message("Use mouse to move/resize, click tabs to switch");
+            }
+            "addtab" => {
+                if parts.len() < 4 {
+                    self.add_system_message("Usage: .addtab <window> <tab_name> <stream>");
+                    self.add_system_message("Example: .addtab chat LNet logons");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let tab_name = parts[2];
+                let stream_name = parts[3];
+
+                // Find the window
+                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                    if window_def.widget_type != "tabbed" {
+                        self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
+                        return;
+                    }
+
+                    // Initialize tabs vec if needed
+                    if window_def.tabs.is_none() {
+                        window_def.tabs = Some(Vec::new());
+                    }
+
+                    // Check if tab already exists
+                    if let Some(ref tabs) = window_def.tabs {
+                        if tabs.iter().any(|t| t.name == tab_name) {
+                            self.add_system_message(&format!("Tab '{}' already exists in window '{}'", tab_name, window_name));
+                            return;
+                        }
+                    }
+
+                    // Add the tab
+                    use crate::config::TabConfig;
+                    if let Some(ref mut tabs) = window_def.tabs {
+                        tabs.push(TabConfig {
+                            name: tab_name.to_string(),
+                            stream: stream_name.to_string(),
+                        });
+                    }
+
+                    self.update_window_manager_config();
+                    self.add_system_message(&format!("Added tab '{}' (stream: {}) to window '{}'", tab_name, stream_name, window_name));
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "removetab" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .removetab <window> <tab_name>");
+                    self.add_system_message("Example: .removetab chat LNet");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let tab_name = parts[2];
+
+                // Find the window
+                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                    if window_def.widget_type != "tabbed" {
+                        self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
+                        return;
+                    }
+
+                    if let Some(ref mut tabs) = window_def.tabs {
+                        let initial_len = tabs.len();
+                        if initial_len <= 1 {
+                            self.add_system_message("Cannot remove last tab from window");
+                            return;
+                        }
+
+                        tabs.retain(|t| t.name != tab_name);
+
+                        if tabs.len() < initial_len {
+                            self.update_window_manager_config();
+                            self.add_system_message(&format!("Removed tab '{}' from window '{}'", tab_name, window_name));
+                        } else {
+                            self.add_system_message(&format!("Tab '{}' not found in window '{}'", tab_name, window_name));
+                        }
+                    } else {
+                        self.add_system_message(&format!("Window '{}' has no tabs", window_name));
+                    }
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "switchtab" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .switchtab <window> <tab_name|index>");
+                    self.add_system_message("Example: .switchtab chat Speech  OR  .switchtab chat 0");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let tab_identifier = parts[2];
+
+                // Find the window widget
+                if let Some(widget) = self.window_manager.get_window(window_name) {
+                    if let Widget::Tabbed(tabbed) = widget {
+                        // Try parsing as index first
+                        if let Ok(index) = tab_identifier.parse::<usize>() {
+                            tabbed.switch_to_tab(index);
+                            self.add_system_message(&format!("Switched to tab #{} in window '{}'", index, window_name));
+                        } else {
+                            // Try by name
+                            tabbed.switch_to_tab_by_name(tab_identifier);
+                            self.add_system_message(&format!("Switched to tab '{}' in window '{}'", tab_identifier, window_name));
+                        }
+                    } else {
+                        self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
+                    }
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "tabcolors" | "settabcolors" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .tabcolors <window> <active_color> [unread_color] [inactive_color]");
+                    self.add_system_message("Example: .tabcolors chat #ffff00 #ffffff #808080");
+                    self.add_system_message("Sets colors for active tab, unread tabs, and inactive tabs");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let active_color = parts[2];
+                let unread_color = parts.get(3).copied();
+                let inactive_color = parts.get(4).copied();
+
+                // Find the window config
+                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                    if window_def.widget_type != "tabbed" {
+                        self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
+                        return;
+                    }
+
+                    // Update colors in config
+                    window_def.tab_active_color = Some(active_color.to_string());
+                    if let Some(color) = unread_color {
+                        window_def.tab_unread_color = Some(color.to_string());
+                    }
+                    if let Some(color) = inactive_color {
+                        window_def.tab_inactive_color = Some(color.to_string());
+                    }
+
+                    // Update the widget
+                    if let Some(widget) = self.window_manager.get_window(window_name) {
+                        if let Widget::Tabbed(tabbed) = widget {
+                            tabbed.set_tab_active_color(active_color.to_string());
+                            if let Some(color) = unread_color {
+                                tabbed.set_tab_unread_color(color.to_string());
+                            }
+                            if let Some(color) = inactive_color {
+                                tabbed.set_tab_inactive_color(color.to_string());
+                            }
+                        }
+                    }
+
+                    let mut msg = format!("Set tab active color to {} for window '{}'", active_color, window_name);
+                    if let Some(color) = unread_color {
+                        msg.push_str(&format!(", unread to {}", color));
+                    }
+                    if let Some(color) = inactive_color {
+                        msg.push_str(&format!(", inactive to {}", color));
+                    }
+                    self.add_system_message(&msg);
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "movetab" | "reordertab" => {
+                if parts.len() < 4 {
+                    self.add_system_message("Usage: .movetab <window> <tab_name> <new_position>");
+                    self.add_system_message("Example: .movetab chat Speech 0");
+                    self.add_system_message("Moves tab to new position (0-based index)");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let tab_name = parts[2];
+                let new_position: usize = match parts[3].parse() {
+                    Ok(pos) => pos,
+                    Err(_) => {
+                        self.add_system_message("Error: Position must be a number");
+                        return;
+                    }
+                };
+
+                // Find the window config
+                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                    if window_def.widget_type != "tabbed" {
+                        self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
+                        return;
+                    }
+
+                    if let Some(ref mut tabs) = window_def.tabs {
+                        // Find the tab by name
+                        if let Some(current_index) = tabs.iter().position(|t| t.name == tab_name) {
+                            let tab_count = tabs.len();
+                            if new_position >= tab_count {
+                                self.add_system_message(&format!("Error: Position {} is out of range (0-{})", new_position, tab_count - 1));
+                                return;
+                            }
+
+                            // Remove tab from current position and insert at new position
+                            let tab = tabs.remove(current_index);
+                            tabs.insert(new_position, tab);
+
+                            // Update window manager
+                            self.update_window_manager_config();
+                            self.add_system_message(&format!("Moved tab '{}' to position {} in window '{}'", tab_name, new_position, window_name));
+                        } else {
+                            self.add_system_message(&format!("Tab '{}' not found in window '{}'", tab_name, window_name));
+                        }
+                    } else {
+                        self.add_system_message(&format!("Window '{}' has no tabs", window_name));
+                    }
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
             }
             "deletewindow" | "deletewin" => {
                 if parts.len() < 2 {
@@ -1111,7 +1493,8 @@ impl App {
             // Update window widths based on terminal size
             let terminal_size = terminal.size()?;
             let terminal_rect = ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height);
-            let layout = UiLayout::calculate(terminal_rect);
+            let cmd_cfg = &self.config.ui.command_input;
+            let layout = UiLayout::calculate(terminal_rect, cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width);
 
             // Calculate window layouts using proportional sizing
             let window_layouts = self.window_manager.calculate_layout(layout.main_area);
@@ -1122,7 +1505,8 @@ impl App {
             terminal.draw(|f| {
                 let ui_render_start = std::time::Instant::now();
 
-                let layout = UiLayout::calculate(f.area());
+                let cmd_cfg = &self.config.ui.command_input;
+                let layout = UiLayout::calculate(f.area(), cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width);
                 let window_layouts = self.window_manager.calculate_layout(layout.main_area);
 
                 // Render all windows in order with focus indicator
@@ -1427,7 +1811,7 @@ impl App {
                         let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
 
                         // Add ">" with prompt color
-                        self.get_current_window().add_text(StyledText {
+                        self.add_text_to_current_stream(StyledText {
                             content: ">".to_string(),
                             fg: Some(prompt_color),
                             bg: None,
@@ -1435,7 +1819,7 @@ impl App {
                         });
 
                         // Add command with echo color
-                        self.get_current_window().add_text(StyledText {
+                        self.add_text_to_current_stream(StyledText {
                             content: command.clone(),
                             fg: echo_color,
                             bg: None,
@@ -1445,7 +1829,7 @@ impl App {
                         // Finish the line so command appears before server response
                         if let Ok(size) = crossterm::terminal::size() {
                             let inner_width = size.0.saturating_sub(2);
-                            self.get_current_window().finish_line(inner_width);
+                            self.finish_current_line(inner_width);
                         }
 
                         // Reset prompt_shown so next prompt will display
@@ -1570,14 +1954,14 @@ impl App {
 
                     let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
 
-                    self.get_current_window().add_text(StyledText {
+                    self.add_text_to_current_stream(StyledText {
                         content: ">".to_string(),
                         fg: Some(prompt_color),
                         bg: None,
                         bold: false,
                     });
 
-                    self.get_current_window().add_text(StyledText {
+                    self.add_text_to_current_stream(StyledText {
                         content: display_text,
                         fg: echo_color,
                         bg: None,
@@ -1587,7 +1971,7 @@ impl App {
                     // Finish the line
                     if let Ok(size) = crossterm::terminal::size() {
                         let inner_width = size.0.saturating_sub(2);
-                        self.get_current_window().finish_line(inner_width);
+                        self.finish_current_line(inner_width);
                     }
 
                     // Reset prompt_shown so next prompt will display
@@ -1645,6 +2029,38 @@ impl App {
                             {
                                 self.focused_window_index = idx;
                                 debug!("Clicked window '{}' (index {})", name, idx);
+
+                                // Check if this is a tabbed window and if we clicked on a tab
+                                if let Some(widget) = self.window_manager.get_window(name) {
+                                    if let Widget::Tabbed(tabbed) = widget {
+                                        // Calculate tab bar position (inside border)
+                                        let inner_y = if tabbed.has_border() { rect.y + 1 } else { rect.y };
+                                        let tab_bar_y = inner_y; // Tab bar is first line inside border
+
+                                        // Check if click was on tab bar row
+                                        if mouse.row == tab_bar_y {
+                                            let inner_x = if tabbed.has_border() { rect.x + 1 } else { rect.x };
+                                            let inner_width = if tabbed.has_border() {
+                                                rect.width.saturating_sub(2)
+                                            } else {
+                                                rect.width
+                                            };
+
+                                            let tab_bar_rect = ratatui::layout::Rect {
+                                                x: inner_x,
+                                                y: tab_bar_y,
+                                                width: inner_width,
+                                                height: 1,
+                                            };
+
+                                            if let Some(tab_idx) = tabbed.get_tab_at_position(mouse.column, tab_bar_rect) {
+                                                debug!("Clicked tab {} in window '{}'", tab_idx, name);
+                                                tabbed.switch_to_tab(tab_idx);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 break;
                             }
                         }
@@ -1759,6 +2175,22 @@ impl App {
                 // Track network bytes received
                 self.perf_stats.record_bytes_received(line.len() as u64);
 
+                // Handle empty lines BEFORE parsing (like ProfanityFE)
+                // Empty lines should create blank display lines
+                if line.is_empty() {
+                    self.add_text_to_current_stream(StyledText {
+                        content: String::new(),
+                        fg: None,
+                        bg: None,
+                        bold: false,
+                    });
+                    if let Ok(size) = crossterm::terminal::size() {
+                        let inner_width = size.0.saturating_sub(2);
+                        self.finish_current_line(inner_width);
+                    }
+                    return;
+                }
+
                 // Parse XML and add to window (with timing)
                 let parse_start = std::time::Instant::now();
                 let elements = self.parser.parse_line(&line);
@@ -1776,22 +2208,18 @@ impl App {
                 });
                 let _has_prompt = elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. }));
 
-                // Track if we actually added anything to display
-                let mut added_content = false;
-
                 for element in elements {
                     match element {
                         ParsedElement::Text { content, fg_color, bg_color, bold, .. } => {
-                            // Add text even if empty or only whitespace (preserves leading spaces and blank lines)
-                            // Don't use trim() here - it would strip leading spaces that matter for formatting
+                            // Add text - preserve leading/trailing spaces but skip truly empty content
+                            // (empty lines are handled before parsing)
                             if !content.is_empty() {
-                                self.get_current_window().add_text(StyledText {
+                                self.add_text_to_current_stream(StyledText {
                                     content: content.clone(),
                                     fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
                                     bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
                                     bold,
                                 });
-                                added_content = true;
                                 // Reset prompt_shown flag when we see actual text content (not just whitespace)
                                 if !content.trim().is_empty() {
                                     self.prompt_shown = false;
@@ -1799,6 +2227,13 @@ impl App {
                             }
                         }
                         ParsedElement::Prompt { text, .. } => {
+                            // Skip this prompt if we just returned from a non-main stream
+                            if self.skip_next_prompt {
+                                debug!("Skipping prompt after stream pop");
+                                self.skip_next_prompt = false;
+                                continue;
+                            }
+
                             // Show prompt if:
                             // 1. Line has text (show prompt after text), OR
                             // 2. Line has no text AND we haven't shown a prompt yet since last text
@@ -1823,25 +2258,38 @@ impl App {
                                             Color::DarkGray
                                         });
 
-                                    self.get_current_window().add_text(StyledText {
+                                    self.add_text_to_current_stream(StyledText {
                                         content: char_str,
                                         fg: Some(color),
                                         bg: None,
                                         bold: false,
                                     });
                                 }
-                                added_content = true;
                                 self.prompt_shown = true;
                             }
                         }
                         ParsedElement::StreamPush { id } => {
                             // Switch to new stream
                             debug!("Pushing stream: {}", id);
-                            self.current_stream = id;
+                            self.current_stream = id.clone();
                         }
                         ParsedElement::StreamPop => {
                             // Return to main stream
                             debug!("Popping stream, returning to main");
+
+                            // Only skip the next prompt if the stream was routed to a non-main window
+                            // If the stream fell back to main (no dedicated window), keep the prompt
+                            let stream_window = self.window_manager
+                                .stream_map
+                                .get(&self.current_stream)
+                                .cloned()
+                                .unwrap_or_else(|| "main".to_string());
+
+                            if stream_window != "main" {
+                                // Stream was routed elsewhere, skip the duplicate prompt
+                                self.skip_next_prompt = true;
+                            }
+
                             self.current_stream = "main".to_string();
                         }
                         ParsedElement::ProgressBar { id, value, max, text } => {
@@ -2074,22 +2522,18 @@ impl App {
                     }
                 }
 
-                // Finish the line after processing all elements from this server line
-                // This preserves blank lines when the server sends empty lines
-                // (like ProfanityFE does with add_string(String.new))
-                if added_content || line.trim().is_empty() {
-                    // Get current terminal width for wrapping
-                    if let Ok(size) = crossterm::terminal::size() {
-                        let inner_width = size.0.saturating_sub(2); // Account for borders
-                        self.get_current_window().finish_line(inner_width);
-                    }
+                // ALWAYS finish the line after processing a server line
+                // Each TCP line from server = one display line (like ProfanityFE)
+                if let Ok(size) = crossterm::terminal::size() {
+                    let inner_width = size.0.saturating_sub(2);
+                    self.finish_current_line(inner_width);
                 }
             }
         }
     }
 
     fn add_system_message(&mut self, msg: &str) {
-        self.get_current_window().add_text(StyledText {
+        self.add_text_to_current_stream(StyledText {
             content: format!("*** {} ***", msg),
             fg: Some(Color::Yellow),
             bg: None,
@@ -2098,7 +2542,7 @@ impl App {
         // Finish the line
         if let Ok(size) = crossterm::terminal::size() {
             let inner_width = size.0.saturating_sub(2);
-            self.get_current_window().finish_line(inner_width);
+            self.finish_current_line(inner_width);
         }
     }
 

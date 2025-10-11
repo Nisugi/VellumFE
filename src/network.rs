@@ -52,9 +52,9 @@ impl LichConnection {
                         break;
                     }
                     Ok(_) => {
-                        if !line.trim().is_empty() {
-                            let _ = server_tx_clone.send(ServerMessage::Text(line));
-                        }
+                        // Strip only the trailing newline, preserve blank lines
+                        let line = line.trim_end_matches(&['\r', '\n']);
+                        let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
                     }
                     Err(e) => {
                         error!("Error reading from server: {}", e);
