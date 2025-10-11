@@ -24,6 +24,7 @@ toml = "0.8"
 
 # Text processing
 regex = "1.11"
+aho-corasick = "1.1"
 unicode-width = "0.2"
 
 # Utilities

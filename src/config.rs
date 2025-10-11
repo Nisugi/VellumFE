@@ -226,6 +226,10 @@ pub struct HighlightPattern {
     pub bg: Option<String>,
     #[serde(default)]
     pub bold: bool,
+    #[serde(default)]
+    pub color_entire_line: bool,  // If true, apply colors to entire line, not just matched text
+    #[serde(default)]
+    pub fast_parse: bool,  // If true, split pattern on | and use Aho-Corasick for literal matching
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2497,11 +2501,41 @@ impl Default for Config {
                 PresetColor { id: "thought".to_string(), fg: Some("#FF8080".to_string()), bg: None },
             ],
             highlights: vec![
+                // Example: Fast highlight for multiple player names (ultra-fast with Aho-Corasick)
+                HighlightPattern {
+                    pattern: "Alice|Bob|Charlie|David|Eve|Frank".to_string(),
+                    fg: Some("#ff00ff".to_string()),
+                    bg: None,
+                    bold: true,
+                    color_entire_line: false,
+                    fast_parse: true,  // Enables Aho-Corasick for blazing speed
+                },
+                // Example: Highlight your combat actions in red (partial line, regex)
                 HighlightPattern {
                     pattern: r"You swing.*".to_string(),
                     fg: Some("#ff0000".to_string()),
                     bg: None,
                     bold: true,
+                    color_entire_line: false,
+                    fast_parse: false,
+                },
+                // Example: Highlight damage numbers in yellow (partial line, regex)
+                HighlightPattern {
+                    pattern: r"\d+ points? of damage".to_string(),
+                    fg: Some("#ffff00".to_string()),
+                    bg: None,
+                    bold: true,
+                    color_entire_line: false,
+                    fast_parse: false,
+                },
+                // Example: Highlight death messages with bright background (whole line, regex)
+                HighlightPattern {
+                    pattern: r".*dies.*".to_string(),
+                    fg: Some("#ffffff".to_string()),
+                    bg: Some("#ff0000".to_string()),
+                    bold: true,
+                    color_entire_line: true,
+                    fast_parse: false,
                 },
             ],
             keybinds: default_keybinds(),

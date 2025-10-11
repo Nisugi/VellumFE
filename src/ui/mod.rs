@@ -16,7 +16,7 @@ mod performance_stats;
 mod targets;
 mod players;
 
-pub use text_window::{TextWindow, StyledText};
+pub use text_window::{TextWindow, StyledText, SpanType};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
 pub use command_input::CommandInput;
 pub use window_manager::{WindowManager, WindowConfig, Widget};

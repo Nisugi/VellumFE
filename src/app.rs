@@ -2,7 +2,7 @@ use crate::config::{Config, KeyAction, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
-use crate::ui::{CommandInput, PerformanceStatsWidget, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
+use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -178,7 +178,7 @@ impl App {
         }
 
         Ok(Self {
-            window_manager: WindowManager::new(window_configs),
+            window_manager: WindowManager::new(window_configs, config.highlights.clone()),
             command_input,
             search_input: CommandInput::new(50),  // Smaller history for search
             parser: XmlParser::with_presets(presets),
@@ -1818,6 +1818,7 @@ impl App {
                             fg: Some(prompt_color),
                             bg: None,
                             bold: false,
+                            span_type: SpanType::Normal,
                         });
 
                         // Add command with echo color
@@ -1826,6 +1827,7 @@ impl App {
                             fg: echo_color,
                             bg: None,
                             bold: false,
+                            span_type: SpanType::Normal,
                         });
 
                         // Finish the line so command appears before server response
@@ -1961,6 +1963,7 @@ impl App {
                         fg: Some(prompt_color),
                         bg: None,
                         bold: false,
+                        span_type: SpanType::Normal,
                     });
 
                     self.add_text_to_current_stream(StyledText {
@@ -1968,6 +1971,7 @@ impl App {
                         fg: echo_color,
                         bg: None,
                         bold: false,
+                        span_type: SpanType::Normal,
                     });
 
                     // Finish the line
@@ -2185,6 +2189,7 @@ impl App {
                         fg: None,
                         bg: None,
                         bold: false,
+                        span_type: SpanType::Normal,
                     });
                     if let Ok(size) = crossterm::terminal::size() {
                         let inner_width = size.0.saturating_sub(2);
@@ -2212,7 +2217,7 @@ impl App {
 
                 for element in elements {
                     match element {
-                        ParsedElement::Text { content, fg_color, bg_color, bold, .. } => {
+                        ParsedElement::Text { content, fg_color, bg_color, bold, span_type, .. } => {
                             // Special handling for target/player streams
                             match self.current_stream.as_str() {
                                 "targetcount" => {
@@ -2245,6 +2250,7 @@ impl App {
                                             fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
                                             bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
                                             bold,
+                                            span_type,
                                         });
                                         // Reset prompt_shown flag when we see actual text content (not just whitespace)
                                         if !content.trim().is_empty() {
@@ -2291,6 +2297,7 @@ impl App {
                                         fg: Some(color),
                                         bg: None,
                                         bold: false,
+                                        span_type: SpanType::Normal,
                                     });
                                 }
                                 self.prompt_shown = true;
@@ -2599,6 +2606,7 @@ impl App {
             fg: Some(Color::Yellow),
             bg: None,
             bold: true,
+            span_type: SpanType::Normal,
         });
         // Finish the line
         if let Ok(size) = crossterm::terminal::size() {

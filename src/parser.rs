@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::collections::HashMap;
+use crate::ui::SpanType;
 
 #[derive(Debug, Clone)]
 pub enum ParsedElement {
@@ -9,6 +10,7 @@ pub enum ParsedElement {
         fg_color: Option<String>,
         bg_color: Option<String>,
         bold: bool,
+        span_type: SpanType,
     },
     Prompt {
         time: String,
@@ -109,6 +111,10 @@ pub struct XmlParser {
     preset_stack: Vec<ColorStyle>,
     style_stack: Vec<ColorStyle>,
     bold_stack: Vec<bool>,
+
+    // Semantic type tracking
+    link_depth: usize,      // Track nested links
+    spell_depth: usize,     // Track nested spells
 }
 
 impl XmlParser {
@@ -131,6 +137,8 @@ impl XmlParser {
             preset_stack: vec![],
             style_stack: vec![],
             bold_stack: vec![],
+            link_depth: 0,
+            spell_depth: 0,
         }
     }
 
@@ -674,7 +682,10 @@ impl XmlParser {
 
     fn handle_link_open(&mut self, tag: &str) {
         // <a exist="..." noun="..."> - apply links preset color
-        // But don't apply if we're inside monsterbold (bold has priority)
+        // Track link depth for semantic type
+        self.link_depth += 1;
+
+        // But don't apply color if we're inside monsterbold (bold has priority)
         if !self.bold_stack.is_empty() {
             return;
         }
@@ -703,7 +714,12 @@ impl XmlParser {
     }
 
     fn handle_link_close(&mut self) {
-        // Only pop if we're not inside monsterbold (matching handle_link_open behavior)
+        // Decrease link depth
+        if self.link_depth > 0 {
+            self.link_depth -= 1;
+        }
+
+        // Only pop color if we're not inside monsterbold (matching handle_link_open behavior)
         if self.bold_stack.is_empty() && !self.color_stack.is_empty() {
             self.color_stack.pop();
         }
@@ -756,12 +772,25 @@ impl XmlParser {
         // Decode HTML entities
         let content = self.decode_entities(&content);
 
+        // Determine semantic type based on current state
+        // Priority: Monsterbold > Spell > Link > Normal
+        let span_type = if !self.bold_stack.is_empty() {
+            SpanType::Monsterbold
+        } else if self.spell_depth > 0 {
+            SpanType::Spell
+        } else if self.link_depth > 0 {
+            SpanType::Link
+        } else {
+            SpanType::Normal
+        };
+
         ParsedElement::Text {
             content,
             stream: self.current_stream.clone(),
             fg_color: fg,
             bg_color: bg,
             bold,
+            span_type,
         }
     }
 

@@ -424,10 +424,11 @@ pub struct WindowManager {
     windows: HashMap<String, Widget>,
     config: Vec<WindowConfig>,
     pub stream_map: HashMap<String, String>, // stream name -> window name (public for routing)
+    highlights: Vec<crate::config::HighlightPattern>, // Highlight patterns for text windows
 }
 
 impl WindowManager {
-    pub fn new(configs: Vec<WindowConfig>) -> Self {
+    pub fn new(configs: Vec<WindowConfig>, highlights: Vec<crate::config::HighlightPattern>) -> Self {
         let mut windows = HashMap::new();
         let mut stream_map = HashMap::new();
 
@@ -665,12 +666,14 @@ impl WindowManager {
                 }
                 _ => {
                     // Default to text window
-                    let text_window = TextWindow::new(&title, config.buffer_size)
+                    let mut text_window = TextWindow::new(&title, config.buffer_size)
                         .with_border_config(
                             config.show_border,
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    // Set highlights
+                    text_window.set_highlights(highlights.clone());
                     Widget::Text(text_window)
                 }
             };
@@ -696,6 +699,7 @@ impl WindowManager {
             windows,
             config: configs,
             stream_map,
+            highlights,
         }
     }
 
@@ -996,12 +1000,14 @@ impl WindowManager {
                     }
                     _ => {
                         // Default to text window
-                        let text_window = TextWindow::new(&title, config.buffer_size)
+                        let mut text_window = TextWindow::new(&title, config.buffer_size)
                             .with_border_config(
                                 config.show_border,
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        // Set highlights
+                        text_window.set_highlights(self.highlights.clone());
                         Widget::Text(text_window)
                     }
                 };

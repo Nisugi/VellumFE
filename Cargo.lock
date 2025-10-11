@@ -576,6 +576,7 @@ dependencies = [
 name = "profanity-rs"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "crossterm 0.29.0",
  "ctrlc",

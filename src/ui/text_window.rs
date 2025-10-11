@@ -7,6 +7,25 @@ use ratatui::{
 };
 use std::collections::VecDeque;
 use regex::Regex;
+use aho_corasick::AhoCorasick;
+use crate::config::HighlightPattern;
+
+// Per-character style info for layering
+#[derive(Clone, Copy)]
+struct CharStyle {
+    fg: Option<Color>,
+    bg: Option<Color>,
+    bold: bool,
+    span_type: SpanType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpanType {
+    Normal,      // Regular text
+    Link,        // <a> tag from parser
+    Monsterbold, // <preset id="monsterbold"> from parser
+    Spell,       // <spell> tag from parser
+}
 
 #[derive(Clone)]
 pub struct StyledText {
@@ -14,18 +33,19 @@ pub struct StyledText {
     pub fg: Option<Color>,
     pub bg: Option<Color>,
     pub bold: bool,
+    pub span_type: SpanType,  // Semantic type for priority layering
 }
 
 // One display line (post-wrapping) with multiple styled spans
 #[derive(Clone)]
 struct WrappedLine {
-    spans: Vec<(String, Style)>,
+    spans: Vec<(String, Style, SpanType)>,
 }
 
 // One logical line (before wrapping) - stores original styled content
 #[derive(Clone)]
 struct LogicalLine {
-    spans: Vec<(String, Style)>,
+    spans: Vec<(String, Style, SpanType)>,
 }
 
 // Match location: (line_index, start_char, end_char)
@@ -48,7 +68,7 @@ pub struct TextWindow {
     // Cached wrapped lines (invalidated when width changes)
     wrapped_lines: VecDeque<WrappedLine>,
     // Accumulate styled chunks for current logical line
-    current_line_spans: Vec<(String, Style)>,
+    current_line_spans: Vec<(String, Style, SpanType)>,
     max_lines: usize,
     scroll_offset: usize,  // Lines back from end when at bottom (0 = live view)
     scroll_position: Option<usize>,  // Absolute line position when scrolled back (None = following live)
@@ -63,6 +83,14 @@ pub struct TextWindow {
     border_sides: Option<Vec<String>>,
     // Search functionality
     search_state: Option<SearchState>,
+    // Highlight patterns
+    highlights: Vec<HighlightPattern>,
+    // Precompiled highlight regexes (parallel to highlights vec, only for non-fast_parse)
+    highlight_regexes: Vec<Option<Regex>>,
+    // Aho-Corasick matcher for fast_parse patterns
+    fast_matcher: Option<AhoCorasick>,
+    // Maps Aho-Corasick match index -> highlight index
+    fast_pattern_map: Vec<usize>,
 }
 
 impl TextWindow {
@@ -83,7 +111,49 @@ impl TextWindow {
             scroll_position: None,  // Start in live view mode
             last_visible_height: 20,  // Reasonable default
             search_state: None,  // No active search
+            highlights: Vec::new(),  // No highlights by default
+            highlight_regexes: Vec::new(),  // No precompiled regexes by default
+            fast_matcher: None,  // No Aho-Corasick matcher by default
+            fast_pattern_map: Vec::new(),  // No fast pattern mapping by default
         }
+    }
+
+    pub fn set_highlights(&mut self, highlights: Vec<HighlightPattern>) {
+        // Separate fast_parse patterns from regex patterns
+        let mut fast_patterns: Vec<String> = Vec::new();
+        let mut fast_map: Vec<usize> = Vec::new();
+
+        // Build regex list and collect fast_parse patterns
+        self.highlight_regexes = highlights.iter()
+            .enumerate()
+            .map(|(i, h)| {
+                if h.fast_parse {
+                    // Split pattern on | and add to Aho-Corasick
+                    for literal in h.pattern.split('|') {
+                        let literal = literal.trim();
+                        if !literal.is_empty() {
+                            fast_patterns.push(literal.to_string());
+                            fast_map.push(i);  // Map this pattern back to highlight index
+                        }
+                    }
+                    None  // Don't compile as regex
+                } else {
+                    // Regular regex pattern
+                    Regex::new(&h.pattern).ok()
+                }
+            })
+            .collect();
+
+        // Build Aho-Corasick matcher for fast_parse patterns
+        if !fast_patterns.is_empty() {
+            self.fast_matcher = AhoCorasick::new(&fast_patterns).ok();
+            self.fast_pattern_map = fast_map;
+        } else {
+            self.fast_matcher = None;
+            self.fast_pattern_map = Vec::new();
+        }
+
+        self.highlights = highlights;
     }
 
     pub fn with_border_config(
@@ -129,14 +199,17 @@ impl TextWindow {
                 Modifier::empty()
             });
 
-        // Add this styled chunk to current line
-        self.current_line_spans.push((styled.content, style));
+        // Add this styled chunk to current line with semantic type
+        self.current_line_spans.push((styled.content, style, styled.span_type));
     }
 
     pub fn finish_line(&mut self, _width: u16) {
         if self.current_line_spans.is_empty() {
             return;
         }
+
+        // Apply highlights before storing/wrapping
+        self.apply_highlights();
 
         // Store the original logical line
         let logical_line = LogicalLine {
@@ -166,17 +239,179 @@ impl TextWindow {
         self.current_line_spans.clear();
     }
 
+    /// Apply highlight patterns to current line spans with proper priority layering
+    fn apply_highlights(&mut self) {
+        if self.highlights.is_empty() {
+            return;
+        }
+
+        // STEP 1: Build character-by-character style map from current spans
+        let mut char_styles: Vec<CharStyle> = Vec::new();
+        for (content, style, span_type) in &self.current_line_spans {
+            for _ in content.chars() {
+                char_styles.push(CharStyle {
+                    fg: style.fg,
+                    bg: style.bg,
+                    bold: style.add_modifier.contains(Modifier::BOLD),
+                    span_type: *span_type,
+                });
+            }
+        }
+
+        if char_styles.is_empty() {
+            return;
+        }
+
+        // STEP 2: Build full text for pattern matching
+        let full_text: String = self.current_line_spans
+            .iter()
+            .map(|(content, _, _)| content.as_str())
+            .collect();
+
+        // STEP 3: Find all highlight matches (both Aho-Corasick and regex)
+        let mut matches: Vec<(usize, usize, Option<Color>, Option<Color>, bool, bool)> = Vec::new();
+        // Format: (start, end, fg, bg, bold, color_entire_line)
+
+        // Try Aho-Corasick fast patterns
+        if let Some(ref matcher) = self.fast_matcher {
+            for mat in matcher.find_iter(&full_text) {
+                if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize()) {
+                    if let Some(highlight) = self.highlights.get(highlight_idx) {
+                        let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                        let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                        matches.push((mat.start(), mat.end(), fg, bg, highlight.bold, highlight.color_entire_line));
+                    }
+                }
+            }
+        }
+
+        // Try regex patterns
+        for (i, highlight) in self.highlights.iter().enumerate() {
+            if highlight.fast_parse {
+                continue;  // Already handled by Aho-Corasick
+            }
+
+            if let Some(Some(regex)) = self.highlight_regexes.get(i) {
+                if let Some(captures) = regex.captures(&full_text) {
+                    if let Some(m) = captures.get(0) {
+                        let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                        let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                        matches.push((m.start(), m.end(), fg, bg, highlight.bold, highlight.color_entire_line));
+                    }
+                }
+            }
+        }
+
+        // STEP 4: Apply highlight matches to char_styles with priority layering
+        for (start, end, fg, bg, bold, color_entire_line) in matches {
+            if color_entire_line {
+                // Whole line: highlight base → links → monsterbold
+                for (i, char_style) in char_styles.iter_mut().enumerate() {
+                    // Apply highlight as base
+                    if let Some(color) = fg {
+                        char_style.fg = Some(color);
+                    }
+                    if let Some(color) = bg {
+                        char_style.bg = Some(color);
+                    }
+                    if bold {
+                        char_style.bold = true;
+                    }
+
+                    // Don't override if it's a link/monsterbold (higher priority)
+                    // Actually, re-apply original colors for links/monsterbold
+                    let original_idx = i;
+                    let mut char_idx = 0;
+                    for (content, style, span_type) in &self.current_line_spans {
+                        for _ch in content.chars() {
+                            if char_idx == original_idx {
+                                if *span_type == SpanType::Link || *span_type == SpanType::Monsterbold {
+                                    // Re-apply original style for links and monsterbold
+                                    char_style.fg = style.fg;
+                                    char_style.bg = style.bg;
+                                    char_style.bold = style.add_modifier.contains(Modifier::BOLD);
+                                }
+                                break;
+                            }
+                            char_idx += 1;
+                        }
+                    }
+                }
+                // Only apply first whole-line match
+                break;
+            } else {
+                // Partial line: existing → links → monsterbold → highlights (highest priority)
+                for i in start..end.min(char_styles.len()) {
+                    // Custom highlights override everything for partial matches
+                    if let Some(color) = fg {
+                        char_styles[i].fg = Some(color);
+                    }
+                    if let Some(color) = bg {
+                        char_styles[i].bg = Some(color);
+                    }
+                    if bold {
+                        char_styles[i].bold = true;
+                    }
+                }
+            }
+        }
+
+        // STEP 5: Reconstruct spans from char_styles with proper splitting
+        let mut new_spans: Vec<(String, Style, SpanType)> = Vec::new();
+        let full_text_chars: Vec<char> = full_text.chars().collect();
+
+        let mut i = 0;
+        while i < char_styles.len() {
+            let current_style = char_styles[i];
+            let mut content = String::new();
+            content.push(full_text_chars[i]);
+
+            // Extend span while style matches
+            i += 1;
+            while i < char_styles.len() {
+                let next_style = char_styles[i];
+                if next_style.fg == current_style.fg
+                    && next_style.bg == current_style.bg
+                    && next_style.bold == current_style.bold
+                    && next_style.span_type == current_style.span_type
+                {
+                    content.push(full_text_chars[i]);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Build Style
+            let mut style = Style::default();
+            if let Some(fg) = current_style.fg {
+                style = style.fg(fg);
+            }
+            if let Some(bg) = current_style.bg {
+                style = style.bg(bg);
+            }
+            if current_style.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+
+            new_spans.push((content, style, current_style.span_type));
+        }
+
+        // Replace current_line_spans with new layered spans
+        self.current_line_spans = new_spans;
+    }
+
     // Wrap a series of styled spans into multiple display lines
-    fn wrap_styled_spans(&self, spans: &[(String, Style)], width: usize) -> Vec<WrappedLine> {
+    fn wrap_styled_spans(&self, spans: &[(String, Style, SpanType)], width: usize) -> Vec<WrappedLine> {
         if width == 0 {
             return vec![];
         }
 
         let mut result = Vec::new();
-        let mut current_line_spans: Vec<(String, Style)> = Vec::new();
+        let mut current_line_spans: Vec<(String, Style, SpanType)> = Vec::new();
         let mut current_line_len = 0;
 
-        for (text, style) in spans {
+        for (text, style, span_type) in spans {
             // Simple approach: just add text as-is, preserving ALL spaces
             // Only wrap if we exceed width
             for ch in text.chars() {
@@ -191,17 +426,17 @@ impl TextWindow {
                 }
 
                 // Add character to current line
-                if let Some((last_text, last_style)) = current_line_spans.last_mut() {
-                    if last_style == style {
-                        // Same style - append to last span
+                if let Some((last_text, last_style, last_type)) = current_line_spans.last_mut() {
+                    if last_style == style && last_type == span_type {
+                        // Same style and type - append to last span
                         last_text.push(ch);
                     } else {
-                        // Different style - new span
-                        current_line_spans.push((ch.to_string(), *style));
+                        // Different style or type - new span
+                        current_line_spans.push((ch.to_string(), *style, *span_type));
                     }
                 } else {
                     // First character on line
-                    current_line_spans.push((ch.to_string(), *style));
+                    current_line_spans.push((ch.to_string(), *style, *span_type));
                 }
                 current_line_len += 1;
             }
@@ -286,7 +521,7 @@ impl TextWindow {
         for (line_idx, wrapped_line) in self.wrapped_lines.iter().enumerate() {
             // Combine all spans into a single text string for searching
             let line_text: String = wrapped_line.spans.iter()
-                .map(|(text, _)| text.as_str())
+                .map(|(text, _, _)| text.as_str())
                 .collect();
 
             // Find all matches in this line
@@ -404,7 +639,7 @@ impl TextWindow {
     ) -> Vec<Span> {
         // Build the full line text to know character positions
         let _full_text: String = wrapped.spans.iter()
-            .map(|(text, _)| text.as_str())
+            .map(|(text, _, _)| text.as_str())
             .collect();
 
         // Collect all character positions that should be highlighted
@@ -425,7 +660,7 @@ impl TextWindow {
         let mut char_pos = 0;
         let mut highlight_idx = 0;
 
-        for (text, style) in &wrapped.spans {
+        for (text, style, _span_type) in &wrapped.spans {
             let text_len = text.len();
             let span_start = char_pos;
             let span_end = char_pos + text_len;
@@ -591,7 +826,7 @@ impl TextWindow {
                 let spans: Vec<Span> = if line_matches.is_empty() {
                     // No matches on this line - render normally
                     wrapped.spans.iter()
-                        .map(|(text, style)| Span::styled(text.clone(), *style))
+                        .map(|(text, style, _span_type)| Span::styled(text.clone(), *style))
                         .collect()
                 } else {
                     // Has matches - need to highlight them
