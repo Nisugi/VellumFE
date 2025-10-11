@@ -21,6 +21,8 @@ pub struct Config {
     pub keybinds: HashMap<String, KeyBindAction>,
     #[serde(default)]
     pub spell_colors: Vec<SpellColorRange>,
+    #[serde(default)]
+    pub sound: SoundConfig,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
 }
@@ -297,6 +299,42 @@ pub struct HighlightPattern {
     pub color_entire_line: bool,  // If true, apply colors to entire line, not just matched text
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_parse: bool,  // If true, split pattern on | and use Aho-Corasick for literal matching
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sound: Option<String>,  // Sound file to play when pattern matches
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sound_volume: Option<f32>,  // Volume override for this sound (0.0 to 1.0)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundConfig {
+    #[serde(default = "default_sound_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_sound_volume")]
+    pub volume: f32,  // Master volume (0.0 to 1.0)
+    #[serde(default = "default_sound_cooldown")]
+    pub cooldown_ms: u64,  // Cooldown between same sound plays (milliseconds)
+}
+
+fn default_sound_enabled() -> bool {
+    true
+}
+
+fn default_sound_volume() -> f32 {
+    0.7
+}
+
+fn default_sound_cooldown() -> u64 {
+    500  // 500ms default cooldown
+}
+
+impl Default for SoundConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_sound_enabled(),
+            volume: default_sound_volume(),
+            cooldown_ms: default_sound_cooldown(),
+        }
+    }
 }
 
 // Helper function for serde skip_serializing_if
@@ -2789,6 +2827,8 @@ impl Default for Config {
                     bold: true,
                     color_entire_line: false,
                     fast_parse: true,
+                    sound: None,
+                    sound_volume: None,
                 });
                 // Example: Highlight your combat actions in red (partial line, regex)
                 map.insert("swing".to_string(), HighlightPattern {
@@ -2798,6 +2838,8 @@ impl Default for Config {
                     bold: true,
                     color_entire_line: false,
                     fast_parse: false,
+                    sound: None,
+                    sound_volume: None,
                 });
                 // Example: Highlight damage numbers in yellow (partial line, regex)
                 map.insert("damage".to_string(), HighlightPattern {
@@ -2807,6 +2849,8 @@ impl Default for Config {
                     bold: true,
                     color_entire_line: false,
                     fast_parse: false,
+                    sound: None,
+                    sound_volume: None,
                 });
                 // Example: Highlight death messages with bright background (whole line, regex)
                 map.insert("death".to_string(), HighlightPattern {
@@ -2816,6 +2860,8 @@ impl Default for Config {
                     bold: true,
                     color_entire_line: true,
                     fast_parse: false,
+                    sound: None,
+                    sound_volume: None,
                 });
                 map
             },
@@ -2873,6 +2919,7 @@ impl Default for Config {
                     color: "#00bfff".to_string()
                 },
             ],
+            sound: SoundConfig::default(),
             character: None,  // Set at runtime via load_with_options
         }
     }

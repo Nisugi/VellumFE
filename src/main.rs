@@ -3,6 +3,7 @@ mod config;
 mod network;
 mod parser;
 mod performance;
+mod sound;
 mod ui;
 
 use anyhow::Result;

@@ -2,6 +2,7 @@ use crate::config::{Config, KeyAction, KeyBindAction, Layout, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
+use crate::sound::SoundPlayer;
 use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::Result;
 use crossterm::{
@@ -51,6 +52,7 @@ pub struct App {
     perf_stats: PerformanceStats,  // Performance statistics
     show_perf_stats: bool,  // Whether to show performance stats window
     stream_buffer: String,  // Buffer for accumulating stream text (used for combat/playerlist)
+    sound_player: Option<SoundPlayer>,  // Sound player (None if initialization failed)
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +180,25 @@ impl App {
         }
         command_input.set_background_color(layout.command_input.background_color.clone());
 
+        // Initialize sound player
+        let sound_player = match SoundPlayer::new(
+            config.sound.enabled,
+            config.sound.volume,
+            config.sound.cooldown_ms,
+        ) {
+            Ok(player) => {
+                // Ensure sounds directory exists
+                if let Err(e) = crate::sound::ensure_sounds_directory() {
+                    tracing::warn!("Failed to create sounds directory: {}", e);
+                }
+                Some(player)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize sound player: {}", e);
+                None
+            }
+        };
+
         Ok(Self {
             window_manager: WindowManager::new(window_configs, config.highlights.clone()),
             command_input,
@@ -198,6 +219,7 @@ impl App {
             perf_stats: PerformanceStats::new(),  // Initialize performance stats
             show_perf_stats: false,  // Hidden by default
             stream_buffer: String::new(),  // Initialize empty stream buffer
+            sound_player,  // Sound player (may be None if initialization failed)
         })
     }
 
@@ -217,6 +239,39 @@ impl App {
         self.window_manager
             .get_window(&window_name)
             .expect("Window must exist")
+    }
+
+    /// Check if text matches any highlight patterns with sounds and play them
+    fn check_sound_triggers(&mut self, text: &str) {
+        if let Some(ref sound_player) = self.sound_player {
+            for (_name, pattern) in &self.config.highlights {
+                // Skip if no sound configured for this pattern
+                if pattern.sound.is_none() {
+                    continue;
+                }
+
+                let matches = if pattern.fast_parse {
+                    // Fast parse: check if any of the pipe-separated patterns are in the text
+                    pattern.pattern.split('|').any(|p| text.contains(p.trim()))
+                } else {
+                    // Regex parse
+                    if let Ok(regex) = regex::Regex::new(&pattern.pattern) {
+                        regex.is_match(text)
+                    } else {
+                        false
+                    }
+                };
+
+                if matches {
+                    if let Some(ref sound_file) = pattern.sound {
+                        // Play the sound
+                        if let Err(e) = sound_player.play_from_sounds_dir(sound_file, pattern.sound_volume) {
+                            tracing::warn!("Failed to play sound '{}': {}", sound_file, e);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Add text to the appropriate window/tab for the current stream
@@ -2313,6 +2368,9 @@ impl App {
                                 _ => {
                                     // Normal text handling for other streams
                                     if !content.is_empty() {
+                                        // Check for sound triggers in highlights
+                                        self.check_sound_triggers(&content);
+
                                         self.add_text_to_current_stream(StyledText {
                                             content: content.clone(),
                                             fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),

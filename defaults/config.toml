@@ -116,3 +116,12 @@ friends = { pattern = "Mandrill|Monolis|Chiora|Exdeo|Kawhi|Aldhelm", fg = "#ff00
 
 # Highlight enemies with background color (FAST with Aho-Corasick!)
 enemies = { pattern = "Sihtric|Ehria|Ayvain|Deddalus|Daluthas", fg = "#ffffff", bg = "#8b0000", bold = true, fast_parse = true }
+
+# Example highlight with sound (place sound files in ~/.vellum-fe/sounds/)
+# death_alert = { pattern = ".*dies.*", fg = "#ffffff", bg = "#ff0000", bold = true, color_entire_line = true, sound = "death.wav", sound_volume = 0.8 }
+
+[sound]
+# Sound configuration
+enabled = true          # Enable/disable all sounds
+volume = 0.7            # Master volume (0.0 to 1.0)
+cooldown_ms = 500       # Cooldown between same sound plays (milliseconds)
