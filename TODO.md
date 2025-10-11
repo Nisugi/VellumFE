@@ -506,20 +506,18 @@
 - Stun handler script
 
 **P2 - Medium Priority**
-- Wrayth-style drag-and-drop (Phases 1-3: Links + Context Menus)
-  - Phase 1: Link detection and rendering (LOW RISK, HIGH VALUE)
-  - Phase 2: cmdlist.xml parsing
-  - Phase 3: Context menus (LEFT-CLICK, no drag - click vs drag threshold)
+- ✅ Wrayth-style drag-and-drop (Phases 1-3: Backend Complete!)
+  - ✅ Phase 1: Link detection and metadata storage (DONE)
+  - ✅ Phase 2: cmdlist1.xml parsing (DONE - 588 entries loaded)
+  - ✅ Phase 3: Menu request/response flow (DONE - test with .testmenu)
+  - [ ] Phase 4: Mouse click detection on links + popup menu rendering
+  - [ ] Phase 5: Send command on menu item selection
 - Timestamps
 - Window management improvements
-- Command history
 - Terminal title updates
 - Enhanced configuration
 
 **P3 - Low Priority**
-- Wrayth-style drag-and-drop (Phases 4-5: Full Drag-Drop)
-  - Phase 4: Drag-and-drop functionality (MEDIUM RISK)
-  - Phase 5: Text selection integration
 - Rich text rendering
 - Platform testing
 - Documentation improvements
