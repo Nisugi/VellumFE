@@ -45,24 +45,6 @@
   - [x] Color-code by group/friend status
   - [x] Support player notes/tags
 
-### Experience Window (exp)
-⚠️ **Note**: Need to research ProfanityFE behavior before implementing
-- [ ] Create Experience/Skills widget
-  - [ ] Parse skill experience data
-  - [ ] Display format: `SkillName: ranks percent% [mindstate/34]`
-  - [ ] Color-code by skill category (armor, weapon, magic, survival, lore)
-  - [ ] Color-code mindstate (0=white, 1-10=cyan, 11-20=green, 21-30=yellow, 31-34=red)
-  - [ ] Sort skills by category or mindstate
-  - [ ] Show pulsing indicator for actively learning skills
-  - [ ] Track skill gains over time
-  - [ ] Support skill filtering/grouping
-
-### Percentage/Stats Window (perc)
-- [ ] Create general stats display widget
-  - [ ] Parse and display various percentage-based stats
-  - [ ] Support custom formatting per stat type
-  - [ ] Configurable refresh rate
-
 ## Parser Improvements
 
 ### XML Parser Enhancements
