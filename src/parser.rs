@@ -121,6 +121,9 @@ pub struct XmlParser {
     link_depth: usize,      // Track nested links
     spell_depth: usize,     // Track nested spells
     current_link_data: Option<LinkData>,  // Current link metadata (exist_id, noun)
+    // Menu tracking
+    current_menu_id: Option<String>,  // ID of menu being parsed
+    current_menu_coords: Vec<String>, // Accumulated coords for current menu
 }
 
 impl XmlParser {
@@ -146,6 +149,8 @@ impl XmlParser {
             link_depth: 0,
             spell_depth: 0,
             current_link_data: None,
+            current_menu_id: None,
+            current_menu_coords: Vec::new(),
         }
     }
 
@@ -329,7 +334,11 @@ impl XmlParser {
         } else if tag == "</a>" {
             self.handle_link_close();
         } else if tag.starts_with("<menu ") {
-            self.handle_menu(tag, elements);
+            self.handle_menu_open(tag);
+        } else if tag == "</menu>" {
+            self.handle_menu_close(elements);
+        } else if tag.starts_with("<mi ") {
+            self.handle_menu_item(tag);
         }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ") || tag == "</compDef>" ||
@@ -750,39 +759,38 @@ impl XmlParser {
         }
     }
 
-    fn handle_menu(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
-        // Parse <menu id="123" ...><mi coord="2524,1898"/><mi coord="2524,2061"/>...</menu>
-        // Extract id attribute
-        let id = Self::extract_attribute(tag, "id");
-
-        if id.is_none() {
+    fn handle_menu_open(&mut self, tag: &str) {
+        // <menu id="123" ...>
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            tracing::debug!("Starting menu collection for id={}", id);
+            self.current_menu_id = Some(id);
+            self.current_menu_coords.clear();
+        } else {
             tracing::warn!("Menu tag missing id attribute: {}", tag);
-            return;
         }
+    }
 
-        // Find all <mi coord="..."/> tags within this tag
-        let mut coords = Vec::new();
-        let mut remaining = tag;
-
-        while let Some(mi_start) = remaining.find("<mi ") {
-            remaining = &remaining[mi_start + 4..];
-            if let Some(mi_end) = remaining.find("/>") {
-                let mi_tag = &remaining[..mi_end];
-                if let Some(coord) = Self::extract_attribute(&format!("<mi {}/>", mi_tag), "coord") {
-                    coords.push(coord);
-                }
-                remaining = &remaining[mi_end + 2..];
-            } else {
-                break;
+    fn handle_menu_item(&mut self, tag: &str) {
+        // <mi coord="2524,1898"/>
+        if self.current_menu_id.is_some() {
+            if let Some(coord) = Self::extract_attribute(tag, "coord") {
+                tracing::debug!("Adding coord to menu: {}", coord);
+                self.current_menu_coords.push(coord);
             }
         }
+    }
 
-        tracing::debug!("Parsed menu response: id={}, {} coords", id.as_ref().unwrap(), coords.len());
+    fn handle_menu_close(&mut self, elements: &mut Vec<ParsedElement>) {
+        // </menu>
+        if let Some(id) = self.current_menu_id.take() {
+            let coords = std::mem::take(&mut self.current_menu_coords);
+            tracing::debug!("Finished menu collection for id={}, {} coords", id, coords.len());
 
-        elements.push(ParsedElement::MenuResponse {
-            id: id.unwrap(),
-            coords,
-        });
+            elements.push(ParsedElement::MenuResponse {
+                id,
+                coords,
+            });
+        }
     }
 
     fn handle_push_bold(&mut self) {
