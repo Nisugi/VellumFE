@@ -1,6 +1,6 @@
 # Widget Reference
 
-This page documents all 40+ widgets available in profanity-rs. Widgets are the building blocks of your interface - they can be text windows, progress bars, countdown timers, status indicators, and more.
+This page documents all 42+ widgets available in profanity-rs. Widgets are the building blocks of your interface - they can be text windows, progress bars, countdown timers, status indicators, combat tracking, and more.
 
 All widgets can be created using the `.createwindow <template>` command (or its alias `.createwin`). Once created, widgets can be moved, resized, and styled to your liking.
 
@@ -16,6 +16,7 @@ All widgets can be created using the `.createwindow <template>` command (or its 
 - [Status Indicators](#status-indicators)
 - [Dashboard](#dashboard)
 - [Active Effects](#active-effects)
+- [Combat Tracking](#combat-tracking)
 
 ---
 
@@ -1017,6 +1018,8 @@ Active effects widgets display time-limited buffs, debuffs, cooldowns, and activ
 
 All active effects widgets use the `active_effects` widget type but filter to different categories. They support scrolling when there are more effects than can fit in the visible area.
 
+**Spell Coloring:** Active effects support custom colors based on spell ID. See [Spell Coloring Guide](../WIKI_Spell_Colors.md) for configuration details.
+
 ### buffs
 
 **Description:** Displays beneficial effects (buffs) currently active on your character.
@@ -1208,6 +1211,145 @@ All active effects widgets use the `active_effects` widget type but filter to di
 | cooldowns | - | Cooldowns | 3 | Ability cooldowns |
 | active_spells | spells | Active Spells | All | All active spells |
 | all_effects | effects | All | 10 | All effects combined |
+
+---
+
+## Combat Tracking
+
+Combat tracking widgets provide scrollable lists for monitoring targets and players in real-time.
+
+**Requirements:**
+- Requires `targetlist.lic` script to be running
+- Script sends data via `combat` (targets) and `playerlist` (players) streams
+- Data updates continuously (every game pulse)
+
+### targets
+
+**Description:** Scrollable list of all combat targets in the current room with status indicators.
+
+**Auto-update:** Yes (receives `combat` stream from targetlist.lic)
+
+**Default Size:** 10 rows x 25 cols
+
+**Creation:**
+```
+.createwindow targets
+```
+
+**Widget Type:** `targets`
+
+**Stream:** `combat`
+
+**Features:**
+- **Title shows count:** "Targets [05]"
+- **Current target indicator:** Marked with "►" prefix
+- **Status suffixes:**
+  - `[stu]` - Stunned
+  - `[sit]` - Sitting
+  - `[kne]` - Kneeling
+  - `[sle]` - Sleeping
+  - `[fro]` - Frozen
+  - `[fly]` - Flying
+  - `[dead]` - Dead (shown without bold)
+- **Scrollable:** Mouse wheel or keyboard (Tab to focus, arrow keys/Page Up/Down)
+
+**Example:**
+```
+.createwindow targets
+.border targets rounded #ff0000
+.rename targets "Combat Targets"
+```
+
+**Configuration:**
+```toml
+[[ui.windows]]
+name = "targets"
+widget_type = "targets"
+row = 0
+col = 100
+rows = 10
+cols = 25
+show_border = true
+border_style = "single"
+title = "Targets"
+```
+
+**Notes:**
+- Uses ScrollableContainer pattern (same as Active Effects)
+- Automatically updates as targets enter/leave combat
+- Dead targets shown in gray without bold
+- Current target highlighted with arrow prefix
+
+---
+
+### players
+
+**Description:** Scrollable list of all player characters in the current room with status indicators.
+
+**Auto-update:** Yes (receives `playerlist` stream from targetlist.lic)
+
+**Default Size:** 10 rows x 25 cols
+
+**Creation:**
+```
+.createwindow players
+```
+
+**Widget Type:** `players`
+
+**Stream:** `playerlist`
+
+**Features:**
+- **Title shows count:** "Players [19]"
+- **Status suffixes:**
+  - `[sit]` - Sitting
+  - `[kne]` - Kneeling
+  - `[sle]` - Sleeping
+  - `[fly]` - Flying
+  - No indicator means standing
+- **Scrollable:** Mouse wheel or keyboard (Tab to focus, arrow keys/Page Up/Down)
+
+**Example:**
+```
+.createwindow players
+.border players rounded #00ff00
+.rename players "Room Players"
+```
+
+**Configuration:**
+```toml
+[[ui.windows]]
+name = "players"
+widget_type = "players"
+row = 10
+col = 100
+rows = 10
+cols = 25
+show_border = true
+border_style = "single"
+title = "Players"
+```
+
+**Notes:**
+- Uses ScrollableContainer pattern (same as Active Effects)
+- Automatically updates as players enter/leave room
+- Shows all PCs in room, not just grouped/visible ones
+- Status updates in real-time as players sit/stand/etc.
+
+**Starting targetlist.lic:**
+```ruby
+;go2 targetlist.lic
+
+# Or add to autostart:
+;autostart add targetlist
+```
+
+**Troubleshooting:**
+- If count shows [00], ensure targetlist.lic is running
+- Scrolling requires widget to be focused (Tab key) or use mouse wheel
+- Widget must have `widget_type = "targets"` or `widget_type = "players"` (not `"text"`)
+
+**See also:** [Targets and Players Widget Guide](Targets-and-Players.md) for detailed documentation
 
 ---
 

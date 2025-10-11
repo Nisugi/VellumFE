@@ -7,7 +7,10 @@ A modern, Rust-based terminal client for GemStone IV, built with [Ratatui](https
 ## Features
 
 - **Dynamic Window Management** - Create, delete, move, and resize windows on the fly
-- **Rich Widget Library** - 40+ pre-built widgets (text, progress bars, timers, compass, injury doll, active effects)
+- **Rich Widget Library** - 40+ pre-built widgets (text, progress bars, timers, compass, injury doll, active effects, targets, players)
+- **Combat Tracking** - Scrollable target list with status indicators and current target highlighting
+- **Player Tracking** - Scrollable player list showing all characters in the room with status
+- **Spell Coloring** - Customize active spell/effect colors by spell ID for easy visual distinction
 - **Mouse Support** - Click to focus, scroll to navigate, drag to move/resize
 - **Text Selection** - Shift+drag to select and copy text
 - **Stream Routing** - Game streams automatically route to appropriate windows

@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use std::collections::HashMap;
-use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText};
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
@@ -17,6 +17,8 @@ pub enum Widget {
     Hand(Hand),
     Dashboard(Dashboard),
     ActiveEffects(active_effects::ActiveEffects),
+    Targets(Targets),
+    Players(Players),
 }
 
 impl Widget {
@@ -34,6 +36,12 @@ impl Widget {
             Widget::Hand(w) => w.render_with_focus(area, buf, focused),
             Widget::Dashboard(w) => w.render_with_focus(area, buf, focused),
             Widget::ActiveEffects(w) => w.render_with_focus(area, buf, focused),
+            Widget::Targets(w) => {
+                w.render(area, buf);
+            }
+            Widget::Players(w) => {
+                w.render(area, buf);
+            }
         }
     }
 
@@ -61,6 +69,16 @@ impl Widget {
                     w.scroll_up();
                 }
             }
+            Widget::Targets(w) => {
+                for _ in 0..lines {
+                    w.scroll_up();
+                }
+            }
+            Widget::Players(w) => {
+                for _ in 0..lines {
+                    w.scroll_up();
+                }
+            }
             _ => {}
         }
     }
@@ -71,6 +89,16 @@ impl Widget {
             Widget::Text(w) => w.scroll_down(lines),
             Widget::Tabbed(w) => w.scroll_down(lines),
             Widget::ActiveEffects(w) => {
+                for _ in 0..lines {
+                    w.scroll_down();
+                }
+            }
+            Widget::Targets(w) => {
+                for _ in 0..lines {
+                    w.scroll_down();
+                }
+            }
+            Widget::Players(w) => {
                 for _ in 0..lines {
                     w.scroll_down();
                 }
@@ -102,6 +130,8 @@ impl Widget {
             Widget::Hand(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Dashboard(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::ActiveEffects(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::Targets(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::Players(w) => w.set_border_config(show_border, border_style, border_color),
         }
     }
 
@@ -157,6 +187,8 @@ impl Widget {
             Widget::Hand(w) => w.set_border_sides(border_sides),
             Widget::Dashboard(w) => w.set_border_sides(border_sides),
             Widget::ActiveEffects(w) => w.set_border_sides(border_sides),
+            Widget::Targets(_) => {},
+            Widget::Players(_) => {},
         }
     }
 
@@ -174,6 +206,8 @@ impl Widget {
             Widget::Hand(w) => w.set_title(title),
             Widget::Dashboard(w) => w.set_title(title),
             Widget::ActiveEffects(w) => w.set_title(title),
+            Widget::Targets(w) => w.set_title(title),
+            Widget::Players(w) => w.set_title(title),
         }
     }
 
@@ -211,9 +245,9 @@ impl Widget {
     }
 
     /// Add or update an active effect (only for ActiveEffects widgets)
-    pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String) {
+    pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String, color: Option<String>) {
         if let Widget::ActiveEffects(w) = self {
-            w.add_or_update_effect(id, name, value, time);
+            w.add_or_update_effect(id, name, value, time, color);
         }
     }
 
@@ -300,6 +334,34 @@ impl Widget {
     pub fn set_dashboard_indicator(&mut self, id: &str, value: u8) {
         if let Widget::Dashboard(w) = self {
             w.set_indicator_value(id, value);
+        }
+    }
+
+    /// Set target count (only for targets widgets)
+    pub fn set_target_count(&mut self, count: u32) {
+        if let Widget::Targets(w) = self {
+            w.set_count(count);
+        }
+    }
+
+    /// Set targets from text (only for targets widgets)
+    pub fn set_targets_from_text(&mut self, text: &str) {
+        if let Widget::Targets(w) = self {
+            w.set_targets_from_text(text);
+        }
+    }
+
+    /// Set player count (only for players widgets)
+    pub fn set_player_count(&mut self, count: u32) {
+        if let Widget::Players(w) = self {
+            w.set_count(count);
+        }
+    }
+
+    /// Set players from text (only for players widgets)
+    pub fn set_players_from_text(&mut self, text: &str) {
+        if let Widget::Players(w) = self {
+            w.set_players_from_text(text);
         }
     }
 
@@ -582,6 +644,24 @@ impl WindowManager {
                     }
 
                     Widget::Tabbed(tabbed_window)
+                }
+                "targets" => {
+                    let mut targets = Targets::new(&title);
+                    targets.set_border_config(
+                        config.show_border,
+                        config.border_style.clone(),
+                        config.border_color.clone(),
+                    );
+                    Widget::Targets(targets)
+                }
+                "players" => {
+                    let mut players = Players::new(&title);
+                    players.set_border_config(
+                        config.show_border,
+                        config.border_style.clone(),
+                        config.border_color.clone(),
+                    );
+                    Widget::Players(players)
                 }
                 _ => {
                     // Default to text window
@@ -895,6 +975,24 @@ impl WindowManager {
                         }
 
                         Widget::Tabbed(tabbed_window)
+                    }
+                    "targets" => {
+                        let mut targets = Targets::new(&title);
+                        targets.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+                        Widget::Targets(targets)
+                    }
+                    "players" => {
+                        let mut players = Players::new(&title);
+                        players.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+                        Widget::Players(players)
                     }
                     _ => {
                         // Default to text window

@@ -14,6 +14,8 @@ pub struct Config {
     pub highlights: Vec<HighlightPattern>,
     #[serde(default)]
     pub keybinds: Vec<KeyBind>,
+    #[serde(default)]
+    pub spell_colors: Vec<SpellColorRange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +29,12 @@ pub struct PresetColor {
 pub struct PromptColor {
     pub character: String, // The character to match (e.g., "R", "S", "H", ">")
     pub color: String,     // Hex color
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpellColorRange {
+    pub spells: Vec<u32>,  // List of spell IDs (e.g., [101, 107, 120, 140, 150])
+    pub color: String,     // Hex color (e.g., "#00ffff")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2183,6 +2191,68 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             }),
+            "targets" => Some(WindowDef {
+                name: "targets".to_string(),
+                widget_type: "targets".to_string(),
+                streams: vec!["targetcount".to_string(), "combat".to_string()],
+                row: default_row,
+                col: default_col,
+                rows: 3,
+                cols: 20,
+                buffer_size: 0,
+                show_border: true,
+                border_style: Some("rounded".to_string()),
+                border_color: None,
+                border_sides: None,
+                title: Some("Targets".to_string()),
+                bar_color: None,
+                bar_background_color: None,
+                transparent_background: true,
+                indicator_colors: None,
+                dashboard_layout: None,
+                dashboard_indicators: None,
+                dashboard_spacing: None,
+                dashboard_hide_inactive: None,
+                visible_count: None,
+                effect_category: None,
+                tabs: None,
+                tab_bar_position: None,
+                tab_active_color: None,
+                tab_inactive_color: None,
+                tab_unread_color: None,
+                tab_unread_prefix: None,
+            }),
+            "players" => Some(WindowDef {
+                name: "players".to_string(),
+                widget_type: "players".to_string(),
+                streams: vec!["playercount".to_string(), "playerlist".to_string()],
+                row: default_row,
+                col: default_col,
+                rows: 3,
+                cols: 20,
+                buffer_size: 0,
+                show_border: true,
+                border_style: Some("rounded".to_string()),
+                border_color: None,
+                border_sides: None,
+                title: Some("Players".to_string()),
+                bar_color: None,
+                bar_background_color: None,
+                transparent_background: true,
+                indicator_colors: None,
+                dashboard_layout: None,
+                dashboard_indicators: None,
+                dashboard_spacing: None,
+                dashboard_hide_inactive: None,
+                visible_count: None,
+                effect_category: None,
+                tabs: None,
+                tab_bar_position: None,
+                tab_active_color: None,
+                tab_inactive_color: None,
+                tab_unread_color: None,
+                tab_unread_prefix: None,
+            }),
             _ => None,
         }
     }
@@ -2231,6 +2301,8 @@ impl Config {
             "spells",
             "all_effects",
             "effects",
+            "targets",
+            "players",
         ]
     }
 
@@ -2378,6 +2450,17 @@ impl Config {
         let config_dir = Self::config_dir()?;
         Ok(config_dir.join("layouts").join(format!("{}.toml", name)))
     }
+
+    /// Resolve a spell ID to a color based on configured spell lists
+    /// Example: spells = [101, 107, 120, 140, 150]
+    pub fn get_spell_color(&self, spell_id: u32) -> Option<String> {
+        for spell_config in &self.spell_colors {
+            if spell_config.spells.contains(&spell_id) {
+                return Some(spell_config.color.clone());
+            }
+        }
+        None
+    }
 }
 
 impl Default for Config {
@@ -2422,6 +2505,59 @@ impl Default for Config {
                 },
             ],
             keybinds: default_keybinds(),
+            spell_colors: vec![
+                // Example spell colors - list commonly used spells from each circle
+                // Light blue for Minor Elemental (400 series)
+                SpellColorRange {
+                    spells: vec![401, 406, 414, 419, 430, 435],
+                    color: "#87ceeb".to_string()
+                },
+                // Dark blue for Major Elemental (500 series)
+                SpellColorRange {
+                    spells: vec![503, 506, 507, 508, 509, 513, 520, 525, 530, 540],
+                    color: "#4169e1".to_string()
+                },
+                // Purple for Wizard (900 series)
+                SpellColorRange {
+                    spells: vec![905, 911, 913, 918, 919, 920, 925, 930, 940],
+                    color: "#9370db".to_string()
+                },
+                // Green for Ranger (600 series)
+                SpellColorRange {
+                    spells: vec![601, 602, 605, 606, 608, 613, 616, 618, 625, 630, 640],
+                    color: "#32cd32".to_string()
+                },
+                // Yellow for Cleric (300 series)
+                SpellColorRange {
+                    spells: vec![303, 307, 310, 313, 315, 317, 318, 319, 325, 330, 335, 340],
+                    color: "#ffd700".to_string()
+                },
+                // Red for Sorcerer (700 series)
+                SpellColorRange {
+                    spells: vec![701, 703, 705, 708, 712, 713, 715, 720, 725, 730, 735, 740],
+                    color: "#ff4500".to_string()
+                },
+                // Cyan for Empath (1100 series)
+                SpellColorRange {
+                    spells: vec![1101, 1107, 1109, 1115, 1120, 1125, 1130, 1140, 1150],
+                    color: "#00ffff".to_string()
+                },
+                // Orange for Bard (1000 series)
+                SpellColorRange {
+                    spells: vec![1001, 1003, 1006, 1010, 1012, 1019, 1025, 1030, 1035, 1040],
+                    color: "#ff8c00".to_string()
+                },
+                // Pink for Paladin (1600 series)
+                SpellColorRange {
+                    spells: vec![1601, 1602, 1605, 1610, 1615, 1617, 1618, 1625, 1630, 1635],
+                    color: "#ff69b4".to_string()
+                },
+                // Sky blue for Minor Spirit (100 series)
+                SpellColorRange {
+                    spells: vec![101, 107, 120, 125, 130, 140, 150, 175],
+                    color: "#00bfff".to_string()
+                },
+            ],
         }
     }
 }

@@ -12,6 +12,7 @@ This page documents all dot commands available in profanity-rs. Dot commands are
 - [Countdown Commands](#countdown-commands)
 - [Indicator Commands](#indicator-commands)
 - [Active Effects Commands](#active-effects-commands)
+- [Combat Tracking Commands](#combat-tracking-commands)
 - [Debug Commands](#debug-commands)
 
 ---
@@ -144,7 +145,7 @@ List all available window templates.
 **Example:**
 ```
 .templates
-→ Available window templates: main, thoughts, speech, familiar, room, logons, deaths, arrivals, ambients, announcements, loot, health, mana, stamina, spirit, mindstate, encumbrance, stance, bloodpoints, roundtime, casttime, stun, compass, injuries, poisoned, diseased, bleeding, stunned, webbed, status, activeeffects, performancestats
+→ Available window templates: main, thoughts, speech, familiar, room, logons, deaths, arrivals, ambients, announcements, loot, health, mana, stamina, spirit, mindstate, encumbrance, stance, bloodpoints, roundtime, casttime, stun, compass, injuries, poisoned, diseased, bleeding, stunned, webbed, status, activeeffects, targets, players, performancestats
 ```
 
 ---
@@ -585,6 +586,74 @@ Toggle between displaying spell names and spell IDs in active effects windows.
 **Notes:**
 - Only works on active effects widgets
 - Useful for debugging or when you need to reference spell IDs
+
+---
+
+## Combat Tracking Commands
+
+### Creating Targets Widget
+
+Create a scrollable targets list widget for tracking combat targets.
+
+**Syntax:**
+```
+.createwindow targets
+```
+
+**Features:**
+- Displays all combat targets with count in title (e.g., "Targets [05]")
+- Current target marked with "►" prefix
+- Status indicators shown as suffix: `[stu]`, `[sit]`, `[kne]`, `[sle]`, `[fro]`, `[fly]`, `[dead]`
+- Scrollable with mouse wheel or keyboard (Tab to focus, then arrow keys)
+- Requires `targetlist.lic` to be running
+
+**Example:**
+```
+.createwindow targets
+.border targets rounded #ff0000
+.rename targets "Combat Targets"
+```
+
+**See also:** [Targets and Players Widget Guide](Targets-and-Players.md)
+
+---
+
+### Creating Players Widget
+
+Create a scrollable players list widget for tracking players in the room.
+
+**Syntax:**
+```
+.createwindow players
+```
+
+**Features:**
+- Displays all players in room with count in title (e.g., "Players [19]")
+- Status indicators shown as suffix: `[sit]`, `[kne]`, `[sle]`, `[fly]`
+- Scrollable with mouse wheel or keyboard (Tab to focus, then arrow keys)
+- Requires `targetlist.lic` to be running
+
+**Example:**
+```
+.createwindow players
+.border players rounded #00ff00
+.rename players "Room Players"
+```
+
+**Notes:**
+- Both targets and players widgets use the ScrollableContainer pattern (same as Active Effects)
+- Data updates continuously from `targetlist.lic`
+- Scrolling works when list exceeds window height
+- Stream routing: targets → `combat` stream, players → `playerlist` stream
+
+**Required Lich Script:**
+```ruby
+;go2 targetlist.lic
+# Or add to autostart:
+;autostart add targetlist
+```
+
+**See also:** [Targets and Players Widget Guide](Targets-and-Players.md)
 
 ---
 

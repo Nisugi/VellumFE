@@ -10,6 +10,7 @@ pub struct ScrollableItem {
     pub value: u32,
     pub max: u32,
     pub suffix: Option<String>,  // Optional suffix to pin to right edge (e.g., "[XX:XX]")
+    pub color: Option<String>,   // Optional color override for this item (hex format)
 }
 
 pub struct ScrollableContainer {
@@ -75,14 +76,14 @@ impl ScrollableContainer {
     }
 
     pub fn add_or_update_item(&mut self, id: String, text: String, value: u32, max: u32) {
-        self.add_or_update_item_full(id, text, None, value, max, None);
+        self.add_or_update_item_full(id, text, None, value, max, None, None);
     }
 
     pub fn add_or_update_item_with_suffix(&mut self, id: String, text: String, value: u32, max: u32, suffix: Option<String>) {
-        self.add_or_update_item_full(id, text, None, value, max, suffix);
+        self.add_or_update_item_full(id, text, None, value, max, suffix, None);
     }
 
-    pub fn add_or_update_item_full(&mut self, id: String, text: String, alternate_text: Option<String>, value: u32, max: u32, suffix: Option<String>) {
+    pub fn add_or_update_item_full(&mut self, id: String, text: String, alternate_text: Option<String>, value: u32, max: u32, suffix: Option<String>, color: Option<String>) {
         let item = ScrollableItem {
             id: id.clone(),
             text,
@@ -90,6 +91,7 @@ impl ScrollableContainer {
             value,
             max,
             suffix,
+            color,
         };
 
         // Add to order list if new
@@ -255,7 +257,9 @@ impl ScrollableContainer {
                 pb.set_value(item.value, item.max);
                 pb.set_value_with_text(item.value, item.max, Some(display_text));
 
-                pb.set_colors(Some(self.bar_color.clone()), None);
+                // Use item-specific color if available, otherwise use default bar_color
+                let bar_color = item.color.as_ref().unwrap_or(&self.bar_color).clone();
+                pb.set_colors(Some(bar_color), None);
                 pb.set_transparent_background(self.transparent_background);
                 pb.set_border_config(false, None, None);
                 pb.set_display_options(self.show_values, self.show_percentage);

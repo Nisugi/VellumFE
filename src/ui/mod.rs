@@ -13,6 +13,8 @@ mod dashboard;
 mod scrollable_container;
 mod active_effects;
 mod performance_stats;
+mod targets;
+mod players;
 
 pub use text_window::{TextWindow, StyledText};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
@@ -35,6 +37,10 @@ pub use hand::{Hand, HandType};
 #[allow(unused_imports)]
 pub use dashboard::{Dashboard, DashboardLayout};
 pub use performance_stats::PerformanceStatsWidget;
+#[allow(unused_imports)]
+pub use targets::Targets;
+#[allow(unused_imports)]
+pub use players::Players;
 
 use ratatui::{
     layout::Rect,

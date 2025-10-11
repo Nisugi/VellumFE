@@ -36,7 +36,7 @@ impl ActiveEffects {
 
     /// Add or update an active effect with proper formatting: "Name [XX:XX]"
     /// Stores both spell ID and name so user can toggle between them
-    pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String) {
+    pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String, color: Option<String>) {
         let duration = Self::format_duration(&time);
         // Pass name as primary text, ID as alternate text
         self.container.add_or_update_item_full(
@@ -45,7 +45,8 @@ impl ActiveEffects {
             Some(id),    // alternate text (spell ID)
             value,
             100,
-            Some(duration)
+            Some(duration),
+            color        // item-specific color
         );
     }
 

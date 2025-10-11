@@ -49,6 +49,7 @@ pub struct App {
     keybind_map: HashMap<(KeyCode, KeyModifiers), KeyAction>,  // Parsed keybindings
     perf_stats: PerformanceStats,  // Performance statistics
     show_perf_stats: bool,  // Whether to show performance stats window
+    stream_buffer: String,  // Buffer for accumulating stream text (used for combat/playerlist)
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +195,7 @@ impl App {
             input_mode: InputMode::Normal,  // Start in normal mode
             perf_stats: PerformanceStats::new(),  // Initialize performance stats
             show_perf_stats: false,  // Hidden by default
+            stream_buffer: String::new(),  // Initialize empty stream buffer
         })
     }
 
@@ -2211,18 +2213,44 @@ impl App {
                 for element in elements {
                     match element {
                         ParsedElement::Text { content, fg_color, bg_color, bold, .. } => {
-                            // Add text - preserve leading/trailing spaces but skip truly empty content
-                            // (empty lines are handled before parsing)
-                            if !content.is_empty() {
-                                self.add_text_to_current_stream(StyledText {
-                                    content: content.clone(),
-                                    fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
-                                    bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
-                                    bold,
-                                });
-                                // Reset prompt_shown flag when we see actual text content (not just whitespace)
-                                if !content.trim().is_empty() {
-                                    self.prompt_shown = false;
+                            // Special handling for target/player streams
+                            match self.current_stream.as_str() {
+                                "targetcount" => {
+                                    // Parse target count: "[05]"
+                                    let count_text = content.trim().trim_matches(&['[', ']'][..]);
+                                    if let Ok(count) = count_text.trim().parse::<u32>() {
+                                        if let Some(widget) = self.window_manager.get_window("targets") {
+                                            widget.set_target_count(count);
+                                        }
+                                    }
+                                }
+                                "playercount" => {
+                                    // Parse player count: "[03]"
+                                    let count_text = content.trim().trim_matches(&['[', ']'][..]);
+                                    if let Ok(count) = count_text.trim().parse::<u32>() {
+                                        if let Some(widget) = self.window_manager.get_window("players") {
+                                            widget.set_player_count(count);
+                                        }
+                                    }
+                                }
+                                "combat" | "playerlist" => {
+                                    // Accumulate text in buffer (will be parsed on StreamPop)
+                                    self.stream_buffer.push_str(&content);
+                                }
+                                _ => {
+                                    // Normal text handling for other streams
+                                    if !content.is_empty() {
+                                        self.add_text_to_current_stream(StyledText {
+                                            content: content.clone(),
+                                            fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
+                                            bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
+                                            bold,
+                                        });
+                                        // Reset prompt_shown flag when we see actual text content (not just whitespace)
+                                        if !content.trim().is_empty() {
+                                            self.prompt_shown = false;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2272,10 +2300,37 @@ impl App {
                             // Switch to new stream
                             debug!("Pushing stream: {}", id);
                             self.current_stream = id.clone();
+
+                            // Clear stream buffer for accumulation streams
+                            match id.as_str() {
+                                "combat" | "playerlist" => {
+                                    self.stream_buffer.clear();
+                                }
+                                _ => {}
+                            }
                         }
                         ParsedElement::StreamPop => {
                             // Return to main stream
                             debug!("Popping stream, returning to main");
+
+                            // Process buffered stream content before popping
+                            match self.current_stream.as_str() {
+                                "combat" => {
+                                    // Parse complete target list
+                                    if let Some(widget) = self.window_manager.get_window("targets") {
+                                        widget.set_targets_from_text(&self.stream_buffer);
+                                    }
+                                    self.stream_buffer.clear();
+                                }
+                                "playerlist" => {
+                                    // Parse complete player list
+                                    if let Some(widget) = self.window_manager.get_window("players") {
+                                        widget.set_players_from_text(&self.stream_buffer);
+                                    }
+                                    self.stream_buffer.clear();
+                                }
+                                _ => {}
+                            }
 
                             // Only skip the next prompt if the stream was routed to a non-main window
                             // If the stream fell back to main (no dedicated window), keep the prompt
@@ -2480,6 +2535,11 @@ impl App {
                         }
                         ParsedElement::ActiveEffect { category, id, value, text, time } => {
                             // Update active effects widgets
+                            // Parse spell ID to lookup color
+                            let spell_color = id.parse::<u32>()
+                                .ok()
+                                .and_then(|spell_id| self.config.get_spell_color(spell_id));
+
                             // Find all windows that accept this category
                             let window_names = self.window_manager.get_window_names();
                             for window_name in window_names {
@@ -2491,7 +2551,8 @@ impl App {
                                                 id.clone(),
                                                 text.clone(),
                                                 value,
-                                                time.clone()
+                                                time.clone(),
+                                                spell_color.clone()
                                             );
                                             debug!("Updated active effect {} in window {}: {} ({}%)", id, window_name, text, value);
                                         }
