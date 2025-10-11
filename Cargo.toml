@@ -11,6 +11,8 @@ license = "MIT OR Apache-2.0"
 ratatui = "0.29"
 # Using PR #1013 for numpad key support on Windows
 crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"] }
+# Text input widget
+tui-textarea = "0.7"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -45,3 +47,6 @@ rand = "0.8"
 
 # Audio playback
 rodio = "0.19"
+
+# Clipboard support
+arboard = "3.4"

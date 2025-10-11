@@ -120,7 +120,11 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Mouse scroll over windows to scroll up/down in text history
 - Title bar detection excludes corners (leaves 1 cell margin on each side)
 - Resize/move use incremental deltas, not absolute positions
-- Text selection: Hold Shift while using mouse to select text (disables window interaction)
+- Text selection: Click and drag (no modifiers) in text windows to select text
+  - Selected text automatically copied to clipboard on mouse release
+  - Respects window boundaries (won't select across windows)
+  - Escape or click anywhere to clear selection
+  - Shift+Mouse enables native terminal selection (bypasses VellumFE selection)
 
 ## Module Structure
 
@@ -179,6 +183,13 @@ GemStone IV XML protocol parser. Contains:
 - Tag handlers for all XML elements
 - Color/style stack management for nested tags
 - Preset color mappings (loaded from config)
+
+### src/selection.rs
+Text selection state and coordinate tracking. Contains:
+- `SelectionState` - Tracks selection start/end positions and active state
+- `TextPosition` - Window-aware text coordinates (window_index, line, col)
+- Selection boundary checking and normalization
+- Window-relative coordinate conversion helpers
 
 **Important XML Elements:**
 - `<pushStream id='...'/>` / `<popStream/>` - Stream routing

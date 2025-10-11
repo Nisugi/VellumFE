@@ -204,6 +204,13 @@ pub struct UiConfig {
     pub mouse_mode_toggle_key: String,  // Key to toggle mouse mode (e.g., "F12")
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
+    // Text selection settings
+    #[serde(default = "default_selection_enabled")]
+    pub selection_enabled: bool,
+    #[serde(default = "default_selection_respect_window_boundaries")]
+    pub selection_respect_window_boundaries: bool,
+    #[serde(default = "default_selection_bg_color")]
+    pub selection_bg_color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -610,6 +617,18 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
 
 fn default_countdown_icon() -> String {
     "\u{f0c8}".to_string()  // Nerd Font square icon
+}
+
+fn default_selection_enabled() -> bool {
+    true
+}
+
+fn default_selection_respect_window_boundaries() -> bool {
+    true
+}
+
+fn default_selection_bg_color() -> String {
+    "#4a4a4a".to_string()
 }
 
 fn default_command_input() -> CommandInputConfig {
@@ -2805,6 +2824,9 @@ impl Default for Config {
                 ],
                 mouse_mode_toggle_key: default_mouse_mode_toggle_key(),
                 countdown_icon: default_countdown_icon(),
+                selection_enabled: default_selection_enabled(),
+                selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
+                selection_bg_color: default_selection_bg_color(),
             },
             presets: {
                 let mut map = HashMap::new();

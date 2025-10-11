@@ -2,6 +2,7 @@ use crate::config::{Config, KeyAction, KeyBindAction, Layout, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
+use crate::selection::SelectionState;
 use crate::sound::SoundPlayer;
 use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::Result;
@@ -30,6 +31,7 @@ enum InputMode {
     Normal,   // Normal text input to command window
     Command,  // Command input mode (typing a command)
     Search,   // Search mode (typing search query)
+    HighlightForm,  // Highlight management form
 }
 
 pub struct App {
@@ -53,6 +55,9 @@ pub struct App {
     show_perf_stats: bool,  // Whether to show performance stats window
     stream_buffer: String,  // Buffer for accumulating stream text (used for combat/playerlist)
     sound_player: Option<SoundPlayer>,  // Sound player (None if initialization failed)
+    highlight_form: Option<crate::ui::HighlightFormWidget>,  // Highlight form (None when not shown)
+    selection_state: Option<SelectionState>,  // Current text selection (None when no selection)
+    selection_drag_start: Option<(u16, u16)>,  // Mouse position when drag started (for detecting drag vs click)
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +225,9 @@ impl App {
             show_perf_stats: false,  // Hidden by default
             stream_buffer: String::new(),  // Initialize empty stream buffer
             sound_player,  // Sound player (may be None if initialization failed)
+            highlight_form: None,  // No form shown initially
+            selection_state: None,  // No selection initially
+            selection_drag_start: None,  // No drag initially
         })
     }
 
@@ -432,6 +440,151 @@ impl App {
             }
         }
         None
+    }
+
+    /// Convert mouse screen coordinates to text position (window_idx, line, col)
+    /// Returns None if mouse is not over a text window
+    fn mouse_to_text_position(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_layouts: &HashMap<String, ratatui::layout::Rect>,
+    ) -> Option<(usize, usize, usize)> {
+        let window_names = self.window_manager.get_window_names();
+
+        for (idx, name) in window_names.iter().enumerate() {
+            if let Some(rect) = window_layouts.get(name) {
+                // Check if mouse is within window bounds
+                if mouse_col >= rect.x
+                    && mouse_col < rect.x + rect.width
+                    && mouse_row >= rect.y
+                    && mouse_row < rect.y + rect.height
+                {
+                    // Only handle text windows for selection
+                    if let Some(widget) = self.window_manager.get_window_const(name) {
+                        if let Widget::Text(_) = widget {
+                            // Convert to window-relative coordinates
+                            // Account for border (if present)
+                            let has_border = self.layout.windows.get(idx)
+                                .map(|w| w.show_border)
+                                .unwrap_or(false);
+
+                            let (rel_col, rel_row) = if has_border {
+                                // Border takes 1 cell on each side
+                                (
+                                    (mouse_col.saturating_sub(rect.x + 1)) as usize,
+                                    (mouse_row.saturating_sub(rect.y + 1)) as usize,
+                                )
+                            } else {
+                                (
+                                    (mouse_col - rect.x) as usize,
+                                    (mouse_row - rect.y) as usize,
+                                )
+                            };
+
+                            return Some((idx, rel_row, rel_col));
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Copy the currently selected text to clipboard
+    fn copy_selection_to_clipboard(&mut self, window_layouts: &HashMap<String, ratatui::layout::Rect>) {
+        let selection = match &self.selection_state {
+            Some(s) if s.active => s,
+            _ => return,
+        };
+
+        // Get the window being selected
+        let window_names = self.window_manager.get_window_names();
+        if selection.start.window_index >= window_names.len() {
+            return;
+        }
+
+        let window_name = &window_names[selection.start.window_index];
+        let widget = match self.window_manager.get_window(window_name) {
+            Some(Widget::Text(text_window)) => text_window,
+            _ => return,
+        };
+
+        // Extract selected text
+        let (start, end) = selection.normalized_range();
+        let mut selected_text = String::new();
+
+        // Get the visible lines from the text window
+        let lines = widget.get_lines();
+
+        for line_idx in start.line..=end.line.min(lines.len().saturating_sub(1)) {
+            if line_idx >= lines.len() {
+                break;
+            }
+
+            let line = &lines[line_idx];
+
+            // Determine which columns to include from this line
+            let (start_col, end_col) = if line_idx == start.line && line_idx == end.line {
+                // Same line - use both bounds
+                (start.col, end.col)
+            } else if line_idx == start.line {
+                // First line - from start_col to end
+                (start.col, usize::MAX)
+            } else if line_idx == end.line {
+                // Last line - from beginning to end_col
+                (0, end.col)
+            } else {
+                // Middle lines - full line
+                (0, usize::MAX)
+            };
+
+            // Extract text from the line
+            let mut col_offset = 0;
+            for segment in &line.segments {
+                let segment_end = col_offset + segment.text.len();
+
+                if col_offset >= end_col {
+                    break;
+                }
+
+                if segment_end > start_col {
+                    // This segment overlaps with selection
+                    let seg_start = start_col.saturating_sub(col_offset);
+                    let seg_end = (end_col.saturating_sub(col_offset)).min(segment.text.len());
+
+                    if seg_start < segment.text.len() {
+                        let chars: Vec<char> = segment.text.chars().collect();
+                        let selected_chars: String = chars[seg_start..seg_end.min(chars.len())].iter().collect();
+                        selected_text.push_str(&selected_chars);
+                    }
+                }
+
+                col_offset = segment_end;
+            }
+
+            // Add newline except for last line
+            if line_idx < end.line {
+                selected_text.push('\n');
+            }
+        }
+
+        // Copy to clipboard
+        if !selected_text.is_empty() {
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => {
+                    if let Err(e) = clipboard.set_text(&selected_text) {
+                        debug!("Failed to copy to clipboard: {}", e);
+                    } else {
+                        debug!("Copied {} characters to clipboard", selected_text.len());
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to access clipboard: {}", e);
+                }
+            }
+        }
     }
 
     /// Update window manager configs from current config
@@ -1536,6 +1689,112 @@ impl App {
                     self.add_system_message(&format!("Window '{}' not found in config", window_name));
                 }
             }
+            "addhighlight" | "addhl" => {
+                // Open highlight form in Create mode
+                let form = crate::ui::HighlightFormWidget::new();
+
+                self.highlight_form = Some(form);
+                self.input_mode = InputMode::HighlightForm;
+                self.add_system_message("Opening highlight form (Tab to navigate, Esc to cancel)");
+            }
+            "edithighlight" | "edithl" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .edithighlight <name>");
+                    return;
+                }
+
+                let name = parts[1];
+
+                if let Some(pattern) = self.config.highlights.get(name) {
+                    let form = crate::ui::HighlightFormWidget::new_edit(name.to_string(), pattern);
+                    self.highlight_form = Some(form);
+                    self.input_mode = InputMode::HighlightForm;
+                    self.add_system_message(&format!("Editing highlight '{}' (Tab to navigate, Esc to cancel)", name));
+                } else {
+                    self.add_system_message(&format!("Highlight '{}' not found", name));
+                }
+            }
+            "deletehighlight" | "delhl" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: .deletehighlight <name>");
+                    return;
+                }
+
+                let name = parts[1];
+
+                if self.config.highlights.remove(name).is_some() {
+                    if let Err(e) = self.config.save(None) {
+                        self.add_system_message(&format!("Failed to save config: {}", e));
+                    } else {
+                        self.window_manager.update_highlights(self.config.highlights.clone());
+                        self.add_system_message(&format!("Highlight '{}' deleted", name));
+                    }
+                } else {
+                    self.add_system_message(&format!("Highlight '{}' not found", name));
+                }
+            }
+            "listhighlights" | "listhl" | "highlights" => {
+                if self.config.highlights.is_empty() {
+                    self.add_system_message("No highlights configured");
+                } else {
+                    let names: Vec<_> = self.config.highlights.keys().collect();
+                    self.add_system_message(&format!("{} highlights: {}", names.len(), names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+                }
+            }
+            "testhighlight" | "testhl" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .testhighlight <name> <text to test>");
+                    self.add_system_message("Example: .testhighlight combat_swing You swing a sword at the kobold!");
+                    return;
+                }
+
+                let name = parts[1];
+                // Join remaining parts as the test text
+                let test_text = parts[2..].join(" ");
+
+                // Clone the pattern to avoid borrowing issues
+                if let Some(pattern_config) = self.config.highlights.get(name).cloned() {
+                    // Test the pattern
+                    match regex::Regex::new(&pattern_config.pattern) {
+                        Ok(re) => {
+                            if let Some(matched) = re.find(&test_text) {
+                                self.add_system_message(&format!("✓ Match found in highlight '{}'", name));
+                                self.add_system_message(&format!("  Pattern: {}", pattern_config.pattern));
+                                self.add_system_message(&format!("  Matched: \"{}\"", matched.as_str()));
+                                self.add_system_message(&format!("  Position: {} to {}", matched.start(), matched.end()));
+
+                                // Show styling that would be applied
+                                let mut style_info = Vec::new();
+                                if let Some(ref fg) = pattern_config.fg {
+                                    style_info.push(format!("fg={}", fg));
+                                }
+                                if let Some(ref bg) = pattern_config.bg {
+                                    style_info.push(format!("bg={}", bg));
+                                }
+                                if pattern_config.bold {
+                                    style_info.push("bold".to_string());
+                                }
+                                if pattern_config.color_entire_line {
+                                    style_info.push("entire line".to_string());
+                                }
+                                if !style_info.is_empty() {
+                                    self.add_system_message(&format!("  Styling: {}", style_info.join(", ")));
+                                }
+                            } else {
+                                self.add_system_message(&format!("✗ No match in highlight '{}'", name));
+                                self.add_system_message(&format!("  Pattern: {}", pattern_config.pattern));
+                                self.add_system_message(&format!("  Test text: \"{}\"", test_text));
+                            }
+                        }
+                        Err(e) => {
+                            self.add_system_message(&format!("✗ Invalid regex in highlight '{}': {}", name, e));
+                        }
+                    }
+                } else {
+                    self.add_system_message(&format!("Highlight '{}' not found", name));
+                    self.add_system_message("Use .listhighlights to see all highlights");
+                }
+            }
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
             }
@@ -1583,12 +1842,36 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        // Check minimum terminal size BEFORE entering alternate screen
+        const MIN_WIDTH: u16 = 80;
+        const MIN_HEIGHT: u16 = 24;
+
+        // Get terminal size without entering alternate screen yet
+        let size = crossterm::terminal::size()?;
+        if size.0 < MIN_WIDTH || size.1 < MIN_HEIGHT {
+            eprintln!("\n╔════════════════════════════════════════════════════════════╗");
+            eprintln!("║              TERMINAL SIZE TOO SMALL                       ║");
+            eprintln!("╠════════════════════════════════════════════════════════════╣");
+            eprintln!("║ VellumFE requires a minimum terminal size to run.         ║");
+            eprintln!("║                                                            ║");
+            eprintln!("║ Current size: {}x{} (width x height)", size.0, size.1);
+            eprintln!("║ Required:     {}x{} (minimum)", MIN_WIDTH, MIN_HEIGHT);
+            eprintln!("║                                                            ║");
+            eprintln!("║ Please resize your terminal window and try again.         ║");
+            eprintln!("╚════════════════════════════════════════════════════════════╝\n");
+
+            return Err(anyhow::anyhow!("Terminal size {}x{} is below minimum {}x{}",
+                size.0, size.1, MIN_WIDTH, MIN_HEIGHT));
+        }
+
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
+
+        tracing::info!("Terminal size: {}x{}", size.0, size.1);
 
         // Set up signal handler for Ctrl+C and terminal close
         let running = Arc::new(AtomicBool::new(true));
@@ -1661,9 +1944,17 @@ impl App {
                         // Render search input with prompt
                         self.render_search_input(layout.input_area, f.buffer_mut());
                     }
+                    InputMode::HighlightForm => {
+                        // Hide command input when form is open
+                    }
                     _ => {
                         self.command_input.render(layout.input_area, f.buffer_mut());
                     }
+                }
+
+                // Render highlight form as popup (if open)
+                if let Some(ref mut form) = self.highlight_form {
+                    form.render(f.area(), f.buffer_mut());
                 }
 
                 // Record UI render time
@@ -1690,6 +1981,25 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         self.handle_mouse_event(mouse, &window_layouts)?;
+                    }
+                    Event::Resize(width, height) => {
+                        const MIN_WIDTH: u16 = 80;
+                        const MIN_HEIGHT: u16 = 24;
+
+                        tracing::debug!("Terminal resized to {}x{}", width, height);
+
+                        if width < MIN_WIDTH || height < MIN_HEIGHT {
+                            tracing::warn!(
+                                "Terminal size {}x{} is below minimum {}x{}. Layout may not display correctly.",
+                                width, height, MIN_WIDTH, MIN_HEIGHT
+                            );
+                            let warning_msg = format!(
+                                "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
+                                width, height, MIN_WIDTH, MIN_HEIGHT
+                            );
+                            self.add_system_message(&warning_msg);
+                        }
+                        // Layout recalculation happens automatically on next frame
                     }
                     _ => {}
                 }
@@ -1746,7 +2056,18 @@ impl App {
         modifiers: KeyModifiers,
         command_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        // Handle global keys first (work in any mode)
+        // In HighlightForm mode, handle in the form directly (except Ctrl+C to quit)
+        if self.input_mode == InputMode::HighlightForm {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the form
+            return self.handle_highlight_form_input(key, modifiers);
+        }
+
+        // Handle global keys first (work in any mode except HighlightForm)
         match (key, modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.running = false;
@@ -1759,7 +2080,12 @@ impl App {
                 return Ok(());
             }
             (KeyCode::Esc, _) => {
-                // Exit search mode, clear search
+                // Clear text selection if any
+                if self.selection_state.is_some() {
+                    self.selection_state = None;
+                }
+
+                // Exit search mode
                 if self.input_mode == InputMode::Search {
                     self.input_mode = InputMode::Normal;
                     if let Some(window) = self.get_focused_window() {
@@ -1789,7 +2115,99 @@ impl App {
         match self.input_mode {
             InputMode::Search => self.handle_search_input(key, modifiers),
             InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
+            InputMode::HighlightForm => unreachable!(), // Handled above
         }
+    }
+
+    fn handle_highlight_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        if let Some(ref mut form) = self.highlight_form {
+            // Convert crossterm KeyCode to ratatui::crossterm KeyCode
+            // They're the same enum, just from different crates
+            use ratatui::crossterm::event as rt_event;
+
+            let rt_key_code = match key {
+                KeyCode::Backspace => rt_event::KeyCode::Backspace,
+                KeyCode::Enter => rt_event::KeyCode::Enter,
+                KeyCode::Left => rt_event::KeyCode::Left,
+                KeyCode::Right => rt_event::KeyCode::Right,
+                KeyCode::Up => rt_event::KeyCode::Up,
+                KeyCode::Down => rt_event::KeyCode::Down,
+                KeyCode::Home => rt_event::KeyCode::Home,
+                KeyCode::End => rt_event::KeyCode::End,
+                KeyCode::PageUp => rt_event::KeyCode::PageUp,
+                KeyCode::PageDown => rt_event::KeyCode::PageDown,
+                KeyCode::Tab => rt_event::KeyCode::Tab,
+                KeyCode::BackTab => rt_event::KeyCode::BackTab,
+                KeyCode::Delete => rt_event::KeyCode::Delete,
+                KeyCode::Insert => rt_event::KeyCode::Insert,
+                KeyCode::F(n) => rt_event::KeyCode::F(n),
+                KeyCode::Char(c) => rt_event::KeyCode::Char(c),
+                KeyCode::Null => rt_event::KeyCode::Null,
+                KeyCode::Esc => rt_event::KeyCode::Esc,
+                _ => rt_event::KeyCode::Null, // Fallback for other keys
+            };
+
+            // Convert modifiers by ORing all active flags
+            let mut rt_modifiers = rt_event::KeyModifiers::empty();
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                rt_modifiers |= rt_event::KeyModifiers::SHIFT;
+            }
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                rt_modifiers |= rt_event::KeyModifiers::CONTROL;
+            }
+            if modifiers.contains(KeyModifiers::ALT) {
+                rt_modifiers |= rt_event::KeyModifiers::ALT;
+            }
+
+            let key_event = rt_event::KeyEvent {
+                code: rt_key_code,
+                modifiers: rt_modifiers,
+                kind: rt_event::KeyEventKind::Press,
+                state: rt_event::KeyEventState::empty(),
+            };
+
+            if let Some(result) = form.handle_key(key_event) {
+                use crate::ui::FormResult;
+                match result {
+                    FormResult::Save { name, pattern } => {
+                        // Save to config
+                        self.config.highlights.insert(name.clone(), pattern);
+                        if let Err(e) = self.config.save(None) {
+                            self.add_system_message(&format!("Failed to save highlight: {}", e));
+                        } else {
+                            // Reload highlights in window manager
+                            self.window_manager.update_highlights(self.config.highlights.clone());
+                            self.add_system_message(&format!("Highlight '{}' saved", name));
+                        }
+
+                        // Close form
+                        self.highlight_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    FormResult::Delete { name } => {
+                        // Delete from config
+                        self.config.highlights.remove(&name);
+                        if let Err(e) = self.config.save(None) {
+                            self.add_system_message(&format!("Failed to delete highlight: {}", e));
+                        } else {
+                            // Reload highlights in window manager
+                            self.window_manager.update_highlights(self.config.highlights.clone());
+                            self.add_system_message(&format!("Highlight '{}' deleted", name));
+                        }
+
+                        // Close form
+                        self.highlight_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    FormResult::Cancel => {
+                        // Close form without saving
+                        self.highlight_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn handle_search_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
@@ -2133,6 +2551,13 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // If Shift is held, let native terminal handle selection (passthrough)
+                if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                    return Ok(());
+                }
+
+                // Clear any existing selection on new click
+                self.selection_state = None;
                 // Check if clicking on a resize border
                 if let Some((window_idx, edge)) = self.check_resize_border(mouse.column, mouse.row, window_layouts) {
                     self.resize_state = Some(ResizeState {
@@ -2158,6 +2583,11 @@ impl App {
                 } else {
                     // Not on border or title bar, check which window was clicked
                     debug!("Click at ({}, {}) - checking windows", mouse.column, mouse.row);
+
+                    // Track this position for potential text selection drag
+                    debug!("Setting selection_drag_start to ({}, {})", mouse.column, mouse.row);
+                    self.selection_drag_start = Some((mouse.column, mouse.row));
+
                     for (idx, name) in self.window_manager.get_window_names().iter().enumerate() {
                         if let Some(rect) = window_layouts.get(name) {
                             debug!("  Window '{}': rect {:?}", name, rect);
@@ -2197,6 +2627,23 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Copy selection to clipboard if we have one
+                if let Some(ref selection) = self.selection_state {
+                    debug!("Mouse up with selection: active={}, empty={}, start=({},{},{}), end=({},{},{})",
+                        selection.active, selection.is_empty(),
+                        selection.start.window_index, selection.start.line, selection.start.col,
+                        selection.end.window_index, selection.end.line, selection.end.col);
+                    if selection.active && !selection.is_empty() {
+                        debug!("Copying selection to clipboard");
+                        self.copy_selection_to_clipboard(window_layouts);
+                    }
+                } else {
+                    debug!("Mouse up with no selection state");
+                }
+
+                // Clear drag tracking
+                self.selection_drag_start = None;
+
                 // End resize or move operation
                 if self.resize_state.is_some() {
                     debug!("Ended resize operation");
@@ -2244,6 +2691,28 @@ impl App {
                         if let Some(ref mut ms) = self.move_state {
                             ms.start_mouse_pos.0 = mouse.column;
                             ms.start_mouse_pos.1 = mouse.row;
+                        }
+                    }
+                } else if let Some(drag_start) = self.selection_drag_start {
+                    debug!("Text selection drag detected at ({}, {})", mouse.column, mouse.row);
+                    // No resize/move active - handle text selection drag
+                    // Start selection if we haven't yet
+                    if self.selection_state.is_none() {
+                        if let Some((window_idx, line, col)) = self.mouse_to_text_position(drag_start.0, drag_start.1, window_layouts) {
+                            debug!("Starting text selection at window {} line {} col {}", window_idx, line, col);
+                            self.selection_state = Some(SelectionState::new(window_idx, line, col));
+                        } else {
+                            debug!("Failed to get text position for drag start ({}, {})", drag_start.0, drag_start.1);
+                        }
+                    }
+
+                    // Update selection end position
+                    // Compute position first to avoid borrow conflicts
+                    let mouse_pos = self.mouse_to_text_position(mouse.column, mouse.row, window_layouts);
+                    if let Some(ref mut selection) = self.selection_state {
+                        if let Some((window_idx, line, col)) = mouse_pos {
+                            debug!("Updating selection end to window {} line {} col {}", window_idx, line, col);
+                            selection.update_end(window_idx, line, col);
                         }
                     }
                 }

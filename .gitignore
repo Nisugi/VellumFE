@@ -21,3 +21,4 @@ debug.log
 
 # Wiki sync temporary directory
 .wiki-repo/
+.claude/settings.local.json

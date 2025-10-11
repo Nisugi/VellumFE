@@ -9,6 +9,11 @@ command_echo_color = "#ffffff"
 mouse_mode_toggle_key = "F11"
 countdown_icon = ""
 
+# Text selection settings
+selection_enabled = true
+selection_respect_window_boundaries = true
+selection_bg_color = "#4a4a4a"
+
 [ui.command_input]
 row = 27
 col = 0

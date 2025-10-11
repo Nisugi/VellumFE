@@ -72,6 +72,10 @@ General UI configuration options.
 command_echo_color = "#ffffff"
 mouse_mode_toggle_key = "F11"
 countdown_icon = "\u{f0c8}"
+# Text selection settings
+selection_enabled = true
+selection_respect_window_boundaries = true
+selection_bg_color = "#4a4a4a"
 ```
 
 ### Options
@@ -81,6 +85,9 @@ countdown_icon = "\u{f0c8}"
 | `command_echo_color` | string | `"#ffffff"` | Color for echoed commands in hex format |
 | `mouse_mode_toggle_key` | string | `"F11"` | Key to toggle mouse mode on/off |
 | `countdown_icon` | string | `"\u{f0c8}"` | Unicode character for countdown timer fill (Nerd Font icon) |
+| `selection_enabled` | boolean | `true` | Enable VellumFE text selection (click and drag to select) |
+| `selection_respect_window_boundaries` | boolean | `true` | Prevent selection from spanning across multiple windows |
+| `selection_bg_color` | string | `"#4a4a4a"` | Background color for selected text (for future visual highlighting) |
 
 ### Prompt Colors
 

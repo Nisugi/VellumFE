@@ -12,6 +12,7 @@ This page documents all dot commands available in vellum-fe. Dot commands are lo
 - [Countdown Commands](#countdown-commands)
 - [Indicator Commands](#indicator-commands)
 - [Active Effects Commands](#active-effects-commands)
+- [Highlight Commands](#highlight-commands)
 - [Combat Tracking Commands](#combat-tracking-commands)
 - [Debug Commands](#debug-commands)
 
@@ -671,6 +672,132 @@ Toggle between displaying spell names and spell IDs in active effects windows.
 **Notes:**
 - Only works on active effects widgets
 - Useful for debugging or when you need to reference spell IDs
+
+---
+
+## Highlight Commands
+
+### `.addhighlight` / `.addhl`
+
+Open the interactive highlight management form to create a new highlight pattern.
+
+**Syntax:**
+```
+.addhighlight
+.addhl
+```
+
+**Example:**
+```
+.addhighlight
+```
+
+**Notes:**
+- Opens a full-screen form for creating highlights
+- Use Tab/Shift+Tab to navigate between fields
+- Press Enter on Save button or Escape to exit
+- See [Highlight Management Guide](Highlight-Management.md) for detailed form usage
+
+---
+
+### `.edithighlight` / `.edithl`
+
+Edit an existing highlight pattern.
+
+**Syntax:**
+```
+.edithighlight <highlight_name>
+.edithl <highlight_name>
+```
+
+**Parameters:**
+- `highlight_name` - Name of the highlight to edit
+
+**Examples:**
+```
+.edithighlight combat_swing
+.edithl death_message
+```
+
+**Notes:**
+- Opens the highlight form pre-filled with existing values
+- Save to update the highlight or Cancel to discard changes
+- Delete button available to remove the highlight
+
+---
+
+### `.deletehighlight` / `.delhl`
+
+Delete a highlight pattern.
+
+**Syntax:**
+```
+.deletehighlight <highlight_name>
+.delhl <highlight_name>
+```
+
+**Parameters:**
+- `highlight_name` - Name of the highlight to delete
+
+**Examples:**
+```
+.deletehighlight combat_swing
+.delhl old_pattern
+```
+
+**Notes:**
+- Deletes immediately without confirmation
+- Saves config automatically after deletion
+- Cannot be undone (unless you reload config from backup)
+
+---
+
+### `.listhighlights` / `.listhl` / `.highlights`
+
+List all configured highlight patterns.
+
+**Syntax:**
+```
+.listhighlights
+.listhl
+.highlights
+```
+
+**Example:**
+```
+.listhighlights
+→ 12 highlights: combat_swing, death_message, loot_found, player_arrives, ...
+```
+
+---
+
+### `.testhighlight` / `.testhl`
+
+Test a highlight pattern against sample text to see if it matches.
+
+**Syntax:**
+```
+.testhighlight <highlight_name> <text to test>
+.testhl <highlight_name> <text to test>
+```
+
+**Parameters:**
+- `highlight_name` - Name of the highlight to test
+- `text to test` - Sample text to match against the pattern
+
+**Examples:**
+```
+.testhighlight combat_swing You swing a sword at the kobold!
+.testhl death_message The kobold falls to the ground and dies.
+```
+
+**Output:**
+- Shows whether the pattern matched
+- Displays the matched text
+- Shows the position in the string
+- Reports what styling would be applied (colors, bold, etc.)
+
+**See also:** [Highlight Management Guide](Highlight-Management.md)
 
 ---
 

@@ -3,6 +3,7 @@ mod config;
 mod network;
 mod parser;
 mod performance;
+mod selection;
 mod sound;
 mod ui;
 

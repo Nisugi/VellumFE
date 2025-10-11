@@ -136,43 +136,69 @@ Click anywhere in a window to focus it:
 
 ## Text Selection
 
-**Note:** Text selection requires mouse mode to be **disabled**.
+VellumFE provides window-aware text selection that automatically copies selected text to your clipboard.
 
-### Enabling Text Selection Mode
+### VellumFE Text Selection (Default)
 
-1. Press `F11` (or configured toggle key) to disable mouse mode
-2. Mouse operations (move/resize) will not work
-3. Terminal's native text selection is active
-
-### Selecting Text
-
-With mouse mode off:
+**Click and drag** (no modifiers) in any text window to select text:
 
 | Mouse Action | Result |
 |--------------|--------|
-| **Click and drag** | Select text |
-| **Shift+Click** | Extend selection |
-| **Shift+Drag** | Select rectangular area (terminal-dependent) |
-| **Double-click** | Select word (terminal-dependent) |
-| **Triple-click** | Select line (terminal-dependent) |
+| **Click and drag** | Select text within window |
+| **Mouse release** | Automatically copy to clipboard |
+| **Click anywhere** | Clear selection |
+| **Escape** | Clear selection |
 
-### Copying Text
+**Features:**
+- Works in default mode (no F11 toggle needed)
+- Respects window boundaries (won't select across windows)
+- Multi-line selection supported
+- Automatically copies to clipboard on release
+- Works with wrapped lines
 
-**Method 1: Terminal Built-in**
+**Notes:**
+- Only works in text windows (not progress bars, compass, etc.)
+- Selection automatically stops at window borders
+- Can scroll back and select older text
+
+### Native Terminal Selection
+
+If you prefer your terminal emulator's native selection (which may select across VellumFE and other content):
+
+| Mouse Action | Result |
+|--------------|--------|
+| **Shift + Click and drag** | Use native terminal selection |
+| **Shift + Drag** | Bypasses VellumFE, uses terminal's selection |
+
+**When to use native selection:**
+- Selecting text across multiple windows
+- Selecting VellumFE UI elements (borders, titles, etc.)
+- Using terminal-specific features (rectangular selection, etc.)
+
+### Copying Selected Text
+
+**VellumFE Selection:**
+- Text is automatically copied to clipboard when you release the mouse
+- Paste anywhere with Ctrl+V (Windows/Linux) or Cmd+V (macOS)
+
+**Native Terminal Selection:**
 - **Windows Terminal:** Ctrl+Shift+C or right-click
-- **iTerm2 (macOS):** Cmd+C
+- **iTerm2 (macOS):** Cmd+C or auto-copy on selection
 - **GNOME Terminal:** Ctrl+Shift+C
 - **Alacritty:** Ctrl+Shift+C
 
-**Method 2: Right-Click Menu**
-- Some terminals support right-click → Copy
+### Configuration
 
-**Method 3: Auto-copy**
-- Some terminals auto-copy selection to clipboard
+Text selection can be configured in your config file:
 
-### Toggling Back to Mouse Mode
+```toml
+[ui]
+selection_enabled = true  # Enable/disable VellumFE selection
+selection_respect_window_boundaries = true  # Keep within single window
+selection_bg_color = "#4a4a4a"  # For future visual highlighting
+```
 
-Press `F11` again to re-enable mouse mode for window operations.
+**See also:** [Text Selection Guide](Text-Selection.md) for detailed documentation
 
 ---
 

@@ -858,6 +858,37 @@ impl TextWindow {
 
         self.needs_rewrap = false;
     }
+
+    /// Get the wrapped lines for text selection/extraction
+    /// Returns a reference to the line segments
+    pub fn get_lines(&self) -> Vec<LineSegments> {
+        self.wrapped_lines
+            .iter()
+            .map(|line| LineSegments {
+                segments: line.spans.iter().map(|(text, style, span_type)| TextSegment {
+                    text: text.clone(),
+                    fg: style.fg,
+                    bg: style.bg,
+                    bold: style.add_modifier.contains(Modifier::BOLD),
+                    span_type: *span_type,
+                }).collect(),
+            })
+            .collect()
+    }
+}
+
+/// A line of text with multiple styled segments (for text selection)
+pub struct LineSegments {
+    pub segments: Vec<TextSegment>,
+}
+
+/// A segment of styled text within a line
+pub struct TextSegment {
+    pub text: String,
+    pub fg: Option<Color>,
+    pub bg: Option<Color>,
+    pub bold: bool,
+    pub span_type: SpanType,
 }
 
 impl TextWindow {

@@ -15,8 +15,9 @@ mod active_effects;
 mod performance_stats;
 mod targets;
 mod players;
+mod highlight_form;
 
-pub use text_window::{TextWindow, StyledText, SpanType};
+pub use text_window::{TextWindow, StyledText, SpanType, LineSegments, TextSegment};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
 pub use command_input::CommandInput;
 pub use window_manager::{WindowManager, WindowConfig, Widget};
@@ -41,6 +42,7 @@ pub use performance_stats::PerformanceStatsWidget;
 pub use targets::Targets;
 #[allow(unused_imports)]
 pub use players::Players;
+pub use highlight_form::{HighlightFormWidget, FormResult};
 
 use ratatui::{
     layout::Rect,
@@ -53,6 +55,9 @@ pub struct UiLayout {
 
 impl UiLayout {
     pub fn calculate(area: Rect, cmd_row: u16, cmd_col: u16, cmd_height: u16, cmd_width: u16) -> Self {
+        // Clamp cmd_col to fit within area
+        let clamped_col = cmd_col.min(area.width.saturating_sub(1));
+
         // Calculate actual command input area based on config
         let input_row = if cmd_row == 0 {
             // Default: bottom of screen
@@ -61,15 +66,18 @@ impl UiLayout {
             cmd_row.min(area.height.saturating_sub(cmd_height))
         };
 
+        // Calculate available width from the starting column
+        let available_width = area.width.saturating_sub(clamped_col);
+
         let input_width = if cmd_width == 0 {
-            // 0 means use full width
-            area.width
+            // 0 means use full width (from starting column to edge)
+            available_width
         } else {
-            cmd_width.min(area.width)
+            cmd_width.min(available_width)
         };
 
         let input_area = Rect {
-            x: area.x + cmd_col,
+            x: area.x + clamped_col,
             y: area.y + input_row,
             width: input_width,
             height: cmd_height.min(area.height),

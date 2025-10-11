@@ -791,12 +791,32 @@ impl WindowManager {
         for config in &self.config {
             let x = area.x + config.col;
             let y = area.y + config.row;
-            // Use full configured dimensions regardless of border state
-            // Content alignment will handle positioning within the widget area
-            let width = config.cols;
-            let height = config.rows;
 
-            result.insert(config.name.clone(), Rect::new(x, y, width, height));
+            // Skip windows that are completely outside the visible area
+            if x >= area.x + area.width || y >= area.y + area.height {
+                tracing::debug!(
+                    "Window '{}' at ({}, {}) is outside terminal bounds ({}x{})",
+                    config.name, x, y, area.width, area.height
+                );
+                continue;
+            }
+
+            // Clamp window dimensions to fit within terminal bounds
+            let max_width = (area.x + area.width).saturating_sub(x);
+            let max_height = (area.y + area.height).saturating_sub(y);
+
+            let width = config.cols.min(max_width);
+            let height = config.rows.min(max_height);
+
+            // Only add window if it has non-zero dimensions
+            if width > 0 && height > 0 {
+                result.insert(config.name.clone(), Rect::new(x, y, width, height));
+            } else {
+                tracing::debug!(
+                    "Window '{}' has zero dimensions after clamping: {}x{}",
+                    config.name, width, height
+                );
+            }
         }
 
         result
@@ -1132,5 +1152,12 @@ impl WindowManager {
         for window in self.windows.values_mut() {
             window.set_dashboard_indicator(indicator_id, value);
         }
+    }
+
+    /// Update highlight patterns (reload after config change)
+    pub fn update_highlights(&mut self, highlights: HashMap<String, crate::config::HighlightPattern>) {
+        self.highlights = highlights;
+        // Text windows will use the updated highlights on next render
+        // (highlights are checked via window_manager reference, not stored in windows)
     }
 }

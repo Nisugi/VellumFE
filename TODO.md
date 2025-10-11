@@ -177,38 +177,142 @@
   - [ ] Support character-specific sound overrides (future enhancement)
 
 ### Highlight Management UI
-- [ ] Create in-app highlight management system
-  - [ ] `.addhighlight` command - Create new highlight with interactive prompts
-  - [ ] `.edithighlight <name>` command - Edit existing highlight
-  - [ ] `.removehighlight <name>` command - Delete highlight
-  - [ ] `.listhighlights` command - Show all configured highlights
-  - [ ] `.testhighlight <name>` command - Test pattern against recent text
-  - [ ] Hot reload highlights without restarting VellumFE
-  - [ ] Auto-save highlights to config file
-  - [ ] Validation for regex patterns (catch errors before saving)
-  - [ ] Visual preview of highlight colors
-  - [ ] Support for creating sound-enabled highlights
+- [x] Create in-app highlight management system
+  - [x] `.addhighlight` command - Create new highlight with interactive prompts
+  - [x] `.edithighlight <name>` command - Edit existing highlight
+  - [x] `.removehighlight <name>` command - Delete highlight
+  - [x] `.listhighlights` command - Show all configured highlights
+  - [x] `.testhighlight <name>` command - Test pattern against recent text
+  - [x] Hot reload highlights without restarting VellumFE
+  - [x] Auto-save highlights to config file
+  - [x] Validation for regex patterns (catch errors before saving)
+  - [x] Visual preview of highlight colors
+  - [x] Support for creating sound-enabled highlights
 
 ### Text Selection
-⚠️ **Note**: Investigate ratatui capabilities for custom text selection
-- [ ] Implement VellumFE-aware text selection
-  - [ ] Research ratatui support for custom selection handling
-  - [ ] Override terminal's native text selection (Shift+Mouse)
-  - [ ] Respect window boundaries (don't select across windows)
-  - [ ] Select text within single focused window only
-  - [ ] Copy to clipboard with proper line breaks
-  - [ ] Visual selection highlighting
-  - [ ] Support multi-line selection within window
-  - [ ] Fallback to native selection if VellumFE selection disabled
+- [x] Add arboard dependency for clipboard integration
+- [x] Implement VellumFE-aware text selection
+  - [x] Add selection state tracking (start pos, end pos, active window)
+  - [x] Mouse-based selection trigger (no modifier + drag for selection, Shift+Mouse for native terminal)
+  - [x] Respect window boundaries (don't select across windows)
+  - [x] Select text within text windows only
+  - [x] Copy to clipboard on mouse release
+  - [x] Support multi-line selection within window
+  - [x] Handle wrapped lines correctly
+  - [x] Clear selection on click or Escape key
+  - [x] Config option to enable/disable custom selection
+- [ ] Visual selection highlighting (deferred - not needed currently, can revisit if requested)
+
+### Wrayth-Style Drag-and-Drop & Context Menus
+⚠️ **Note**: Emulate Wrayth's clickable link system for game objects
+⚠️ **Note**: Must coordinate with text selection feature (different modifier keys)
+⚠️ **Design Decision**: Default to text selection (safer), modifier key for drag-drop to prevent accidental expensive item drops
+
+- [ ] Parse and load cmdlist1.xml
+  - [ ] Add quick-xml parser for `<cli coord="..." menu="..." command="..." menu_cat="..."/>` entries
+  - [ ] Embed default cmdlist1.xml in binary using `include_bytes!("../defaults/cmdlist1.xml")`
+  - [ ] Extract embedded file to `~/.vellum-fe/cmdlist1.xml` on first run (if missing)
+  - [ ] Always load from `~/.vellum-fe/cmdlist1.xml` (users can update when Simutronics updates)
+  - [ ] Re-extract from embedded if file missing/corrupted (self-healing)
+  - [ ] Build lookup table: coord → (menu_text, command_template, category)
+  - [ ] Handle @ and # placeholders (@ = display name, # = exist_id in command)
+  - [ ] Support % placeholder for secondary items (e.g., "pour % on @")
+  - [ ] Cache parsed data in memory for fast lookups
+
+- [ ] Link detection and tracking
+  - [ ] Parse `<a exist="ID" noun="...">text</a>` tags from game XML
+  - [ ] Track exist_id and noun for each link in parsed text
+  - [ ] Store link positions (window, line, column range) for click detection
+  - [ ] Render links with underline or different color (configurable)
+  - [ ] Update link positions when window scrolls or resizes
+  - [ ] Clear link cache when window content changes
+
+- [ ] Left-click context menu (NO right-click!)
+  - [ ] **Distinguish click from drag**: Movement threshold (~5 pixels or 1 char cell)
+  - [ ] Detect left-click on link (mouse down + up at same position = CLICK)
+  - [ ] If mouse moves beyond threshold: DRAG mode (not click - Phase 4)
+  - [ ] Generate request counter (correlation ID) for menu request
+  - [ ] Send `_menu #exist_id counter` to game server on click
+  - [ ] Parse menu response: `<menu id="counter" path="" cat_list="..."><mi coord="..."/><mi coord="..."/>...`
+  - [ ] Verify response `id` attribute matches our `counter` (request correlation)
+  - [ ] Extract all `<mi coord="..."/>` tags from response
+  - [ ] Look up each coord in cmdlist1.xml to get menu entries (menu, command, menu_cat)
+  - [ ] Skip coords not found in cmdlist (game adds commands faster than cmdlist updates)
+  - [ ] **Filter out dialog commands** for Phase 3 (commands starting with `_dialog`)
+    - [ ] Phase 3: Skip `_dialog` commands (speak to, sing to, recite to, submit bug report)
+    - [ ] Later phase: Implement dialog widget for `_dialog` commands
+  - [ ] **Substitute placeholders correctly**:
+    - [ ] `@` = noun (display text: "look @" → "look pendant")
+    - [ ] `#` = "#exist_id" **WITH # symbol** (command: "look #" → "look #73772244")
+  - [ ] **Group by category** and build menu structure:
+    - [ ] Parse `menu_cat` for base category and subcategory (e.g., "5_roleplay-swear" → base=5_roleplay, sub=swear)
+    - [ ] Sort categories by number (0-13, top to bottom)
+    - [ ] Categories with ≤4 items: Add all directly to main menu
+    - [ ] Categories with 5+ items: Create submenu trigger with ">" (e.g., "roleplay >")
+    - [ ] Extract category display name from suffix (e.g., "5_roleplay" → "roleplay")
+  - [ ] Render context menu as popup widget at mouse position
+  - [ ] **Menu items are clickable links** (reuse link rendering!)
+  - [ ] Track bounds for each menu item and submenu trigger
+  - [ ] **Handle submenu clicks**: Open submenu popup at appropriate position
+  - [ ] **Handle nested submenus**: Subcategories with `-` create nested popups
+  - [ ] Send selected command on menu item click
+  - [ ] Close menu on final selection, click outside, or Escape key
+
+- [ ] Drag-and-drop functionality (**REQUIRES Ctrl key for safety!**)
+  - [ ] Check if Ctrl key is held on mouse down on link
+  - [ ] If no Ctrl: regular click or text selection (not drag-drop)
+  - [ ] If Ctrl held: track mouse down on link for drag-drop
+  - [ ] Visual feedback during drag (highlight source link, show dragging cursor, Ctrl indicator)
+  - [ ] Handle text scrolling during drag operation
+    - [ ] Auto-scroll window if mouse near top/bottom edge
+    - [ ] Maintain drag state while scrolling
+  - [ ] Detect drop target on mouse release
+    - [ ] Drop on another link: send `_drag #source_exist_id #target_exist_id`
+    - [ ] Drop on non-link area: send drop command (implementation TBD)
+  - [ ] Cancel drag on Escape key
+
+- [ ] Interaction with text selection (SIMPLIFIED STRATEGY!)
+  - [ ] **No modifier + click on link** = Context menu
+  - [ ] **No modifier + drag (not on link)** = Text selection (VellumFE-aware)
+  - [ ] **Ctrl + drag on link** = Drag-and-drop (requires Ctrl for safety!)
+  - [ ] **Shift + drag** = Native terminal selection (VellumFE ignores, passthrough)
+  - [ ] Check if Ctrl held on mouse down on link
+  - [ ] Visual indicator when Ctrl held over link (cursor change, highlight)
+  - [ ] Config option to disable drag-drop entirely (default: disabled)
+
+- [ ] Configuration options
+  - [ ] `links_enabled` - Enable/disable link detection and clicking
+  - [ ] Note: cmdlist1.xml always loaded from `~/.vellum-fe/cmdlist1.xml` (no path config needed)
+  - [ ] `link_color` - Color for clickable links
+  - [ ] `link_underline` - Underline links (true/false)
+  - [ ] `dragdrop_enabled` - Enable/disable drag-and-drop (default: false for safety)
+  - [ ] Note: Drag-drop always requires Ctrl key (hardcoded for safety)
+  - [ ] `context_menu_enabled` - Enable/disable left-click context menus
+  - [ ] `click_drag_threshold` - Movement threshold to distinguish click from drag (pixels)
+  - [ ] `selection_enabled` - Enable/disable VellumFE text selection (default: true)
+  - [ ] `selection_respect_window_boundaries` - Limit selection to single window (default: true)
+
+- [ ] Performance considerations
+  - [ ] Lazy link detection (only active/focused window)
+  - [ ] Limit link cache size (clear old entries)
+  - [ ] Benchmark render performance impact
+  - [ ] Option to disable links in specific windows (e.g., combat log)
+
+- [ ] Testing and edge cases
+  - [ ] Handle malformed exist_id values
+  - [ ] Handle missing cmdlist1.xml gracefully
+  - [ ] Handle network lag during context menu operations
+  - [ ] Test with multiple items with same noun
+  - [ ] Test drag-drop across different window types
+  - [ ] Test with very long link text (wrapping)
 
 ### Terminal Size Management & Responsive Layouts
-⚠️ **Note**: Currently crashes if terminal smaller than layout dimensions
-- [ ] Terminal size detection and management
-  - [ ] Detect terminal dimensions on startup
-  - [ ] Investigate setting terminal size programmatically before launching
-  - [ ] Handle terminal resize events gracefully (don't crash)
-  - [ ] Show error/warning if terminal too small for layout
-  - [ ] Minimum terminal size requirements (e.g., 80x24)
+- [x] Terminal size detection and management
+  - [x] Detect terminal dimensions on startup
+  - [x] Handle terminal resize events gracefully (don't crash)
+  - [x] Show error/warning if terminal too small for layout
+  - [x] Minimum terminal size requirements (80x24)
+  - [x] Clamp window dimensions to fit within terminal bounds
 
 - [ ] Responsive layout system
   - [ ] Create default layouts for common terminal sizes:
@@ -284,8 +388,12 @@
 
 ## Advanced Features (Future / Experimental Branch)
 
-### Clickable Links & Context Menus
-⚠️ **Note**: These features should be developed on a separate branch to avoid performance impact on main
+### ⚠️ Old Clickable Links Section (REPLACED - See "Wrayth-Style Drag-and-Drop" above)
+⚠️ **Note**: This section is superseded by the comprehensive Wrayth-style implementation above
+⚠️ **Note**: Retained for historical reference only - DO NOT IMPLEMENT THIS VERSION
+
+<details>
+<summary>Old clickable links design (click to expand)</summary>
 
 - [ ] Link detection & clicking
   - [ ] Detect clickable elements (items, NPCs, players, directions)
@@ -304,6 +412,8 @@
   - [ ] Configurable enable/disable
   - [ ] Cache parsed elements
   - [ ] Benchmark impact on render performance
+
+</details>
 
 ### Rich Text Rendering
 - [ ] Support for more text attributes
@@ -365,18 +475,24 @@
 ## Priority Levels
 
 **P0 - Critical (Do First)**
-- Target/Player widgets
-- Complete indicators
-- Highlighting system
+- ✅ Target/Player widgets (DONE)
+- ✅ Complete indicators (DONE)
+- ✅ Highlighting system (DONE)
 
 **P1 - High Priority**
-- Experience window
+- ✅ Terminal size management (DONE - prevents crashes)
+- ✅ Highlight management UI (DONE)
+- ✅ Text selection (DONE - window-aware, clipboard copy)
 - Macro support
-- Keybind support
 - Stun handler script
 - Autocomplete
+- ✅ Keybind support (DONE)
 
 **P2 - Medium Priority**
+- Wrayth-style drag-and-drop (Phases 1-3: Links + Context Menus)
+  - Phase 1: Link detection and rendering (LOW RISK, HIGH VALUE)
+  - Phase 2: cmdlist.xml parsing
+  - Phase 3: Context menus (LEFT-CLICK, no drag - click vs drag threshold)
 - Timestamps
 - Window management improvements
 - Command history
@@ -384,15 +500,18 @@
 - Enhanced configuration
 
 **P3 - Low Priority**
+- Wrayth-style drag-and-drop (Phases 4-5: Full Drag-Drop)
+  - Phase 4: Drag-and-drop functionality (MEDIUM RISK)
+  - Phase 5: Text selection integration
 - Rich text rendering
 - Platform testing
 - Documentation improvements
 - Performance optimization
 
 **P4 - Experimental**
-- Clickable links
-- Context menus
 - Advanced UI features
+- Visual effects
+- Multi-select drag-drop
 
 ---
 

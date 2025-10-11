@@ -13,7 +13,7 @@ A modern, high-performance terminal frontend for GemStone IV, built with [Ratatu
 - **Player Tracking** - Scrollable player list showing all characters in the room with status
 - **Spell Coloring** - Customize active spell/effect colors by spell ID for easy visual distinction
 - **Mouse Support** - Click to focus, scroll to navigate, drag to move/resize
-- **Text Selection** - Shift+drag to select and copy text
+- **Text Selection** - Click and drag to select text, auto-copy to clipboard (Shift+drag for native terminal selection)
 - **Stream Routing** - Game streams automatically route to appropriate windows
 - **Layout Management** - Save and load custom window layouts
 - **Performance Monitoring** - Real-time FPS, render times, network, and memory stats
