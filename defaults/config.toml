@@ -1,0 +1,464 @@
+[connection]
+host = "127.0.0.1"
+port = 8000
+
+[ui]
+buffer_size = 1000
+show_timestamps = false
+command_echo_color = "#ffffff"
+mouse_mode_toggle_key = "F11"
+countdown_icon = ""
+
+[ui.layout]
+
+[[ui.prompt_colors]]
+character = "R"
+color = "#ff0000"
+
+[[ui.prompt_colors]]
+character = "S"
+color = "#ffff00"
+
+[[ui.prompt_colors]]
+character = "H"
+color = "#9370db"
+
+[[ui.prompt_colors]]
+character = ">"
+color = "#a9a9a9"
+
+[[ui.windows]]
+name = "main"
+widget_type = "text"
+streams = ["main"]
+row = 0
+col = 0
+rows = 24
+cols = 120
+buffer_size = 10000
+show_border = true
+transparent_background = true
+
+[[ui.windows]]
+name = "health"
+widget_type = "progress"
+streams = []
+row = 24
+col = 0
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Health"
+bar_color = "#6e0202"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "mana"
+widget_type = "progress"
+streams = []
+row = 24
+col = 24
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Mana"
+bar_color = "#08086d"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "stamina"
+widget_type = "progress"
+streams = []
+row = 24
+col = 48
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stamina"
+bar_color = "#bd7b00"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "spirit"
+widget_type = "progress"
+streams = []
+row = 24
+col = 72
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Spirit"
+bar_color = "#6e727c"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "mindstate"
+widget_type = "progress"
+streams = []
+row = 24
+col = 96
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Mind"
+bar_color = "#008b8b"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "stance"
+widget_type = "progress"
+streams = []
+row = 27
+col = 0
+rows = 3
+cols = 20
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stance"
+bar_color = "#000080"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "encumlevel"
+widget_type = "progress"
+streams = []
+row = 27
+col = 20
+rows = 3
+cols = 25
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Encumbrance"
+bar_color = "#006400"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "roundtime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 45
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "RT"
+bar_color = "#ff0000"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "casttime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 60
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Cast"
+bar_color = "#0000ff"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "stuntime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 75
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stun"
+bar_color = "#ffff00"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[ui.windows]]
+name = "thoughts"
+widget_type = "text"
+streams = ["thoughts"]
+row = 30
+col = 0
+rows = 10
+cols = 84
+buffer_size = 500
+show_border = true
+transparent_background = true
+
+[[ui.windows]]
+name = "speech"
+widget_type = "text"
+streams = [
+    "speech",
+    "whisper",
+]
+row = 30
+col = 84
+rows = 10
+cols = 36
+buffer_size = 1000
+show_border = true
+transparent_background = true
+
+[[presets]]
+id = "whisper"
+fg = "#60b4bf"
+
+[[presets]]
+id = "links"
+fg = "#477ab3"
+
+[[presets]]
+id = "speech"
+fg = "#53a684"
+
+[[presets]]
+id = "roomName"
+fg = "#9BA2B2"
+bg = "#395573"
+
+[[presets]]
+id = "monsterbold"
+fg = "#a29900"
+
+[[presets]]
+id = "familiar"
+fg = "#767339"
+
+[[presets]]
+id = "thought"
+fg = "#FF8080"
+
+[[highlights]]
+pattern = "You swing.*"
+fg = "#ff0000"
+bold = true
+
+[[keybinds]]
+key = "enter"
+action = "send_command"
+
+[[keybinds]]
+key = "left"
+action = "cursor_left"
+
+[[keybinds]]
+key = "right"
+action = "cursor_right"
+
+[[keybinds]]
+key = "ctrl+left"
+action = "cursor_word_left"
+
+[[keybinds]]
+key = "ctrl+right"
+action = "cursor_word_right"
+
+[[keybinds]]
+key = "home"
+action = "cursor_home"
+
+[[keybinds]]
+key = "end"
+action = "cursor_end"
+
+[[keybinds]]
+key = "backspace"
+action = "cursor_backspace"
+
+[[keybinds]]
+key = "delete"
+action = "cursor_delete"
+
+[[keybinds]]
+key = "tab"
+action = "switch_current_window"
+
+[[keybinds]]
+key = "alt+page_up"
+action = "scroll_current_window_up_one"
+
+[[keybinds]]
+key = "alt+page_down"
+action = "scroll_current_window_down_one"
+
+[[keybinds]]
+key = "page_up"
+action = "scroll_current_window_up_page"
+
+[[keybinds]]
+key = "page_down"
+action = "scroll_current_window_down_page"
+
+[[keybinds]]
+key = "up"
+action = "previous_command"
+
+[[keybinds]]
+key = "down"
+action = "next_command"
+
+[[keybinds]]
+key = "ctrl+f"
+action = "start_search"
+
+[[keybinds]]
+key = "ctrl+page_up"
+action = "prev_search_match"
+
+[[keybinds]]
+key = "ctrl+page_down"
+action = "next_search_match"
+
+[[keybinds]]
+key = "num_1"
+macro_text = "sw\r"
+
+[[keybinds]]
+key = "num_2"
+macro_text = "s\r"
+
+[[keybinds]]
+key = "num_3"
+macro_text = "se\r"
+
+[[keybinds]]
+key = "num_4"
+macro_text = "w\r"
+
+[[keybinds]]
+key = "num_5"
+macro_text = "out\r"
+
+[[keybinds]]
+key = "num_6"
+macro_text = "e\r"
+
+[[keybinds]]
+key = "num_7"
+macro_text = "nw\r"
+
+[[keybinds]]
+key = "num_8"
+macro_text = "n\r"
+
+[[keybinds]]
+key = "num_9"
+macro_text = "ne\r"
+
+[[keybinds]]
+key = "num_0"
+macro_text = "down\r"
+
+[[keybinds]]
+key = "num_."
+macro_text = "up\r"
+
+[[keybinds]]
+key = "num_+"
+macro_text = "look\r"
+
+[[keybinds]]
+key = "num_-"
+macro_text = "info\r"
+
+[[keybinds]]
+key = "num_*"
+macro_text = "exp\r"
+
+[[keybinds]]
+key = "num_/"
+macro_text = "health\r"
+
+[[keybinds]]
+key = "shift+num_1"
+macro_text = "peer sw\r"
+
+[[keybinds]]
+key = "shift+num_2"
+macro_text = "peer s\r"
+
+[[keybinds]]
+key = "shift+num_3"
+macro_text = "peer se\r"
+
+[[keybinds]]
+key = "shift+num_4"
+macro_text = "peer w\r"
+
+[[keybinds]]
+key = "shift+num_5"
+macro_text = "peer out\r"
+
+[[keybinds]]
+key = "shift+num_6"
+macro_text = "peer e\r"
+
+[[keybinds]]
+key = "shift+num_7"
+macro_text = "peer nw\r"
+
+[[keybinds]]
+key = "shift+num_8"
+macro_text = "peer n\r"
+
+[[keybinds]]
+key = "shift+num_9"
+macro_text = "peer ne\r"
+
+[[keybinds]]
+key = "shift+num_0"
+macro_text = "peer down\r"
+
+[[keybinds]]
+key = "shift+num_."
+macro_text = "peer up\r"
+
+[[keybinds]]
+key = "f12"
+action = "toggle_performance_stats"
+
+
+
+# Highlight player names in magenta (FAST with Aho-Corasick!)
+[[highlights]]
+pattern = "Mandrill|Monolis|Chiora|Exdeo|Kawhi|Aldhelm"
+fg = "#ff00ff"
+bold = true
+fast_parse = true  # Uses Aho-Corasick - blazing fast for many names!
+color_entire_line = false
+
+# Highlight player names in magenta (FAST with Aho-Corasick!)
+[[highlights]]
+pattern = "Sihtric|Ehria|Ayvain|Deddalus|Daluthas"
+fg = "#ffffff"
+bg = "#8b0000"
+bold = true
+fast_parse = true  # Uses Aho-Corasick - blazing fast for many names!
+color_entire_line = false

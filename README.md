@@ -1,11 +1,12 @@
-# profanity-rs
+# VellumFE
 
-A modern, Rust-based terminal client for GemStone IV, built with [Ratatui](https://github.com/ratatui-org/ratatui). This is a complete rewrite of [ProfanityFE](https://github.com/elanthia-online/profanity) with enhanced features and performance.
+A modern, high-performance terminal frontend for GemStone IV, built with [Ratatui](https://github.com/ratatui-org/ratatui). VellumFE is a complete rewrite of [ProfanityFE](https://github.com/elanthia-online/profanity) with enhanced features, blazing performance, and modern architecture.
 
 ![Screenshot](https://via.placeholder.com/800x400.png?text=Terminal+UI+Screenshot)
 
 ## Features
 
+- **Custom Highlights** - Ultra-fast regex and literal string matching with Aho-Corasick (40x faster!)
 - **Dynamic Window Management** - Create, delete, move, and resize windows on the fly
 - **Rich Widget Library** - 40+ pre-built widgets (text, progress bars, timers, compass, injury doll, active effects, targets, players)
 - **Combat Tracking** - Scrollable target list with status indicators and current target highlighting
@@ -24,12 +25,12 @@ A modern, Rust-based terminal client for GemStone IV, built with [Ratatui](https
 ### 1. Build from Source
 
 ```bash
-git clone https://github.com/yourusername/profanity-rs.git
-cd profanity-rs
+git clone https://github.com/Nisugi/VellumFE.git
+cd vellum-fe
 cargo build --release
 ```
 
-The binary will be at `target/release/profanity-rs`.
+The binary will be at `target/release/vellum-fe`.
 
 ### 2. Start Lich in Detached Mode
 
@@ -43,28 +44,40 @@ C:\Ruby4Lich5\3.4.5\bin\rubyw.exe C:\Ruby4Lich5\Lich5\lich.rbw --login Character
 ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
 ```
 
-### 3. Launch profanity-rs
+### 3. Launch VellumFE
 
 ```bash
-./profanity-rs
+# Basic launch (uses default config)
+./vellum-fe
+
+# With command-line options
+./vellum-fe --port 8000 --character YourCharName --links true
+
+# View all options
+./vellum-fe --help
 ```
+
+**Command-Line Options:**
+- `--port` / `-p` - Port to connect to (default: 8000)
+- `--character` / `-c` - Character name (loads character-specific config)
+- `--links` - Enable link highlighting (default: false)
 
 The client will connect to Lich on `localhost:8000` by default.
 
 ## Documentation
 
-**📖 [Read the full documentation in the Wiki](https://github.com/Nisugi/Profanitui/wiki)**
+**📖 [Read the full documentation in the Wiki](https://github.com/Nisugi/VellumFE/wiki)**
 
 ### Quick Links
 
-- [Installation Guide](https://github.com/Nisugi/Profanitui/wiki/Installation)
-- [Window Management](https://github.com/Nisugi/Profanitui/wiki/Window-Management)
-- [Widget Reference](https://github.com/Nisugi/Profanitui/wiki/Widget-Reference) - All 40+ widgets documented
-- [Commands Reference](https://github.com/Nisugi/Profanitui/wiki/Commands-Reference) - Complete list of dot commands
-- [Configuration Guide](https://github.com/Nisugi/Profanitui/wiki/Configuration-Guide)
-- [Troubleshooting](https://github.com/Nisugi/Profanitui/wiki/Troubleshooting)
-- [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide)
-- [Feature Roadmap](https://github.com/Nisugi/Profanitui/wiki/Feature-Roadmap)
+- [Installation Guide](https://github.com/Nisugi/VellumFE/wiki/Installation)
+- [Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management)
+- [Widget Reference](https://github.com/Nisugi/VellumFE/wiki/Widget-Reference) - All 40+ widgets documented
+- [Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference) - Complete list of dot commands
+- [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)
+- [Troubleshooting](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting)
+- [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide)
+- [Feature Roadmap](https://github.com/Nisugi/VellumFE/wiki/Feature-Roadmap)
 
 ## Creating Your First Window
 
@@ -77,7 +90,17 @@ The client will connect to Lich on `localhost:8000` by default.
 
 ## Configuration
 
-On first run, a default config is created at `~/.profanity-rs/config.toml`. See the [Configuration Guide](https://github.com/Nisugi/Profanitui/wiki/Configuration-Guide) for details.
+VellumFE uses a directory-based config structure for multi-character support:
+
+**Config Locations:**
+- `~/.vellum-fe/configs/default.toml` - Default configuration
+- `~/.vellum-fe/configs/<character>.toml` - Character-specific configs
+- `~/.vellum-fe/layouts/default.toml` - Default window layout
+- `~/.vellum-fe/layouts/<character>.toml` - Character-specific layouts
+- `~/.vellum-fe/layouts/auto_<character>.toml` - Autosaved layouts (highest priority)
+- `~/.vellum-fe/debug.log` - Debug log (or `debug_<character>.log` if using `-c`)
+
+On first run, default configs are automatically created. See the [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide) for details.
 
 ## Development
 
@@ -87,13 +110,16 @@ cargo build
 
 # Run with debug logs
 RUST_LOG=debug cargo run
-# Logs: ~/.profanity-rs/debug.log
+
+# Run with character-specific config and debug log
+cargo run -- --character Zoleta
+# Logs: ~/.vellum-fe/debug_Zoleta.log
 
 # Build for release
 cargo build --release
 ```
 
-See [Development Guide](https://github.com/Nisugi/Profanitui/wiki/Development-Guide) for architecture details and contribution guidelines.
+See [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide) for architecture details and contribution guidelines.
 
 ## Requirements
 

@@ -4,6 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyModifiers};
 
+// Embed default configuration files at compile time
+const DEFAULT_CONFIG: &str = include_str!("../defaults/config.toml");
+const DEFAULT_LAYOUT: &str = include_str!("../defaults/layout.toml");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub connection: ConnectionConfig,
@@ -2311,31 +2315,70 @@ impl Config {
     }
 
     pub fn load() -> Result<Self> {
-        let config_path = Self::config_path()?;
-
-        if config_path.exists() {
-            let contents = fs::read_to_string(&config_path)
-                .context("Failed to read config file")?;
-            let mut config: Config = toml::from_str(&contents)
-                .context("Failed to parse config file")?;
-
-            // If keybinds is empty, populate with defaults and save
-            if config.keybinds.is_empty() {
-                config.keybinds = default_keybinds();
-                config.save()?;
-            }
-
-            Ok(config)
-        } else {
-            // Create default config
-            let config = Self::default();
-            config.save()?;
-            Ok(config)
-        }
+        Self::load_with_options(None, 8000)
     }
 
-    pub fn save(&self) -> Result<()> {
-        let config_path = Self::config_path()?;
+    /// Load config with command-line options
+    /// Checks in order:
+    /// 1. ./config/<character>.toml (if character specified)
+    /// 2. ./config/default.toml
+    /// 3. ~/.vellum-fe/<character>.toml (if character specified)
+    /// 4. ~/.vellum-fe/config.toml (fallback)
+    pub fn load_with_options(character: Option<&str>, port_override: u16) -> Result<Self> {
+        // Build character-specific config path
+        let config_path = Self::config_path(character)?;
+
+        // Try to load from ~/.vellum-fe/configs/<character>.toml or default.toml
+        if config_path.exists() {
+            let contents = fs::read_to_string(&config_path)
+                .context(format!("Failed to read config file: {:?}", config_path))?;
+            let mut config: Config = toml::from_str(&contents)
+                .context(format!("Failed to parse config file: {:?}", config_path))?;
+
+            // Override port from command line
+            config.connection.port = port_override;
+
+            // If keybinds is empty, populate with defaults
+            if config.keybinds.is_empty() {
+                config.keybinds = default_keybinds();
+            }
+
+            return Ok(config);
+        }
+
+        // No config found - create from embedded defaults
+        tracing::info!("No config found, creating from embedded defaults");
+
+        // Parse embedded default config
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG)
+            .context("Failed to parse embedded default config")?;
+
+        config.connection.port = port_override;
+
+        // Create directories if needed
+        let configs_dir = Self::configs_dir()?;
+        let layouts_dir = Self::layouts_dir()?;
+        fs::create_dir_all(&configs_dir)?;
+        fs::create_dir_all(&layouts_dir)?;
+
+        // Write default config to ~/.vellum-fe/configs/default.toml
+        let default_config_path = configs_dir.join("default.toml");
+        fs::write(&default_config_path, DEFAULT_CONFIG)
+            .context("Failed to write default config")?;
+
+        // Write default layout to ~/.vellum-fe/layouts/default.toml
+        let default_layout_path = layouts_dir.join("default.toml");
+        fs::write(&default_layout_path, DEFAULT_LAYOUT)
+            .context("Failed to write default layout")?;
+
+        tracing::info!("Created default config at {:?}", default_config_path);
+        tracing::info!("Created default layout at {:?}", default_layout_path);
+
+        Ok(config)
+    }
+
+    pub fn save(&self, character: Option<&str>) -> Result<()> {
+        let config_path = Self::config_path(character)?;
 
         // Ensure parent directory exists
         if let Some(parent) = config_path.parent() {
@@ -2350,16 +2393,50 @@ impl Config {
         Ok(())
     }
 
-    fn config_path() -> Result<PathBuf> {
+    fn config_path(character: Option<&str>) -> Result<PathBuf> {
         let home = dirs::home_dir()
             .context("Could not find home directory")?;
-        Ok(home.join(".profanity-rs").join("config.toml"))
+        let config_dir = home.join(".vellum-fe").join("configs");
+
+        let filename = if let Some(char_name) = character {
+            format!("{}.toml", char_name)
+        } else {
+            "default.toml".to_string()
+        };
+
+        Ok(config_dir.join(filename))
     }
 
     fn config_dir() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .context("Could not find home directory")?;
-        Ok(home.join(".profanity-rs"))
+        Ok(home.join(".vellum-fe"))
+    }
+
+    fn configs_dir() -> Result<PathBuf> {
+        let home = dirs::home_dir()
+            .context("Could not find home directory")?;
+        Ok(home.join(".vellum-fe").join("configs"))
+    }
+
+    fn layouts_dir() -> Result<PathBuf> {
+        let home = dirs::home_dir()
+            .context("Could not find home directory")?;
+        Ok(home.join(".vellum-fe").join("layouts"))
+    }
+
+    pub fn get_log_path(character: Option<&str>) -> Result<PathBuf> {
+        let home = dirs::home_dir()
+            .context("Could not find home directory")?;
+        let log_dir = home.join(".vellum-fe");
+
+        let filename = if let Some(char_name) = character {
+            format!("debug_{}.log", char_name)
+        } else {
+            "debug.log".to_string()
+        };
+
+        Ok(log_dir.join(filename))
     }
 
     /// Save just the window layout to a named file
@@ -2451,8 +2528,8 @@ impl Config {
     }
 
     fn layout_path(name: &str) -> Result<PathBuf> {
-        let config_dir = Self::config_dir()?;
-        Ok(config_dir.join("layouts").join(format!("{}.toml", name)))
+        let layouts_dir = Self::layouts_dir()?;
+        Ok(layouts_dir.join(format!("{}.toml", name)))
     }
 
     /// Resolve a spell ID to a color based on configured spell lists

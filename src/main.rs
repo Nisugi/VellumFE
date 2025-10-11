@@ -7,17 +7,36 @@ mod ui;
 
 use anyhow::Result;
 use app::App;
+use clap::Parser;
 use config::Config;
 use std::fs::OpenOptions;
 use tracing_subscriber;
 
+/// VellumFE - A modern, high-performance terminal frontend for GemStone IV
+#[derive(Parser, Debug)]
+#[command(name = "vellum-fe")]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Port to connect to (Lich detached mode port)
+    #[arg(short, long, default_value = "8000")]
+    port: u16,
+
+    /// Character name / config file to load (loads ./config/<character>.toml or default.toml)
+    #[arg(short, long)]
+    character: Option<String>,
+
+    /// Enable link highlighting (required for proper game feed with clickable links)
+    #[arg(long, default_value = "false")]
+    links: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging to file instead of stderr to not mess up TUI
-    let log_file = dirs::home_dir()
-        .unwrap()
-        .join(".profanity-rs")
-        .join("debug.log");
+    // Parse command-line arguments
+    let args = Args::parse();
+
+    // Initialize logging to character-specific file instead of stderr to not mess up TUI
+    let log_file = Config::get_log_path(args.character.as_deref())?;
 
     if let Some(parent) = log_file.parent() {
         std::fs::create_dir_all(parent)?;
@@ -34,8 +53,8 @@ async fn main() -> Result<()> {
         .with_ansi(false)
         .init();
 
-    // Load configuration
-    let config = Config::load()?;
+    // Load configuration (with character override if specified)
+    let config = Config::load_with_options(args.character.as_deref(), args.port)?;
 
     // Create and run the application
     let mut app = App::new(config)?;

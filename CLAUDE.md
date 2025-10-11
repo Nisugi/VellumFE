@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**profanity-rs** is a modern, Rust-based terminal client for GemStone IV, built with Ratatui. It connects to Lich (Ruby scripting engine) via detached mode and provides a TUI with dynamic window management, mouse support, and XML stream parsing.
+**VellumFE** is a modern, high-performance terminal frontend for GemStone IV, built with Ratatui. It connects to Lich (Ruby scripting engine) via detached mode and provides a blazing-fast TUI with dynamic window management, custom highlights with Aho-Corasick optimization, mouse support, and full XML stream parsing.
 
 ## Build and Development Commands
 
@@ -17,17 +17,21 @@ cargo run
 
 # Build for release
 cargo build --release
-# Binary located at: target/release/profanity-rs
+# Binary located at: target/release/vellum-fe
 
 # Enable debug logs
 RUST_LOG=debug cargo run
-# Logs written to ~/.profanity-rs/debug.log
+# Logs written to ~/.vellum-fe/debug.log
+
+# Run with character-specific config
+cargo run -- --character Zoleta --port 8000
+# Logs written to ~/.vellum-fe/debug_Zoleta.log
 ```
 
 ## Running the Application
 
 **Prerequisites:**
-1. Start Lich in detached mode first (wait 5-10 seconds before launching profanity-rs)
+1. Start Lich in detached mode first (wait 5-10 seconds before launching VellumFE)
 2. Default connection: `localhost:8000`
 
 **Windows (PowerShell):**
@@ -44,7 +48,7 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 
 ### High-Level Flow
 
-1. **main.rs** → Initializes logging to `~/.profanity-rs/debug.log`, loads config, creates and runs App
+1. **main.rs** → Parses command-line args, initializes character-specific logging, loads config with character override, creates and runs App
 2. **app.rs** → Main event loop handling terminal events, server messages, and UI rendering
 3. **network.rs** → TCP connection to Lich server (async via tokio)
 4. **parser.rs** → Parses GemStone IV XML protocol into structured elements
@@ -96,9 +100,16 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Colors: roundtime=red, casttime=blue, stun=yellow
 - Centered text shows remaining seconds
 
+**Configuration System:**
+- Embedded defaults bundled into binary using `include_str!()`
+- Multi-character support with character-specific configs and layouts
+- Config priority: `~/.vellum-fe/configs/<character>.toml` → `~/.vellum-fe/configs/default.toml` → embedded defaults
+- Layout priority: `auto_<character>.toml` → `<character>.toml` → `default.toml`
+- Character-specific debug logs: `debug_<character>.log`
+
 **Layout Persistence:**
-- Window configs stored in `~/.profanity-rs/config.toml` (full config)
-- Layouts stored in `~/.profanity-rs/layouts/<name>.toml` (just windows array)
+- Window configs stored in `~/.vellum-fe/configs/` directory
+- Layouts stored in `~/.vellum-fe/layouts/<name>.toml` (just windows array)
 - Autosave layout created on exit, loaded on startup if exists
 
 **Mouse Operations:**
@@ -112,6 +123,19 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Text selection: Hold Shift while using mouse to select text (disables window interaction)
 
 ## Module Structure
+
+### src/main.rs
+Entry point and initialization. Contains:
+- Command-line argument parsing with `clap`
+- Args struct: `--port` / `-p`, `--character` / `-c`, `--links`
+- Character-specific debug log initialization
+- Config loading with character override
+- App creation and execution
+
+**Command-Line Arguments:**
+```bash
+vellum-fe --port 8000 --character Zoleta --links true
+```
 
 ### src/app.rs
 Main application loop and state management. Contains:
@@ -130,10 +154,13 @@ Main application loop and state management. Contains:
 
 ### src/config.rs
 Configuration management and window templates. Contains:
-- `Config` struct with connection, UI, presets, highlights, keybinds
+- `Config` struct with connection, UI, presets, highlights, keybinds, spell_colors
+- Embedded defaults using `include_str!("../defaults/config.toml")` and `include_str!("../defaults/layout.toml")`
+- `load_with_options(character, port)` - Character-specific config loading
+- Multi-character support with separate configs/layouts per character
 - Window template definitions for all built-in window types
-- Layout save/load functionality
-- Default configurations
+- Layout save/load functionality with priority system
+- Path helpers: `config_path()`, `configs_dir()`, `layouts_dir()`, `get_log_path()`
 
 **Window Templates:**
 Text windows: main, thoughts, speech, familiar, room, logons, deaths, arrivals, ambients, announcements, loot
@@ -209,8 +236,26 @@ Tabbed text window widget with activity indicators. Contains:
 
 ## Configuration
 
-**Config location:** `~/.profanity-rs/config.toml`
-**Layouts location:** `~/.profanity-rs/layouts/<name>.toml`
+**Directory Structure:**
+- `~/.vellum-fe/configs/default.toml` - Default configuration
+- `~/.vellum-fe/configs/<character>.toml` - Character-specific configs
+- `~/.vellum-fe/layouts/default.toml` - Default window layout
+- `~/.vellum-fe/layouts/<character>.toml` - Character layouts
+- `~/.vellum-fe/layouts/auto_<character>.toml` - Autosaved layouts (highest priority)
+- `~/.vellum-fe/debug.log` - Debug log (or `debug_<character>.log` with `-c`)
+- `defaults/config.toml` - Source defaults (embedded at compile time)
+- `defaults/layout.toml` - Source layout defaults (embedded at compile time)
+
+**Config Loading Priority:**
+1. `~/.vellum-fe/configs/<character>.toml` (if `--character` specified)
+2. `~/.vellum-fe/configs/default.toml`
+3. Embedded defaults from `defaults/config.toml`
+
+**Layout Loading Priority:**
+1. `~/.vellum-fe/layouts/auto_<character>.toml`
+2. `~/.vellum-fe/layouts/<character>.toml`
+3. `~/.vellum-fe/layouts/default.toml`
+4. Embedded defaults from `defaults/layout.toml`
 
 ### Important Config Sections
 
@@ -334,7 +379,7 @@ stream = "whisper"
 
 - Use `.setprogress health 50 100` to manually test progress bars
 - Use `.setcountdown roundtime 5` to test countdown timers
-- Check `~/.profanity-rs/debug.log` for tracing output
+- Check `~/.vellum-fe/debug.log` for tracing output
 - Terminal size changes require layout recalculation (handled automatically)
 - Mouse operations log to debug when RUST_LOG=debug
 
