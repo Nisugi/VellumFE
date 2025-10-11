@@ -6,6 +6,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 use std::collections::VecDeque;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 
 pub struct CommandInput {
     input: String,
@@ -18,6 +21,9 @@ pub struct CommandInput {
     border_color: Option<String>,
     title: String,
     background_color: Option<String>,
+    completion_candidates: Vec<String>,  // Current completion candidates
+    completion_index: Option<usize>,     // Index of current completion
+    completion_prefix: Option<String>,   // Original text before completion started
 }
 
 impl CommandInput {
@@ -33,6 +39,9 @@ impl CommandInput {
             border_color: None,
             title: "Command".to_string(),
             background_color: None,
+            completion_candidates: Vec::new(),
+            completion_index: None,
+            completion_prefix: None,
         }
     }
 
@@ -55,6 +64,8 @@ impl CommandInput {
         let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos);
         self.input.insert(byte_idx, c);
         self.cursor_pos += 1;
+        // Reset completion state when typing
+        self.reset_completion();
     }
 
     pub fn delete_char(&mut self) {
@@ -338,5 +349,145 @@ impl CommandInput {
 
         let paragraph = Paragraph::new(line);
         paragraph.render(inner, buf);
+    }
+
+    /// Reset completion state
+    fn reset_completion(&mut self) {
+        self.completion_candidates.clear();
+        self.completion_index = None;
+        self.completion_prefix = None;
+    }
+
+    /// Try to complete the current input
+    /// Returns true if a completion was performed
+    pub fn try_complete(&mut self, available_commands: &[String], available_names: &[String]) -> bool {
+        // Only complete if cursor is at the end
+        if self.cursor_pos != self.input.chars().count() {
+            return false;
+        }
+
+        // If we're not in a completion session, start one
+        if self.completion_candidates.is_empty() {
+            let input = self.input.trim();
+
+            // Find what we're trying to complete
+            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
+                // Completing a word after a space (e.g., ".createwindow mai" -> complete "mai")
+                let prefix = &input[..=pos];
+                let word = &input[pos+1..];
+                (prefix.to_string(), word)
+            } else {
+                // Completing the first word (e.g., ".createw" -> complete ".createw")
+                ("".to_string(), input)
+            };
+
+            if word_to_complete.is_empty() {
+                return false;
+            }
+
+            // Find candidates
+            let mut candidates = Vec::new();
+
+            // If completing a dot command (starts with .)
+            if word_to_complete.starts_with('.') {
+                for cmd in available_commands {
+                    if cmd.starts_with(word_to_complete) {
+                        candidates.push(cmd.clone());
+                    }
+                }
+            } else {
+                // Completing a window/template name
+                for name in available_names {
+                    if name.starts_with(word_to_complete) {
+                        candidates.push(name.clone());
+                    }
+                }
+            }
+
+            if candidates.is_empty() {
+                return false;
+            }
+
+            candidates.sort();
+            self.completion_candidates = candidates;
+            self.completion_prefix = Some(prefix);
+            self.completion_index = Some(0);
+        } else {
+            // Already in completion session, cycle to next candidate
+            if let Some(ref mut index) = self.completion_index {
+                *index = (*index + 1) % self.completion_candidates.len();
+            }
+        }
+
+        // Apply the current completion
+        if let (Some(index), Some(ref prefix)) = (self.completion_index, &self.completion_prefix) {
+            if let Some(candidate) = self.completion_candidates.get(index) {
+                self.input = format!("{}{}", prefix, candidate);
+                self.cursor_pos = self.input.chars().count();
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Get the history file path (~/.vellum-fe/history/<character>.txt or default.txt)
+    fn get_history_path(character: Option<&str>) -> Result<PathBuf, std::io::Error> {
+        let home = dirs::home_dir().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Could not find home directory")
+        })?;
+
+        let history_dir = home.join(".vellum-fe").join("history");
+        fs::create_dir_all(&history_dir)?;
+
+        let filename = if let Some(char_name) = character {
+            format!("{}.txt", char_name)
+        } else {
+            "default.txt".to_string()
+        };
+
+        Ok(history_dir.join(filename))
+    }
+
+    /// Load command history from disk
+    pub fn load_history(&mut self, character: Option<&str>) -> Result<(), std::io::Error> {
+        let history_path = Self::get_history_path(character)?;
+
+        if !history_path.exists() {
+            return Ok(()); // No history file yet, that's fine
+        }
+
+        let file = fs::File::open(&history_path)?;
+        let reader = BufReader::new(file);
+
+        self.history.clear();
+
+        for line in reader.lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                self.history.push_back(line);
+                if self.history.len() > self.max_history {
+                    self.history.pop_front();
+                }
+            }
+        }
+
+        tracing::debug!("Loaded {} commands from history", self.history.len());
+        Ok(())
+    }
+
+    /// Save command history to disk
+    pub fn save_history(&self, character: Option<&str>) -> Result<(), std::io::Error> {
+        let history_path = Self::get_history_path(character)?;
+
+        let mut file = fs::File::create(&history_path)?;
+
+        // Save in reverse order (most recent first in file)
+        for cmd in &self.history {
+            writeln!(file, "{}", cmd)?;
+        }
+
+        tracing::debug!("Saved {} commands to history", self.history.len());
+        Ok(())
     }
 }

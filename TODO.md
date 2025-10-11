@@ -351,12 +351,14 @@
 ## Quality of Life Features
 
 ### Autocomplete System
-- [ ] Command autocomplete
+- [x] Command autocomplete
+  - [x] Complete dot commands (`.createwindow`, `.addhl`, etc.)
+  - [x] Complete window names
+  - [x] Complete template names
+  - [x] Tab completion UI (press Tab to cycle through completions)
   - [ ] Complete from command history
-  - [ ] Complete known commands
   - [ ] Complete room directions
   - [ ] Complete visible NPC/player names
-  - [ ] Tab completion UI
 
 - [ ] Context-aware autocomplete
   - [ ] Different completions based on context
@@ -383,10 +385,14 @@
   - [ ] Export/import layouts
 
 ### Command History
-- [ ] Persistent command history
-  - [ ] Save across sessions
+- [x] Persistent command history
+  - [x] Save across sessions (`~/.vellum-fe/history/`)
+  - [x] Character-specific history files
+  - [x] Auto-load on startup
+  - [x] Auto-save on exit
+  - [x] History size limits (configurable max_history)
+  - [x] Up/Down arrow navigation through history
   - [ ] Search history (Ctrl+R style)
-  - [ ] History size limits
   - [ ] Clear history command
 
 ### Terminal Title Updates
@@ -493,10 +499,11 @@
 - ✅ Terminal size management (DONE - prevents crashes)
 - ✅ Highlight management UI (DONE)
 - ✅ Text selection (DONE - window-aware, clipboard copy)
-- Macro support
-- Stun handler script
-- Autocomplete
 - ✅ Keybind support (DONE)
+- ✅ Command history persistence (DONE)
+- ✅ Tab completion (DONE - dot commands, windows, templates)
+- Macro support (defer to Lich - keybinds sufficient)
+- Stun handler script
 
 **P2 - Medium Priority**
 - Wrayth-style drag-and-drop (Phases 1-3: Links + Context Menus)

@@ -206,6 +206,11 @@ impl App {
             }
         };
 
+        // Load command history
+        if let Err(e) = command_input.load_history(config.character.as_deref()) {
+            tracing::warn!("Failed to load command history: {}", e);
+        }
+
         Ok(Self {
             window_manager: WindowManager::new(window_configs, config.highlights.clone()),
             command_input,
@@ -2113,6 +2118,13 @@ impl App {
             tracing::info!("Layout autosaved as {}", autosave_name);
         }
 
+        // Save command history
+        if let Err(e) = self.command_input.save_history(self.config.character.as_deref()) {
+            tracing::error!("Failed to save command history: {}", e);
+        } else {
+            tracing::info!("Command history saved");
+        }
+
         // Cleanup terminal
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
@@ -2621,7 +2633,18 @@ impl App {
 
             // Window actions
             KeyAction::SwitchCurrentWindow => {
-                self.cycle_focused_window();
+                // If command input has text, try tab completion first
+                if self.command_input.get_input().is_some() {
+                    // Build lists of available completions
+                    let available_commands = self.get_available_dot_commands();
+                    let available_names = self.get_available_names();
+
+                    // Try completion
+                    self.command_input.try_complete(&available_commands, &available_names);
+                } else {
+                    // No text - cycle focused window as usual
+                    self.cycle_focused_window();
+                }
             }
             KeyAction::ScrollCurrentWindowUpOne => {
                 if let Some(window) = self.get_focused_window() {
@@ -3388,6 +3411,80 @@ impl App {
             let inner_width = size.0.saturating_sub(2);
             self.finish_current_line(inner_width);
         }
+    }
+
+    /// Get list of available dot commands for tab completion
+    fn get_available_dot_commands(&self) -> Vec<String> {
+        vec![
+            // Application
+            ".quit".to_string(), ".q".to_string(),
+            // Window management
+            ".createwindow".to_string(), ".createwin".to_string(),
+            ".customwindow".to_string(), ".customwin".to_string(),
+            ".deletewindow".to_string(), ".deletewin".to_string(),
+            ".windows".to_string(), ".listwindows".to_string(),
+            ".templates".to_string(), ".availablewindows".to_string(),
+            ".rename".to_string(),
+            ".border".to_string(),
+            ".contentalign".to_string(), ".align".to_string(),
+            ".background".to_string(), ".bgcolor".to_string(),
+            // Tabbed windows
+            ".createtabbed".to_string(), ".tabbedwindow".to_string(),
+            ".addtab".to_string(),
+            ".removetab".to_string(),
+            ".switchtab".to_string(),
+            ".movetab".to_string(), ".reordertab".to_string(),
+            ".tabcolors".to_string(), ".settabcolors".to_string(),
+            // Layout
+            ".savelayout".to_string(),
+            ".loadlayout".to_string(),
+            ".layouts".to_string(),
+            // Progress bars
+            ".setprogress".to_string(),
+            ".setbarcolor".to_string(),
+            // Countdowns
+            ".setcountdown".to_string(),
+            // Indicators
+            ".indicatoron".to_string(),
+            ".indicatoroff".to_string(),
+            // Active effects
+            ".togglespellid".to_string(), ".toggleeffectid".to_string(),
+            // Highlights
+            ".addhighlight".to_string(), ".addhl".to_string(),
+            ".edithighlight".to_string(), ".edithl".to_string(),
+            ".deletehighlight".to_string(), ".delhl".to_string(),
+            ".listhighlights".to_string(), ".listhl".to_string(), ".highlights".to_string(),
+            ".testhighlight".to_string(), ".testhl".to_string(),
+            // Keybinds
+            ".addkeybind".to_string(), ".addkey".to_string(),
+            ".editkeybind".to_string(), ".editkey".to_string(),
+            ".deletekeybind".to_string(), ".delkey".to_string(),
+            ".listkeybinds".to_string(), ".listkeys".to_string(), ".keybinds".to_string(),
+            // Debug
+            ".randominjuries".to_string(), ".randinjuries".to_string(),
+            ".randomcompass".to_string(), ".randcompass".to_string(),
+            ".randomprogress".to_string(), ".randprog".to_string(),
+            ".randomcountdowns".to_string(), ".randcountdowns".to_string(),
+        ]
+    }
+
+    /// Get list of available window and template names for tab completion
+    fn get_available_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+
+        // Add current window names
+        for window_config in &self.layout.windows {
+            names.push(window_config.name.clone());
+        }
+
+        // Add template names
+        names.extend(Config::available_window_templates().into_iter().map(|s| s.to_string()));
+
+        // Deduplicate
+        names.sort();
+        names.dedup();
+
+        names
     }
 
     /// Rebuild the keybind_map from config (called after adding/deleting keybinds)
