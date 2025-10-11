@@ -18,6 +18,7 @@ pub struct Countdown {
     background_color: Option<String>,
     transparent_background: bool,  // If true, empty portion is transparent; if false, use background_color
     icon: char,  // Character to use for countdown blocks
+    content_align: Option<String>,
 }
 
 impl Countdown {
@@ -33,6 +34,7 @@ impl Countdown {
             background_color: None,
             transparent_background: true, // Transparent by default
             icon: '\u{f0c8}',  // Default to Nerd Font square icon
+            content_align: None,
         }
     }
 
@@ -82,6 +84,10 @@ impl Countdown {
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
         self.transparent_background = transparent;
+    }
+
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
     }
 
     pub fn set_end_time(&mut self, end_time: u64) {
@@ -156,24 +162,41 @@ impl Countdown {
             return;
         }
 
+        // Calculate content alignment offset (vertical only, like progress bars)
+        const CONTENT_HEIGHT: u16 = 1;
+        let row_offset = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            let (offset, _) = align.calculate_offset(inner_area.width, CONTENT_HEIGHT, inner_area.width, inner_area.height);
+            offset
+        } else {
+            0
+        };
+
         let remaining = self.remaining_seconds().max(0) as u32;
 
         let bar_color = self.bar_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Green);
         let bg_color = self.background_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Reset);
 
         // Clear the bar area
-        if !self.transparent_background {
-            // Fill with background color if not transparent
-            for i in 0..inner_area.width {
-                let x = inner_area.x + i;
-                buf[(x, inner_area.y)].set_char(' ');
-                buf[(x, inner_area.y)].set_bg(bg_color);
-            }
-        } else {
-            // Just clear with spaces, no background
-            for i in 0..inner_area.width {
-                let x = inner_area.x + i;
-                buf[(x, inner_area.y)].set_char(' ');
+        let y = inner_area.y + row_offset;
+        if y < buf.area().height {
+            if !self.transparent_background {
+                // Fill with background color if not transparent
+                for i in 0..inner_area.width {
+                    let x = inner_area.x + i;
+                    if x < buf.area().width {
+                        buf[(x, y)].set_char(' ');
+                        buf[(x, y)].set_bg(bg_color);
+                    }
+                }
+            } else {
+                // Just clear with spaces, no background
+                for i in 0..inner_area.width {
+                    let x = inner_area.x + i;
+                    if x < buf.area().width {
+                        buf[(x, y)].set_char(' ');
+                    }
+                }
             }
         }
 
@@ -195,26 +218,31 @@ impl Countdown {
         let text_width = remaining_text.len() as u16; // Always 3 chars
 
         // Render countdown number on the left (right-aligned within 3 chars)
-        for (i, c) in remaining_text.chars().enumerate() {
-            let x = inner_area.x + i as u16;
-            if x < inner_area.x + inner_area.width {
-                buf[(x, inner_area.y)].set_char(c);
-                buf[(x, inner_area.y)].set_fg(bar_color);
-                if !self.transparent_background {
-                    buf[(x, inner_area.y)].set_bg(bg_color);
+        let y = inner_area.y + row_offset;
+        if y < buf.area().height {
+            for (i, c) in remaining_text.chars().enumerate() {
+                let x = inner_area.x + i as u16;
+                if x < inner_area.x + inner_area.width && x < buf.area().width {
+                    buf[(x, y)].set_char(c);
+                    buf[(x, y)].set_fg(bar_color);
+                    if !self.transparent_background {
+                        buf[(x, y)].set_bg(bg_color);
+                    }
                 }
             }
-        }
 
-        // Render blocks after the number
-        for i in 0..blocks_to_show {
-            let pos = text_width + i as u16;
-            if pos < inner_area.width {
-                let x = inner_area.x + pos;
-                buf[(x, inner_area.y)].set_char(self.icon);
-                buf[(x, inner_area.y)].set_fg(bar_color);
-                if !self.transparent_background {
-                    buf[(x, inner_area.y)].set_bg(bg_color);
+            // Render blocks after the number
+            for i in 0..blocks_to_show {
+                let pos = text_width + i as u16;
+                if pos < inner_area.width {
+                    let x = inner_area.x + pos;
+                    if x < buf.area().width {
+                        buf[(x, y)].set_char(self.icon);
+                        buf[(x, y)].set_fg(bar_color);
+                        if !self.transparent_background {
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
                 }
             }
         }

@@ -196,6 +196,91 @@ Change the border style and color of a window.
 
 ---
 
+### `.contentalign` / `.align`
+
+Set content alignment for widgets within their window area. Useful when borders are removed to position content where you want it.
+
+**Syntax:**
+```
+.contentalign <window_name> <alignment>
+.align <window_name> <alignment>
+```
+
+**Parameters:**
+- `window_name` - Name of the window
+- `alignment` - Alignment position (see below)
+
+**Alignment Options:**
+- Corner alignments: `top-left`, `top-right`, `bottom-left`, `bottom-right`
+- Edge alignments: `top`, `bottom`, `left`, `right`
+- Center: `center`
+
+**Examples:**
+```
+.contentalign compass bottom-left
+.contentalign injuries center
+.contentalign health bottom
+.align roundtime top
+```
+
+**Supported Widgets:**
+- **Compass** (7x3 fixed size) - Align the compass grid within the window area
+- **InjuryDoll** (5x6 fixed size) - Align the injury doll figure within the window area
+- **ProgressBar** (1 row height) - Vertical alignment (top, center, bottom) within multi-row areas
+- Other widgets fill their areas and don't need alignment
+
+**Common Use Cases:**
+```
+# Remove border from compass, align to bottom-left with transparent space above
+.border compass none
+.contentalign compass bottom-left
+
+# Progress bars with 3-row height, align bar to bottom
+.contentalign health bottom
+.contentalign mana bottom
+
+# Center small widgets in larger areas
+.contentalign injuries center
+```
+
+**Notes:**
+- Changes take effect immediately without restart
+- Content alignment only matters when the window area is larger than the widget's content
+- With borders disabled, widgets use their full configured dimensions
+- Alignment is saved when you save the layout
+
+---
+
+### `.background` / `.bgcolor`
+
+Set background color for a window. Useful for making borderless windows more visible.
+
+**Syntax:**
+```
+.background <window_name> <color>
+.bgcolor <window_name> <color>
+```
+
+**Parameters:**
+- `window_name` - Name of the window
+- `color` - Hex color code (e.g., `#1a1a1a`) or `none` to remove
+
+**Examples:**
+```
+.background command #1a1a1a
+.background compass #000033
+.bgcolor injuries #1a1a00
+.background main none
+```
+
+**Notes:**
+- Background color fills the entire widget area
+- When not set, widgets have transparent backgrounds
+- Particularly useful for borderless windows to show boundaries
+- Works with all widget types
+
+---
+
 ### `.createtabbed` / `.tabbedwindow`
 
 Create a new tabbed text window with multiple tabs for different streams.

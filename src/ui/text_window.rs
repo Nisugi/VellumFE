@@ -81,6 +81,7 @@ pub struct TextWindow {
     border_style: Option<String>,
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
+    background_color: Option<String>,
     // Search functionality
     search_state: Option<SearchState>,
     // Highlight patterns
@@ -108,6 +109,7 @@ impl TextWindow {
             border_style: None,
             border_color: None,
             border_sides: None,
+            background_color: None,
             scroll_position: None,  // Start in live view mode
             last_visible_height: 20,  // Reasonable default
             search_state: None,  // No active search
@@ -182,6 +184,10 @@ impl TextWindow {
 
     pub fn set_border_sides(&mut self, border_sides: Option<Vec<String>>) {
         self.border_sides = border_sides;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
     }
 
     /// Update the window title
@@ -993,6 +999,26 @@ impl TextWindow {
 
         if self.show_border {
             block = block.border_style(border_style);
+        }
+
+        // Fill background if specified
+        if let Some(ref color_hex) = self.background_color {
+            if let Some(bg_color) = Self::parse_hex_color(color_hex) {
+                let inner_area = if self.show_border {
+                    block.inner(area)
+                } else {
+                    area
+                };
+                for row in 0..inner_area.height {
+                    for col in 0..inner_area.width {
+                        let x = inner_area.x + col;
+                        let y = inner_area.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
+                }
+            }
         }
 
         let paragraph = Paragraph::new(display_lines).block(block);

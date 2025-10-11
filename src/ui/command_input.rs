@@ -17,6 +17,7 @@ pub struct CommandInput {
     border_style: Option<String>,
     border_color: Option<String>,
     title: String,
+    background_color: Option<String>,
 }
 
 impl CommandInput {
@@ -31,6 +32,7 @@ impl CommandInput {
             border_style: None,
             border_color: None,
             title: "Command".to_string(),
+            background_color: None,
         }
     }
 
@@ -42,6 +44,10 @@ impl CommandInput {
 
     pub fn set_title(&mut self, title: String) {
         self.title = title;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -297,6 +303,21 @@ impl CommandInput {
 
         let inner = block.inner(area);
         block.render(area, buf);
+
+        // Fill background if explicitly set
+        if let Some(ref color_hex) = self.background_color {
+            if let Some(bg_color) = Self::parse_color(color_hex) {
+                for row in 0..inner.height {
+                    for col in 0..inner.width {
+                        let x = inner.x + col;
+                        let y = inner.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
+                }
+            }
+        }
 
         // Create line with cursor
         // cursor_pos is now a character position, not byte index

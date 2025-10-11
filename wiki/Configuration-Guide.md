@@ -277,6 +277,8 @@ title = "Main"
 | `border_color` | string | No | Border color in hex format |
 | `title` | string | No | Window title (shown in border) |
 | `transparent_background` | boolean | No | Transparent background (default: true) |
+| `background_color` | string | No | Background color in hex format (e.g., `#1a1a1a`) |
+| `content_align` | string | No | Content alignment: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom`, `bottom-right` |
 
 ### Text Window Options
 
@@ -346,6 +348,110 @@ cols = 20
 bar_color = "#ff0000"
 show_border = false
 ```
+
+### Content Alignment
+
+The `content_align` option positions widget content within the window area. This is especially useful when borders are removed and you want extra space around widgets.
+
+**Supported Widgets:**
+- **Compass** - 7x3 fixed size content
+- **InjuryDoll** - 5x6 fixed size content
+- **ProgressBar** - 1 row height (vertical alignment only)
+
+**Alignment Options:**
+
+| Value | Description |
+|-------|-------------|
+| `top-left` | Align to top-left corner (default) |
+| `top` | Center horizontally, align to top |
+| `top-right` | Align to top-right corner |
+| `left` | Center vertically, align to left |
+| `center` | Center both horizontally and vertically |
+| `right` | Center vertically, align to right |
+| `bottom-left` | Align to bottom-left corner |
+| `bottom` | Center horizontally, align to bottom |
+| `bottom-right` | Align to bottom-right corner |
+
+**Examples:**
+
+```toml
+# Compass with no border, aligned to bottom-left with transparent space above
+[[windows]]
+name = "compass"
+widget_type = "compass"
+row = 65
+col = 1
+rows = 8
+cols = 10
+show_border = false
+content_align = "bottom-left"
+
+# Progress bars with 3-row height, bars aligned to bottom
+[[windows]]
+name = "health"
+widget_type = "progress"
+row = 30
+col = 0
+rows = 3
+cols = 20
+show_border = false
+content_align = "bottom"
+bar_color = "#00ff00"
+
+# Injury doll centered in larger area
+[[windows]]
+name = "injuries"
+widget_type = "injury_doll"
+row = 40
+col = 100
+rows = 10
+cols = 10
+show_border = false
+content_align = "center"
+```
+
+**Notes:**
+- Content alignment only affects widgets when the window area is larger than the content
+- When borders are enabled, alignment is relative to the inner area (inside the border)
+- Transparent space around aligned content remains transparent unless `background_color` is set
+- Use `.contentalign` command to change alignment at runtime
+
+### Background Color
+
+The `background_color` option fills the entire widget area with a color. Useful for making borderless windows more visible.
+
+**Examples:**
+
+```toml
+# Command input with dark gray background
+[[windows]]
+name = "command"
+widget_type = "text"
+row = 70
+col = 0
+rows = 1
+cols = 156
+show_border = false
+background_color = "#1a1a1a"
+
+# Compass with dark blue background
+[[windows]]
+name = "compass"
+widget_type = "compass"
+row = 65
+col = 1
+rows = 5
+cols = 10
+show_border = false
+content_align = "bottom-left"
+background_color = "#000033"
+```
+
+**Notes:**
+- Works with all widget types
+- When not set, widgets have transparent backgrounds
+- Background fills the entire widget area, not just the content
+- Use `.background` command to change color at runtime
 
 ### Compass Options
 

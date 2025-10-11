@@ -193,8 +193,6 @@ impl ScrollableContainer {
         let available_height = inner_area.height as usize;
         self.last_available_height = available_height;  // Store for scroll calculations
         let display_count = self.visible_count.unwrap_or(available_height).min(available_height);
-        tracing::debug!("ScrollableContainer '{}': available_height={}, visible_count={:?}, display_count={}",
-            self.label, available_height, self.visible_count, display_count);
 
         // Get the slice of items to display
         let start_idx = self.scroll_offset;
@@ -218,9 +216,9 @@ impl ScrollableContainer {
                     if available_width < suffix_len + 1 {
                         // Too narrow to show anything meaningful, just show truncated suffix
                         suffix.chars().take(available_width).collect()
-                    } else if available_width <= suffix_len + 2 {
-                        // Just enough for suffix, show "…[XX:XX]"
-                        format!("…{}", suffix)
+                    } else if available_width <= suffix_len + 1 {
+                        // Just barely enough for suffix, truncate text completely
+                        suffix.clone()
                     } else {
                         // We have room for text + suffix
                         // Reserve space for suffix + " " (space before suffix)
@@ -229,23 +227,26 @@ impl ScrollableContainer {
 
                         // Determine text (no separator, just text and time)
                         let truncated_text = if source_text.chars().count() > text_space {
-                            // Text is too long, truncate with ellipsis
-                            let text: String = source_text.chars().take(text_space.saturating_sub(1)).collect();
-                            format!("{}…", text)
+                            // Text is too long, truncate without ellipsis
+                            source_text.chars().take(text_space).collect()
                         } else {
                             // Text fits completely
                             source_text.clone()
                         };
 
                         // Calculate padding to push suffix to right edge
-                        let current_len = truncated_text.chars().count() + 1 + suffix_len;
-                        let padding = available_width.saturating_sub(current_len);
+                        // We want: "text<padding>suffix" where padding is at least 1 space
+                        let text_len = truncated_text.chars().count();
+                        let min_spacing = 1;  // At least 1 space between text and suffix
+                        let current_len = text_len + min_spacing + suffix_len;
 
-                        // Format: "text<padding> suffix"
-                        if padding > 0 {
-                            format!("{}{} {}", truncated_text, " ".repeat(padding), suffix)
+                        if current_len <= available_width {
+                            // We have room for at least 1 space
+                            let padding = available_width - text_len - suffix_len;
+                            format!("{}{}{}", truncated_text, " ".repeat(padding), suffix)
                         } else {
-                            format!("{} {}", truncated_text, suffix)
+                            // No room for spacing, just concatenate (shouldn't happen with correct text truncation)
+                            format!("{}{}", truncated_text, suffix)
                         }
                     }
                 } else {

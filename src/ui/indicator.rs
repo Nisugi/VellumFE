@@ -18,6 +18,7 @@ pub struct Indicator {
     // For injuries: [none, injury1, injury2, injury3, scar1, scar2, scar3]
     // For boolean: [off, on]
     colors: Vec<String>,
+    content_align: Option<String>,
 }
 
 impl Indicator {
@@ -38,6 +39,7 @@ impl Indicator {
                 "#477ab3".to_string(),  // 5: scar 2 (blue)
                 "#7e62b3".to_string(),  // 6: scar 3 (purple)
             ],
+            content_align: None,
         }
     }
 
@@ -80,6 +82,10 @@ impl Indicator {
     /// Set custom colors for each state
     pub fn set_colors(&mut self, colors: Vec<String>) {
         self.colors = colors;
+    }
+
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
     }
 
     /// Parse a hex color string to ratatui Color
@@ -141,6 +147,16 @@ impl Indicator {
             return;
         }
 
+        // Calculate content alignment offset (vertical only, like progress bars)
+        const CONTENT_HEIGHT: u16 = 1;
+        let row_offset = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            let (offset, _) = align.calculate_offset(inner_area.width, CONTENT_HEIGHT, inner_area.width, inner_area.height);
+            offset
+        } else {
+            0
+        };
+
         // Get color for current value
         let color_index = (self.value as usize).min(self.colors.len().saturating_sub(1));
         let color = Self::parse_color(&self.colors[color_index]);
@@ -164,11 +180,14 @@ impl Indicator {
         };
 
         // Render each character of the label
-        for (i, c) in display_text.chars().enumerate() {
-            let x = start_col + i as u16;
-            if x < inner_area.x + inner_area.width && inner_area.y < area.y + area.height {
-                buf[(x, inner_area.y)].set_char(c);
-                buf[(x, inner_area.y)].set_fg(color);
+        let y = inner_area.y + row_offset;
+        if y < buf.area().height {
+            for (i, c) in display_text.chars().enumerate() {
+                let x = start_col + i as u16;
+                if x < inner_area.x + inner_area.width && x < buf.area().width {
+                    buf[(x, y)].set_char(c);
+                    buf[(x, y)].set_fg(color);
+                }
             }
         }
     }

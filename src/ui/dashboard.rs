@@ -35,6 +35,8 @@ pub struct Dashboard {
     border_style: Option<String>,
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
+    content_align: Option<String>,
+    transparent_background: bool,
 }
 
 impl Dashboard {
@@ -50,6 +52,8 @@ impl Dashboard {
             border_style: None,
             border_color: None,
             border_sides: None,
+            content_align: None,
+            transparent_background: true,
         }
     }
 
@@ -90,6 +94,14 @@ impl Dashboard {
 
     pub fn set_hide_inactive(&mut self, hide: bool) {
         self.hide_inactive = hide;
+    }
+
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
     }
 
     /// Add an indicator to the dashboard
@@ -169,15 +181,17 @@ impl Dashboard {
             return;
         }
 
-        // Fill background
-        for row in 0..inner_area.height {
-            for col in 0..inner_area.width {
-                let x = inner_area.x + col;
-                let y = inner_area.y + row;
-                // Bounds check against buffer dimensions
-                if x < buf.area.right() && y < buf.area.bottom() {
-                    buf[(x, y)].set_char(' ');
-                    buf[(x, y)].set_bg(Color::Black);
+        // Fill background only if not transparent
+        if !self.transparent_background {
+            for row in 0..inner_area.height {
+                for col in 0..inner_area.width {
+                    let x = inner_area.x + col;
+                    let y = inner_area.y + row;
+                    // Bounds check against buffer dimensions
+                    if x < buf.area.right() && y < buf.area.bottom() {
+                        buf[(x, y)].set_char(' ');
+                        buf[(x, y)].set_bg(Color::Black);
+                    }
                 }
             }
         }
@@ -192,16 +206,51 @@ impl Dashboard {
             return;
         }
 
+        // Calculate content size based on layout
+        let (content_width, content_height) = match self.layout {
+            DashboardLayout::Horizontal => {
+                // Width = sum of icon widths + spacing between them
+                let icon_count = visible_indicators.len() as u16;
+                let total_width = icon_count.saturating_add(icon_count.saturating_sub(1).saturating_mul(self.spacing));
+                (total_width, 1)
+            }
+            DashboardLayout::Vertical => {
+                // Height = number of indicators, Width = 1
+                (1, visible_indicators.len() as u16)
+            }
+            DashboardLayout::Grid { rows, cols } => {
+                // Width = cols + spacing, Height = rows
+                let width = cols as u16 + (cols as u16).saturating_sub(1).saturating_mul(self.spacing);
+                (width, rows as u16)
+            }
+        };
+
+        // Calculate content alignment offset
+        let (row_offset, col_offset) = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            align.calculate_offset(content_width, content_height, inner_area.width, inner_area.height)
+        } else {
+            (0, 0)
+        };
+
+        // Create adjusted area for rendering with offset
+        let render_area = Rect::new(
+            inner_area.x + col_offset,
+            inner_area.y + row_offset,
+            content_width.min(inner_area.width.saturating_sub(col_offset)),
+            content_height.min(inner_area.height.saturating_sub(row_offset)),
+        );
+
         // Render indicators based on layout
         match self.layout {
             DashboardLayout::Horizontal => {
-                self.render_horizontal(&visible_indicators, inner_area, buf);
+                self.render_horizontal(&visible_indicators, render_area, buf);
             }
             DashboardLayout::Vertical => {
-                self.render_vertical(&visible_indicators, inner_area, buf);
+                self.render_vertical(&visible_indicators, render_area, buf);
             }
             DashboardLayout::Grid { rows, cols } => {
-                self.render_grid(&visible_indicators, rows, cols, inner_area, buf);
+                self.render_grid(&visible_indicators, rows, cols, render_area, buf);
             }
         }
     }

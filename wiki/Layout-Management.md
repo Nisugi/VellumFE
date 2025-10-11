@@ -155,9 +155,22 @@ vellum-fe automatically saves your layout when you exit gracefully.
 
 ### File Format
 
-Layout files are TOML format with the same structure as `config.toml`:
+Layout files are TOML format containing window configurations and command input settings:
 
 ```toml
+# Command input configuration (optional)
+[command_input]
+row = 0
+col = 0
+height = 3
+width = 0  # 0 = full terminal width
+show_border = true
+border_style = "single"  # "single", "double", "rounded", "thick"
+border_color = "#ffffff"
+title = "Command"
+background_color = "#1a1a1a"  # Optional background color
+
+# Window configurations
 [[windows]]
 name = "main"
 widget_type = "text"
@@ -183,6 +196,34 @@ show_border = true
 title = "Health"
 bar_color = "#ff0000"
 bar_background_color = "#000000"
+```
+
+### Command Input Configuration
+
+The `[command_input]` section controls the command input widget appearance and position:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `row` | integer | 0 | Row position (0 = top) |
+| `col` | integer | 0 | Column position (0 = left) |
+| `height` | integer | 3 | Height in rows |
+| `width` | integer | 0 | Width in columns (0 = full terminal width) |
+| `show_border` | boolean | true | Show border around input |
+| `border_style` | string | "single" | Border style: "single", "double", "rounded", "thick" |
+| `border_color` | string | - | Border color in hex (e.g., "#ffffff") |
+| `title` | string | None | Title shown in border (omit for no title) |
+| `background_color` | string | - | Background color in hex (transparent if not set) |
+
+**Example:**
+```toml
+# Borderless command input at bottom with dark background
+[command_input]
+row = 67
+col = 0
+height = 3
+width = 0
+show_border = false
+background_color = "#1a1a1a"
 ```
 
 ### Manual Editing

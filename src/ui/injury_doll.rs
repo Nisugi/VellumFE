@@ -24,6 +24,8 @@ pub struct InjuryDoll {
     border_sides: Option<Vec<String>>,
     // ProfanityFE injury colors: none, injury1-3, scar1-3
     colors: Vec<String>,
+    background_color: Option<String>,
+    content_align: Option<String>,
 }
 
 impl InjuryDoll {
@@ -44,6 +46,8 @@ impl InjuryDoll {
                 "#777777".to_string(),  // 5: scar 2 (medium gray)
                 "#555555".to_string(),  // 6: scar 3 (darker gray)
             ],
+            background_color: None,
+            content_align: None,
         }
     }
 
@@ -87,6 +91,14 @@ impl InjuryDoll {
         if colors.len() == 7 {
             self.colors = colors;
         }
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
+    }
+
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
     }
 
     fn parse_color(hex: &str) -> Color {
@@ -149,15 +161,32 @@ impl InjuryDoll {
             return;
         }
 
-        // Fill entire area with black background
-        for row in 0..inner_area.height {
-            for col in 0..inner_area.width {
-                let x = inner_area.x + col;
-                let y = inner_area.y + row;
-                buf[(x, y)].set_char(' ');
-                buf[(x, y)].set_bg(Color::Black);
+        // Fill background if explicitly set
+        if let Some(ref color_hex) = self.background_color {
+            let bg_color = Self::parse_color(color_hex);
+            for row in 0..inner_area.height {
+                for col in 0..inner_area.width {
+                    let x = inner_area.x + col;
+                    let y = inner_area.y + row;
+                    if x < buf.area().width && y < buf.area().height {
+                        buf[(x, y)].set_char(' ');
+                        buf[(x, y)].set_bg(bg_color);
+                    }
+                }
             }
         }
+
+        // Calculate content alignment offset
+        // Injury doll content is 5 cols x 6 rows
+        const CONTENT_WIDTH: u16 = 5;
+        const CONTENT_HEIGHT: u16 = 6;
+
+        let (row_offset, col_offset) = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            align.calculate_offset(CONTENT_WIDTH, CONTENT_HEIGHT, inner_area.width, inner_area.height)
+        } else {
+            (0, 0) // Default to top-left
+        };
 
         // Layout with fixed character positions (shifted left to align with eyes):
         // 👁   👁
@@ -192,11 +221,11 @@ impl InjuryDoll {
 
         // Render body parts
         for (col, row, ch, body_part) in positions.iter() {
-            let x = inner_area.x + col;
-            let y = inner_area.y + row;
+            let x = inner_area.x + col + col_offset;
+            let y = inner_area.y + row + row_offset;
 
             // Bounds check
-            if x < inner_area.x + inner_area.width && y < inner_area.y + inner_area.height {
+            if x < buf.area().width && y < buf.area().height {
                 let color = self.get_injury_color(body_part);
                 buf[(x, y)].set_char(*ch);
                 buf[(x, y)].set_fg(color);
@@ -216,10 +245,10 @@ impl InjuryDoll {
             let color = self.get_injury_color(body_part);
 
             for (i, ch) in text.chars().enumerate() {
-                let x = inner_area.x + start_col + i as u16;
-                let y = inner_area.y + row;
+                let x = inner_area.x + start_col + i as u16 + col_offset;
+                let y = inner_area.y + row + row_offset;
 
-                if x < inner_area.x + inner_area.width && y < inner_area.y + inner_area.height {
+                if x < buf.area().width && y < buf.area().height {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(color);
                     buf[(x, y)].set_bg(Color::Black);

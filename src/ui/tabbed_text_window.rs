@@ -412,9 +412,10 @@ impl TabbedTextWindow {
             } else if focused {
                 block = block.border_style(Style::default().add_modifier(Modifier::BOLD));
             }
-        }
 
-        block = block.title(self.title.clone());
+            // Only set title when borders are shown
+            block = block.title(self.title.clone());
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -504,16 +505,14 @@ impl TabbedTextWindow {
 
     /// Get tab bar rect for mouse detection
     pub fn get_tab_bar_rect(&self, window_rect: Rect) -> Rect {
-        let inner = if self.show_border {
-            Rect {
-                x: window_rect.x + 1,
-                y: window_rect.y + 1,
-                width: window_rect.width.saturating_sub(2),
-                height: window_rect.height.saturating_sub(2),
-            }
-        } else {
-            window_rect
-        };
+        // Use the same logic as render_with_focus to calculate inner area
+        let mut block = Block::default();
+        if self.show_border {
+            block = block.borders(Borders::ALL);
+            // Only set title when borders are shown (matching render_with_focus)
+            block = block.title(self.title.clone());
+        }
+        let inner = block.inner(window_rect);
 
         match self.tab_bar_position {
             TabBarPosition::Top => Rect {

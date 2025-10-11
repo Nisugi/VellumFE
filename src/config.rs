@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -13,19 +14,22 @@ pub struct Config {
     pub connection: ConnectionConfig,
     pub ui: UiConfig,
     #[serde(default)]
-    pub presets: Vec<PresetColor>,
+    pub presets: HashMap<String, PresetColor>,
     #[serde(default)]
-    pub highlights: Vec<HighlightPattern>,
+    pub highlights: HashMap<String, HighlightPattern>,
     #[serde(default)]
-    pub keybinds: Vec<KeyBind>,
+    pub keybinds: HashMap<String, KeyBindAction>,
     #[serde(default)]
     pub spell_colors: Vec<SpellColorRange>,
+    #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
+    pub character: Option<String>,  // Character name for character-specific saving
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetColor {
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bg: Option<String>,
 }
 
@@ -69,6 +73,10 @@ pub struct WindowDef {
     pub border_sides: Option<Vec<String>>,  // ["top", "bottom", "left", "right"] - None means all
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    pub content_align: Option<String>,  // "top-left", "top-right", "bottom-left", "bottom-right", "center" - alignment of content within widget area
+    #[serde(default)]
+    pub background_color: Option<String>,  // Background color for the entire widget area (works for all widget types)
     #[serde(default)]
     pub bar_color: Option<String>,  // Hex color for progress bar (if widget_type is "progress")
     #[serde(default)]
@@ -190,14 +198,10 @@ pub struct UiConfig {
     pub command_echo_color: String,
     #[serde(default)]
     pub prompt_colors: Vec<PromptColor>,
-    #[serde(default = "default_windows")]
-    pub windows: Vec<WindowDef>,
     #[serde(default = "default_mouse_mode_toggle_key")]
     pub mouse_mode_toggle_key: String,  // Key to toggle mouse mode (e.g., "F12")
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
-    #[serde(default = "default_command_input")]
-    pub command_input: CommandInputConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +219,7 @@ pub struct CommandInputConfig {
     pub border_style: Option<String>,  // "single", "double", "rounded", "thick"
     pub border_color: Option<String>,
     pub title: Option<String>,
+    pub background_color: Option<String>,  // Background color (transparent if not set)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -223,26 +228,92 @@ pub struct LayoutConfig {
     // No global grid needed
 }
 
+/// Represents a saved layout (windows + command input position)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HighlightPattern {
-    pub pattern: String,
-    pub fg: Option<String>,
-    pub bg: Option<String>,
-    #[serde(default)]
-    pub bold: bool,
-    #[serde(default)]
-    pub color_entire_line: bool,  // If true, apply colors to entire line, not just matched text
-    #[serde(default)]
-    pub fast_parse: bool,  // If true, split pattern on | and use Aho-Corasick for literal matching
+pub struct Layout {
+    pub windows: Vec<WindowDef>,
+    #[serde(default = "default_command_input")]
+    pub command_input: CommandInputConfig,
+}
+
+/// Content alignment within widget area (used when borders are removed)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentAlign {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+}
+
+impl ContentAlign {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "top" => ContentAlign::Top,
+            "top-right" | "topright" => ContentAlign::TopRight,
+            "left" => ContentAlign::Left,
+            "center" => ContentAlign::Center,
+            "right" => ContentAlign::Right,
+            "bottom-left" | "bottomleft" => ContentAlign::BottomLeft,
+            "bottom" => ContentAlign::Bottom,
+            "bottom-right" | "bottomright" => ContentAlign::BottomRight,
+            _ => ContentAlign::TopLeft, // Default
+        }
+    }
+
+    /// Calculate offset for rendering content within a larger area
+    /// Returns (row_offset, col_offset)
+    pub fn calculate_offset(&self, content_width: u16, content_height: u16, area_width: u16, area_height: u16) -> (u16, u16) {
+        let row_offset = match self {
+            ContentAlign::TopLeft | ContentAlign::Top | ContentAlign::TopRight => 0,
+            ContentAlign::Left | ContentAlign::Center | ContentAlign::Right => (area_height.saturating_sub(content_height)) / 2,
+            ContentAlign::BottomLeft | ContentAlign::Bottom | ContentAlign::BottomRight => area_height.saturating_sub(content_height),
+        };
+
+        let col_offset = match self {
+            ContentAlign::TopLeft | ContentAlign::Left | ContentAlign::BottomLeft => 0,
+            ContentAlign::Top | ContentAlign::Center | ContentAlign::Bottom => (area_width.saturating_sub(content_width)) / 2,
+            ContentAlign::TopRight | ContentAlign::Right | ContentAlign::BottomRight => area_width.saturating_sub(content_width),
+        };
+
+        (row_offset, col_offset)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyBind {
-    pub key: String,           // e.g., "ctrl+f", "num_1", "alt+page_up"
+pub struct HighlightPattern {
+    pub pattern: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub action: Option<String>, // e.g., "cursor_word_left", "send_command"
+    pub fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub macro_text: Option<String>, // e.g., "sw\r" for southwest movement
+    pub bg: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bold: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub color_entire_line: bool,  // If true, apply colors to entire line, not just matched text
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_parse: bool,  // If true, split pattern on | and use Aho-Corasick for literal matching
+}
+
+// Helper function for serde skip_serializing_if
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeyBindAction {
+    Action(String),          // Just an action: "cursor_word_left"
+    Macro(MacroAction),      // A macro with text
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroAction {
+    pub macro_text: String,  // e.g., "sw\r" for southwest movement
 }
 
 /// Actions that can be bound to keys
@@ -443,58 +514,60 @@ fn default_mouse_mode_toggle_key() -> String {
 }
 
 /// Get default keybindings (based on ProfanityFE defaults)
-pub fn default_keybinds() -> Vec<KeyBind> {
-    vec![
-        // Basic command input
-        KeyBind { key: "enter".to_string(), action: Some("send_command".to_string()), macro_text: None },
-        KeyBind { key: "left".to_string(), action: Some("cursor_left".to_string()), macro_text: None },
-        KeyBind { key: "right".to_string(), action: Some("cursor_right".to_string()), macro_text: None },
-        KeyBind { key: "ctrl+left".to_string(), action: Some("cursor_word_left".to_string()), macro_text: None },
-        KeyBind { key: "ctrl+right".to_string(), action: Some("cursor_word_right".to_string()), macro_text: None },
-        KeyBind { key: "home".to_string(), action: Some("cursor_home".to_string()), macro_text: None },
-        KeyBind { key: "end".to_string(), action: Some("cursor_end".to_string()), macro_text: None },
-        KeyBind { key: "backspace".to_string(), action: Some("cursor_backspace".to_string()), macro_text: None },
-        KeyBind { key: "delete".to_string(), action: Some("cursor_delete".to_string()), macro_text: None },
+pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
+    let mut map = HashMap::new();
 
-        // Window management
-        KeyBind { key: "tab".to_string(), action: Some("switch_current_window".to_string()), macro_text: None },
-        KeyBind { key: "alt+page_up".to_string(), action: Some("scroll_current_window_up_one".to_string()), macro_text: None },
-        KeyBind { key: "alt+page_down".to_string(), action: Some("scroll_current_window_down_one".to_string()), macro_text: None },
-        KeyBind { key: "page_up".to_string(), action: Some("scroll_current_window_up_page".to_string()), macro_text: None },
-        KeyBind { key: "page_down".to_string(), action: Some("scroll_current_window_down_page".to_string()), macro_text: None },
+    // Basic command input
+    map.insert("enter".to_string(), KeyBindAction::Action("send_command".to_string()));
+    map.insert("left".to_string(), KeyBindAction::Action("cursor_left".to_string()));
+    map.insert("right".to_string(), KeyBindAction::Action("cursor_right".to_string()));
+    map.insert("ctrl+left".to_string(), KeyBindAction::Action("cursor_word_left".to_string()));
+    map.insert("ctrl+right".to_string(), KeyBindAction::Action("cursor_word_right".to_string()));
+    map.insert("home".to_string(), KeyBindAction::Action("cursor_home".to_string()));
+    map.insert("end".to_string(), KeyBindAction::Action("cursor_end".to_string()));
+    map.insert("backspace".to_string(), KeyBindAction::Action("cursor_backspace".to_string()));
+    map.insert("delete".to_string(), KeyBindAction::Action("cursor_delete".to_string()));
 
-        // Command history
-        KeyBind { key: "up".to_string(), action: Some("previous_command".to_string()), macro_text: None },
-        KeyBind { key: "down".to_string(), action: Some("next_command".to_string()), macro_text: None },
+    // Window management
+    map.insert("tab".to_string(), KeyBindAction::Action("switch_current_window".to_string()));
+    map.insert("alt+page_up".to_string(), KeyBindAction::Action("scroll_current_window_up_one".to_string()));
+    map.insert("alt+page_down".to_string(), KeyBindAction::Action("scroll_current_window_down_one".to_string()));
+    map.insert("page_up".to_string(), KeyBindAction::Action("scroll_current_window_up_page".to_string()));
+    map.insert("page_down".to_string(), KeyBindAction::Action("scroll_current_window_down_page".to_string()));
 
-        // Search (already implemented)
-        KeyBind { key: "ctrl+f".to_string(), action: Some("start_search".to_string()), macro_text: None },
-        KeyBind { key: "ctrl+page_up".to_string(), action: Some("prev_search_match".to_string()), macro_text: None },
-        KeyBind { key: "ctrl+page_down".to_string(), action: Some("next_search_match".to_string()), macro_text: None },
+    // Command history
+    map.insert("up".to_string(), KeyBindAction::Action("previous_command".to_string()));
+    map.insert("down".to_string(), KeyBindAction::Action("next_command".to_string()));
 
-        // Debug/Performance
-        KeyBind { key: "f12".to_string(), action: Some("toggle_performance_stats".to_string()), macro_text: None },
+    // Search
+    map.insert("ctrl+f".to_string(), KeyBindAction::Action("start_search".to_string()));
+    map.insert("ctrl+page_up".to_string(), KeyBindAction::Action("prev_search_match".to_string()));
+    map.insert("ctrl+page_down".to_string(), KeyBindAction::Action("next_search_match".to_string()));
 
-        // Numpad movement macros (no \r needed - network module adds \n automatically)
-        KeyBind { key: "num_1".to_string(), action: None, macro_text: Some("sw".to_string()) },
-        KeyBind { key: "num_2".to_string(), action: None, macro_text: Some("s".to_string()) },
-        KeyBind { key: "num_3".to_string(), action: None, macro_text: Some("se".to_string()) },
-        KeyBind { key: "num_4".to_string(), action: None, macro_text: Some("w".to_string()) },
-        KeyBind { key: "num_5".to_string(), action: None, macro_text: Some("out".to_string()) },
-        KeyBind { key: "num_6".to_string(), action: None, macro_text: Some("e".to_string()) },
-        KeyBind { key: "num_7".to_string(), action: None, macro_text: Some("nw".to_string()) },
-        KeyBind { key: "num_8".to_string(), action: None, macro_text: Some("n".to_string()) },
-        KeyBind { key: "num_9".to_string(), action: None, macro_text: Some("ne".to_string()) },
-        KeyBind { key: "num_0".to_string(), action: None, macro_text: Some("down".to_string()) },
-        KeyBind { key: "num_.".to_string(), action: None, macro_text: Some("up".to_string()) },
-        KeyBind { key: "num_+".to_string(), action: None, macro_text: Some("look".to_string()) },
-        KeyBind { key: "num_-".to_string(), action: None, macro_text: Some("info".to_string()) },
-        KeyBind { key: "num_*".to_string(), action: None, macro_text: Some("exp".to_string()) },
-        KeyBind { key: "num_/".to_string(), action: None, macro_text: Some("health".to_string()) },
+    // Debug/Performance
+    map.insert("f12".to_string(), KeyBindAction::Action("toggle_performance_stats".to_string()));
 
-        // Note: Shift+numpad doesn't work on Windows - the OS doesn't report SHIFT modifier for numpad numeric keys
-        // If you want peer keybinds, use alt+numpad or ctrl+numpad instead (those modifiers work with numpad)
-    ]
+    // Numpad movement macros
+    map.insert("num_1".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "sw\r".to_string() }));
+    map.insert("num_2".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "s\r".to_string() }));
+    map.insert("num_3".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "se\r".to_string() }));
+    map.insert("num_4".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "w\r".to_string() }));
+    map.insert("num_5".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "out\r".to_string() }));
+    map.insert("num_6".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "e\r".to_string() }));
+    map.insert("num_7".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "nw\r".to_string() }));
+    map.insert("num_8".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "n\r".to_string() }));
+    map.insert("num_9".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "ne\r".to_string() }));
+    map.insert("num_0".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "down\r".to_string() }));
+    map.insert("num_.".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "up\r".to_string() }));
+    map.insert("num_+".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "look\r".to_string() }));
+    map.insert("num_-".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "info\r".to_string() }));
+    map.insert("num_*".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "exp\r".to_string() }));
+    map.insert("num_/".to_string(), KeyBindAction::Macro(MacroAction { macro_text: "health\r".to_string() }));
+
+    // Note: Shift+numpad doesn't work on Windows - the OS doesn't report SHIFT modifier for numpad numeric keys
+    // If you want peer keybinds, use alt+numpad or ctrl+numpad instead (those modifiers work with numpad)
+
+    map
 }
 
 fn default_countdown_icon() -> String {
@@ -510,7 +583,8 @@ fn default_command_input() -> CommandInputConfig {
         show_border: true,
         border_style: None,
         border_color: None,
-        title: Some("Command".to_string()),
+        title: None,  // No title by default
+        background_color: None,  // Transparent by default
     }
 }
 
@@ -556,6 +630,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
+            content_align: None,
+            background_color: None,
             bar_color: None,
             bar_background_color: None,
             transparent_background: true,
@@ -588,6 +664,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Health".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#6e0202".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -619,6 +697,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Mana".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#08086d".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -650,6 +730,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Stamina".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#bd7b00".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -681,6 +763,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Spirit".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#6e727c".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -712,6 +796,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Mind".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#008b8b".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -744,6 +830,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Stance".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#000080".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -775,6 +863,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Encumbrance".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#006400".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -807,6 +897,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("RT".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#ff0000".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -838,6 +930,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Cast".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#0000ff".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -869,6 +963,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: Some("Stun".to_string()),
+            content_align: None,
+            background_color: None,
             bar_color: Some("#ffff00".to_string()),
             bar_background_color: Some("#000000".to_string()),
             transparent_background: false,
@@ -901,6 +997,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
+            content_align: None,
+            background_color: None,
             bar_color: None,
             bar_background_color: None,
             transparent_background: true,
@@ -932,6 +1030,8 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
+            content_align: None,
+            background_color: None,
             bar_color: None,
             bar_background_color: None,
             transparent_background: true,
@@ -952,6 +1052,74 @@ fn default_windows() -> Vec<WindowDef> {
     ]
 }
 
+impl Layout {
+    /// Load layout from file (checks autosave, character-specific, then default)
+    /// Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
+    pub fn load(character: Option<&str>) -> Result<Self> {
+        let layouts_dir = Config::layouts_dir()?;
+
+        // Try character-specific autosave first
+        if let Some(char_name) = character {
+            let auto_char_path = layouts_dir.join(format!("auto_{}.toml", char_name));
+            if auto_char_path.exists() {
+                return Self::load_from_file(&auto_char_path);
+            }
+
+            let char_path = layouts_dir.join(format!("{}.toml", char_name));
+            if char_path.exists() {
+                return Self::load_from_file(&char_path);
+            }
+        }
+
+        // Try generic autosave
+        let autosave_path = layouts_dir.join("autosave.toml");
+        if autosave_path.exists() {
+            return Self::load_from_file(&autosave_path);
+        }
+
+        // Try default layout
+        let default_path = layouts_dir.join("default.toml");
+        if default_path.exists() {
+            return Self::load_from_file(&default_path);
+        }
+
+        // Fall back to embedded default
+        tracing::info!("No layout found, using embedded default");
+        let layout: Layout = toml::from_str(DEFAULT_LAYOUT)
+            .context("Failed to parse embedded default layout")?;
+
+        // Save it as default for next time
+        fs::create_dir_all(&layouts_dir)?;
+        fs::write(&default_path, DEFAULT_LAYOUT)
+            .context("Failed to write default layout")?;
+
+        Ok(layout)
+    }
+
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
+        let contents = fs::read_to_string(path)
+            .context(format!("Failed to read layout file: {:?}", path))?;
+        let layout: Layout = toml::from_str(&contents)
+            .context(format!("Failed to parse layout file: {:?}", path))?;
+        Ok(layout)
+    }
+
+    /// Save layout to file
+    pub fn save(&self, name: &str) -> Result<()> {
+        let layout_path = Config::layout_path(name)?;
+
+        if let Some(parent) = layout_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let toml_string = toml::to_string_pretty(&self)
+            .context("Failed to serialize layout")?;
+        fs::write(&layout_path, toml_string)
+            .context("Failed to write layout file")?;
+
+        Ok(())
+    }
+}
 
 impl Config {
     /// Get a window template by name
@@ -978,6 +1146,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Main".to_string()),
+                content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1009,6 +1179,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Thoughts".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1040,6 +1212,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Speech".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1071,6 +1245,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Familiar".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1102,6 +1278,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Room".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1133,6 +1311,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Logons".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1164,6 +1344,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Deaths".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1195,6 +1377,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Arrivals".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1226,6 +1410,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Ambients".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1257,6 +1443,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Announcements".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1288,6 +1476,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Loot".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1319,6 +1509,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Health".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#6e0202".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1350,6 +1542,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Mana".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#08086d".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1381,6 +1575,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Stamina".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#bd7b00".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1412,6 +1608,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Spirit".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#6e727c".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1443,6 +1641,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Mind".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#008b8b".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1474,6 +1674,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Encumbrance".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#006400".to_string()), // Will change dynamically based on value
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1505,6 +1707,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Stance".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#000080".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1536,6 +1740,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Blood Points".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#4d0085".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1567,6 +1773,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("RT".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#ff0000".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1598,6 +1806,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Cast".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#0000ff".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1629,6 +1839,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Stun".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#ffff00".to_string()),
                 bar_background_color: Some("#000000".to_string()),
                 transparent_background: false,
@@ -1660,6 +1872,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Exits".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1691,6 +1905,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Injuries".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1722,6 +1938,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Hands".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1753,6 +1971,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Left Hand".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1784,6 +2004,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Right Hand".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1815,6 +2037,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Spell".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1846,6 +2070,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("\u{e231}".to_string()), // Nerd Font poison icon
+                content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -1876,6 +2102,8 @@ impl Config {
                 border_style: None,
                 border_color: None,
             border_sides: None,
+                content_align: None,
+            background_color: None,
                 title: Some("\u{e286}".to_string()), // Nerd Font disease icon
                 bar_color: None,
                 bar_background_color: None,
@@ -1907,6 +2135,8 @@ impl Config {
                 border_style: None,
                 border_color: None,
             border_sides: None,
+                content_align: None,
+            background_color: None,
                 title: Some("\u{f043}".to_string()), // Nerd Font bleeding icon
                 bar_color: None,
                 bar_background_color: None,
@@ -1938,6 +2168,8 @@ impl Config {
                 border_style: None,
                 border_color: None,
             border_sides: None,
+                content_align: None,
+            background_color: None,
                 title: Some("\u{f0e7}".to_string()), // Nerd Font stunned icon
                 bar_color: None,
                 bar_background_color: None,
@@ -1970,6 +2202,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("\u{f0bca}".to_string()), // Nerd Font webbed icon
+                content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -2001,6 +2235,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Status".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -2058,6 +2294,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Buffs".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#40FF40".to_string()),
                 bar_background_color: None,
                 transparent_background: true,
@@ -2089,6 +2327,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Debuffs".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#FF4040".to_string()),
                 bar_background_color: None,
                 transparent_background: true,
@@ -2120,6 +2360,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Cooldowns".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#FFB040".to_string()),
                 bar_background_color: None,
                 transparent_background: true,
@@ -2151,6 +2393,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Active Spells".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#4080FF".to_string()),
                 bar_background_color: None,
                 transparent_background: true,
@@ -2182,6 +2426,8 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("All Active Effects".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: Some("#808080".to_string()),
                 bar_background_color: None,
                 transparent_background: true,
@@ -2213,6 +2459,8 @@ impl Config {
                 border_color: None,
                 border_sides: None,
                 title: Some("Targets".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -2244,6 +2492,8 @@ impl Config {
                 border_color: None,
                 border_sides: None,
                 title: Some("Players".to_string()),
+            content_align: None,
+            background_color: None,
                 bar_color: None,
                 bar_background_color: None,
                 transparent_background: true,
@@ -2338,6 +2588,9 @@ impl Config {
             // Override port from command line
             config.connection.port = port_override;
 
+            // Store character name for later saves
+            config.character = character.map(|s| s.to_string());
+
             // If keybinds is empty, populate with defaults
             if config.keybinds.is_empty() {
                 config.keybinds = default_keybinds();
@@ -2354,6 +2607,7 @@ impl Config {
             .context("Failed to parse embedded default config")?;
 
         config.connection.port = port_override;
+        config.character = character.map(|s| s.to_string());
 
         // Create directories if needed
         let configs_dir = Self::configs_dir()?;
@@ -2361,24 +2615,37 @@ impl Config {
         fs::create_dir_all(&configs_dir)?;
         fs::create_dir_all(&layouts_dir)?;
 
-        // Write default config to ~/.vellum-fe/configs/default.toml
+        // Write default config to ~/.vellum-fe/configs/default.toml (if it doesn't exist)
         let default_config_path = configs_dir.join("default.toml");
-        fs::write(&default_config_path, DEFAULT_CONFIG)
-            .context("Failed to write default config")?;
+        if !default_config_path.exists() {
+            fs::write(&default_config_path, DEFAULT_CONFIG)
+                .context("Failed to write default config")?;
+            tracing::info!("Created default config at {:?}", default_config_path);
+        }
 
-        // Write default layout to ~/.vellum-fe/layouts/default.toml
+        // If character was specified, also create character-specific config
+        if let Some(char_name) = character {
+            let char_config_path = configs_dir.join(format!("{}.toml", char_name));
+            fs::write(&char_config_path, DEFAULT_CONFIG)
+                .context("Failed to write character-specific config")?;
+            tracing::info!("Created character-specific config at {:?}", char_config_path);
+        }
+
+        // Write default layout to ~/.vellum-fe/layouts/default.toml (if it doesn't exist)
         let default_layout_path = layouts_dir.join("default.toml");
-        fs::write(&default_layout_path, DEFAULT_LAYOUT)
-            .context("Failed to write default layout")?;
-
-        tracing::info!("Created default config at {:?}", default_config_path);
-        tracing::info!("Created default layout at {:?}", default_layout_path);
+        if !default_layout_path.exists() {
+            fs::write(&default_layout_path, DEFAULT_LAYOUT)
+                .context("Failed to write default layout")?;
+            tracing::info!("Created default layout at {:?}", default_layout_path);
+        }
 
         Ok(config)
     }
 
     pub fn save(&self, character: Option<&str>) -> Result<()> {
-        let config_path = Self::config_path(character)?;
+        // Use provided character name, or fall back to stored character name
+        let char_name = character.or(self.character.as_deref());
+        let config_path = Self::config_path(char_name)?;
 
         // Ensure parent directory exists
         if let Some(parent) = config_path.parent() {
@@ -2439,71 +2706,6 @@ impl Config {
         Ok(log_dir.join(filename))
     }
 
-    /// Save just the window layout to a named file
-    pub fn save_layout(&self, name: &str) -> Result<()> {
-        let layout_path = Self::layout_path(name)?;
-
-        // Ensure directory exists
-        if let Some(parent) = layout_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        #[derive(serde::Serialize)]
-        struct LayoutData {
-            windows: Vec<WindowDef>,
-        }
-
-        let layout_config = LayoutData {
-            windows: self.ui.windows.clone(),
-        };
-
-        let contents = toml::to_string_pretty(&layout_config)
-            .context("Failed to serialize layout")?;
-        fs::write(&layout_path, contents)
-            .context("Failed to write layout file")?;
-
-        Ok(())
-    }
-
-    /// Load window layout from a named file
-    pub fn load_layout(&mut self, name: &str) -> Result<()> {
-        let layout_path = Self::layout_path(name)?;
-
-        if !layout_path.exists() {
-            anyhow::bail!("Layout '{}' not found", name);
-        }
-
-        let contents = fs::read_to_string(&layout_path)
-            .context("Failed to read layout file")?;
-
-        #[derive(serde::Deserialize)]
-        struct LayoutData {
-            windows: Vec<WindowDef>,
-        }
-
-        let layout: LayoutData = toml::from_str(&contents)
-            .context("Failed to parse layout file")?;
-
-        self.ui.windows = layout.windows;
-        Ok(())
-    }
-
-    /// Save autosave layout (current window positions)
-    pub fn autosave_layout(&self) -> Result<()> {
-        self.save_layout("autosave")
-    }
-
-    /// Load autosave layout if it exists
-    pub fn load_autosave_layout(&mut self) -> Result<bool> {
-        let layout_path = Self::layout_path("autosave")?;
-        if layout_path.exists() {
-            self.load_layout("autosave")?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
     /// List all saved layouts
     pub fn list_layouts() -> Result<Vec<String>> {
         let layouts_dir = Self::config_dir()?.join("layouts");
@@ -2527,7 +2729,7 @@ impl Config {
         Ok(layouts)
     }
 
-    fn layout_path(name: &str) -> Result<PathBuf> {
+    pub fn layout_path(name: &str) -> Result<PathBuf> {
         let layouts_dir = Self::layouts_dir()?;
         Ok(layouts_dir.join(format!("{}.toml", name)))
     }
@@ -2563,58 +2765,60 @@ impl Default for Config {
                     PromptColor { character: "H".to_string(), color: "#9370db".to_string() }, // Purple for Hidden
                     PromptColor { character: ">".to_string(), color: "#a9a9a9".to_string() }, // DarkGray default
                 ],
-                windows: default_windows(),
                 mouse_mode_toggle_key: default_mouse_mode_toggle_key(),
                 countdown_icon: default_countdown_icon(),
-                command_input: default_command_input(),
             },
-            presets: vec![
-                PresetColor { id: "whisper".to_string(), fg: Some("#60b4bf".to_string()), bg: None },
-                PresetColor { id: "links".to_string(), fg: Some("#477ab3".to_string()), bg: None },
-                PresetColor { id: "speech".to_string(), fg: Some("#53a684".to_string()), bg: None },
-                PresetColor { id: "roomName".to_string(), fg: Some("#9BA2B2".to_string()), bg: Some("#395573".to_string()) },
-                PresetColor { id: "monsterbold".to_string(), fg: Some("#a29900".to_string()), bg: None },
-                PresetColor { id: "familiar".to_string(), fg: Some("#767339".to_string()), bg: None },
-                PresetColor { id: "thought".to_string(), fg: Some("#FF8080".to_string()), bg: None },
-            ],
-            highlights: vec![
+            presets: {
+                let mut map = HashMap::new();
+                map.insert("whisper".to_string(), PresetColor { fg: Some("#60b4bf".to_string()), bg: None });
+                map.insert("links".to_string(), PresetColor { fg: Some("#477ab3".to_string()), bg: None });
+                map.insert("speech".to_string(), PresetColor { fg: Some("#53a684".to_string()), bg: None });
+                map.insert("roomName".to_string(), PresetColor { fg: Some("#9BA2B2".to_string()), bg: Some("#395573".to_string()) });
+                map.insert("monsterbold".to_string(), PresetColor { fg: Some("#a29900".to_string()), bg: None });
+                map.insert("familiar".to_string(), PresetColor { fg: Some("#767339".to_string()), bg: None });
+                map.insert("thought".to_string(), PresetColor { fg: Some("#FF8080".to_string()), bg: None });
+                map
+            },
+            highlights: {
+                let mut map = HashMap::new();
                 // Example: Fast highlight for multiple player names (ultra-fast with Aho-Corasick)
-                HighlightPattern {
+                map.insert("friends".to_string(), HighlightPattern {
                     pattern: "Alice|Bob|Charlie|David|Eve|Frank".to_string(),
                     fg: Some("#ff00ff".to_string()),
                     bg: None,
                     bold: true,
                     color_entire_line: false,
-                    fast_parse: true,  // Enables Aho-Corasick for blazing speed
-                },
+                    fast_parse: true,
+                });
                 // Example: Highlight your combat actions in red (partial line, regex)
-                HighlightPattern {
+                map.insert("swing".to_string(), HighlightPattern {
                     pattern: r"You swing.*".to_string(),
                     fg: Some("#ff0000".to_string()),
                     bg: None,
                     bold: true,
                     color_entire_line: false,
                     fast_parse: false,
-                },
+                });
                 // Example: Highlight damage numbers in yellow (partial line, regex)
-                HighlightPattern {
+                map.insert("damage".to_string(), HighlightPattern {
                     pattern: r"\d+ points? of damage".to_string(),
                     fg: Some("#ffff00".to_string()),
                     bg: None,
                     bold: true,
                     color_entire_line: false,
                     fast_parse: false,
-                },
+                });
                 // Example: Highlight death messages with bright background (whole line, regex)
-                HighlightPattern {
+                map.insert("death".to_string(), HighlightPattern {
                     pattern: r".*dies.*".to_string(),
                     fg: Some("#ffffff".to_string()),
                     bg: Some("#ff0000".to_string()),
                     bold: true,
                     color_entire_line: true,
                     fast_parse: false,
-                },
-            ],
+                });
+                map
+            },
             keybinds: default_keybinds(),
             spell_colors: vec![
                 // Example spell colors - list commonly used spells from each circle
@@ -2669,6 +2873,7 @@ impl Default for Config {
                     color: "#00bfff".to_string()
                 },
             ],
+            character: None,  // Set at runtime via load_with_options
         }
     }
 }

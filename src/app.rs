@@ -1,4 +1,4 @@
-use crate::config::{Config, KeyAction, parse_key_string};
+use crate::config::{Config, KeyAction, KeyBindAction, Layout, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
@@ -33,6 +33,7 @@ enum InputMode {
 
 pub struct App {
     config: Config,
+    layout: Layout,
     window_manager: WindowManager,
     command_input: CommandInput,
     search_input: CommandInput,  // Separate input for search
@@ -75,19 +76,17 @@ enum ResizeEdge {
 }
 
 impl App {
-    pub fn new(mut config: Config) -> Result<Self> {
-        // Try to load autosave layout
-        match config.load_autosave_layout() {
-            Ok(true) => info!("Loaded autosaved layout"),
-            Ok(false) => debug!("No autosaved layout found, using default"),
-            Err(e) => tracing::warn!("Failed to load autosaved layout: {}", e),
-        }
+    pub fn new(config: Config) -> Result<Self> {
+        // Load layout (separate from config)
+        // Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
+        let layout = Layout::load(config.character.as_deref())?;
+        info!("Loaded layout with {} windows", layout.windows.len());
 
         // Convert config presets to parser format
         let presets: Vec<(String, Option<String>, Option<String>)> = config
             .presets
             .iter()
-            .map(|p| (p.id.clone(), p.fg.clone(), p.bg.clone()))
+            .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
             .collect();
 
         debug!("Loaded {} prompt color mappings:", config.ui.prompt_colors.len());
@@ -95,10 +94,9 @@ impl App {
             debug!("  '{}' -> {}", pc.character, pc.color);
         }
 
-        // Convert window configs
+        // Convert window configs from layout
         let countdown_icon = Some(config.ui.countdown_icon.clone());
-        let window_configs: Vec<WindowConfig> = config
-            .ui
+        let window_configs: Vec<WindowConfig> = layout
             .windows
             .iter()
             .map(|w| WindowConfig {
@@ -115,6 +113,8 @@ impl App {
                 border_color: w.border_color.clone(),
                 border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
+                content_align: w.content_align.clone(),
+                background_color: w.background_color.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
                 transparent_background: w.transparent_background,
@@ -143,39 +143,40 @@ impl App {
 
         // Build keybind map
         let mut keybind_map = HashMap::new();
-        for keybind in &config.keybinds {
-            if let Some((key_code, modifiers)) = parse_key_string(&keybind.key) {
-                let action = if let Some(ref action_str) = keybind.action {
-                    KeyAction::from_str(action_str)
-                } else if let Some(ref macro_text) = keybind.macro_text {
-                    Some(KeyAction::SendMacro(macro_text.clone()))
-                } else {
-                    None
+        for (key_str, keybind_action) in &config.keybinds {
+            if let Some((key_code, modifiers)) = parse_key_string(key_str) {
+                let action = match keybind_action {
+                    KeyBindAction::Action(action_str) => {
+                        KeyAction::from_str(action_str)
+                    }
+                    KeyBindAction::Macro(macro_action) => {
+                        Some(KeyAction::SendMacro(macro_action.macro_text.clone()))
+                    }
                 };
 
                 if let Some(action) = action {
                     keybind_map.insert((key_code, modifiers), action);
                 } else {
-                    tracing::warn!("Invalid keybind: {} -> {:?}/{:?}",
-                        keybind.key, keybind.action, keybind.macro_text);
+                    tracing::warn!("Invalid keybind: {} -> {:?}", key_str, keybind_action);
                 }
             } else {
-                tracing::warn!("Could not parse key string: {}", keybind.key);
+                tracing::warn!("Could not parse key string: {}", key_str);
             }
         }
 
         debug!("Loaded {} keybindings", keybind_map.len());
 
-        // Create command input with config
+        // Create command input with layout config
         let mut command_input = CommandInput::new(100);
         command_input.set_border_config(
-            config.ui.command_input.show_border,
-            config.ui.command_input.border_style.clone(),
-            config.ui.command_input.border_color.clone(),
+            layout.command_input.show_border,
+            layout.command_input.border_style.clone(),
+            layout.command_input.border_color.clone(),
         );
-        if let Some(title) = &config.ui.command_input.title {
+        if let Some(title) = &layout.command_input.title {
             command_input.set_title(title.clone());
         }
+        command_input.set_background_color(layout.command_input.background_color.clone());
 
         Ok(Self {
             window_manager: WindowManager::new(window_configs, config.highlights.clone()),
@@ -184,6 +185,7 @@ impl App {
             parser: XmlParser::with_presets(presets),
             keybind_map,
             config,
+            layout,
             running: true,
             prompt_shown: false,
             current_stream: "main".to_string(),
@@ -346,7 +348,7 @@ impl App {
     /// Check if the mouse is on a window's title bar (top border, but not corners)
     /// Returns the window index if on a title bar
     fn check_title_bar(
-        &self,
+        &mut self,
         mouse_col: u16,
         mouse_row: u16,
         window_layouts: &HashMap<String, ratatui::layout::Rect>,
@@ -355,6 +357,16 @@ impl App {
 
         for (idx, name) in window_names.iter().enumerate() {
             if let Some(rect) = window_layouts.get(name) {
+                // Skip title bar detection for borderless tabbed windows
+                // (the top row contains tabs, not a title bar)
+                if let Some(widget) = self.window_manager.get_window(name) {
+                    if let Widget::Tabbed(tabbed) = widget {
+                        if !tabbed.has_border() {
+                            continue;
+                        }
+                    }
+                }
+
                 // Check if on top border but not in the corners (leave 1 cell margin on each side)
                 if mouse_row == rect.y
                     && mouse_col > rect.x
@@ -370,8 +382,7 @@ impl App {
     /// Update window manager configs from current config
     fn update_window_manager_config(&mut self) {
         let countdown_icon = Some(self.config.ui.countdown_icon.clone());
-        let window_configs: Vec<WindowConfig> = self.config
-            .ui
+        let window_configs: Vec<WindowConfig> = self.layout
             .windows
             .iter()
             .map(|w| WindowConfig {
@@ -388,6 +399,8 @@ impl App {
                 border_color: w.border_color.clone(),
                 border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
+                content_align: w.content_align.clone(),
+                background_color: w.background_color.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
                 transparent_background: w.transparent_background,
@@ -428,7 +441,7 @@ impl App {
         };
 
         // Find and update only this window - other windows stay independent
-        for window_def in &mut self.config.ui.windows {
+        for window_def in &mut self.layout.windows {
             if window_def.name == window_name {
                 match edge {
                     ResizeEdge::Top => {
@@ -508,7 +521,7 @@ impl App {
         };
 
         // Find and update only this window's position
-        for window_def in &mut self.config.ui.windows {
+        for window_def in &mut self.layout.windows {
             if window_def.name == window_name {
                 // Update position, ensuring we don't go negative or beyond terminal bounds
                 let new_row = (window_def.row as i16 + delta_rows).max(0) as u16;
@@ -548,15 +561,23 @@ impl App {
             }
             "savelayout" => {
                 let name = parts.get(1).unwrap_or(&"default");
-                match self.config.save_layout(name) {
+                match self.layout.save(name) {
                     Ok(_) => self.add_system_message(&format!("Layout saved as '{}'", name)),
                     Err(e) => self.add_system_message(&format!("Failed to save layout: {}", e)),
                 }
             }
             "loadlayout" => {
                 let name = parts.get(1).unwrap_or(&"default");
-                match self.config.load_layout(name) {
-                    Ok(_) => {
+                let layout_path = match Config::layout_path(name) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to get layout path: {}", e));
+                        return;
+                    }
+                };
+                match Layout::load_from_file(&layout_path) {
+                    Ok(new_layout) => {
+                        self.layout = new_layout;
                         self.add_system_message(&format!("Layout '{}' loaded", name));
                         self.update_window_manager_config();
                     }
@@ -586,7 +607,7 @@ impl App {
                 let window_name = parts[1];
 
                 // Check if window already exists
-                if self.config.ui.windows.iter().any(|w| w.name == window_name) {
+                if self.layout.windows.iter().any(|w| w.name == window_name) {
                     self.add_system_message(&format!("Window '{}' already exists", window_name));
                     return;
                 }
@@ -594,7 +615,7 @@ impl App {
                 // Get template
                 if let Some(window_def) = Config::get_window_template(window_name) {
                     let actual_name = window_def.name.clone();
-                    self.config.ui.windows.push(window_def);
+                    self.layout.windows.push(window_def);
                     self.update_window_manager_config();
 
                     // If template name differs from actual window name, inform user
@@ -621,7 +642,7 @@ impl App {
                 let streams_str = parts[2];
 
                 // Check if window already exists
-                if self.config.ui.windows.iter().any(|w| w.name == window_name) {
+                if self.layout.windows.iter().any(|w| w.name == window_name) {
                     self.add_system_message(&format!("Window '{}' already exists", window_name));
                     return;
                 }
@@ -650,6 +671,8 @@ impl App {
                     border_color: None,
                     border_sides: None,
                     title: Some(window_name.to_string()),
+                    content_align: None,
+            background_color: None,
                     bar_color: None,
                     bar_background_color: None,
                     transparent_background: true,
@@ -668,7 +691,7 @@ impl App {
                     tab_unread_prefix: None,
                 };
 
-                self.config.ui.windows.push(window_def);
+                self.layout.windows.push(window_def);
                 self.update_window_manager_config();
                 self.add_system_message(&format!("Created custom window '{}' - use mouse to move/resize", window_name));
             }
@@ -684,7 +707,7 @@ impl App {
                 let tabs_str = parts[2];
 
                 // Check if window already exists
-                if self.config.ui.windows.iter().any(|w| w.name == window_name) {
+                if self.layout.windows.iter().any(|w| w.name == window_name) {
                     self.add_system_message(&format!("Window '{}' already exists", window_name));
                     return;
                 }
@@ -723,6 +746,8 @@ impl App {
                     border_color: None,
                     border_sides: None,
                     title: Some(window_name.to_string()),
+                    content_align: None,
+            background_color: None,
                     bar_color: None,
                     bar_background_color: None,
                     transparent_background: true,
@@ -741,7 +766,7 @@ impl App {
                     tab_unread_prefix: Some("* ".to_string()),
                 };
 
-                self.config.ui.windows.push(window_def);
+                self.layout.windows.push(window_def);
                 self.update_window_manager_config();
 
                 let tab_names: Vec<String> = tabs.iter().map(|t| t.name.clone()).collect();
@@ -760,7 +785,7 @@ impl App {
                 let stream_name = parts[3];
 
                 // Find the window
-                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name == window_name) {
                     if window_def.widget_type != "tabbed" {
                         self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
                         return;
@@ -805,7 +830,7 @@ impl App {
                 let tab_name = parts[2];
 
                 // Find the window
-                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name == window_name) {
                     if window_def.widget_type != "tabbed" {
                         self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
                         return;
@@ -876,7 +901,7 @@ impl App {
                 let inactive_color = parts.get(4).copied();
 
                 // Find the window config
-                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name == window_name) {
                     if window_def.widget_type != "tabbed" {
                         self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
                         return;
@@ -935,7 +960,7 @@ impl App {
                 };
 
                 // Find the window config
-                if let Some(window_def) = self.config.ui.windows.iter_mut().find(|w| w.name == window_name) {
+                if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name == window_name) {
                     if window_def.widget_type != "tabbed" {
                         self.add_system_message(&format!("Window '{}' is not a tabbed window", window_name));
                         return;
@@ -974,16 +999,16 @@ impl App {
                 }
 
                 let window_name = parts[1];
-                let initial_len = self.config.ui.windows.len();
-                self.config.ui.windows.retain(|w| w.name != window_name);
+                let initial_len = self.layout.windows.len();
+                self.layout.windows.retain(|w| w.name != window_name);
 
-                if self.config.ui.windows.len() < initial_len {
+                if self.layout.windows.len() < initial_len {
                     self.update_window_manager_config();
                     self.add_system_message(&format!("Deleted window '{}'", window_name));
 
                     // Adjust focused window index if needed
-                    if self.focused_window_index >= self.config.ui.windows.len() && self.focused_window_index > 0 {
-                        self.focused_window_index = self.config.ui.windows.len() - 1;
+                    if self.focused_window_index >= self.layout.windows.len() && self.focused_window_index > 0 {
+                        self.focused_window_index = self.layout.windows.len() - 1;
                     }
                 } else {
                     self.add_system_message(&format!("Window '{}' not found", window_name));
@@ -1005,7 +1030,7 @@ impl App {
                 }
             }
             "windows" | "listwindows" => {
-                let windows: Vec<String> = self.config.ui.windows.iter().map(|w| w.name.clone()).collect();
+                let windows: Vec<String> = self.layout.windows.iter().map(|w| w.name.clone()).collect();
                 if windows.is_empty() {
                     self.add_system_message("No windows");
                 } else {
@@ -1187,9 +1212,9 @@ impl App {
                     window.set_countdown(now + cast_seconds);
                 }
 
-                // Stun: 15-25 seconds
+                // Stuntime: 15-25 seconds
                 let stun_seconds = rng.gen_range(15..=25);
-                if let Some(window) = self.window_manager.get_window("stun") {
+                if let Some(window) = self.window_manager.get_window("stuntime") {
                     window.set_countdown(now + stun_seconds);
                 }
 
@@ -1209,7 +1234,7 @@ impl App {
 
                 // Find and update the window
                 let mut found = false;
-                for window_def in &mut self.config.ui.windows {
+                for window_def in &mut self.layout.windows {
                     if window_def.name == window_name {
                         window_def.title = Some(new_title.clone());
                         found = true;
@@ -1264,7 +1289,7 @@ impl App {
 
                 // Find and update the window
                 let mut found = false;
-                for window_def in &mut self.config.ui.windows {
+                for window_def in &mut self.layout.windows {
                     if window_def.name == window_name {
                         if style == "none" {
                             window_def.show_border = false;
@@ -1297,6 +1322,46 @@ impl App {
                         self.add_system_message(&format!("Set '{}' border to {} ({}){}", window_name, style, c, sides_str));
                     } else {
                         self.add_system_message(&format!("Set '{}' border to {}{}", window_name, style, sides_str));
+                    }
+                } else {
+                    self.add_system_message(&format!("Window '{}' not found", window_name));
+                }
+            }
+            "contentalign" | "align" => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: .contentalign <window> <alignment>");
+                    self.add_system_message("Alignments: top-left, top-right, bottom-left, bottom-right, center");
+                    self.add_system_message("Example: .contentalign compass bottom-left");
+                    return;
+                }
+
+                let window_name = parts[1];
+                let alignment = parts[2];
+
+                // Validate alignment
+                let valid_alignments = ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"];
+                if !valid_alignments.contains(&alignment) {
+                    self.add_system_message(&format!("Invalid alignment '{}'. Valid: top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right", alignment));
+                    return;
+                }
+
+                // Find and update the window definition
+                let mut found = false;
+                for window_def in &mut self.layout.windows {
+                    if window_def.name == window_name {
+                        window_def.content_align = Some(alignment.to_string());
+                        found = true;
+                        break;
+                    }
+                }
+
+                if found {
+                    // Update the running widget directly without recreating everything
+                    if let Some(widget) = self.window_manager.get_window(window_name) {
+                        widget.set_content_align(Some(alignment.to_string()));
+                        self.add_system_message(&format!("Set '{}' content alignment to {}", window_name, alignment));
+                    } else {
+                        self.add_system_message(&format!("Window '{}' not found in window manager", window_name));
                     }
                 } else {
                     self.add_system_message(&format!("Window '{}' not found", window_name));
@@ -1391,7 +1456,7 @@ impl App {
 
                 // Update the config
                 let mut found = false;
-                for window_def in &mut self.config.ui.windows {
+                for window_def in &mut self.layout.windows {
                     if window_def.name == window_name {
                         window_def.bar_color = Some(bar_color.to_string());
                         window_def.bar_background_color = bg_color.map(|s| s.to_string());
@@ -1495,7 +1560,7 @@ impl App {
             // Update window widths based on terminal size
             let terminal_size = terminal.size()?;
             let terminal_rect = ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height);
-            let cmd_cfg = &self.config.ui.command_input;
+            let cmd_cfg = &self.layout.command_input;
             let layout = UiLayout::calculate(terminal_rect, cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width);
 
             // Calculate window layouts using proportional sizing
@@ -1507,7 +1572,7 @@ impl App {
             terminal.draw(|f| {
                 let ui_render_start = std::time::Instant::now();
 
-                let cmd_cfg = &self.config.ui.command_input;
+                let cmd_cfg = &self.layout.command_input;
                 let layout = UiLayout::calculate(f.area(), cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width);
                 let window_layouts = self.window_manager.calculate_layout(layout.main_area);
 
@@ -1590,15 +1655,26 @@ impl App {
                     total_lines += window.line_count();
                 }
             }
-            let window_count = self.config.ui.windows.len();
+            let window_count = self.layout.windows.len();
             self.perf_stats.update_memory_stats(total_lines, window_count);
         }
 
-        // Autosave layout before exiting
-        if let Err(e) = self.config.autosave_layout() {
+        // Autosave config and layout before exiting
+        if let Err(e) = self.config.save(None) {
+            tracing::error!("Failed to autosave config: {}", e);
+        } else {
+            tracing::info!("Config autosaved");
+        }
+
+        let autosave_name = if let Some(ref char_name) = self.config.character {
+            format!("auto_{}", char_name)
+        } else {
+            "autosave".to_string()
+        };
+        if let Err(e) = self.layout.save(&autosave_name) {
             tracing::error!("Failed to autosave layout: {}", e);
         } else {
-            tracing::info!("Layout autosaved");
+            tracing::info!("Layout autosaved as {}", autosave_name);
         }
 
         // Cleanup terminal
@@ -2026,8 +2102,10 @@ impl App {
                     }
                 } else {
                     // Not on border or title bar, check which window was clicked
+                    debug!("Click at ({}, {}) - checking windows", mouse.column, mouse.row);
                     for (idx, name) in self.window_manager.get_window_names().iter().enumerate() {
                         if let Some(rect) = window_layouts.get(name) {
+                            debug!("  Window '{}': rect {:?}", name, rect);
                             if mouse.column >= rect.x
                                 && mouse.column < rect.x + rect.width
                                 && mouse.row >= rect.y
@@ -2039,29 +2117,19 @@ impl App {
                                 // Check if this is a tabbed window and if we clicked on a tab
                                 if let Some(widget) = self.window_manager.get_window(name) {
                                     if let Widget::Tabbed(tabbed) = widget {
-                                        // Calculate tab bar position (inside border)
-                                        let inner_y = if tabbed.has_border() { rect.y + 1 } else { rect.y };
-                                        let tab_bar_y = inner_y; // Tab bar is first line inside border
+                                        // Use the tabbed window's method to get correct tab bar rect
+                                        let tab_bar_rect = tabbed.get_tab_bar_rect(*rect);
+                                        debug!("Tabbed window '{}': click at ({}, {}), tab_bar_rect: {:?}",
+                                            name, mouse.column, mouse.row, tab_bar_rect);
 
-                                        // Check if click was on tab bar row
-                                        if mouse.row == tab_bar_y {
-                                            let inner_x = if tabbed.has_border() { rect.x + 1 } else { rect.x };
-                                            let inner_width = if tabbed.has_border() {
-                                                rect.width.saturating_sub(2)
-                                            } else {
-                                                rect.width
-                                            };
-
-                                            let tab_bar_rect = ratatui::layout::Rect {
-                                                x: inner_x,
-                                                y: tab_bar_y,
-                                                width: inner_width,
-                                                height: 1,
-                                            };
-
+                                        // Check if click was on tab bar
+                                        if mouse.row >= tab_bar_rect.y && mouse.row < tab_bar_rect.y + tab_bar_rect.height {
+                                            debug!("Click is on tab bar row");
                                             if let Some(tab_idx) = tabbed.get_tab_at_position(mouse.column, tab_bar_rect) {
                                                 debug!("Clicked tab {} in window '{}'", tab_idx, name);
                                                 tabbed.switch_to_tab(tab_idx);
+                                            } else {
+                                                debug!("get_tab_at_position returned None");
                                             }
                                         }
                                     }
@@ -2571,7 +2639,7 @@ impl App {
                             // Clear active effects in matching windows
                             let window_names = self.window_manager.get_window_names();
                             for window_name in window_names {
-                                if let Some(config) = self.config.ui.windows.iter().find(|w| w.name == window_name) {
+                                if let Some(config) = self.layout.windows.iter().find(|w| w.name == window_name) {
                                     if let Some(ref effect_category) = config.effect_category {
                                         // Clear if window's category matches or is "All"
                                         if *effect_category == *category || *effect_category == "All" {

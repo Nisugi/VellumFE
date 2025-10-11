@@ -1,7 +1,7 @@
 # Default Window Layout for VellumFE
-# This file contains only the [[ui.windows]] sections for easy layout editing
+# This file contains only the [[windows]] sections for easy layout editing
 
-[[ui.windows]]
+[[windows]]
 name = "main"
 widget_type = "text"
 streams = ["main"]
@@ -13,7 +13,7 @@ buffer_size = 10000
 show_border = true
 transparent_background = true
 
-[[ui.windows]]
+[[windows]]
 name = "health"
 widget_type = "progress"
 streams = []
@@ -29,7 +29,7 @@ bar_color = "#6e0202"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "mana"
 widget_type = "progress"
 streams = []
@@ -45,7 +45,7 @@ bar_color = "#08086d"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "stamina"
 widget_type = "progress"
 streams = []
@@ -61,7 +61,7 @@ bar_color = "#bd7b00"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "spirit"
 widget_type = "progress"
 streams = []
@@ -77,7 +77,7 @@ bar_color = "#6e727c"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "mindstate"
 widget_type = "progress"
 streams = []
@@ -93,7 +93,7 @@ bar_color = "#008b8b"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "stance"
 widget_type = "progress"
 streams = []
@@ -109,7 +109,7 @@ bar_color = "#000080"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "encumlevel"
 widget_type = "progress"
 streams = []
@@ -125,7 +125,7 @@ bar_color = "#006400"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "roundtime"
 widget_type = "countdown"
 streams = []
@@ -141,7 +141,7 @@ bar_color = "#ff0000"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "casttime"
 widget_type = "countdown"
 streams = []
@@ -157,7 +157,7 @@ bar_color = "#0000ff"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "stuntime"
 widget_type = "countdown"
 streams = []
@@ -173,7 +173,7 @@ bar_color = "#ffff00"
 bar_background_color = "#000000"
 transparent_background = false
 
-[[ui.windows]]
+[[windows]]
 name = "thoughts"
 widget_type = "text"
 streams = ["thoughts"]
@@ -185,7 +185,7 @@ buffer_size = 500
 show_border = true
 transparent_background = true
 
-[[ui.windows]]
+[[windows]]
 name = "speech"
 widget_type = "text"
 streams = [

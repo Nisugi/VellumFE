@@ -20,6 +20,8 @@ pub struct Compass {
     border_sides: Option<Vec<String>>,
     active_color: Option<String>,   // Color for available exits
     inactive_color: Option<String>, // Color for unavailable exits
+    content_align: Option<String>,  // Content alignment within widget area
+    background_color: Option<String>, // Background color for entire widget area
 }
 
 impl Compass {
@@ -33,6 +35,8 @@ impl Compass {
             border_sides: None,
             active_color: Some("#00ff00".to_string()),   // Green for available
             inactive_color: Some("#333333".to_string()), // Dark gray for unavailable
+            content_align: None,  // Default to top-left
+            background_color: None,
         }
     }
 
@@ -79,6 +83,14 @@ impl Compass {
         if let Some(color) = inactive_color {
             self.inactive_color = Some(color);
         }
+    }
+
+    pub fn set_content_align(&mut self, content_align: Option<String>) {
+        self.content_align = content_align;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
     }
 
     fn parse_color(hex: &str) -> Color {
@@ -135,6 +147,18 @@ impl Compass {
             return;
         }
 
+        // Calculate content alignment offset
+        // Compass content is 7 cols x 3 rows
+        const CONTENT_WIDTH: u16 = 7;
+        const CONTENT_HEIGHT: u16 = 3;
+
+        let (row_offset, col_offset) = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            align.calculate_offset(CONTENT_WIDTH, CONTENT_HEIGHT, inner_area.width, inner_area.height)
+        } else {
+            (0, 0) // Default to top-left
+        };
+
         let active_color = self.active_color.as_ref()
             .map(|c| Self::parse_color(c))
             .unwrap_or(Color::Green);
@@ -148,13 +172,18 @@ impl Compass {
         //   ↓ · ↙ ▼ ↘
         // Each direction is 1 char, with 1 space between groups
 
-        // Fill entire area with black background first (makes spacing invisible)
-        for row in 0..inner_area.height {
-            for col in 0..inner_area.width {
-                let x = inner_area.x + col;
-                let y = inner_area.y + row;
-                buf[(x, y)].set_char(' ');
-                buf[(x, y)].set_bg(Color::Black);
+        // Fill background if explicitly set
+        if let Some(ref color_hex) = self.background_color {
+            let bg_color = Self::parse_color(color_hex);
+            for row in 0..inner_area.height {
+                for col in 0..inner_area.width {
+                    let x = inner_area.x + col;
+                    let y = inner_area.y + row;
+                    if x < buf.area().width && y < buf.area().height {
+                        buf[(x, y)].set_char(' ');
+                        buf[(x, y)].set_bg(bg_color);
+                    }
+                }
             }
         }
 
@@ -182,11 +211,11 @@ impl Compass {
         ];
 
         for (col, row, dir_label, short_form, long_form) in positions.iter() {
-            let x = inner_area.x + col;
-            let y = inner_area.y + row;
+            let x = inner_area.x + col + col_offset;
+            let y = inner_area.y + row + row_offset;
 
             // Skip if position is out of bounds (need to check before any buffer access)
-            if y >= inner_area.y + inner_area.height {
+            if x >= buf.area().width || y >= buf.area().height {
                 continue;
             }
 

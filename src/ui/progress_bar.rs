@@ -28,6 +28,7 @@ pub struct ProgressBar {
     show_percentage: bool,
     show_values: bool,
     text_alignment: TextAlignment,  // How to align the text (left, center, right)
+    content_align: Option<String>,  // Alignment of bar within widget area (top, center, bottom, etc.)
 }
 
 impl ProgressBar {
@@ -47,6 +48,7 @@ impl ProgressBar {
             show_percentage: true,
             show_values: true,
             text_alignment: TextAlignment::Center,  // Center by default (for vitals)
+            content_align: None,
         }
     }
 
@@ -116,6 +118,10 @@ impl ProgressBar {
         self.transparent_background = transparent;
     }
 
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
+    }
+
     /// Parse a hex color string to ratatui Color
     pub fn parse_color(hex: &str) -> Color {
         let hex = hex.trim_start_matches('#');
@@ -183,6 +189,17 @@ impl ProgressBar {
         if inner_area.width == 0 || inner_area.height == 0 {
             return;
         }
+
+        // Calculate content alignment offset
+        // Progress bar content is 1 row high, fills width
+        const CONTENT_HEIGHT: u16 = 1;
+        let row_offset = if let Some(ref align_str) = self.content_align {
+            let align = crate::config::ContentAlign::from_str(align_str);
+            let (offset, _) = align.calculate_offset(inner_area.width, CONTENT_HEIGHT, inner_area.width, inner_area.height);
+            offset
+        } else {
+            0
+        };
 
         // Calculate percentage
         let percentage = if self.max > 0 {
@@ -269,36 +286,44 @@ impl ProgressBar {
                 };
 
                 // First pass: Fill the background
-                for i in 0..available_width {
-                    let x = inner_area.x + i;
-                    buf[(x, inner_area.y)].set_char(' ');
-                    if i < split_position {
-                        // Filled portion - use bar color as background
-                        buf[(x, inner_area.y)].set_bg(bar_color);
-                    } else if !self.transparent_background {
-                        // Empty portion - use background color only if not transparent
-                        buf[(x, inner_area.y)].set_bg(bg_color);
+                let y = inner_area.y + row_offset;
+                if y < buf.area().height {
+                    for i in 0..available_width {
+                        let x = inner_area.x + i;
+                        if x < buf.area().width {
+                            buf[(x, y)].set_char(' ');
+                            if i < split_position {
+                                // Filled portion - use bar color as background
+                                buf[(x, y)].set_bg(bar_color);
+                            } else if !self.transparent_background {
+                                // Empty portion - use background color only if not transparent
+                                buf[(x, y)].set_bg(bg_color);
+                            }
+                            // If transparent_background is true, don't set background for empty portion
+                        }
                     }
-                    // If transparent_background is true, don't set background for empty portion
                 }
 
                 // Second pass: Render text on top with appropriate colors
-                for (i, c) in final_text.chars().enumerate() {
-                    let x = text_start_x + i as u16;
-                    if x < inner_area.x + inner_area.width {
-                        let char_position = x - inner_area.x;
+                let y = inner_area.y + row_offset;
+                if y < buf.area().height {
+                    for (i, c) in final_text.chars().enumerate() {
+                        let x = text_start_x + i as u16;
+                        if x < inner_area.x + inner_area.width && x < buf.area().width {
+                            let char_position = x - inner_area.x;
 
-                        if char_position < split_position {
-                            // On filled portion: white text on colored background
-                            buf[(x, inner_area.y)].set_char(c);
-                            buf[(x, inner_area.y)].set_fg(Color::White);
-                            buf[(x, inner_area.y)].set_bg(bar_color);
-                        } else {
-                            // On empty portion: gray text, background depends on transparent_background
-                            buf[(x, inner_area.y)].set_char(c);
-                            buf[(x, inner_area.y)].set_fg(Color::DarkGray);
-                            if !self.transparent_background {
-                                buf[(x, inner_area.y)].set_bg(bg_color);
+                            if char_position < split_position {
+                                // On filled portion: white text on colored background
+                                buf[(x, y)].set_char(c);
+                                buf[(x, y)].set_fg(Color::White);
+                                buf[(x, y)].set_bg(bar_color);
+                            } else {
+                                // On empty portion: gray text, background depends on transparent_background
+                                buf[(x, y)].set_char(c);
+                                buf[(x, y)].set_fg(Color::DarkGray);
+                                if !self.transparent_background {
+                                    buf[(x, y)].set_bg(bg_color);
+                                }
                             }
                         }
                     }
@@ -306,13 +331,18 @@ impl ProgressBar {
             }
         } else if available_width > 0 {
             // No text - just show the colored bar
-            for i in 0..available_width {
-                let x = inner_area.x + i;
-                buf[(x, inner_area.y)].set_char(' ');
-                if i < split_position {
-                    buf[(x, inner_area.y)].set_bg(bar_color);
-                } else if !self.transparent_background {
-                    buf[(x, inner_area.y)].set_bg(bg_color);
+            let y = inner_area.y + row_offset;
+            if y < buf.area().height {
+                for i in 0..available_width {
+                    let x = inner_area.x + i;
+                    if x < buf.area().width {
+                        buf[(x, y)].set_char(' ');
+                        if i < split_position {
+                            buf[(x, y)].set_bg(bar_color);
+                        } else if !self.transparent_background {
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
                 }
             }
         }
