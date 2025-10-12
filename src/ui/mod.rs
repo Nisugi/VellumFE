@@ -48,7 +48,7 @@ pub use targets::Targets;
 pub use players::Players;
 pub use highlight_form::{HighlightFormWidget, FormResult};
 pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
-pub use window_editor::WindowEditor;
+pub use window_editor::{WindowEditor, EditorMode};
 
 use ratatui::{
     layout::Rect,

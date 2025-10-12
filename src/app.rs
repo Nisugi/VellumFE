@@ -1308,6 +1308,27 @@ impl App {
                 let templates = Config::available_window_templates();
                 self.add_system_message(&format!("Available window templates: {}", templates.join(", ")));
             }
+            "editwindow" | "editwin" => {
+                // Get list of window names
+                let window_names: Vec<String> = self.layout.windows.iter().map(|w| w.name.clone()).collect();
+
+                if window_names.is_empty() {
+                    self.add_system_message("No windows to edit");
+                    return;
+                }
+
+                // Optional: window name specified
+                let selected_window = parts.get(1).map(|s| s.to_string());
+
+                // Open window editor
+                self.window_editor.open_for_window(window_names, selected_window);
+                self.add_system_message("Window editor opened - select window to edit");
+            }
+            "addwindow" | "newwindow" => {
+                // Open window editor for new window
+                self.window_editor.open_for_new_window();
+                self.add_system_message("Window editor opened - select widget type");
+            }
             "indicatoron" => {
                 // Force all status indicators on for testing
                 let indicators = ["poisoned", "diseased", "bleeding", "stunned", "webbed"];
@@ -2369,6 +2390,11 @@ impl App {
                     form.render(f.area(), f.buffer_mut());
                 }
 
+                // Render window editor as popup (if open)
+                if self.window_editor.active {
+                    self.window_editor.render(f, f.area());
+                }
+
                 // Render popup menu (if open)
                 // Render main popup menu
                 if let Some(ref menu) = self.popup_menu {
@@ -2653,6 +2679,22 @@ impl App {
             }
             // Everything else goes to the form
             return self.handle_keybind_form_input(key, modifiers);
+        }
+
+        // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
+        if self.window_editor.active {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Handle key in window editor
+            let key_event = crossterm::event::KeyEvent::new(key, modifiers);
+            if self.window_editor.handle_key(key_event) {
+                // Check if we need to handle special transitions
+                self.handle_window_editor_transitions();
+                return Ok(());
+            }
         }
 
         // Handle global keys first (work in any mode except HighlightForm)
@@ -4361,6 +4403,46 @@ impl App {
             1..=20 => "advance".to_string(),
             0 => "offensive".to_string(),
             _ => "unknown".to_string(),
+        }
+    }
+
+    /// Handle window editor state transitions (loading/saving windows)
+    fn handle_window_editor_transitions(&mut self) {
+        use crate::ui::EditorMode;
+
+        // Check if we need to load a window for editing
+        if self.window_editor.mode == EditorMode::SelectingWindow {
+            // User pressed Enter - check if they want to edit a window
+            if let Some(window_name) = self.window_editor.get_selected_window_name() {
+                // Find the window in our layout
+                if let Some(window) = self.layout.windows.iter().find(|w| w.name == window_name).cloned() {
+                    self.window_editor.set_window(window);
+                }
+            }
+        }
+
+        // Check if user saved (Ctrl+S was pressed and validation passed)
+        if !self.window_editor.show_validation || self.window_editor.validation_errors.is_empty() {
+            // If we have a valid window, save it
+            if let Some(edited_window) = self.window_editor.get_window() {
+                if self.window_editor.is_new_window {
+                    // Add new window
+                    self.layout.windows.push(edited_window.clone());
+                    self.add_system_message(&format!("Created window '{}' - use mouse to move/resize", edited_window.name));
+                    self.add_system_message("Remember to .savelayout to save this configuration!");
+                    self.window_editor.close();
+                    self.update_window_manager_config();
+                } else if let Some(original) = &self.window_editor.original_window {
+                    // Update existing window
+                    if let Some(idx) = self.layout.windows.iter().position(|w| w.name == original.name) {
+                        self.layout.windows[idx] = edited_window.clone();
+                        self.add_system_message(&format!("Updated window '{}'", edited_window.name));
+                        self.add_system_message("Remember to .savelayout to save this configuration!");
+                        self.window_editor.close();
+                        self.update_window_manager_config();
+                    }
+                }
+            }
         }
     }
 }
