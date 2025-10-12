@@ -639,6 +639,10 @@ impl WindowManager {
                         config.border_color.clone(),
                     );
 
+                    // Set background
+                    tabbed_window.set_transparent_background(config.transparent_background);
+                    tabbed_window.set_background_color(config.background_color.clone());
+
                     // Set tab colors if specified
                     if let Some(ref color) = config.tab_active_color {
                         tabbed_window.set_tab_active_color(color.clone());
@@ -1004,6 +1008,10 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+
+                        // Set background
+                        tabbed_window.set_transparent_background(config.transparent_background);
+                        tabbed_window.set_background_color(config.background_color.clone());
 
                         // Set tab colors if specified
                         if let Some(ref color) = config.tab_active_color {

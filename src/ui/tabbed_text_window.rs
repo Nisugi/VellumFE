@@ -30,6 +30,9 @@ pub struct TabbedTextWindow {
     border_style: Option<String>,
     border_color: Option<String>,
     title: String,
+    // Background
+    transparent_background: bool,
+    background_color: Option<String>,
     // Tab styling
     tab_active_color: Option<String>,
     tab_inactive_color: Option<String>,
@@ -51,6 +54,8 @@ impl TabbedTextWindow {
             border_style: None,
             border_color: None,
             title: title.into(),
+            transparent_background: false,
+            background_color: None,
             tab_active_color: None,
             tab_inactive_color: None,
             tab_unread_color: None,
@@ -83,6 +88,8 @@ impl TabbedTextWindow {
             border_style: None,
             border_color: None,
             title: title.into(),
+            transparent_background: false,
+            background_color: None,
             tab_active_color: None,
             tab_inactive_color: None,
             tab_unread_color: None,
@@ -157,6 +164,14 @@ impl TabbedTextWindow {
 
     pub fn set_unread_prefix(&mut self, prefix: String) {
         self.tab_unread_prefix = prefix;
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
     }
 
     /// Add a new tab dynamically
@@ -453,6 +468,23 @@ impl TabbedTextWindow {
                 (tab_bar, content)
             }
         };
+
+        // Fill background if not transparent
+        if !self.transparent_background {
+            let bg_color = if let Some(ref color_str) = self.background_color {
+                Self::parse_color(color_str).unwrap_or(Color::Reset)
+            } else {
+                Color::Reset
+            };
+
+            for y in inner.y..inner.y + inner.height {
+                for x in inner.x..inner.x + inner.width {
+                    if x < area.width && y < area.height {
+                        buf.get_mut(x, y).set_bg(bg_color);
+                    }
+                }
+            }
+        }
 
         // Render tab bar
         self.render_tab_bar(tab_bar_area, buf);
