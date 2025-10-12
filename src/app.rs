@@ -1329,6 +1329,30 @@ impl App {
                 self.window_editor.open_for_new_window();
                 self.add_system_message("Window editor opened - select widget type");
             }
+            "lockwindows" | "lockall" => {
+                // Lock all windows
+                let mut count = 0;
+                for window in &mut self.layout.windows {
+                    if !window.locked {
+                        window.locked = true;
+                        count += 1;
+                    }
+                }
+                self.add_system_message(&format!("Locked {} window(s) - cannot be moved or resized", count));
+                self.add_system_message("Remember to .savelayout to persist locked state!");
+            }
+            "unlockwindows" | "unlockall" => {
+                // Unlock all windows
+                let mut count = 0;
+                for window in &mut self.layout.windows {
+                    if window.locked {
+                        window.locked = false;
+                        count += 1;
+                    }
+                }
+                self.add_system_message(&format!("Unlocked {} window(s) - can now be moved or resized", count));
+                self.add_system_message("Remember to .savelayout to persist unlocked state!");
+            }
             "indicatoron" => {
                 // Force all status indicators on for testing
                 let indicators = ["poisoned", "diseased", "bleeding", "stunned", "webbed"];
@@ -3415,25 +3439,34 @@ impl App {
                 self.selection_state = None;
                 // Check if clicking on a resize border
                 if let Some((window_idx, edge)) = self.check_resize_border(mouse.column, mouse.row, window_layouts) {
-                    self.resize_state = Some(ResizeState {
-                        window_index: window_idx,
-                        edge,
-                        start_mouse_pos: (mouse.column, mouse.row),
-                    });
-                    debug!("Started resize on window {} edge {:?}", window_idx, edge);
+                    // Check if window is locked
+                    if !self.is_window_locked(window_idx) {
+                        self.resize_state = Some(ResizeState {
+                            window_index: window_idx,
+                            edge,
+                            start_mouse_pos: (mouse.column, mouse.row),
+                        });
+                        debug!("Started resize on window {} edge {:?}", window_idx, edge);
+                    } else {
+                        debug!("Window {} is locked - cannot resize", window_idx);
+                    }
                 } else if let Some(window_idx) = self.check_title_bar(mouse.column, mouse.row, window_layouts) {
                     // Clicking on title bar - start move operation
-                    let window_names = self.window_manager.get_window_names();
-                    if window_idx < window_names.len() {
-                        let window_name = &window_names[window_idx];
-                        if let Some(rect) = window_layouts.get(window_name) {
-                            self.move_state = Some(MoveState {
-                                window_index: window_idx,
-                                start_mouse_pos: (mouse.column, mouse.row),
-                                start_window_pos: (rect.x, rect.y),
-                            });
-                            debug!("Started move on window {} at {:?}", window_idx, (rect.x, rect.y));
+                    if !self.is_window_locked(window_idx) {
+                        let window_names = self.window_manager.get_window_names();
+                        if window_idx < window_names.len() {
+                            let window_name = &window_names[window_idx];
+                            if let Some(rect) = window_layouts.get(window_name) {
+                                self.move_state = Some(MoveState {
+                                    window_index: window_idx,
+                                    start_mouse_pos: (mouse.column, mouse.row),
+                                    start_window_pos: (rect.x, rect.y),
+                                });
+                                debug!("Started move on window {} at {:?}", window_idx, (rect.x, rect.y));
+                            }
                         }
+                    } else {
+                        debug!("Window {} is locked - cannot move", window_idx);
                     }
                 } else {
                     // Not on border or title bar, check which window was clicked
@@ -4404,6 +4437,14 @@ impl App {
             0 => "offensive".to_string(),
             _ => "unknown".to_string(),
         }
+    }
+
+    /// Check if a window is locked (cannot be moved or resized)
+    fn is_window_locked(&self, window_idx: usize) -> bool {
+        if window_idx >= self.layout.windows.len() {
+            return false;
+        }
+        self.layout.windows[window_idx].locked
     }
 
     /// Handle window editor state transitions (loading/saving windows)
