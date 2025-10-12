@@ -413,6 +413,16 @@ impl WindowEditor {
                 }
                 None
             },
+            KeyCode::BackTab => {
+                // Shift+Tab (BackTab)
+                let max_field = 16;
+                if self.focused_field == 0 {
+                    self.focused_field = max_field;
+                } else {
+                    self.focused_field -= 1;
+                }
+                None
+            },
             KeyCode::Esc => {
                 self.active = false;
                 Some(WindowEditorResult::Cancel)
@@ -590,7 +600,7 @@ impl WindowEditor {
 
     fn render_fields(&mut self, area: Rect, buf: &mut Buffer) {
         let popup_width = 100.min(area.width);
-        let popup_height = 30.min(area.height);
+        let popup_height = 40.min(area.height);  // Increased from 30 to 40
         let popup_x = (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -670,8 +680,20 @@ impl WindowEditor {
         Self::render_checkbox(13, self.focused_field, "Lock Window:", self.locked, content.x, y, buf);
         y += 2;
 
-        Self::render_text_field(14, self.focused_field, "Buffer Size:", &mut self.buffer_size_input, content.x, y, content.width, buf);
-        y += 3;
+        // Buffer size only for text/tabbed windows
+        if matches!(self.current_window.widget_type.as_str(), "text" | "tabbed") {
+            Self::render_text_field(14, self.focused_field, "Buffer Size:", &mut self.buffer_size_input, content.x, y, content.width, buf);
+            y += 3;
+        }
+
+        // Tabbed window configuration
+        if self.current_window.widget_type == "tabbed" {
+            let tab_count = self.current_window.tabs.as_ref().map(|t| t.len()).unwrap_or(0);
+            let tab_info = format!("Tabs: {} configured (use .addtab/.removetab commands)", tab_count);
+            let tab_para = Paragraph::new(tab_info).style(Style::default().fg(Color::DarkGray));
+            tab_para.render(Rect { x: content.x, y, width: content.width, height: 1 }, buf);
+            y += 2;
+        }
 
         // Buttons
         Self::render_buttons(self.focused_field, content.x, y, buf);
