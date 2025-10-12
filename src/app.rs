@@ -70,6 +70,7 @@ pub struct App {
     last_link_click_pos: Option<(u16, u16)>,  // Position of last link click (for menu positioning)
     menu_categories: HashMap<String, Vec<crate::ui::MenuItem>>,  // Cached categories for submenus
     drag_state: Option<DragState>,  // Active drag operation (None when not dragging)
+    window_editor: crate::ui::WindowEditor,  // Window configuration editor
 }
 
 /// Drag and drop state
@@ -283,6 +284,7 @@ impl App {
             last_link_click_pos: None,  // No last click position initially
             menu_categories: HashMap::new(),  // No cached categories initially
             drag_state: None,  // No drag operation initially
+            window_editor: crate::ui::WindowEditor::new(),  // Initialize window editor
         })
     }
 
@@ -939,6 +941,7 @@ impl App {
                     bar_color: None,
                     bar_background_color: None,
                     transparent_background: true,
+                    locked: false,
                     indicator_colors: None,
                     dashboard_layout: None,
                     dashboard_indicators: None,
@@ -1014,6 +1017,7 @@ impl App {
                     bar_color: None,
                     bar_background_color: None,
                     transparent_background: true,
+                    locked: false,
                     indicator_colors: None,
                     dashboard_layout: None,
                     dashboard_indicators: None,
