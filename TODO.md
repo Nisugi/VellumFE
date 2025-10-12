@@ -45,6 +45,80 @@
   - [x] Color-code by group/friend status
   - [x] Support player notes/tags
 
+## Performance Monitoring & Reporting
+
+### Performance Stats Documentation
+- [ ] Explore performance reporting system thoroughly
+  - [ ] Test all performance metrics (FPS, render times, network, memory)
+  - [ ] Document what each metric measures
+  - [ ] Document why each metric is important
+  - [ ] Document how metrics help diagnose issues
+  - [ ] Document normal vs problematic values
+
+- [ ] Create comprehensive Performance Stats wiki page
+  - [ ] Explain performance widget (F12 toggle)
+  - [ ] Break down each metric in detail (assume no prior knowledge)
+  - [ ] Provide troubleshooting guides per metric
+  - [ ] Include examples of performance issues and solutions
+  - [ ] Add screenshots/examples of good vs bad performance
+
+- [ ] Research additional performance metrics
+  - [ ] Identify what else can be measured
+  - [ ] Evaluate usefulness of new metrics
+  - [ ] Implement high-value additional metrics
+  - [ ] Document new metrics in wiki
+
+## Configuration & Management UI
+
+### Configuration UI System
+- [ ] Audit all configuration options
+  - [ ] List all config fields in config.toml
+  - [ ] Categorize by type (UI, network, features, etc.)
+  - [ ] Identify which are safe to change at runtime
+  - [ ] Document which require restart
+
+- [ ] Design configuration UI
+  - [ ] Form-based UI similar to keybind/highlight management
+  - [ ] Organize by category (tabs or sections)
+  - [ ] Validation for each field type
+  - [ ] Preview/apply changes before saving
+  - [ ] Help text for each option
+
+- [ ] Implement configuration UI
+  - [ ] `.config` or `.settings` command to open UI
+  - [ ] Edit fields with proper input types (text, number, color picker, boolean)
+  - [ ] Save to config file
+  - [ ] Hot-reload where possible
+  - [ ] Show which settings require restart
+
+### Keybind Management Enhancement
+- [ ] Add edit functionality to existing keybind UI
+  - [x] `.addkeybind` - Create new keybind (DONE)
+  - [ ] `.editkeybind <key>` - Edit existing keybind
+  - [x] `.deletekeybind <key>` - Delete keybind (DONE)
+  - [x] `.listkeybinds` - List all keybinds (DONE)
+
+- [ ] Enhance keybind edit UI
+  - [ ] Pre-fill form with existing keybind values
+  - [ ] Show current action/macro when editing
+  - [ ] Warn if changing conflicts with other keybinds
+  - [ ] Support rebinding to different key
+
+### Highlight Management Enhancement
+- [ ] Add edit functionality to existing highlight UI
+  - [x] `.addhighlight` - Create new highlight (DONE)
+  - [ ] `.edithighlight <name>` - Edit existing highlight
+  - [x] `.removehighlight <name>` - Delete highlight (DONE)
+  - [x] `.listhighlights` - List all highlights (DONE)
+  - [x] `.testhighlight <name>` - Test highlight (DONE)
+
+- [ ] Enhance highlight edit UI
+  - [ ] Pre-fill form with existing highlight values
+  - [ ] Show current pattern/colors when editing
+  - [ ] Live preview of color changes
+  - [ ] Test pattern against recent text in edit mode
+  - [ ] Support editing sound settings
+
 ## Parser Improvements
 
 ### XML Parser Enhancements
