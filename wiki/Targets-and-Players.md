@@ -237,3 +237,13 @@ All three widgets (Targets, Players, Active Effects) use the same ScrollableCont
 - Minimal performance impact - updates only when data changes
 - Efficient ScrollableContainer pattern reuses items
 - No memory leaks - old items are cleared before adding new ones
+
+## See Also
+
+- [Widget Reference](Widget-Reference.md) - All available widgets
+- [Stream Routing](Stream-Routing.md) - Understanding game streams
+- [Configuration Guide](Configuration-Guide.md) - Window configuration
+
+---
+
+← [Widget Reference](Widget-Reference.md) | [Home](Home.md) | [Configuration Guide](Configuration-Guide.md) →

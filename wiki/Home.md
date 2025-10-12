@@ -64,6 +64,8 @@ Built in Rust for speed and reliability:
 - [Text Selection](https://github.com/Nisugi/VellumFE/wiki/Text-Selection)
 - [Highlight Management](https://github.com/Nisugi/VellumFE/wiki/Highlight-Management)
 - [Keybind Management](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management)
+- [Spell Colors](https://github.com/Nisugi/VellumFE/wiki/Spell-Colors)
+- [Targets and Players](https://github.com/Nisugi/VellumFE/wiki/Targets-and-Players)
 - [Troubleshooting](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting)
 - [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide)
 - [Feature Roadmap](https://github.com/Nisugi/VellumFE/wiki/Feature-Roadmap)

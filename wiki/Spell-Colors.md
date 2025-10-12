@@ -8,7 +8,7 @@ The spell coloring system allows you to assign colors to spells based on their n
 
 ## Configuration
 
-Spell colors are configured in `~/.profanity-rs/config.toml` under the `[[spell_colors]]` section.
+Spell colors are configured in `~/.vellum-fe/configs/default.toml` (or your character-specific config) under the `[[spell_colors]]` section.
 
 ### Format
 
@@ -194,7 +194,7 @@ color = "#00bfff"  # Blue
 1. Check that spell IDs are correct (use `.togglespellid` to verify)
 2. Verify hex color format includes `#` prefix
 3. Ensure config file syntax is correct (no missing commas, brackets)
-4. Restart profanity-rs after editing config
+4. Restart VellumFE after editing config
 
 ### Wrong color applied
 
@@ -207,20 +207,20 @@ color = "#00bfff"  # Blue
 **Problem**: Changes to config not taking effect
 
 **Solution**:
-1. Check `~/.profanity-rs/debug.log` for config parsing errors
+1. Check `~/.vellum-fe/debug.log` for config parsing errors
 2. Verify TOML syntax (use online TOML validator)
-3. Restart profanity-rs to reload config
+3. Restart VellumFE to reload config
 
 ## Default Configuration
 
-profanity-rs comes with pre-configured spell colors for all major spell circles. These are just examples - customize them to your preferences!
+VellumFE comes with pre-configured spell colors for all major spell circles. These are just examples - customize them to your preferences!
 
 The defaults provide:
 - Distinct colors for each spell circle
 - Coverage of commonly used spells
 - Good visual contrast for quick identification
 
-You can completely replace or extend the default configuration in your `~/.profanity-rs/config.toml` file.
+You can completely replace or extend the default configuration in your config file.
 
 ## Related Commands
 
@@ -237,3 +237,7 @@ You can completely replace or extend the default configuration in your `~/.profa
 - [Active Effects Widget](Widget-Reference.md#active-effects)
 - [Configuration Guide](Configuration-Guide.md)
 - [Commands Reference](Commands-Reference.md)
+
+---
+
+← [Widget Reference](Widget-Reference.md) | [Home](Home.md) | [Configuration Guide](Configuration-Guide.md) →
