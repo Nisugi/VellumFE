@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
+    widgets::{Block, Borders, Clear, Paragraph, Widget as RatatuiWidget, Wrap},
 };
 use std::collections::HashMap;
 
@@ -54,6 +54,7 @@ pub enum EditorMode {
 pub struct WindowEditor {
     pub active: bool,
     pub mode: EditorMode,
+    pub needs_transition: bool,  // Flag to signal when Enter was pressed
 
     // Window selection
     pub available_windows: Vec<String>,  // List of existing windows
@@ -105,6 +106,7 @@ impl WindowEditor {
         Self {
             active: false,
             mode: EditorMode::SelectingWindow,
+            needs_transition: false,
             available_windows: Vec::new(),
             selected_window_index: 0,
             window_scroll_offset: 0,
@@ -710,21 +712,24 @@ impl WindowEditor {
     }
 
     /// Render the window editor
-    pub fn render(&mut self, f: &mut Frame, area: Rect) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+        // Clear the entire area first
+        RatatuiWidget::render(Clear, area, buf);
+
         match self.mode {
-            EditorMode::SelectingWindow => self.render_window_selection(f, area),
-            EditorMode::SelectingWidgetType => self.render_widget_type_selection(f, area),
-            EditorMode::EditingField => self.render_field_editor(f, area),
-            EditorMode::EditingDropdown => self.render_dropdown_editor(f, area),
-            EditorMode::EditingMultiCheckbox => self.render_multi_checkbox_editor(f, area),
-            EditorMode::EditingTagList => self.render_tag_list_editor(f, area),
-            EditorMode::EditingColorArray => self.render_color_array_editor(f, area),
-            EditorMode::EditingTabList => self.render_tab_list_editor(f, area),
-            EditorMode::EditingDashboardIndicators => self.render_dashboard_indicator_editor(f, area),
+            EditorMode::SelectingWindow => self.render_window_selection(area, buf),
+            EditorMode::SelectingWidgetType => self.render_widget_type_selection(area, buf),
+            EditorMode::EditingField => self.render_field_editor(area, buf),
+            EditorMode::EditingDropdown => self.render_dropdown_editor(area, buf),
+            EditorMode::EditingMultiCheckbox => self.render_multi_checkbox_editor(area, buf),
+            EditorMode::EditingTagList => self.render_tag_list_editor(area, buf),
+            EditorMode::EditingColorArray => self.render_color_array_editor(area, buf),
+            EditorMode::EditingTabList => self.render_tab_list_editor(area, buf),
+            EditorMode::EditingDashboardIndicators => self.render_dashboard_indicator_editor(area, buf),
         }
     }
 
-    fn render_window_selection(&self, f: &mut Frame, area: Rect) {
+    fn render_window_selection(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -738,7 +743,7 @@ impl WindowEditor {
         let title = Paragraph::new("Select Window to Edit")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Window list
         let visible_height = chunks[1].height.saturating_sub(2) as usize; // Account for borders
@@ -762,16 +767,16 @@ impl WindowEditor {
 
         let list = Paragraph::new(list_items)
             .block(Block::default().borders(Borders::ALL).title("Windows").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Status
         let status = Paragraph::new(self.status_message.clone())
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[2]);
+        status.render(chunks[2], buf);
     }
 
-    fn render_widget_type_selection(&self, f: &mut Frame, area: Rect) {
+    fn render_widget_type_selection(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -785,7 +790,7 @@ impl WindowEditor {
         let title = Paragraph::new("Select Widget Type")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Widget type list
         let list_items: Vec<Line> = self.available_widget_types
@@ -806,16 +811,16 @@ impl WindowEditor {
 
         let list = Paragraph::new(list_items)
             .block(Block::default().borders(Borders::ALL).title("Widget Types").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Status
         let status = Paragraph::new(self.status_message.clone())
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[2]);
+        status.render(chunks[2], buf);
     }
 
-    fn render_field_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_field_editor(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -834,7 +839,7 @@ impl WindowEditor {
         let title = Paragraph::new(title_text)
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Field list
         let visible_height = chunks[1].height.saturating_sub(2) as usize;
@@ -880,7 +885,7 @@ impl WindowEditor {
 
         let list = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Fields").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Status
         let mut status_lines = vec![
@@ -900,10 +905,10 @@ impl WindowEditor {
         let status = Paragraph::new(status_lines)
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[2]);
+        status.render(chunks[2], buf);
     }
 
-    fn render_dropdown_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_dropdown_editor(&self, area: Rect, buf: &mut Buffer) {
         // Get current field to access dropdown options
         if self.current_field_index >= self.fields.len() {
             return;
@@ -928,7 +933,7 @@ impl WindowEditor {
         let title = Paragraph::new(format!("Select: {}", field.label))
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Options list
         let list_items: Vec<Line> = options
@@ -949,16 +954,16 @@ impl WindowEditor {
 
         let list = Paragraph::new(list_items)
             .block(Block::default().borders(Borders::ALL).title("Options").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Status
         let status = Paragraph::new("↑/↓: Navigate | Enter: Select | Esc: Cancel")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[2]);
+        status.render(chunks[2], buf);
     }
 
-    fn render_multi_checkbox_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_multi_checkbox_editor(&self, area: Rect, buf: &mut Buffer) {
         // Get current field to access checkbox options
         if self.current_field_index >= self.fields.len() {
             return;
@@ -983,7 +988,7 @@ impl WindowEditor {
         let title = Paragraph::new(format!("Edit: {}", field.label))
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Options list with checkboxes
         let list_items: Vec<Line> = options
@@ -1002,16 +1007,16 @@ impl WindowEditor {
 
         let list = Paragraph::new(list_items)
             .block(Block::default().borders(Borders::ALL).title("Options").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Status
         let status = Paragraph::new("Click to toggle | Enter: Save | Esc: Cancel")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[2]);
+        status.render(chunks[2], buf);
     }
 
-    fn render_tag_list_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_tag_list_editor(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1027,7 +1032,7 @@ impl WindowEditor {
         let title = Paragraph::new(format!("Edit: {}", field.label))
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Tag list
         let list_items: Vec<Line> = self.tag_list_items
@@ -1054,22 +1059,22 @@ impl WindowEditor {
             Paragraph::new(list_items)
                 .block(Block::default().borders(Borders::ALL).title("Items").border_style(Style::default().fg(Color::White)))
         };
-        f.render_widget(list_display, chunks[1]);
+        list_display.render(chunks[1], buf);
 
         // Input field
         let input = Paragraph::new(self.tag_list_input.clone())
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL).title("Add Item").border_style(Style::default().fg(Color::White)));
-        f.render_widget(input, chunks[2]);
+        input.render(chunks[2], buf);
 
         // Status
         let status = Paragraph::new("Type and press Enter to add | Click item to remove | Esc: Done")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[3]);
+        status.render(chunks[3], buf);
     }
 
-    fn render_color_array_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_color_array_editor(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1085,7 +1090,7 @@ impl WindowEditor {
         let title = Paragraph::new(format!("Edit: {}", field.label))
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Color list
         let list_items: Vec<Line> = self.color_array_items
@@ -1107,22 +1112,22 @@ impl WindowEditor {
 
         let list = Paragraph::new(list_items)
             .block(Block::default().borders(Borders::ALL).title("Colors").border_style(Style::default().fg(Color::White)));
-        f.render_widget(list, chunks[1]);
+        list.render(chunks[1], buf);
 
         // Input field
         let input = Paragraph::new(self.color_array_input.clone())
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL).title("Edit Color (hex)").border_style(Style::default().fg(Color::White)));
-        f.render_widget(input, chunks[2]);
+        input.render(chunks[2], buf);
 
         // Status
         let status = Paragraph::new("↑/↓: Select | Type hex color | Enter: Save | Esc: Done")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[3]);
+        status.render(chunks[3], buf);
     }
 
-    fn render_tab_list_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_tab_list_editor(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1137,7 +1142,7 @@ impl WindowEditor {
         let title = Paragraph::new("Edit Tabs")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Tab list
         let list_items: Vec<Line> = self.tab_list_items
@@ -1164,7 +1169,7 @@ impl WindowEditor {
             Paragraph::new(list_items)
                 .block(Block::default().borders(Borders::ALL).title("Tabs").border_style(Style::default().fg(Color::White)))
         };
-        f.render_widget(list_display, chunks[1]);
+        list_display.render(chunks[1], buf);
 
         // Input field
         let input_title = if self.tab_list_editing_name {
@@ -1175,16 +1180,16 @@ impl WindowEditor {
         let input = Paragraph::new(self.tab_list_input.clone())
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL).title(input_title).border_style(Style::default().fg(Color::White)));
-        f.render_widget(input, chunks[2]);
+        input.render(chunks[2], buf);
 
         // Status
         let status = Paragraph::new("a: Add tab | d: Delete selected | ↑/↓: Navigate | Esc: Done")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[3]);
+        status.render(chunks[3], buf);
     }
 
-    fn render_dashboard_indicator_editor(&self, f: &mut Frame, area: Rect) {
+    fn render_dashboard_indicator_editor(&self, area: Rect, buf: &mut Buffer) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1199,7 +1204,7 @@ impl WindowEditor {
         let title = Paragraph::new("Edit Dashboard Indicators")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-        f.render_widget(title, chunks[0]);
+        title.render(chunks[0], buf);
 
         // Indicator list
         let list_items: Vec<Line> = self.dashboard_indicators
@@ -1228,7 +1233,7 @@ impl WindowEditor {
             Paragraph::new(list_items)
                 .block(Block::default().borders(Borders::ALL).title("Indicators").border_style(Style::default().fg(Color::White)))
         };
-        f.render_widget(list_display, chunks[1]);
+        list_display.render(chunks[1], buf);
 
         // Edit fields
         let field_names = ["ID", "Icon", "Off Color", "On Color"];
@@ -1243,13 +1248,13 @@ impl WindowEditor {
         let edit = Paragraph::new(edit_lines)
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL).title("Edit Field").border_style(Style::default().fg(Color::White)));
-        f.render_widget(edit, chunks[2]);
+        edit.render(chunks[2], buf);
 
         // Status
         let status = Paragraph::new("a: Add | d: Delete | Tab: Next field | ↑/↓: Navigate | Enter: Save | Esc: Done")
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(status, chunks[3]);
+        status.render(chunks[3], buf);
     }
 
     /// Handle keyboard input
@@ -1292,8 +1297,8 @@ impl WindowEditor {
                 true
             },
             KeyCode::Enter => {
-                // Transition to editing the selected window
-                // The app.rs will handle loading the actual window data
+                // Signal that we need to transition to editing the selected window
+                self.needs_transition = true;
                 true
             },
             _ => false,
@@ -1356,8 +1361,9 @@ impl WindowEditor {
                 true
             },
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Save changes
+                // Save changes - validate and signal transition
                 self.validate_all_fields();
+                self.needs_transition = true;
                 true
             },
             KeyCode::Char(' ') => {

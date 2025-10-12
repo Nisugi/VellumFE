@@ -2416,7 +2416,7 @@ impl App {
 
                 // Render window editor as popup (if open)
                 if self.window_editor.active {
-                    self.window_editor.render(f, f.area());
+                    self.window_editor.render(f.area(), f.buffer_mut());
                 }
 
                 // Render popup menu (if open)
@@ -4451,9 +4451,17 @@ impl App {
     fn handle_window_editor_transitions(&mut self) {
         use crate::ui::EditorMode;
 
+        // Only process transitions when explicitly signaled
+        if !self.window_editor.needs_transition {
+            return;
+        }
+
+        // Clear the flag
+        self.window_editor.needs_transition = false;
+
         // Check if we need to load a window for editing
         if self.window_editor.mode == EditorMode::SelectingWindow {
-            // User pressed Enter - check if they want to edit a window
+            // User pressed Enter - load the selected window
             if let Some(window_name) = self.window_editor.get_selected_window_name() {
                 // Find the window in our layout
                 if let Some(window) = self.layout.windows.iter().find(|w| w.name == window_name).cloned() {
