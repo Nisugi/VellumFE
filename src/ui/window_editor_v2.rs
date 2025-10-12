@@ -545,6 +545,27 @@ impl WindowEditor {
     }
 
     fn render_window_selection(&self, area: Rect, buf: &mut Buffer) {
+        let popup_width = 60.min(area.width);
+        let popup_height = 20.min(area.height);
+        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+        let popup_area = Rect {
+            x: popup_x,
+            y: popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Fill background with solid black
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if x < area.width && y < area.height {
+                    buf.get_mut(x, y).set_char(' ').set_bg(Color::Black);
+                }
+            }
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -552,11 +573,11 @@ impl WindowEditor {
                 Constraint::Min(10),
                 Constraint::Length(3),
             ])
-            .split(area);
+            .split(popup_area);
 
         let title = Paragraph::new("Select Window to Edit")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL));
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
         title.render(chunks[0], buf);
 
         let items: Vec<Line> = self.available_windows.iter().enumerate().map(|(i, name)| {
@@ -578,6 +599,27 @@ impl WindowEditor {
     }
 
     fn render_widget_type_selection(&self, area: Rect, buf: &mut Buffer) {
+        let popup_width = 60.min(area.width);
+        let popup_height = 20.min(area.height);
+        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+        let popup_area = Rect {
+            x: popup_x,
+            y: popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Fill background with solid black
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if x < area.width && y < area.height {
+                    buf.get_mut(x, y).set_char(' ').set_bg(Color::Black);
+                }
+            }
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -585,11 +627,11 @@ impl WindowEditor {
                 Constraint::Min(10),
                 Constraint::Length(3),
             ])
-            .split(area);
+            .split(popup_area);
 
         let title = Paragraph::new("Select Widget Type")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL));
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
         title.render(chunks[0], buf);
 
         let items: Vec<Line> = self.available_widget_types.iter().enumerate().map(|(i, wtype)| {
