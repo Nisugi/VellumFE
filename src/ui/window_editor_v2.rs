@@ -24,6 +24,13 @@ pub struct WindowEditor {
     pub mode: EditorMode,
     pub active: bool,
 
+    // Popup position (for dragging)
+    pub popup_x: u16,
+    pub popup_y: u16,
+    pub is_dragging: bool,
+    pub drag_offset_x: u16,
+    pub drag_offset_y: u16,
+
     // Window selection (for edit mode)
     available_windows: Vec<String>,
     selected_window_index: usize,
@@ -87,6 +94,11 @@ impl WindowEditor {
         Self {
             mode: EditorMode::SelectingWindow,
             active: false,
+            popup_x: 0,
+            popup_y: 0,
+            is_dragging: false,
+            drag_offset_x: 0,
+            drag_offset_y: 0,
             available_windows: Vec::new(),
             selected_window_index: 0,
             available_widget_types: vec![
@@ -523,7 +535,7 @@ impl WindowEditor {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        RatatuiWidget::render(Clear, area, buf);
+        // Don't clear - render as popup on top of existing windows
 
         match self.mode {
             EditorMode::SelectingWindow => self.render_window_selection(area, buf),
@@ -600,21 +612,38 @@ impl WindowEditor {
 
     fn render_fields(&mut self, area: Rect, buf: &mut Buffer) {
         let popup_width = 100.min(area.width);
-        let popup_height = 40.min(area.height);  // Increased from 30 to 40
-        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        let popup_height = 40.min(area.height);
+
+        // Use stored position if set, otherwise center
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        }
+
+        // Clamp position to screen bounds
+        self.popup_x = self.popup_x.min(area.width.saturating_sub(popup_width));
+        self.popup_y = self.popup_y.min(area.height.saturating_sub(popup_height));
 
         let popup_area = Rect {
-            x: popup_x,
-            y: popup_y,
+            x: self.popup_x,
+            y: self.popup_y,
             width: popup_width,
             height: popup_height,
         };
 
+        // Fill background with solid black
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if x < area.width && y < area.height {
+                    buf.get_mut(x, y).set_char(' ').set_bg(Color::Black);
+                }
+            }
+        }
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(if self.is_new_window { " Add Window " } else { " Edit Window " })
-            .style(Style::default().bg(Color::Black));
+            .title(if self.is_new_window { " Add Window (drag title to move) " } else { " Edit Window (drag title to move) " })
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
         block.render(popup_area, buf);
 
         let content = Rect {
@@ -810,5 +839,47 @@ impl WindowEditor {
     pub fn close(&mut self) {
         self.active = false;
         self.mode = EditorMode::SelectingWindow;
+        self.is_dragging = false;
+        // Reset position for next time
+        self.popup_x = 0;
+        self.popup_y = 0;
+    }
+
+    /// Handle mouse events for dragging the popup
+    pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool) -> bool {
+        if !self.active {
+            return false;
+        }
+
+        let popup_width = 100;
+        let popup_height = 40;
+
+        // Check if mouse is on title bar (top border, excluding corners)
+        let on_title_bar = mouse_row == self.popup_y
+            && mouse_col > self.popup_x
+            && mouse_col < self.popup_x + popup_width - 1;
+
+        if mouse_down && on_title_bar && !self.is_dragging {
+            // Start dragging
+            self.is_dragging = true;
+            self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
+            self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
+            return true;
+        }
+
+        if self.is_dragging {
+            if mouse_down {
+                // Continue dragging - update position
+                self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
+                self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
+                return true;
+            } else {
+                // Release - stop dragging
+                self.is_dragging = false;
+                return true;
+            }
+        }
+
+        false
     }
 }

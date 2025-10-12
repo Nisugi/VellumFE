@@ -3391,6 +3391,13 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Window editor drag handling (highest priority)
+                if self.window_editor.active {
+                    if self.window_editor.handle_mouse(mouse.column, mouse.row, true) {
+                        return Ok(());
+                    }
+                }
+
                 // If Shift is held, let native terminal handle selection (passthrough)
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                     return Ok(());
@@ -3628,6 +3635,12 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Window editor drag release (highest priority)
+                if self.window_editor.active && self.window_editor.is_dragging {
+                    self.window_editor.handle_mouse(mouse.column, mouse.row, false);
+                    return Ok(());
+                }
+
                 // Handle drag and drop completion (highest priority)
                 if let Some(drag_state) = self.drag_state.take() {
                     debug!("Mouse up with active drag state for {}", drag_state.link_data.noun);
@@ -3719,6 +3732,12 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                // Window editor dragging (highest priority)
+                if self.window_editor.active && self.window_editor.is_dragging {
+                    self.window_editor.handle_mouse(mouse.column, mouse.row, true);
+                    return Ok(());
+                }
+
                 // Handle active drag and drop (highest priority)
                 if let Some(ref mut drag_state) = self.drag_state {
                     drag_state.current_pos = (mouse.column, mouse.row);
