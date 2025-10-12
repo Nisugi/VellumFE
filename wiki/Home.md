@@ -40,8 +40,8 @@ Built in Rust for speed and reliability:
 - **TOML-based config** - Human-readable configuration files
 - **Live updates** - Most settings apply without restart
 - **Per-character layouts** - Different setups for different characters
-- **Highlights** - Regex-based text highlighting (coming soon)
-- **Keybinds** - Custom keyboard shortcuts (partial support)
+- **Highlights** - Regex-based text highlighting with Aho-Corasick optimization and sound support
+- **Keybinds** - Custom keyboard shortcuts with 24 built-in actions and macro support
 
 ## Getting Started
 
@@ -61,6 +61,9 @@ Built in Rust for speed and reliability:
 - [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)
 - [Stream Routing](https://github.com/Nisugi/VellumFE/wiki/Stream-Routing)
 - [Mouse and Keyboard](https://github.com/Nisugi/VellumFE/wiki/Mouse-and-Keyboard)
+- [Text Selection](https://github.com/Nisugi/VellumFE/wiki/Text-Selection)
+- [Highlight Management](https://github.com/Nisugi/VellumFE/wiki/Highlight-Management)
+- [Keybind Management](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management)
 - [Troubleshooting](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting)
 - [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide)
 - [Feature Roadmap](https://github.com/Nisugi/VellumFE/wiki/Feature-Roadmap)

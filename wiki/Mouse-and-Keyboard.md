@@ -48,19 +48,18 @@ This guide covers all keyboard shortcuts and mouse operations available in vellu
 
 | Key | Action |
 |-----|--------|
-| `F11` | Toggle mouse mode on/off (default) |
-| `Ctrl+Q` | (Planned) Quick quit |
-| `Esc` | (Planned) Cancel current operation |
+| `F12` | Toggle performance stats display |
+| `Ctrl+C` | Quit application |
 
-### Custom Keybinds (Planned)
+### Custom Keybinds
 
-Keybind support is planned but not yet implemented. See [Configuration Guide](Configuration-Guide.md#keybinds) for the planned format.
+Fully implemented! See [Keybind Management](Keybind-Management.md) for details on creating and managing custom keybinds.
 
 ---
 
 ## Mouse Operations
 
-**Note:** Mouse operations require mouse mode to be enabled. Press `F11` (default) to toggle mouse mode on/off.
+Mouse operations work immediately - no toggle required!
 
 ### Window Resizing
 
@@ -297,7 +296,7 @@ VellumFE provides window-aware text selection that automatically copies selected
 | **Escape** | Clear selection |
 
 **Features:**
-- Works in default mode (no F11 toggle needed)
+- Works immediately - no setup needed
 - Respects window boundaries (won't select across windows)
 - Multi-line selection supported
 - Automatically copies to clipboard on release
@@ -490,35 +489,6 @@ Ctrl+R (not yet implemented)
 - **Cannot move/resize windows**
 - **Cannot click to focus**
 
-### Toggling Mouse Mode
-
-Default key: `F11`
-
-**To change the toggle key:**
-
-Edit `config.toml`:
-```toml
-[ui]
-mouse_mode_toggle_key = "F11"  # Change to F12, F10, etc.
-```
-
-**Available keys:**
-- Function keys: `F1` through `F12`
-- Other special keys (implementation-dependent)
-
-### When to Use Mouse Mode
-
-**Use Mouse Mode ON when:**
-- Setting up your layout
-- Moving/resizing windows
-- Actively playing (scrolling, focusing windows)
-
-**Use Mouse Mode OFF when:**
-- Copying text from windows
-- Selecting error messages
-- Copying commands or loot lists
-- Taking screenshots with text selection
-
 ### Terminal Requirements
 
 Not all terminals support mouse operations. Works best with:
@@ -534,9 +504,8 @@ Not all terminals support mouse operations. Works best with:
 
 **Testing Mouse Support:**
 1. Launch vellum-fe
-2. Ensure mouse mode is on (press `F11` if needed)
-3. Try clicking on a window border and dragging
-4. If it works, your terminal supports mouse operations
+2. Try clicking on a window border and dragging
+3. If it works, your terminal supports mouse operations
 
 ---
 
@@ -544,11 +513,9 @@ Not all terminals support mouse operations. Works best with:
 
 ### Quick Layout Adjustment
 
-1. Press `F11` to enable mouse mode
-2. Drag windows to desired positions
-3. Resize as needed
-4. Press `.savelayout hunting` to save
-5. Press `F11` to disable mouse mode
+1. Drag windows to desired positions
+2. Resize as needed
+3. Press `.savelayout hunting` to save
 6. Select and copy any text you need
 
 ### Efficient Scrolling
@@ -566,11 +533,10 @@ Not all terminals support mouse operations. Works best with:
 
 ### Copy Text Without Leaving Mouse Mode
 
-Some terminals support Ctrl+Shift+C even in mouse mode. Try:
-1. Leave mouse mode ON
-2. Click and drag to try selecting (might not show)
-3. Press Ctrl+Shift+C
-4. Paste to test if it copied
+Some terminals support Ctrl+Shift+C for copying. Try:
+1. Hold Shift and drag to select text
+2. Press Ctrl+Shift+C
+3. Paste to test if it copied
 
 (Terminal-dependent; YMMV)
 
@@ -604,7 +570,8 @@ Some terminals support Ctrl+Shift+C even in mouse mode. Try:
 ┌─────────────────────────────────────────────────┐
 │ Application                                     │
 ├─────────────────────────────────────────────────┤
-│ F11            Toggle mouse mode                │
+│ F12            Toggle performance stats         │
+│ Ctrl+C         Exit application                 │
 │ .quit          Exit application                 │
 └─────────────────────────────────────────────────┘
 ```

@@ -6,7 +6,6 @@ port = 8000
 buffer_size = 1000
 show_timestamps = true
 command_echo_color = "#ffffff"
-mouse_mode_toggle_key = "F11"
 countdown_icon = ""
 
 # Text selection settings

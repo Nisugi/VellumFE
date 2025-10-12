@@ -162,13 +162,7 @@ RUST_LOG=debug cargo run
 
 **Causes & Solutions:**
 
-#### 1. Mouse Mode Disabled
-
-**Solution:**
-- Press `F11` to enable mouse mode
-- Verify mouse mode is on (may show indicator)
-
-#### 2. Terminal Doesn't Support Mouse
+#### 1. Terminal Doesn't Support Mouse
 
 **Solution:**
 - Use a terminal with mouse support:
@@ -506,13 +500,12 @@ RUST_LOG=debug cargo run
 
 **Causes & Solutions:**
 
-#### 1. Mouse Mode Enabled
+#### 1. Use VellumFE Text Selection
 
 **Solution:**
-- Press `F11` to disable mouse mode
-- Now terminal text selection should work
-- Use Ctrl+Shift+C (or terminal's copy shortcut)
-- Press `F11` again to re-enable mouse mode
+- Hold Shift while dragging to select text
+- Text is automatically copied to clipboard
+- See [Text Selection](Text-Selection.md) for details
 
 #### 2. Terminal Doesn't Support Copy
 

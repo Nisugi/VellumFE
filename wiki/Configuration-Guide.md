@@ -70,12 +70,13 @@ General UI configuration options.
 ```toml
 [ui]
 command_echo_color = "#ffffff"
-mouse_mode_toggle_key = "F11"
 countdown_icon = "\u{f0c8}"
 # Text selection settings
 selection_enabled = true
 selection_respect_window_boundaries = true
 selection_bg_color = "#4a4a4a"
+# Drag and drop settings
+drag_modifier_key = "ctrl"
 ```
 
 ### Options
@@ -83,11 +84,11 @@ selection_bg_color = "#4a4a4a"
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `command_echo_color` | string | `"#ffffff"` | Color for echoed commands in hex format |
-| `mouse_mode_toggle_key` | string | `"F11"` | Key to toggle mouse mode on/off |
 | `countdown_icon` | string | `"\u{f0c8}"` | Unicode character for countdown timer fill (Nerd Font icon) |
 | `selection_enabled` | boolean | `true` | Enable VellumFE text selection (click and drag to select) |
 | `selection_respect_window_boundaries` | boolean | `true` | Prevent selection from spanning across multiple windows |
 | `selection_bg_color` | string | `"#4a4a4a"` | Background color for selected text (for future visual highlighting) |
+| `drag_modifier_key` | string | `"ctrl"` | Modifier key required for drag-and-drop: "ctrl", "alt", "shift", or "none" |
 
 ### Prompt Colors
 
@@ -173,26 +174,23 @@ fg = "#00ff00"
 
 ## Highlights
 
-**Note:** Highlighting is not yet fully implemented. This section describes the planned configuration format.
+Highlights apply custom colors and styles to text matching specific patterns. Fully implemented with Aho-Corasick optimization for fast pattern matching and optional sound support.
 
-Highlights apply custom colors and styles to text matching specific patterns.
+For a complete guide with in-app management commands, see [Highlight Management](Highlight-Management.md).
 
 ```toml
-[[highlights]]
-pattern = "^You.*"
-fg = "#ffff00"
-bold = true
+[highlights]
+# Example combat highlight
+swing = { pattern = "You swing.*", fg = "#ff0000", bold = true }
 
-[[highlights]]
-pattern = "\\d+ silver"
-fg = "#c0c0c0"
+# Highlight player names in magenta (FAST with Aho-Corasick!)
+friends = { pattern = "Mandrill|Monolis", fg = "#ff00ff", bold = true, fast_parse = true }
 
-[[highlights]]
-pattern = "\\[.*?\\]"
-fg = "#00ffff"
+# Highlight with sound
+death_alert = { pattern = ".*dies.*", fg = "#ffffff", bg = "#ff0000", sound = "death.wav" }
 ```
 
-### Options (Planned)
+### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -200,38 +198,42 @@ fg = "#00ffff"
 | `fg` | string | - | Foreground color |
 | `bg` | string | - | Background color |
 | `bold` | boolean | false | Apply bold styling |
-| `underline` | boolean | false | Apply underline |
-| `priority` | integer | 0 | Priority for overlapping highlights (higher = wins) |
+| `color_entire_line` | boolean | false | Color entire line when pattern matches |
+| `fast_parse` | boolean | false | Use Aho-Corasick for literal pattern matching (much faster) |
+| `sound` | string | - | Sound file to play (in ~/.vellum-fe/sounds/) |
+| `sound_volume` | float | 0.7 | Volume for this sound (0.0-1.0) |
 
 ---
 
 ## Keybinds
 
-**Note:** Keybinds are not yet fully implemented. This section describes the planned configuration format.
+Keybinds map key combinations to commands or actions. Fully implemented with 24 built-in actions and macro support.
 
-Keybinds map key combinations to commands or actions.
+For a complete guide with in-app management commands, see [Keybind Management](Keybind-Management.md).
 
 ```toml
-[[keybinds]]
-key = "f1"
-command = "look"
+[keybinds]
+# Built-in action
+f12 = "toggle_performance_stats"
 
-[[keybinds]]
-key = "ctrl+r"
-command = "recall"
+# Macro with \r for enter
+num_8 = { macro_text = "n\r" }
 
-[[keybinds]]
-key = "num_8"
-command = "north"
+# With modifiers
+"ctrl+f" = "start_search"
 ```
 
-### Options (Planned)
+### Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `key` | string | Required | Key combination (see Key Reference below) |
-| `command` | string | Required | Command to execute |
-| `modifier` | string | - | Modifier keys: `ctrl`, `alt`, `shift` |
+Keybinds can be either:
+- A string for built-in actions: `f12 = "toggle_performance_stats"`
+- A table for macros: `num_8 = { macro_text = "n\r" }`
+
+**Built-in Actions** (24 available):
+See [Keybind Management](Keybind-Management.md#built-in-actions) for complete list.
+
+**Macro format:**
+- `macro_text` - Text to send, use `\r` for Enter key
 
 ### Key Reference
 
@@ -625,8 +627,8 @@ port = 8000
 
 [ui]
 command_echo_color = "#ffffff"
-mouse_mode_toggle_key = "F11"
 countdown_icon = "\u{f0c8}"
+drag_modifier_key = "ctrl"
 
 [[ui.prompt_colors]]
 character = "R"

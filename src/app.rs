@@ -49,7 +49,6 @@ pub struct App {
     discard_current_stream: bool, // If true, discard text because no window exists for current stream
     skip_next_prompt: bool, // Skip the next prompt (after returning from a non-main stream)
     focused_window_index: usize, // Index of currently focused window for scrolling
-    mouse_mode_enabled: bool, // Whether mouse features are enabled (vs text selection)
     resize_state: Option<ResizeState>, // Track active resize operation
     move_state: Option<MoveState>, // Track active window move operation
     input_mode: InputMode,  // Track current input mode
@@ -264,7 +263,6 @@ impl App {
             discard_current_stream: false,
             skip_next_prompt: false,
             focused_window_index: 0, // Start with first window focused
-            mouse_mode_enabled: false, // Start with mouse mode off (text selection enabled)
             resize_state: None, // No active resize initially
             move_state: None, // No active move initially
             input_mode: InputMode::Normal,  // Start in normal mode
@@ -2243,46 +2241,6 @@ impl App {
             y,
             width: menu_width.min(terminal_area.width),
             height: menu_height.min(terminal_area.height),
-        }
-    }
-
-    /// Toggle mouse mode on/off
-    fn toggle_mouse_mode(&mut self) -> Result<()> {
-        self.mouse_mode_enabled = !self.mouse_mode_enabled;
-
-        if self.mouse_mode_enabled {
-            execute!(io::stdout(), EnableMouseCapture)?;
-            info!("Mouse mode enabled (click/scroll windows)");
-            self.add_system_message("Mouse mode: ON (Scroll Lock to toggle)");
-        } else {
-            execute!(io::stdout(), DisableMouseCapture)?;
-            info!("Mouse mode disabled (text selection enabled)");
-            self.add_system_message("Mouse mode: OFF - Text selection enabled (Scroll Lock to toggle)");
-        }
-
-        Ok(())
-    }
-
-    /// Check if a key matches the configured toggle key
-    fn is_toggle_key(&self, key: KeyCode) -> bool {
-        let config_key = &self.config.ui.mouse_mode_toggle_key;
-        debug!("Checking toggle key: config='{}', pressed={:?}", config_key, key);
-
-        match config_key.as_str() {
-            "ScrollLock" => matches!(key, KeyCode::ScrollLock),
-            "F12" => matches!(key, KeyCode::F(12)),
-            "F11" => matches!(key, KeyCode::F(11)),
-            "F10" => matches!(key, KeyCode::F(10)),
-            "F9" => matches!(key, KeyCode::F(9)),
-            "F8" => matches!(key, KeyCode::F(8)),
-            "F7" => matches!(key, KeyCode::F(7)),
-            "F6" => matches!(key, KeyCode::F(6)),
-            "F5" => matches!(key, KeyCode::F(5)),
-            "F4" => matches!(key, KeyCode::F(4)),
-            "F3" => matches!(key, KeyCode::F(3)),
-            "F2" => matches!(key, KeyCode::F(2)),
-            "F1" => matches!(key, KeyCode::F(1)),
-            _ => false,
         }
     }
 

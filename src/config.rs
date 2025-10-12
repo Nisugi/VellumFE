@@ -200,8 +200,6 @@ pub struct UiConfig {
     pub command_echo_color: String,
     #[serde(default)]
     pub prompt_colors: Vec<PromptColor>,
-    #[serde(default = "default_mouse_mode_toggle_key")]
-    pub mouse_mode_toggle_key: String,  // Key to toggle mouse mode (e.g., "F12")
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
     // Text selection settings
@@ -555,10 +553,6 @@ fn default_buffer_size() -> usize {
 
 fn default_command_echo_color() -> String {
     "#ffffff".to_string()
-}
-
-fn default_mouse_mode_toggle_key() -> String {
-    "F11".to_string()
 }
 
 /// Get default keybindings (based on ProfanityFE defaults)
@@ -2829,7 +2823,6 @@ impl Default for Config {
                     PromptColor { character: "H".to_string(), color: "#9370db".to_string() }, // Purple for Hidden
                     PromptColor { character: ">".to_string(), color: "#a9a9a9".to_string() }, // DarkGray default
                 ],
-                mouse_mode_toggle_key: default_mouse_mode_toggle_key(),
                 countdown_icon: default_countdown_icon(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
