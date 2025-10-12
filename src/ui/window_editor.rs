@@ -41,7 +41,8 @@ pub struct WindowFieldDef {
 pub enum EditorMode {
     SelectingWindow,     // Choosing which window to edit
     SelectingWidgetType, // Choosing widget type (for new windows)
-    EditingField,        // Editing a specific field
+    EditingField,        // Navigating fields
+    EditingInlineText,   // Editing text/number/color inline
     EditingDropdown,     // Dropdown is open for selection
     EditingMultiCheckbox, // Multi-checkbox editor is active
     EditingTagList,      // Tag list editor is active
@@ -255,6 +256,15 @@ impl WindowEditor {
             required: true,
             section: "Position & Size".to_string(),
         });
+
+        self.fields.push(WindowFieldDef {
+            key: "locked".to_string(),
+            label: "Lock Window".to_string(),
+            editor: FieldEditor::Checkbox,
+            help_text: "Prevent window from being moved or resized with mouse (Space to toggle)".to_string(),
+            required: false,
+            section: "Position & Size".to_string(),
+        });
     }
 
     fn add_border_fields(&mut self) {
@@ -353,15 +363,6 @@ impl WindowEditor {
             label: "Background Color".to_string(),
             editor: FieldEditor::ColorPicker,
             help_text: "Background color in hex format (#RRGGBB)".to_string(),
-            required: false,
-            section: "Appearance".to_string(),
-        });
-
-        self.fields.push(WindowFieldDef {
-            key: "locked".to_string(),
-            label: "Lock Window".to_string(),
-            editor: FieldEditor::Checkbox,
-            help_text: "Prevent window from being moved or resized with mouse (Space to toggle)".to_string(),
             required: false,
             section: "Appearance".to_string(),
         });
@@ -720,6 +721,7 @@ impl WindowEditor {
             EditorMode::SelectingWindow => self.render_window_selection(area, buf),
             EditorMode::SelectingWidgetType => self.render_widget_type_selection(area, buf),
             EditorMode::EditingField => self.render_field_editor(area, buf),
+            EditorMode::EditingInlineText => self.render_field_editor(area, buf), // Same as EditingField but shows cursor
             EditorMode::EditingDropdown => self.render_dropdown_editor(area, buf),
             EditorMode::EditingMultiCheckbox => self.render_multi_checkbox_editor(area, buf),
             EditorMode::EditingTagList => self.render_tag_list_editor(area, buf),
@@ -860,7 +862,13 @@ impl WindowEditor {
             }
 
             let is_selected = i == self.current_field_index;
-            let value_str = self.get_field_value_string(field);
+
+            // If we're editing inline text and this is the selected field, show the buffer
+            let value_str = if is_selected && self.mode == EditorMode::EditingInlineText {
+                format!("{}█", self.text_input_buffer) // Show cursor
+            } else {
+                self.get_field_value_string(field)
+            };
 
             let label_style = if is_selected {
                 Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
@@ -1263,6 +1271,7 @@ impl WindowEditor {
             EditorMode::SelectingWindow => self.handle_window_selection_key(key),
             EditorMode::SelectingWidgetType => self.handle_widget_type_selection_key(key),
             EditorMode::EditingField => self.handle_field_editor_key(key),
+            EditorMode::EditingInlineText => self.handle_inline_text_editor_key(key),
             EditorMode::EditingDropdown => self.handle_dropdown_editor_key(key),
             EditorMode::EditingMultiCheckbox => self.handle_multi_checkbox_editor_key(key),
             EditorMode::EditingTagList => self.handle_tag_list_editor_key(key),
@@ -1380,6 +1389,57 @@ impl WindowEditor {
         }
     }
 
+    fn handle_inline_text_editor_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel editing, return to field navigation
+                self.mode = EditorMode::EditingField;
+                self.text_input_buffer.clear();
+                true
+            },
+            KeyCode::Enter => {
+                // Save the text and return to field navigation
+                self.save_text_field();
+                self.mode = EditorMode::EditingField;
+                self.text_input_buffer.clear();
+                true
+            },
+            KeyCode::Backspace => {
+                if self.text_input_cursor > 0 {
+                    self.text_input_buffer.remove(self.text_input_cursor - 1);
+                    self.text_input_cursor -= 1;
+                }
+                true
+            },
+            KeyCode::Left => {
+                if self.text_input_cursor > 0 {
+                    self.text_input_cursor -= 1;
+                }
+                true
+            },
+            KeyCode::Right => {
+                if self.text_input_cursor < self.text_input_buffer.len() {
+                    self.text_input_cursor += 1;
+                }
+                true
+            },
+            KeyCode::Home => {
+                self.text_input_cursor = 0;
+                true
+            },
+            KeyCode::End => {
+                self.text_input_cursor = self.text_input_buffer.len();
+                true
+            },
+            KeyCode::Char(c) => {
+                self.text_input_buffer.insert(self.text_input_cursor, c);
+                self.text_input_cursor += 1;
+                true
+            },
+            _ => false,
+        }
+    }
+
     fn enter_field_editor(&mut self) {
         if self.current_field_index >= self.fields.len() {
             return;
@@ -1395,7 +1455,7 @@ impl WindowEditor {
                     self.text_input_buffer.clear();
                 }
                 self.text_input_cursor = self.text_input_buffer.len();
-                // Stay in EditingField mode but handle text input
+                self.mode = EditorMode::EditingInlineText;
             },
             FieldEditor::Checkbox => {
                 // Checkboxes toggle with space, enter does nothing
@@ -1459,6 +1519,113 @@ impl WindowEditor {
             "dashboard_hide_inactive" => {
                 let current = self.current_window.dashboard_hide_inactive.unwrap_or(false);
                 self.current_window.dashboard_hide_inactive = Some(!current);
+            },
+            _ => {}
+        }
+    }
+
+    fn save_text_field(&mut self) {
+        if self.current_field_index >= self.fields.len() {
+            return;
+        }
+
+        let field_key = self.fields[self.current_field_index].key.clone();
+        let value = self.text_input_buffer.trim().to_string();
+
+        // Save the value based on field key
+        match field_key.as_str() {
+            "row" => {
+                if let Ok(num) = value.parse::<u16>() {
+                    self.current_window.row = num;
+                }
+            },
+            "col" => {
+                if let Ok(num) = value.parse::<u16>() {
+                    self.current_window.col = num;
+                }
+            },
+            "rows" => {
+                if let Ok(num) = value.parse::<u16>() {
+                    self.current_window.rows = num.max(3); // Minimum 3 rows
+                }
+            },
+            "cols" => {
+                if let Ok(num) = value.parse::<u16>() {
+                    self.current_window.cols = num.max(10); // Minimum 10 cols
+                }
+            },
+            "border_color" => {
+                if value.is_empty() {
+                    self.current_window.border_color = None;
+                } else {
+                    self.current_window.border_color = Some(value);
+                }
+            },
+            "title" => {
+                if value.is_empty() {
+                    self.current_window.title = None;
+                } else {
+                    self.current_window.title = Some(value);
+                }
+            },
+            "background_color" => {
+                if value.is_empty() {
+                    self.current_window.background_color = None;
+                } else {
+                    self.current_window.background_color = Some(value);
+                }
+            },
+            "tab_active_color" => {
+                if value.is_empty() {
+                    self.current_window.tab_active_color = None;
+                } else {
+                    self.current_window.tab_active_color = Some(value);
+                }
+            },
+            "tab_inactive_color" => {
+                if value.is_empty() {
+                    self.current_window.tab_inactive_color = None;
+                } else {
+                    self.current_window.tab_inactive_color = Some(value);
+                }
+            },
+            "tab_unread_color" => {
+                if value.is_empty() {
+                    self.current_window.tab_unread_color = None;
+                } else {
+                    self.current_window.tab_unread_color = Some(value);
+                }
+            },
+            "tab_unread_prefix" => {
+                if value.is_empty() {
+                    self.current_window.tab_unread_prefix = None;
+                } else {
+                    self.current_window.tab_unread_prefix = Some(value);
+                }
+            },
+            "buffer_size" => {
+                if let Ok(num) = value.parse::<usize>() {
+                    self.current_window.buffer_size = num.max(100); // Minimum 100 lines
+                }
+            },
+            "dashboard_spacing" => {
+                if let Ok(num) = value.parse::<u16>() {
+                    self.current_window.dashboard_spacing = Some(num);
+                }
+            },
+            "default_bar_color" | "bar_color" => {
+                if value.is_empty() {
+                    self.current_window.bar_color = None;
+                } else {
+                    self.current_window.bar_color = Some(value);
+                }
+            },
+            "bar_background_color" => {
+                if value.is_empty() {
+                    self.current_window.bar_background_color = None;
+                } else {
+                    self.current_window.bar_background_color = Some(value);
+                }
             },
             _ => {}
         }
