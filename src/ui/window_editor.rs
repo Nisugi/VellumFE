@@ -202,6 +202,16 @@ impl WindowEditor {
 
         let widget_type = self.current_window.widget_type.clone();
 
+        // Name field (ALWAYS FIRST)
+        self.fields.push(WindowFieldDef {
+            key: "name".to_string(),
+            label: "Window Name".to_string(),
+            editor: FieldEditor::TextInput,
+            help_text: "Unique name for this window".to_string(),
+            required: true,
+            section: "Identity".to_string(),
+        });
+
         // Common fields for all widgets
         self.add_position_fields();
         self.add_border_fields();
@@ -641,9 +651,63 @@ impl WindowEditor {
         self.status_message = field.help_text.clone();
     }
 
+    /// Apply sensible defaults based on widget type
+    fn apply_widget_defaults(&mut self, widget_type: &str) {
+        // Set name to "new_window" by default
+        if self.is_new_window {
+            self.current_window.name = "new_window".to_string();
+        }
+
+        // Set size defaults based on widget type
+        match widget_type {
+            "compass" => {
+                self.current_window.rows = 5;
+                self.current_window.cols = 10;
+            },
+            "injury_doll" => {
+                self.current_window.rows = 12;
+                self.current_window.cols = 20;
+            },
+            "progress" | "countdown" => {
+                self.current_window.rows = 3;
+                self.current_window.cols = 20;
+            },
+            "indicator" => {
+                self.current_window.rows = 3;
+                self.current_window.cols = 15;
+            },
+            "dashboard" => {
+                self.current_window.rows = 5;
+                self.current_window.cols = 40;
+            },
+            "text" => {
+                self.current_window.rows = 20;
+                self.current_window.cols = 80;
+            },
+            "tabbed" => {
+                self.current_window.rows = 20;
+                self.current_window.cols = 60;
+            },
+            "targets" | "players" => {
+                self.current_window.rows = 10;
+                self.current_window.cols = 30;
+            },
+            "active_effects" => {
+                self.current_window.rows = 15;
+                self.current_window.cols = 35;
+            },
+            _ => {
+                // Generic defaults
+                self.current_window.rows = 10;
+                self.current_window.cols = 40;
+            }
+        }
+    }
+
     /// Get current field value as a display string
     fn get_field_value_string(&self, field: &WindowFieldDef) -> String {
         match field.key.as_str() {
+            "name" => self.current_window.name.clone(),
             "row" => self.current_window.row.to_string(),
             "col" => self.current_window.col.to_string(),
             "rows" => self.current_window.rows.to_string(),
@@ -945,30 +1009,17 @@ impl WindowEditor {
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
         title.render(chunks[0], buf);
 
-        // Options list
-        let list_items: Vec<Line> = options
-            .iter()
-            .enumerate()
-            .map(|(i, option)| {
-                let style = if i == self.dropdown_selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(option.clone(), style),
-                ])
-            })
-            .collect();
+        // Show currently selected option with position indicator
+        let selected_option = &options[self.dropdown_selected];
+        let position_text = format!("{} ({}/{})", selected_option, self.dropdown_selected + 1, options.len());
+        let selected_display = Paragraph::new(position_text)
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL).title("Selected").border_style(Style::default().fg(Color::White)));
+        selected_display.render(chunks[1], buf);
 
-        let list = Paragraph::new(list_items)
-            .block(Block::default().borders(Borders::ALL).title("Options").border_style(Style::default().fg(Color::White)));
-        list.render(chunks[1], buf);
-
-        // Status
-        let status = Paragraph::new("↑/↓: Navigate | Enter: Select | Esc: Cancel")
-            .style(Style::default().fg(Color::Yellow))
+        // Status with help text
+        let status = Paragraph::new("↑/↓: Scroll through options | Enter: Select | Esc: Cancel")
+            .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
         status.render(chunks[2], buf);
     }
@@ -1353,7 +1404,12 @@ impl WindowEditor {
             },
             KeyCode::Enter => {
                 // Set the widget type and transition to field editing
-                self.current_window.widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
+                let widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
+                self.current_window.widget_type = widget_type.clone();
+
+                // Set smart defaults based on widget type
+                self.apply_widget_defaults(&widget_type);
+
                 self.build_field_list();
                 self.mode = EditorMode::EditingField;
                 self.update_status_message();
@@ -1560,6 +1616,9 @@ impl WindowEditor {
 
         // Save the value based on field key
         match field_key.as_str() {
+            "name" => {
+                self.current_window.name = value;
+            },
             "row" => {
                 if let Ok(num) = value.parse::<u16>() {
                     self.current_window.row = num;
