@@ -79,6 +79,7 @@ pub struct WindowEditor {
     pub text_input_cursor: usize,
     pub dropdown_selected: usize,
     pub multi_checkbox_states: HashMap<String, bool>,
+    pub multi_checkbox_selected: usize,  // Which checkbox is currently highlighted
     pub tag_list_items: Vec<String>,
     pub tag_list_input: String,
     pub tag_list_selected: Option<usize>,
@@ -135,6 +136,7 @@ impl WindowEditor {
             text_input_cursor: 0,
             dropdown_selected: 0,
             multi_checkbox_states: HashMap::new(),
+            multi_checkbox_selected: 0,
             tag_list_items: Vec::new(),
             tag_list_input: String::new(),
             tag_list_selected: None,
@@ -1001,14 +1003,31 @@ impl WindowEditor {
         // Options list with checkboxes
         let list_items: Vec<Line> = options
             .iter()
-            .map(|option| {
+            .enumerate()
+            .map(|(i, option)| {
                 let checked = self.multi_checkbox_states.get(option).copied().unwrap_or(false);
                 let checkbox = if checked { "[X]" } else { "[ ]" };
+                let is_selected = i == self.multi_checkbox_selected;
+
+                let checkbox_style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else if checked {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+
+                let text_style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
                 Line::from(vec![
                     Span::raw("  "),
-                    Span::styled(checkbox, Style::default().fg(Color::Green)),
+                    Span::styled(checkbox, checkbox_style),
                     Span::raw(" "),
-                    Span::styled(option.clone(), Style::default().fg(Color::White)),
+                    Span::styled(option.clone(), text_style),
                 ])
             })
             .collect();
@@ -1467,11 +1486,18 @@ impl WindowEditor {
                 self.mode = EditorMode::EditingDropdown;
             },
             FieldEditor::MultiCheckbox(options) => {
-                // Initialize checkbox states
+                // Initialize checkbox states - default to all checked if None
                 self.multi_checkbox_states.clear();
+                self.multi_checkbox_selected = 0;
                 if let Some(sides) = &self.current_window.border_sides {
-                    for side in sides {
-                        self.multi_checkbox_states.insert(side.clone(), true);
+                    // Use existing sides
+                    for option in options {
+                        self.multi_checkbox_states.insert(option.clone(), sides.contains(option));
+                    }
+                } else {
+                    // Default: all sides checked
+                    for option in options {
+                        self.multi_checkbox_states.insert(option.clone(), true);
                     }
                 }
                 self.mode = EditorMode::EditingMultiCheckbox;
@@ -1667,6 +1693,13 @@ impl WindowEditor {
     }
 
     fn handle_multi_checkbox_editor_key(&mut self, key: KeyEvent) -> bool {
+        // Get the options list
+        let field = &self.fields[self.current_field_index].clone();
+        let options = match &field.editor {
+            FieldEditor::MultiCheckbox(opts) => opts.clone(),
+            _ => return false,
+        };
+
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 // Save checkbox states
@@ -1680,6 +1713,28 @@ impl WindowEditor {
                     Some(selected)
                 };
                 self.mode = EditorMode::EditingField;
+                true
+            },
+            KeyCode::Up => {
+                if self.multi_checkbox_selected > 0 {
+                    self.multi_checkbox_selected -= 1;
+                }
+                true
+            },
+            KeyCode::Down => {
+                if self.multi_checkbox_selected + 1 < options.len() {
+                    self.multi_checkbox_selected += 1;
+                }
+                true
+            },
+            KeyCode::Char(' ') => {
+                // Toggle the currently selected checkbox
+                if self.multi_checkbox_selected < options.len() {
+                    let option = &options[self.multi_checkbox_selected];
+                    if let Some(checked) = self.multi_checkbox_states.get_mut(option) {
+                        *checked = !*checked;
+                    }
+                }
                 true
             },
             _ => false,
