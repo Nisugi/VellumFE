@@ -18,7 +18,7 @@ mod players;
 mod highlight_form;
 mod keybind_form;
 mod popup_menu;
-mod window_editor;
+mod window_editor_v2;
 
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
 pub use popup_menu::{PopupMenu, MenuItem};
@@ -48,7 +48,7 @@ pub use targets::Targets;
 pub use players::Players;
 pub use highlight_form::{HighlightFormWidget, FormResult};
 pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
-pub use window_editor::{WindowEditor, EditorMode};
+pub use window_editor_v2::{WindowEditor, WindowEditorResult};
 
 use ratatui::{
     layout::Rect,

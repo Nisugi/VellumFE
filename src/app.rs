@@ -2712,13 +2712,85 @@ impl App {
                 self.running = false;
                 return Ok(());
             }
-            // Handle key in window editor
-            let key_event = crossterm::event::KeyEvent::new(key, modifiers);
-            if self.window_editor.handle_key(key_event) {
-                // Check if we need to handle special transitions
-                self.handle_window_editor_transitions();
+
+            // Convert crossterm KeyCode to ratatui::crossterm KeyCode
+            use ratatui::crossterm::event as rt_event;
+
+            let rt_key_code = match key {
+                KeyCode::Backspace => rt_event::KeyCode::Backspace,
+                KeyCode::Enter => rt_event::KeyCode::Enter,
+                KeyCode::Left => rt_event::KeyCode::Left,
+                KeyCode::Right => rt_event::KeyCode::Right,
+                KeyCode::Up => rt_event::KeyCode::Up,
+                KeyCode::Down => rt_event::KeyCode::Down,
+                KeyCode::Home => rt_event::KeyCode::Home,
+                KeyCode::End => rt_event::KeyCode::End,
+                KeyCode::PageUp => rt_event::KeyCode::PageUp,
+                KeyCode::PageDown => rt_event::KeyCode::PageDown,
+                KeyCode::Tab => rt_event::KeyCode::Tab,
+                KeyCode::BackTab => rt_event::KeyCode::BackTab,
+                KeyCode::Delete => rt_event::KeyCode::Delete,
+                KeyCode::Insert => rt_event::KeyCode::Insert,
+                KeyCode::F(n) => rt_event::KeyCode::F(n),
+                KeyCode::Char(c) => rt_event::KeyCode::Char(c),
+                KeyCode::Null => rt_event::KeyCode::Null,
+                KeyCode::Esc => rt_event::KeyCode::Esc,
+                _ => rt_event::KeyCode::Null,
+            };
+
+            let mut rt_modifiers = rt_event::KeyModifiers::empty();
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                rt_modifiers |= rt_event::KeyModifiers::SHIFT;
+            }
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                rt_modifiers |= rt_event::KeyModifiers::CONTROL;
+            }
+            if modifiers.contains(KeyModifiers::ALT) {
+                rt_modifiers |= rt_event::KeyModifiers::ALT;
+            }
+
+            let key_event = rt_event::KeyEvent {
+                code: rt_key_code,
+                modifiers: rt_modifiers,
+                kind: rt_event::KeyEventKind::Press,
+                state: rt_event::KeyEventState::empty(),
+            };
+
+            // Check if we're in SelectingWindow mode and user pressed Enter
+            use crate::ui::WindowEditorResult;
+            if key == KeyCode::Enter {
+                if let Some(window_name) = self.window_editor.get_selected_window_name() {
+                    // Load window for editing
+                    if let Some(window) = self.layout.windows.iter().find(|w| w.name == window_name).cloned() {
+                        self.window_editor.load_window(window);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Process key and handle result
+            if let Some(result) = self.window_editor.handle_key(key_event) {
+                match result {
+                    WindowEditorResult::Save { window, is_new, original_name } => {
+                        if is_new {
+                            self.layout.windows.push(window.clone());
+                            self.add_system_message(&format!("Created window '{}' - use mouse to move/resize", window.name));
+                        } else if let Some(orig_name) = original_name {
+                            if let Some(idx) = self.layout.windows.iter().position(|w| w.name == orig_name) {
+                                self.layout.windows[idx] = window.clone();
+                                self.add_system_message(&format!("Updated window '{}'", window.name));
+                            }
+                        }
+                        self.add_system_message("Remember to .savelayout to save this configuration!");
+                        self.update_window_manager_config();
+                    },
+                    WindowEditorResult::Cancel => {
+                        // Just closed, nothing to do
+                    }
+                }
                 return Ok(());
             }
+            return Ok(());
         }
 
         // Handle global keys first (work in any mode except HighlightForm)
@@ -4445,53 +4517,5 @@ impl App {
             return false;
         }
         self.layout.windows[window_idx].locked
-    }
-
-    /// Handle window editor state transitions (loading/saving windows)
-    fn handle_window_editor_transitions(&mut self) {
-        use crate::ui::EditorMode;
-
-        // Only process transitions when explicitly signaled
-        if !self.window_editor.needs_transition {
-            return;
-        }
-
-        // Clear the flag
-        self.window_editor.needs_transition = false;
-
-        // Check if we need to load a window for editing
-        if self.window_editor.mode == EditorMode::SelectingWindow {
-            // User pressed Enter - load the selected window
-            if let Some(window_name) = self.window_editor.get_selected_window_name() {
-                // Find the window in our layout
-                if let Some(window) = self.layout.windows.iter().find(|w| w.name == window_name).cloned() {
-                    self.window_editor.set_window(window);
-                }
-            }
-        }
-
-        // Check if user saved (Ctrl+S was pressed and validation passed)
-        if !self.window_editor.show_validation || self.window_editor.validation_errors.is_empty() {
-            // If we have a valid window, save it
-            if let Some(edited_window) = self.window_editor.get_window() {
-                if self.window_editor.is_new_window {
-                    // Add new window
-                    self.layout.windows.push(edited_window.clone());
-                    self.add_system_message(&format!("Created window '{}' - use mouse to move/resize", edited_window.name));
-                    self.add_system_message("Remember to .savelayout to save this configuration!");
-                    self.window_editor.close();
-                    self.update_window_manager_config();
-                } else if let Some(original) = &self.window_editor.original_window {
-                    // Update existing window
-                    if let Some(idx) = self.layout.windows.iter().position(|w| w.name == original.name) {
-                        self.layout.windows[idx] = edited_window.clone();
-                        self.add_system_message(&format!("Updated window '{}'", edited_window.name));
-                        self.add_system_message("Remember to .savelayout to save this configuration!");
-                        self.window_editor.close();
-                        self.update_window_manager_config();
-                    }
-                }
-            }
-        }
     }
 }
