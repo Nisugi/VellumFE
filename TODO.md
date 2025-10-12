@@ -119,6 +119,37 @@
   - [ ] Test pattern against recent text in edit mode
   - [ ] Support editing sound settings
 
+## Documentation & Quick Start Improvements
+
+### Quick Start Guide Updates
+- [ ] Remove "Wait 5-10 seconds after launching Lich" note
+  - This delay is no longer needed
+  - VellumFE can connect immediately
+
+- [ ] Fix text selection documentation
+  - ✅ Current: "Shift+drag - Select text for copying"
+  - ❌ This is WRONG - Shift+drag uses terminal selection (doesn't respect windows)
+  - ✅ Correct: VellumFE has built-in text selection
+    - Left-click and drag to select text within a window
+    - Respects window boundaries
+    - Automatically copies to clipboard on mouse release
+    - No modifier key needed
+
+- [ ] Add note about release builds coming soon
+  - Currently requires building from source
+  - Future: Will have pre-built releases for download
+  - Add placeholder for release installation instructions
+
+### Mouse Control Enhancements
+- [ ] Add layout lock feature
+  - [ ] `.lockwindows` / `.locklayout` command to disable mouse resize/reposition
+  - [ ] `.unlockwindows` / `.unlocklayout` to re-enable
+  - [ ] Show locked status in UI (status message or indicator)
+  - [ ] Locked mode: mouse can still scroll, select text, click links
+  - [ ] Locked mode: cannot resize/move windows (prevents accidental changes)
+  - [ ] Config option: `layout_locked = true/false`
+  - [ ] Persist lock state with layout saves
+
 ## Parser Improvements
 
 ### XML Parser Enhancements
