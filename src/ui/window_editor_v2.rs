@@ -39,6 +39,11 @@ pub struct WindowEditor {
     available_widget_types: Vec<String>,
     selected_widget_type_index: usize,
 
+    // Template selection (after widget type is chosen)
+    available_templates: Vec<String>,
+    selected_template_index: usize,
+    template_selected: bool,
+
     // Editing state
     is_new_window: bool,
     original_window_name: Option<String>,
@@ -57,16 +62,20 @@ pub struct WindowEditor {
     title_input: TextArea<'static>,
     bg_color_input: TextArea<'static>,
     buffer_size_input: TextArea<'static>,
+    streams_input: TextArea<'static>,
+    hand_icon_input: TextArea<'static>,
 
     // Dropdown states (just store selected index)
     border_style_index: usize,
     content_align_index: usize,
     tab_bar_position_index: usize,
+    effect_category_index: usize,
 
     // Checkbox states
     show_border: bool,
     transparent_bg: bool,
     locked: bool,
+    show_title: bool,  // If false, saves title as Some("") to hide title bar
 
     // Multi-checkbox state (border sides)
     border_sides_selected: usize,  // Which checkbox is highlighted
@@ -80,6 +89,7 @@ pub struct WindowEditor {
 pub enum EditorMode {
     SelectingWindow,
     SelectingWidgetType,
+    SelectingTemplate,
     EditingFields,
 }
 
@@ -88,6 +98,25 @@ const BORDER_STYLES: &[&str] = &["none", "single", "double", "rounded", "thick"]
 const CONTENT_ALIGNS: &[&str] = &["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"];
 const TAB_BAR_POSITIONS: &[&str] = &["top", "bottom"];
 const BORDER_SIDES: &[&str] = &["top", "bottom", "left", "right"];
+const EFFECT_CATEGORIES: &[&str] = &["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "All"];
+
+/// Get available templates for a widget type
+fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
+    match widget_type {
+        "text" => vec!["thoughts", "speech", "familiar", "room", "logons", "deaths", "arrivals", "ambients", "announcements", "loot", "custom"],
+        "tabbed" => vec!["custom"],
+        "progress" => vec!["health", "mana", "stamina", "spirit", "bloodpoints", "stance", "encumbrance", "mindstate", "custom"],
+        "countdown" => vec!["roundtime", "casttime", "stuntime", "custom"],
+        "active_effects" => vec!["active_spells", "buffs", "debuffs", "cooldowns", "all_effects", "custom"],
+        "entity" => vec!["targets", "players", "custom"],
+        "dashboard" => vec!["status_dashboard", "custom"],
+        "indicator" => vec!["poisoned", "diseased", "bleeding", "stunned", "webbed", "custom"],
+        "compass" => vec!["compass"],
+        "injury_doll" => vec!["injuries"],
+        "hands" => vec!["hands", "lefthand", "righthand", "spellhand"],
+        _ => vec!["custom"],
+    }
+}
 
 impl WindowEditor {
     pub fn new() -> Self {
@@ -104,17 +133,20 @@ impl WindowEditor {
             available_widget_types: vec![
                 "text".to_string(),
                 "tabbed".to_string(),
+                "progress".to_string(),
+                "countdown".to_string(),
                 "active_effects".to_string(),
-                "targets".to_string(),
-                "players".to_string(),
+                "entity".to_string(),
                 "dashboard".to_string(),
                 "indicator".to_string(),
                 "compass".to_string(),
                 "injury_doll".to_string(),
-                "progress".to_string(),
-                "countdown".to_string(),
+                "hands".to_string(),
             ],
             selected_widget_type_index: 0,
+            available_templates: Vec::new(),
+            selected_template_index: 0,
+            template_selected: false,
             is_new_window: false,
             original_window_name: None,
             current_window: WindowDef::default(),
@@ -128,12 +160,16 @@ impl WindowEditor {
             title_input: TextArea::default(),
             bg_color_input: TextArea::default(),
             buffer_size_input: TextArea::default(),
+            streams_input: TextArea::default(),
+            hand_icon_input: TextArea::default(),
             border_style_index: 1, // "single"
             content_align_index: 0, // "top-left"
             tab_bar_position_index: 0, // "top"
+            effect_category_index: 4, // "All"
             show_border: true,
             transparent_bg: false,
             locked: false,
+            show_title: true,
             border_sides_selected: 0,
             border_sides_states: HashMap::new(),
             status_message: String::new(),
@@ -169,7 +205,13 @@ impl WindowEditor {
         self.current_window = window.clone();
         self.populate_fields_from_window();
         self.mode = EditorMode::EditingFields;
-        self.focused_field = 0;
+        self.active = true;
+        // Set initial focused field based on widget type
+        self.focused_field = if window.widget_type == "command_input" {
+            9  // Title field (first field for command_input)
+        } else {
+            0  // Name field (first field for normal windows)
+        };
         self.update_status();
     }
 
@@ -185,6 +227,30 @@ impl WindowEditor {
         self.apply_widget_defaults(&widget_type);
         self.populate_fields_from_window();
 
+        self.mode = EditorMode::EditingFields;
+        self.focused_field = 0;
+        self.update_status();
+    }
+
+    /// Load a template into the editor
+    pub fn load_template(&mut self, template_name: &str) {
+        use crate::config::Config;
+
+        self.is_new_window = true;
+        self.original_window_name = None;
+
+        // Load template from config
+        if let Some(template) = Config::get_window_template(template_name) {
+            self.current_window = template;
+            // Make the name unique for new windows
+            self.current_window.name = format!("{}_new", template_name);
+        } else {
+            // Fallback to default if template not found
+            self.current_window = WindowDef::default();
+            self.current_window.name = format!("{}_new", template_name);
+        }
+
+        self.populate_fields_from_window();
         self.mode = EditorMode::EditingFields;
         self.focused_field = 0;
         self.update_status();
@@ -220,7 +286,7 @@ impl WindowEditor {
                 self.current_window.rows = 20;
                 self.current_window.cols = 60;
             },
-            "targets" | "players" => {
+            "entity" => {
                 self.current_window.rows = 10;
                 self.current_window.cols = 30;
             },
@@ -269,10 +335,21 @@ impl WindowEditor {
             self.bg_color_input.insert_str(bg);
         }
 
+        self.streams_input.delete_line_by_head();
+        self.streams_input.insert_str(&self.current_window.streams.join(", "));
+
+        self.hand_icon_input.delete_line_by_head();
+        if let Some(ref icon) = self.current_window.hand_icon {
+            self.hand_icon_input.insert_str(icon);
+        }
+
         // Checkboxes
         self.show_border = self.current_window.show_border;
         self.transparent_bg = self.current_window.transparent_background;
         self.locked = self.current_window.locked;
+
+        // Show title checkbox: false if title is explicitly Some(""), true otherwise
+        self.show_title = !matches!(&self.current_window.title, Some(t) if t.is_empty());
 
         // Dropdowns - find index
         self.border_style_index = BORDER_STYLES.iter()
@@ -286,6 +363,10 @@ impl WindowEditor {
         self.tab_bar_position_index = TAB_BAR_POSITIONS.iter()
             .position(|&s| Some(s.to_string()) == self.current_window.tab_bar_position)
             .unwrap_or(0);
+
+        self.effect_category_index = EFFECT_CATEGORIES.iter()
+            .position(|&s| Some(s.to_string()) == self.current_window.effect_category)
+            .unwrap_or(4); // Default to "All"
 
         // Border sides
         self.border_sides_states.clear();
@@ -316,10 +397,35 @@ impl WindowEditor {
         self.current_window.border_color = if border_color.is_empty() { None } else { Some(border_color) };
 
         let title = self.title_input.lines()[0].to_string();
-        self.current_window.title = if title.is_empty() { None } else { Some(title) };
+        self.current_window.title = if !self.show_title {
+            // Show title unchecked = explicitly hide title
+            Some("".to_string())
+        } else if title.is_empty() {
+            // Show title checked + empty = use name as title
+            None
+        } else {
+            // Show title checked + text = use custom title
+            Some(title)
+        };
 
         let bg = self.bg_color_input.lines()[0].to_string();
         self.current_window.background_color = if bg.is_empty() { None } else { Some(bg) };
+
+        // Parse streams from comma-separated input
+        let streams_text = self.streams_input.lines()[0].to_string();
+        self.current_window.streams = if streams_text.trim().is_empty() {
+            Vec::new()
+        } else {
+            streams_text
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+
+        // Hand icon
+        let hand_icon = self.hand_icon_input.lines()[0].to_string();
+        self.current_window.hand_icon = if hand_icon.is_empty() { None } else { Some(hand_icon) };
 
         self.current_window.show_border = self.show_border;
         self.current_window.transparent_background = self.transparent_bg;
@@ -328,6 +434,7 @@ impl WindowEditor {
         self.current_window.border_style = Some(BORDER_STYLES[self.border_style_index].to_string());
         self.current_window.content_align = Some(CONTENT_ALIGNS[self.content_align_index].to_string());
         self.current_window.tab_bar_position = Some(TAB_BAR_POSITIONS[self.tab_bar_position_index].to_string());
+        self.current_window.effect_category = Some(EFFECT_CATEGORIES[self.effect_category_index].to_string());
 
         // Border sides
         let checked_sides: Vec<String> = BORDER_SIDES.iter()
@@ -345,6 +452,7 @@ impl WindowEditor {
         match self.mode {
             EditorMode::SelectingWindow => self.handle_window_selection_key(key),
             EditorMode::SelectingWidgetType => self.handle_widget_type_selection_key(key),
+            EditorMode::SelectingTemplate => self.handle_template_selection_key(key),
             EditorMode::EditingFields => self.handle_fields_key(key),
         }
     }
@@ -395,7 +503,52 @@ impl WindowEditor {
             },
             KeyCode::Enter => {
                 let widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
-                self.init_new_window(widget_type);
+                // Load templates for this widget type
+                self.available_templates = get_templates_for_widget_type(&widget_type)
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                self.selected_template_index = 0;
+                self.template_selected = false;
+                self.mode = EditorMode::SelectingTemplate;
+                self.status_message = "↑/↓: Navigate | Enter: Select template | Esc: Back".to_string();
+                None
+            },
+            _ => None,
+        }
+    }
+
+    fn handle_template_selection_key(&mut self, key: KeyEvent) -> Option<WindowEditorResult> {
+        match key.code {
+            KeyCode::Esc => {
+                // Go back to widget type selection
+                self.mode = EditorMode::SelectingWidgetType;
+                self.status_message = "↑/↓: Navigate | Enter: Select widget type | Esc: Cancel".to_string();
+                None
+            },
+            KeyCode::Up => {
+                if self.selected_template_index > 0 {
+                    self.selected_template_index -= 1;
+                }
+                None
+            },
+            KeyCode::Down => {
+                if self.selected_template_index + 1 < self.available_templates.len() {
+                    self.selected_template_index += 1;
+                }
+                None
+            },
+            KeyCode::Enter => {
+                let widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
+                let template_name = self.available_templates[self.selected_template_index].clone();
+
+                // Load template (or create custom window)
+                if template_name == "custom" {
+                    self.init_new_window(widget_type);
+                } else {
+                    self.load_template(&template_name);
+                }
+                self.template_selected = true;
                 None
             },
             _ => None,
@@ -405,33 +558,66 @@ impl WindowEditor {
     fn handle_fields_key(&mut self, key: KeyEvent) -> Option<WindowEditorResult> {
         // Field IDs: 0=name, 1=row, 2=col, 3=rows, 4=cols, 5=show_border, 6=border_style,
         // 7=border_sides, 8=border_color, 9=title, 10=content_align, 11=transparent_bg,
-        // 12=bg_color, 13=locked, 14=buffer_size, 15=save, 16=cancel
+        // 12=bg_color, 13=locked, 14=streams, 15=hand_icon, 16=buffer_size, 17=save, 18=cancel, 19=effect_category, 20=show_title
 
         match key.code {
             KeyCode::Tab => {
-                let max_field = 16;
+                // Custom tab order to follow visual layout
+                // For command_input: skip name, lock, streams, effect_category, hand_icon, buffer_size
+                let tab_order = if self.current_window.widget_type == "command_input" {
+                    // 9(title) -> 20(show_title) -> 1(row) -> 2(col) -> 3(height) -> 4(width) ->
+                    // 5(show_border) -> 6(border_style) -> 7(border_sides) -> 8(border_color) ->
+                    // 11(transparent_bg) -> 12(bg_color) -> 10(content_align) -> 17(save) -> 18(cancel)
+                    vec![9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 10, 17, 18]
+                } else {
+                    // Full order for normal windows:
+                    // 0(name) -> 9(title) -> 20(show_title) -> 1(row) -> 2(col) -> 3(height) -> 4(width) ->
+                    // 5(show_border) -> 6(border_style) -> 7(border_sides) -> 8(border_color) ->
+                    // 11(transparent_bg) -> 13(lock) -> 12(bg_color) -> 10(content_align) ->
+                    // 14(streams) -> 19(effect_category) -> 15(hand_icon) -> 16(buffer_size) -> 17(save) -> 18(cancel)
+                    vec![0, 9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 12, 10, 14, 19, 15, 16, 17, 18]
+                };
+
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    if self.focused_field == 0 {
-                        self.focused_field = max_field;
-                    } else {
-                        self.focused_field -= 1;
+                    // Backward
+                    if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
+                        if pos == 0 {
+                            self.focused_field = tab_order[tab_order.len() - 1];
+                        } else {
+                            self.focused_field = tab_order[pos - 1];
+                        }
                     }
                 } else {
-                    if self.focused_field >= max_field {
-                        self.focused_field = 0;
+                    // Forward
+                    if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
+                        if pos >= tab_order.len() - 1 {
+                            self.focused_field = tab_order[0];
+                        } else {
+                            self.focused_field = tab_order[pos + 1];
+                        }
                     } else {
-                        self.focused_field += 1;
+                        // Focused field not in tab order, reset to first field
+                        self.focused_field = tab_order[0];
                     }
                 }
                 None
             },
             KeyCode::BackTab => {
-                // Shift+Tab (BackTab)
-                let max_field = 16;
-                if self.focused_field == 0 {
-                    self.focused_field = max_field;
+                // Shift+Tab (BackTab) - same as Tab with Shift
+                let tab_order = if self.current_window.widget_type == "command_input" {
+                    vec![9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 10, 17, 18]
                 } else {
-                    self.focused_field -= 1;
+                    vec![0, 9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 12, 10, 14, 19, 15, 16, 17, 18]
+                };
+                if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
+                    if pos == 0 {
+                        self.focused_field = tab_order[tab_order.len() - 1];
+                    } else {
+                        self.focused_field = tab_order[pos - 1];
+                    }
+                } else {
+                    // Focused field not in tab order, reset to first field
+                    self.focused_field = tab_order[0];
                 }
                 None
             },
@@ -449,6 +635,10 @@ impl WindowEditor {
             },
             KeyCode::Char(' ') if self.focused_field == 13 => {
                 self.locked = !self.locked;
+                None
+            },
+            KeyCode::Char(' ') if self.focused_field == 20 => {
+                self.show_title = !self.show_title;
                 None
             },
             KeyCode::Char(' ') if self.focused_field == 7 => {
@@ -475,6 +665,26 @@ impl WindowEditor {
                 self.content_align_index = (self.content_align_index + 1).min(CONTENT_ALIGNS.len() - 1);
                 None
             },
+            KeyCode::Up if self.focused_field == 19 => {
+                self.effect_category_index = self.effect_category_index.saturating_sub(1);
+                None
+            },
+            KeyCode::Down if self.focused_field == 19 => {
+                self.effect_category_index = (self.effect_category_index + 1).min(EFFECT_CATEGORIES.len() - 1);
+                None
+            },
+            KeyCode::Left if self.focused_field == 7 => {
+                if self.border_sides_selected > 0 {
+                    self.border_sides_selected -= 1;
+                }
+                None
+            },
+            KeyCode::Right if self.focused_field == 7 => {
+                if self.border_sides_selected + 1 < BORDER_SIDES.len() {
+                    self.border_sides_selected += 1;
+                }
+                None
+            },
             KeyCode::Up if self.focused_field == 7 => {
                 if self.border_sides_selected > 0 {
                     self.border_sides_selected -= 1;
@@ -487,7 +697,7 @@ impl WindowEditor {
                 }
                 None
             },
-            KeyCode::Enter if self.focused_field == 15 => {
+            KeyCode::Enter if self.focused_field == 17 => {
                 // Save button
                 self.save_fields_to_window();
                 self.active = false;
@@ -497,7 +707,7 @@ impl WindowEditor {
                     original_name: self.original_window_name.clone(),
                 })
             },
-            KeyCode::Enter if self.focused_field == 16 => {
+            KeyCode::Enter if self.focused_field == 18 => {
                 // Cancel button
                 self.active = false;
                 Some(WindowEditorResult::Cancel)
@@ -526,7 +736,9 @@ impl WindowEditor {
                     8 => self.border_color_input.input(input.clone()),
                     9 => self.title_input.input(input.clone()),
                     12 => self.bg_color_input.input(input.clone()),
-                    14 => self.buffer_size_input.input(input.clone()),
+                    14 => self.streams_input.input(input.clone()),
+                    15 => self.hand_icon_input.input(input.clone()),
+                    16 => self.buffer_size_input.input(input.clone()),
                     _ => false,
                 };
                 None
@@ -540,6 +752,7 @@ impl WindowEditor {
         match self.mode {
             EditorMode::SelectingWindow => self.render_window_selection(area, buf),
             EditorMode::SelectingWidgetType => self.render_widget_type_selection(area, buf),
+            EditorMode::SelectingTemplate => self.render_template_selection(area, buf),
             EditorMode::EditingFields => self.render_fields(area, buf),
         }
     }
@@ -580,16 +793,41 @@ impl WindowEditor {
             .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
         title.render(chunks[0], buf);
 
-        let items: Vec<Line> = self.available_windows.iter().enumerate().map(|(i, name)| {
-            let style = if i == self.selected_window_index {
-                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            Line::from(Span::styled(format!("  {}", name), style))
-        }).collect();
+        // Calculate visible window for scrolling
+        let list_height = chunks[1].height.saturating_sub(2) as usize; // Subtract borders
+        let total_items = self.available_windows.len();
 
-        let list = Paragraph::new(items).block(Block::default().borders(Borders::ALL).title("Windows"));
+        // Calculate scroll offset to keep selected item visible
+        let scroll_offset = if self.selected_window_index < list_height {
+            0
+        } else {
+            self.selected_window_index.saturating_sub(list_height / 2)
+        };
+
+        let visible_end = (scroll_offset + list_height).min(total_items);
+
+        // Only render visible items
+        let items: Vec<Line> = self.available_windows[scroll_offset..visible_end]
+            .iter()
+            .enumerate()
+            .map(|(offset_i, name)| {
+                let i = scroll_offset + offset_i;
+                let style = if i == self.selected_window_index {
+                    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                Line::from(Span::styled(format!("  {}", name), style))
+            }).collect();
+
+        // Add scroll indicators
+        let title_text = if total_items > list_height {
+            format!("Windows ({}/{}) ↑↓", self.selected_window_index + 1, total_items)
+        } else {
+            format!("Windows ({}/{})", self.selected_window_index + 1, total_items)
+        };
+
+        let list = Paragraph::new(items).block(Block::default().borders(Borders::ALL).title(title_text));
         list.render(chunks[1], buf);
 
         let status = Paragraph::new(&self.status_message as &str)
@@ -652,9 +890,65 @@ impl WindowEditor {
         status.render(chunks[2], buf);
     }
 
+    fn render_template_selection(&self, area: Rect, buf: &mut Buffer) {
+        let popup_width = 60.min(area.width);
+        let popup_height = 20.min(area.height);
+        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+        let popup_area = Rect {
+            x: popup_x,
+            y: popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        // Fill background with solid black
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if x < area.width && y < area.height {
+                    buf.get_mut(x, y).set_char(' ').set_bg(Color::Black);
+                }
+            }
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(10),
+                Constraint::Length(3),
+            ])
+            .split(popup_area);
+
+        let widget_type = &self.available_widget_types[self.selected_widget_type_index];
+        let title_text = format!("Select {} Template", widget_type);
+        let title = Paragraph::new(title_text)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
+        title.render(chunks[0], buf);
+
+        let items: Vec<Line> = self.available_templates.iter().enumerate().map(|(i, template)| {
+            let style = if i == self.selected_template_index {
+                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Line::from(Span::styled(format!("  {}", template), style))
+        }).collect();
+
+        let list = Paragraph::new(items).block(Block::default().borders(Borders::ALL).title("Templates"));
+        list.render(chunks[1], buf);
+
+        let status = Paragraph::new(&self.status_message as &str)
+            .style(Style::default().fg(Color::Yellow))
+            .block(Block::default().borders(Borders::ALL));
+        status.render(chunks[2], buf);
+    }
+
     fn render_fields(&mut self, area: Rect, buf: &mut Buffer) {
         let popup_width = 100.min(area.width);
-        let popup_height = 40.min(area.height);
+        let popup_height = 50.min(area.height);
 
         // Use stored position if set, otherwise center
         if self.popup_x == 0 && self.popup_y == 0 {
@@ -698,7 +992,9 @@ impl WindowEditor {
         let mut y = content.y;
 
         // Title
-        let title = if self.is_new_window {
+        let title = if self.current_window.widget_type == "command_input" {
+            "Edit Command Input Box".to_string()
+        } else if self.is_new_window {
             format!("Create new {} window", self.current_window.widget_type)
         } else {
             format!("Edit window: {}", self.current_window.name)
@@ -707,26 +1003,42 @@ impl WindowEditor {
         title_para.render(Rect { x: content.x, y, width: content.width, height: 1 }, buf);
         y += 2;
 
-        // Name field
-        Self::render_text_field(0, self.focused_field, "Name:", &mut self.name_input, content.x, y, content.width, buf);
+        // === WINDOW IDENTITY ===
+        // Skip for command_input (name is always "command_input")
+        if self.current_window.widget_type != "command_input" {
+            Self::render_section_header("Window Identity", content.x, y, buf);
+            y += 1;
+
+            Self::render_text_field(0, self.focused_field, "Name:", &mut self.name_input, content.x, y, content.width, buf);
+            y += 3;
+        }
+
+        Self::render_text_field(9, self.focused_field, "Title:", &mut self.title_input, content.x, y, content.width, buf);
         y += 3;
 
-        // Position fields (2 columns)
+        Self::render_checkbox(20, self.focused_field, "Show Title:", self.show_title, content.x, y, buf);
+        y += 2;
+
+        // === POSITION & SIZE ===
+        Self::render_section_header("Position & Size", content.x, y, buf);
+        y += 1;
+
         let col_width = content.width / 2;
         Self::render_text_field(1, self.focused_field, "Row:", &mut self.row_input, content.x, y, col_width - 1, buf);
         Self::render_text_field(2, self.focused_field, "Col:", &mut self.col_input, content.x + col_width, y, col_width, buf);
         y += 3;
 
-        // Size fields (2 columns)
         Self::render_text_field(3, self.focused_field, "Height:", &mut self.rows_input, content.x, y, col_width - 1, buf);
         Self::render_text_field(4, self.focused_field, "Width:", &mut self.cols_input, content.x + col_width, y, col_width, buf);
         y += 3;
 
-        // Border section
-        Self::render_checkbox(5, self.focused_field, "Show Border:", self.show_border, content.x, y, buf);
-        y += 2;
+        // === BORDER SETTINGS ===
+        Self::render_section_header("Border Settings", content.x, y, buf);
+        y += 1;
 
-        Self::render_dropdown(6, self.focused_field, "Border Style:", BORDER_STYLES[self.border_style_index], self.border_style_index, BORDER_STYLES.len(), content.x, y, content.width, buf);
+        // Show Border checkbox and Border Style dropdown on same line
+        Self::render_checkbox(5, self.focused_field, "Show Border:", self.show_border, content.x, y, buf);
+        Self::render_dropdown(6, self.focused_field, "Style:", BORDER_STYLES[self.border_style_index], self.border_style_index, BORDER_STYLES.len(), content.x + 35, y, col_width, buf);
         y += 2;
 
         Self::render_multi_checkbox(7, self.focused_field, "Border Sides:", self.border_sides_selected, &self.border_sides_states, content.x, y, buf);
@@ -735,26 +1047,59 @@ impl WindowEditor {
         Self::render_text_field(8, self.focused_field, "Border Color:", &mut self.border_color_input, content.x, y, content.width, buf);
         y += 3;
 
-        // Other fields
-        Self::render_text_field(9, self.focused_field, "Title:", &mut self.title_input, content.x, y, content.width, buf);
-        y += 3;
+        // === DISPLAY SETTINGS ===
+        Self::render_section_header("Display Settings", content.x, y, buf);
+        y += 1;
 
-        Self::render_dropdown(10, self.focused_field, "Content Align:", CONTENT_ALIGNS[self.content_align_index], self.content_align_index, CONTENT_ALIGNS.len(), content.x, y, content.width, buf);
-        y += 2;
-
+        // Checkboxes on same line
         Self::render_checkbox(11, self.focused_field, "Transparent BG:", self.transparent_bg, content.x, y, buf);
+        // Lock checkbox only for windows (not command_input)
+        if self.current_window.widget_type != "command_input" {
+            Self::render_checkbox(13, self.focused_field, "Lock:", self.locked, content.x + 40, y, buf);
+        }
         y += 2;
 
         Self::render_text_field(12, self.focused_field, "BG Color:", &mut self.bg_color_input, content.x, y, content.width, buf);
         y += 3;
 
-        Self::render_checkbox(13, self.focused_field, "Lock Window:", self.locked, content.x, y, buf);
+        Self::render_dropdown(10, self.focused_field, "Content Align:", CONTENT_ALIGNS[self.content_align_index], self.content_align_index, CONTENT_ALIGNS.len(), content.x, y, content.width, buf);
         y += 2;
 
-        // Buffer size only for text/tabbed windows
-        if matches!(self.current_window.widget_type.as_str(), "text" | "tabbed") {
-            Self::render_text_field(14, self.focused_field, "Buffer Size:", &mut self.buffer_size_input, content.x, y, content.width, buf);
-            y += 3;
+        // === WIDGET-SPECIFIC SETTINGS ===
+        let has_widget_specific = matches!(self.current_window.widget_type.as_str(), "text" | "entity" | "lefthand" | "righthand" | "spellhand")
+            || self.current_window.widget_type == "active_effects";
+
+        if has_widget_specific {
+            Self::render_section_header("Widget-Specific", content.x, y, buf);
+            y += 1;
+
+            // Streams field only for text widgets and entity widgets
+            if matches!(self.current_window.widget_type.as_str(), "text" | "entity") {
+                Self::render_text_field(14, self.focused_field, "Streams:", &mut self.streams_input, content.x, y, content.width, buf);
+                y += 3;
+            }
+
+            // Effect category dropdown only for active_effects widgets
+            if self.current_window.widget_type == "active_effects" {
+                Self::render_dropdown(19, self.focused_field, "Effect Category:",
+                    EFFECT_CATEGORIES[self.effect_category_index],
+                    self.effect_category_index,
+                    EFFECT_CATEGORIES.len(),
+                    content.x, y, content.width, buf);
+                y += 2;
+            }
+
+            // Hand icon field only for hand widgets
+            if matches!(self.current_window.widget_type.as_str(), "lefthand" | "righthand" | "spellhand") {
+                Self::render_text_field(15, self.focused_field, "Hand Icon:", &mut self.hand_icon_input, content.x, y, content.width, buf);
+                y += 3;
+            }
+
+            // Buffer size only for text windows (not tabbed - tabs have their own buffers)
+            if self.current_window.widget_type == "text" {
+                Self::render_text_field(16, self.focused_field, "Buffer Size:", &mut self.buffer_size_input, content.x, y, content.width, buf);
+                y += 3;
+            }
         }
 
         // Tabbed window configuration
@@ -852,8 +1197,14 @@ impl WindowEditor {
         items_para.render(Rect { x: x + 20, y, width: 60, height: 1 }, buf);
     }
 
+    fn render_section_header(text: &str, x: u16, y: u16, buf: &mut Buffer) {
+        let header = Paragraph::new(format!("━━ {} ━━", text))
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        header.render(Rect { x, y, width: 50, height: 1 }, buf);
+    }
+
     fn render_buttons(focused_field: usize, x: u16, y: u16, buf: &mut Buffer) {
-        let save_style = if focused_field == 15 {
+        let save_style = if focused_field == 17 {
             Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Green)
@@ -861,7 +1212,7 @@ impl WindowEditor {
         let save_btn = Paragraph::new("[ Save ]").style(save_style);
         save_btn.render(Rect { x, y, width: 10, height: 1 }, buf);
 
-        let cancel_style = if focused_field == 16 {
+        let cancel_style = if focused_field == 18 {
             Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Red)

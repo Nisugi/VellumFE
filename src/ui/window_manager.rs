@@ -433,6 +433,7 @@ pub struct WindowConfig {
     pub tab_inactive_color: Option<String>,  // Color for inactive tabs
     pub tab_unread_color: Option<String>,  // Color for tabs with unread messages
     pub tab_unread_prefix: Option<String>,  // Prefix for tabs with unread (e.g., "* ")
+    pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
 }
 
 pub struct WindowManager {
@@ -533,30 +534,39 @@ impl WindowManager {
                     Widget::Hands(hands)
                 }
                 "lefthand" => {
-                    let hand = Hand::new(&title, HandType::Left)
+                    let mut hand = Hand::new(&title, HandType::Left)
                         .with_border_config(
                             config.show_border,
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    if let Some(ref icon) = config.hand_icon {
+                        hand.set_icon(icon.clone());
+                    }
                     Widget::Hand(hand)
                 }
                 "righthand" => {
-                    let hand = Hand::new(&title, HandType::Right)
+                    let mut hand = Hand::new(&title, HandType::Right)
                         .with_border_config(
                             config.show_border,
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    if let Some(ref icon) = config.hand_icon {
+                        hand.set_icon(icon.clone());
+                    }
                     Widget::Hand(hand)
                 }
                 "spellhand" => {
-                    let hand = Hand::new(&title, HandType::Spell)
+                    let mut hand = Hand::new(&title, HandType::Spell)
                         .with_border_config(
                             config.show_border,
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    if let Some(ref icon) = config.hand_icon {
+                        hand.set_icon(icon.clone());
+                    }
                     Widget::Hand(hand)
                 }
                 "dashboard" => {
@@ -674,7 +684,29 @@ impl WindowManager {
 
                     Widget::Tabbed(tabbed_window)
                 }
+                "entity" => {
+                    // Determine which entity type based on name or streams
+                    if config.name.contains("player") || config.streams.iter().any(|s| s.contains("player")) {
+                        let mut players = Players::new(&title);
+                        players.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+                        Widget::Players(players)
+                    } else {
+                        // Default to targets
+                        let mut targets = Targets::new(&title);
+                        targets.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+                        Widget::Targets(targets)
+                    }
+                }
                 "targets" => {
+                    // Legacy support - still accept "targets" widget_type
                     let mut targets = Targets::new(&title);
                     targets.set_border_config(
                         config.show_border,
@@ -684,6 +716,7 @@ impl WindowManager {
                     Widget::Targets(targets)
                 }
                 "players" => {
+                    // Legacy support - still accept "players" widget_type
                     let mut players = Players::new(&title);
                     players.set_border_config(
                         config.show_border,
@@ -926,30 +959,39 @@ impl WindowManager {
                         Widget::Hands(hands)
                     }
                     "lefthand" => {
-                        let hand = Hand::new(&title, HandType::Left)
+                        let mut hand = Hand::new(&title, HandType::Left)
                             .with_border_config(
                                 config.show_border,
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        if let Some(ref icon) = config.hand_icon {
+                            hand.set_icon(icon.clone());
+                        }
                         Widget::Hand(hand)
                     }
                     "righthand" => {
-                        let hand = Hand::new(&title, HandType::Right)
+                        let mut hand = Hand::new(&title, HandType::Right)
                             .with_border_config(
                                 config.show_border,
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        if let Some(ref icon) = config.hand_icon {
+                            hand.set_icon(icon.clone());
+                        }
                         Widget::Hand(hand)
                     }
                     "spellhand" => {
-                        let hand = Hand::new(&title, HandType::Spell)
+                        let mut hand = Hand::new(&title, HandType::Spell)
                             .with_border_config(
                                 config.show_border,
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        if let Some(ref icon) = config.hand_icon {
+                            hand.set_icon(icon.clone());
+                        }
                         Widget::Hand(hand)
                     }
                     "dashboard" => {
@@ -1044,7 +1086,29 @@ impl WindowManager {
 
                         Widget::Tabbed(tabbed_window)
                     }
+                    "entity" => {
+                        // Determine which entity type based on name or streams
+                        if config.name.contains("player") || config.streams.iter().any(|s| s.contains("player")) {
+                            let mut players = Players::new(&title);
+                            players.set_border_config(
+                                config.show_border,
+                                config.border_style.clone(),
+                                config.border_color.clone(),
+                            );
+                            Widget::Players(players)
+                        } else {
+                            // Default to targets
+                            let mut targets = Targets::new(&title);
+                            targets.set_border_config(
+                                config.show_border,
+                                config.border_style.clone(),
+                                config.border_color.clone(),
+                            );
+                            Widget::Targets(targets)
+                        }
+                    }
                     "targets" => {
+                        // Legacy support
                         let mut targets = Targets::new(&title);
                         targets.set_border_config(
                             config.show_border,
@@ -1054,6 +1118,7 @@ impl WindowManager {
                         Widget::Targets(targets)
                     }
                     "players" => {
+                        // Legacy support
                         let mut players = Players::new(&title);
                         players.set_border_config(
                             config.show_border,
@@ -1094,7 +1159,7 @@ impl WindowManager {
                     }
                 }
             } else {
-                // Window exists - update its border config and title
+                // Window exists - update its properties
                 if let Some(window) = self.windows.get_mut(&config.name) {
                     window.set_border_config(
                         config.show_border,
@@ -1106,9 +1171,28 @@ impl WindowManager {
                     let title = config.title.clone().unwrap_or_else(|| config.name.clone());
                     window.set_title(title);
 
-                    // For tabbed windows, sync tabs from config
-                    if config.widget_type == "tabbed" {
-                        if let Widget::Tabbed(tabbed) = window {
+                    // Update widget-specific properties
+                    match window {
+                        Widget::Tabbed(tabbed) => {
+                            // Update background settings
+                            tabbed.set_transparent_background(config.transparent_background);
+                            tabbed.set_background_color(config.background_color.clone());
+
+                            // Update tab colors
+                            if let Some(ref color) = config.tab_active_color {
+                                tabbed.set_tab_active_color(color.clone());
+                            }
+                            if let Some(ref color) = config.tab_inactive_color {
+                                tabbed.set_tab_inactive_color(color.clone());
+                            }
+                            if let Some(ref color) = config.tab_unread_color {
+                                tabbed.set_tab_unread_color(color.clone());
+                            }
+                            if let Some(ref prefix) = config.tab_unread_prefix {
+                                tabbed.set_unread_prefix(prefix.clone());
+                            }
+
+                            // Sync tabs from config
                             if let Some(ref tabs) = config.tabs {
                                 // Get current tab names
                                 let current_tabs = tabbed.get_tab_names();
@@ -1139,6 +1223,58 @@ impl WindowManager {
                                 // Reorder tabs to match config order
                                 tabbed.reorder_tabs(&config_tab_names);
                             }
+                        }
+                        Widget::Progress(progress) => {
+                            progress.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                            progress.set_transparent_background(config.transparent_background);
+                            progress.set_content_align(config.content_align.clone());
+                        }
+                        Widget::Countdown(countdown) => {
+                            countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                            countdown.set_transparent_background(config.transparent_background);
+                            countdown.set_content_align(config.content_align.clone());
+                            if let Some(ref icon_str) = config.countdown_icon {
+                                if let Some(icon_char) = icon_str.chars().next() {
+                                    countdown.set_icon(icon_char);
+                                }
+                            }
+                        }
+                        Widget::Indicator(indicator) => {
+                            if let Some(ref colors) = config.indicator_colors {
+                                indicator.set_colors(colors.clone());
+                            }
+                            indicator.set_content_align(config.content_align.clone());
+                        }
+                        Widget::Compass(compass) => {
+                            compass.set_content_align(config.content_align.clone());
+                            compass.set_background_color(config.background_color.clone());
+                        }
+                        Widget::InjuryDoll(injury_doll) => {
+                            injury_doll.set_content_align(config.content_align.clone());
+                            injury_doll.set_background_color(config.background_color.clone());
+                        }
+                        Widget::Dashboard(dashboard) => {
+                            dashboard.set_content_align(config.content_align.clone());
+                            if let Some(spacing) = config.dashboard_spacing {
+                                dashboard.set_spacing(spacing);
+                            }
+                            if let Some(hide) = config.dashboard_hide_inactive {
+                                dashboard.set_hide_inactive(hide);
+                            }
+                        }
+                        Widget::Text(text_window) => {
+                            text_window.set_background_color(config.background_color.clone());
+                            // Update highlights
+                            let highlights_vec: Vec<_> = self.highlights.values().cloned().collect();
+                            text_window.set_highlights(highlights_vec);
+                        }
+                        Widget::Hand(hand) => {
+                            if let Some(ref icon) = config.hand_icon {
+                                hand.set_icon(icon.clone());
+                            }
+                        }
+                        _ => {
+                            // Other widget types (targets, players, hands multi) don't have additional properties to update
                         }
                     }
                 }

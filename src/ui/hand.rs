@@ -11,6 +11,7 @@ pub struct Hand {
     label: String,
     hand_type: HandType,
     content: String,
+    icon: String,  // Configurable icon (e.g., "L:", "R:", "S:")
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
@@ -27,10 +28,17 @@ pub enum HandType {
 
 impl Hand {
     pub fn new(label: &str, hand_type: HandType) -> Self {
+        let default_icon = match hand_type {
+            HandType::Left => "L:",
+            HandType::Right => "R:",
+            HandType::Spell => "S:",
+        };
+
         Self {
             label: label.to_string(),
             hand_type,
             content: String::new(),
+            icon: default_icon.to_string(),
             show_border: false,
             border_style: None,
             border_color: None,
@@ -68,6 +76,10 @@ impl Hand {
 
     pub fn set_title(&mut self, title: String) {
         self.label = title;
+    }
+
+    pub fn set_icon(&mut self, icon: String) {
+        self.icon = icon;
     }
 
     pub fn set_content(&mut self, content: String) {
@@ -152,17 +164,10 @@ impl Hand {
             .map(|c| Self::parse_color(c))
             .unwrap_or(Color::White);
 
-        // Render icon based on hand type
-        let icon = match self.hand_type {
-            HandType::Left => "L:",
-            HandType::Right => "R:",
-            HandType::Spell => "S:",
-        };
-
         let y = inner_area.y;
 
-        // Render icon (2 chars: "L:")
-        for (i, ch) in icon.chars().enumerate() {
+        // Render icon using configurable icon field
+        for (i, ch) in self.icon.chars().enumerate() {
             let x = inner_area.x + i as u16;
             if x < inner_area.x + inner_area.width {
                 buf[(x, y)].set_char(ch);
@@ -171,8 +176,8 @@ impl Hand {
             }
         }
 
-        // Render content starting at column 3 (after "L: ")
-        let start_col = 3;
+        // Render content after icon (+ 1 space)
+        let start_col = self.icon.len() as u16 + 1;
         for (i, ch) in self.content.chars().enumerate() {
             let x = inner_area.x + start_col + i as u16;
             if x < inner_area.x + inner_area.width {

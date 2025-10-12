@@ -116,6 +116,85 @@ Delete an existing window.
 
 ---
 
+### `.editwindow` / `.editwin`
+
+Open the window editor to edit an existing window's properties.
+
+**Syntax:**
+```
+.editwindow [window_name]
+.editwin [window_name]
+```
+
+**Parameters:**
+- `window_name` - (Optional) Name of the window to edit. If omitted, opens a selection list.
+
+**Examples:**
+```
+.editwindow main
+.editwin thoughts
+.editwindow
+```
+
+**Notes:**
+- Opens the visual window editor interface
+- Navigate with Tab/Arrow keys, save with Ctrl+S
+- Changes are not persisted until you `.savelayout`
+
+**See also:** [Window Editor Guide](Window-Editor.md)
+
+---
+
+### `.addwindow` / `.newwindow`
+
+Open the window editor to create a new window.
+
+**Syntax:**
+```
+.addwindow
+.newwindow
+```
+
+**Examples:**
+```
+.addwindow
+```
+
+**Notes:**
+- Opens the visual window editor in creation mode
+- First select widget type, then optionally select a template
+- Navigate with Tab/Arrow keys, save with Ctrl+S
+- New windows default to position (0,0) - move with mouse after creation
+
+**See also:** [Window Editor Guide](Window-Editor.md)
+
+---
+
+### `.editinput` / `.editcommandbox`
+
+Edit the command input box position, size, and appearance.
+
+**Syntax:**
+```
+.editinput
+.editcommandbox
+```
+
+**Examples:**
+```
+.editinput
+```
+
+**Notes:**
+- Opens the window editor for the command input box
+- Configure position, size, border style, colors, and title
+- Changes are not persisted until you `.savelayout`
+- Command input box cannot be deleted (it's not in the window list)
+
+**See also:** [Window Editor Guide](Window-Editor.md)
+
+---
+
 ### `.windows` / `.listwindows`
 
 List all active windows.

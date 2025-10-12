@@ -472,15 +472,16 @@ impl TabbedTextWindow {
         // Fill background if not transparent
         if !self.transparent_background {
             let bg_color = if let Some(ref color_str) = self.background_color {
-                Self::parse_color(color_str).unwrap_or(Color::Reset)
+                Self::parse_color(color_str).unwrap_or(Color::Black)
             } else {
-                Color::Reset
+                Color::Black
             };
 
+            // Fill with space characters and background color
             for y in inner.y..inner.y + inner.height {
                 for x in inner.x..inner.x + inner.width {
-                    if x < area.width && y < area.height {
-                        buf.get_mut(x, y).set_bg(bg_color);
+                    if x < buf.area.width && y < buf.area.height {
+                        buf.get_mut(x, y).set_char(' ').set_bg(bg_color);
                     }
                 }
             }

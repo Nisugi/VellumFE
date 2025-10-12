@@ -168,6 +168,7 @@ impl App {
                 tab_inactive_color: w.tab_inactive_color.clone(),
                 tab_unread_color: w.tab_unread_color.clone(),
                 tab_unread_prefix: w.tab_unread_prefix.clone(),
+                hand_icon: w.hand_icon.clone(),
             })
             .collect();
 
@@ -683,6 +684,7 @@ impl App {
                 tab_inactive_color: w.tab_inactive_color.clone(),
                 tab_unread_color: w.tab_unread_color.clone(),
                 tab_unread_prefix: w.tab_unread_prefix.clone(),
+                hand_icon: w.hand_icon.clone(),
             })
             .collect();
 
@@ -955,6 +957,7 @@ impl App {
                     tab_inactive_color: None,
                     tab_unread_color: None,
                     tab_unread_prefix: None,
+                    hand_icon: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1031,6 +1034,7 @@ impl App {
                     tab_inactive_color: Some("#808080".to_string()),
                     tab_unread_color: Some("#ffffff".to_string()),
                     tab_unread_prefix: Some("* ".to_string()),
+                    hand_icon: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1328,6 +1332,12 @@ impl App {
                 // Open window editor for new window
                 self.window_editor.open_for_new_window();
                 self.add_system_message("Window editor opened - select widget type");
+            }
+            "editinput" | "editcommandbox" => {
+                // Convert command input config to window def for editing
+                let window_def = self.layout.command_input.to_window_def();
+                self.window_editor.load_window(window_def);
+                self.add_system_message("Editing command input box");
             }
             "lockwindows" | "lockall" => {
                 // Lock all windows
@@ -2772,17 +2782,24 @@ impl App {
             if let Some(result) = self.window_editor.handle_key(key_event) {
                 match result {
                     WindowEditorResult::Save { window, is_new, original_name } => {
-                        if is_new {
+                        // Special handling for command_input
+                        if window.widget_type == "command_input" {
+                            self.layout.command_input.update_from_window_def(&window);
+                            self.add_system_message("Updated command input box");
+                            self.add_system_message("Remember to .savelayout to save this configuration!");
+                        } else if is_new {
                             self.layout.windows.push(window.clone());
                             self.add_system_message(&format!("Created window '{}' - use mouse to move/resize", window.name));
+                            self.add_system_message("Remember to .savelayout to save this configuration!");
+                            self.update_window_manager_config();
                         } else if let Some(orig_name) = original_name {
                             if let Some(idx) = self.layout.windows.iter().position(|w| w.name == orig_name) {
                                 self.layout.windows[idx] = window.clone();
                                 self.add_system_message(&format!("Updated window '{}'", window.name));
+                                self.add_system_message("Remember to .savelayout to save this configuration!");
+                                self.update_window_manager_config();
                             }
                         }
-                        self.add_system_message("Remember to .savelayout to save this configuration!");
-                        self.update_window_manager_config();
                     },
                     WindowEditorResult::Cancel => {
                         // Just closed, nothing to do
@@ -4407,6 +4424,9 @@ impl App {
             ".createwindow".to_string(), ".createwin".to_string(),
             ".customwindow".to_string(), ".customwin".to_string(),
             ".deletewindow".to_string(), ".deletewin".to_string(),
+            ".editwindow".to_string(), ".editwin".to_string(),
+            ".addwindow".to_string(), ".newwindow".to_string(),
+            ".editinput".to_string(), ".editcommandbox".to_string(),
             ".windows".to_string(), ".listwindows".to_string(),
             ".templates".to_string(), ".availablewindows".to_string(),
             ".rename".to_string(),

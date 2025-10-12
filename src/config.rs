@@ -114,6 +114,9 @@ pub struct WindowDef {
     pub tab_unread_color: Option<String>,  // Color for tabs with unread messages
     #[serde(default)]
     pub tab_unread_prefix: Option<String>,  // Prefix for tabs with unread (e.g., "* ")
+    // Hand widget configuration
+    #[serde(default)]
+    pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +160,7 @@ impl Default for WindowDef {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         }
     }
 }
@@ -271,6 +275,60 @@ pub struct CommandInputConfig {
     pub border_color: Option<String>,
     pub title: Option<String>,
     pub background_color: Option<String>,  // Background color (transparent if not set)
+}
+
+impl CommandInputConfig {
+    /// Convert to WindowDef for editing in window editor
+    pub fn to_window_def(&self) -> WindowDef {
+        WindowDef {
+            name: "command_input".to_string(),
+            widget_type: "command_input".to_string(),
+            streams: Vec::new(),
+            row: self.row,
+            col: self.col,
+            rows: self.height,
+            cols: self.width,
+            buffer_size: 0,
+            show_border: self.show_border,
+            border_style: self.border_style.clone(),
+            border_color: self.border_color.clone(),
+            title: self.title.clone(),
+            background_color: self.background_color.clone(),
+            bar_color: None,
+            bar_background_color: None,
+            transparent_background: self.background_color.is_none(),
+            border_sides: None,
+            content_align: None,
+            locked: false,
+            indicator_colors: None,
+            dashboard_layout: None,
+            dashboard_indicators: None,
+            dashboard_spacing: None,
+            dashboard_hide_inactive: None,
+            visible_count: None,
+            hand_icon: None,
+            tab_bar_position: None,
+            tab_active_color: None,
+            tab_inactive_color: None,
+            tab_unread_color: None,
+            tab_unread_prefix: None,
+            tabs: None,
+            effect_category: None,
+        }
+    }
+
+    /// Update from WindowDef after editing
+    pub fn update_from_window_def(&mut self, window: &WindowDef) {
+        self.row = window.row;
+        self.col = window.col;
+        self.height = window.rows;
+        self.width = window.cols;
+        self.show_border = window.show_border;
+        self.border_style = window.border_style.clone();
+        self.border_color = window.border_color.clone();
+        self.title = window.title.clone();
+        self.background_color = window.background_color.clone();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -748,6 +806,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -783,6 +842,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "mana".to_string(),
@@ -817,6 +877,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -851,6 +912,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -885,6 +947,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -919,6 +982,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -954,6 +1018,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -988,6 +1053,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1023,6 +1089,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1057,6 +1124,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1091,6 +1159,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1126,6 +1195,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1160,6 +1230,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_inactive_color: None,
             tab_unread_color: None,
             tab_unread_prefix: None,
+            hand_icon: None,
         },
     ]
 }
@@ -1277,6 +1348,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1311,6 +1383,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1345,6 +1418,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1379,6 +1453,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1413,6 +1488,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1447,6 +1523,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1481,6 +1558,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1515,6 +1593,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1549,6 +1628,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -1583,6 +1663,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -1617,6 +1698,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -1651,6 +1733,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -1685,6 +1768,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -1719,6 +1803,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -1753,6 +1838,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -1787,6 +1873,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -1821,6 +1908,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -1855,6 +1943,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -1889,6 +1978,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -1923,6 +2013,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -1957,6 +2048,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -1991,6 +2083,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2025,6 +2118,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2059,6 +2153,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "hands" => Some(WindowDef {
                 name: "hands".to_string(),
@@ -2093,6 +2188,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2127,6 +2223,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+                hand_icon: Some("L:".to_string()),
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2161,6 +2258,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+                hand_icon: Some("R:".to_string()),
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2195,6 +2293,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+                hand_icon: Some("S:".to_string()),
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2229,6 +2328,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2263,6 +2363,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2297,6 +2398,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2331,6 +2433,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2365,6 +2468,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -2425,6 +2529,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -2459,6 +2564,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -2493,6 +2599,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -2527,6 +2634,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -2561,6 +2669,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -2595,10 +2704,11 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
-                widget_type: "targets".to_string(),
+                widget_type: "entity".to_string(),
                 streams: vec!["targetcount".to_string(), "combat".to_string()],
                 row: default_row,
                 col: default_col,
@@ -2629,10 +2739,11 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
-                widget_type: "players".to_string(),
+                widget_type: "entity".to_string(),
                 streams: vec!["playercount".to_string(), "playerlist".to_string()],
                 row: default_row,
                 col: default_col,
@@ -2663,6 +2774,7 @@ impl Config {
                 tab_inactive_color: None,
                 tab_unread_color: None,
                 tab_unread_prefix: None,
+            hand_icon: None,
             }),
             _ => None,
         }
