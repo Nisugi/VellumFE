@@ -70,6 +70,16 @@ pub struct App {
     nested_submenu: Option<crate::ui::PopupMenu>,  // Active nested submenu (third level)
     last_link_click_pos: Option<(u16, u16)>,  // Position of last link click (for menu positioning)
     menu_categories: HashMap<String, Vec<crate::ui::MenuItem>>,  // Cached categories for submenus
+    drag_state: Option<DragState>,  // Active drag operation (None when not dragging)
+}
+
+/// Drag and drop state
+#[derive(Debug, Clone)]
+struct DragState {
+    link_data: crate::ui::LinkData,  // What we're dragging
+    start_pos: (u16, u16),           // Where drag started (col, row)
+    current_pos: (u16, u16),         // Current mouse position (col, row)
+    source_window: String,           // Window where drag started
 }
 
 /// Pending menu request information
@@ -274,6 +284,7 @@ impl App {
             nested_submenu: None,  // No nested submenu initially
             last_link_click_pos: None,  // No last click position initially
             menu_categories: HashMap::new(),  // No cached categories initially
+            drag_state: None,  // No drag operation initially
         })
     }
 
@@ -3440,8 +3451,6 @@ impl App {
                                 debug!("Clicked window '{}' (index {})", name, idx);
 
                                 // Check if this is a tabbed window and if we clicked on a tab
-                                let mut should_request_menu = None;
-
                                 if let Some(widget) = self.window_manager.get_window(name) {
                                     if let Widget::Tabbed(tabbed) = widget {
                                         // Use the tabbed window's method to get correct tab bar rect
@@ -3461,25 +3470,46 @@ impl App {
                                         }
                                     } else if let Widget::Text(text_window) = widget {
                                         // Check if we clicked on a link in a text window
-                                        debug!("Click on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                        debug!("Mouse down on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
                                         if let Some(word) = Self::extract_word_at_position(text_window, mouse.column, mouse.row, *rect) {
-                                            debug!("Extracted word at click: '{}'", word);
+                                            debug!("Extracted word at mouse down: '{}'", word);
                                             if let Some(link_data) = text_window.find_link_by_word(&word) {
-                                                debug!("Found link for word '{}': exist_id={}", word, link_data.exist_id);
-                                                should_request_menu = Some((link_data.exist_id.clone(), link_data.noun.clone()));
+                                                // Check if the required modifier key is held for drag and drop
+                                                let drag_modifier = self.config.ui.drag_modifier_key.to_lowercase();
+                                                let has_modifier = match drag_modifier.as_str() {
+                                                    "ctrl" => mouse.modifiers.contains(KeyModifiers::CONTROL),
+                                                    "alt" => mouse.modifiers.contains(KeyModifiers::ALT),
+                                                    "shift" => mouse.modifiers.contains(KeyModifiers::SHIFT),
+                                                    "none" => true,  // No modifier required
+                                                    _ => false,
+                                                };
+
+                                                if has_modifier {
+                                                    debug!("Found link for word '{}': exist_id={}, starting drag (modifier: {})", word, link_data.exist_id, drag_modifier);
+                                                    // Start drag operation
+                                                    self.drag_state = Some(DragState {
+                                                        link_data: link_data.clone(),
+                                                        start_pos: (mouse.column, mouse.row),
+                                                        current_pos: (mouse.column, mouse.row),
+                                                        source_window: name.clone(),
+                                                    });
+                                                } else {
+                                                    debug!("Found link for word '{}': exist_id={}, opening menu (no {} modifier held)", word, link_data.exist_id, drag_modifier);
+                                                    // No modifier held - immediately request menu
+                                                    if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
+                                                        self.add_system_message(&format!("Failed to request menu: {}", e));
+                                                    } else {
+                                                        // Store the click position for positioning the menu when it arrives
+                                                        self.last_link_click_pos = Some((mouse.column, mouse.row));
+                                                    }
+                                                }
                                             } else {
                                                 debug!("No link found for word '{}'", word);
                                             }
                                         } else {
-                                            debug!("Could not extract word at click position");
+                                            debug!("Could not extract word at mouse down position");
                                         }
                                     }
-                                }
-
-                                // Request menu after releasing the borrow
-                                if let Some((exist_id, noun)) = should_request_menu {
-                                    self.last_link_click_pos = Some((mouse.column, mouse.row));
-                                    self.request_menu(&exist_id, &noun, Some(command_tx))?;
                                 }
 
                                 break;
@@ -3489,8 +3519,71 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Handle drag and drop completion (highest priority)
+                if let Some(drag_state) = self.drag_state.take() {
+                    debug!("Mouse up with active drag state for {}", drag_state.link_data.noun);
+
+                    // Check if this was a drag or just a click
+                    let dx = (drag_state.current_pos.0 as i16 - drag_state.start_pos.0 as i16).abs();
+                    let dy = (drag_state.current_pos.1 as i16 - drag_state.start_pos.1 as i16).abs();
+                    let drag_threshold = 2; // Minimum pixels to count as a drag
+
+                    if dx > drag_threshold || dy > drag_threshold {
+                        // This was a drag - find drop target
+                        debug!("Detected drag movement: dx={}, dy={} for {}", dx, dy, drag_state.link_data.noun);
+
+                        // Find what window/link is at the drop position
+                        let mut drop_target: Option<String> = None;
+
+                        for name in self.window_manager.get_window_names() {
+                            if let Some(rect) = window_layouts.get(&name) {
+                                if drag_state.current_pos.0 >= rect.x
+                                    && drag_state.current_pos.0 < rect.x + rect.width
+                                    && drag_state.current_pos.1 >= rect.y
+                                    && drag_state.current_pos.1 < rect.y + rect.height
+                                {
+                                    if let Some(widget) = self.window_manager.get_window(&name) {
+                                        if let Widget::Text(text_window) = widget {
+                                            // Check if we dropped on a link
+                                            if let Some(word) = Self::extract_word_at_position(
+                                                text_window,
+                                                drag_state.current_pos.0,
+                                                drag_state.current_pos.1,
+                                                *rect
+                                            ) {
+                                                if let Some(target_link) = text_window.find_link_by_word(&word) {
+                                                    drop_target = Some(target_link.noun.clone());
+                                                    debug!("Dropped {} onto link target: {}", drag_state.link_data.noun, target_link.noun);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Generate command based on drop target
+                        let command = if let Some(target_noun) = drop_target {
+                            // Dropped on another object - try "put X in/on Y"
+                            format!("put my {} in my {}", drag_state.link_data.noun, target_noun)
+                        } else {
+                            // Dropped in empty space - just "drop X"
+                            format!("drop my {}", drag_state.link_data.noun)
+                        };
+
+                        debug!("Sending drag-drop command: {}", command);
+
+                        // Send command to game
+                        let _ = command_tx.send(command);
+                    } else {
+                        // No significant drag - do nothing (menu was already opened on mouse down if no modifier was held)
+                        debug!("No significant drag detected for {} - ignoring (menu already opened if applicable)", drag_state.link_data.noun);
+                    }
+                }
+
                 // Copy selection to clipboard if we have one
-                if let Some(ref selection) = self.selection_state {
+                else if let Some(ref selection) = self.selection_state {
                     debug!("Mouse up with selection: active={}, empty={}, start=({},{},{}), end=({},{},{})",
                         selection.active, selection.is_empty(),
                         selection.start.window_index, selection.start.line, selection.start.col,
@@ -3517,8 +3610,13 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                // Handle active drag and drop (highest priority)
+                if let Some(ref mut drag_state) = self.drag_state {
+                    drag_state.current_pos = (mouse.column, mouse.row);
+                    debug!("Dragging {} to ({}, {})", drag_state.link_data.noun, mouse.column, mouse.row);
+                }
                 // Handle active resize
-                if let Some(ref state) = self.resize_state.clone() {
+                else if let Some(ref state) = self.resize_state.clone() {
                     let delta_cols = mouse.column as i16 - state.start_mouse_pos.0 as i16;
                     let delta_rows = mouse.row as i16 - state.start_mouse_pos.1 as i16;
 

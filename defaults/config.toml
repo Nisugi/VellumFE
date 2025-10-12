@@ -14,6 +14,9 @@ selection_enabled = true
 selection_respect_window_boundaries = true
 selection_bg_color = "#4a4a4a"
 
+# Drag and drop settings
+drag_modifier_key = "ctrl"  # Modifier key required for drag and drop: "ctrl", "alt", "shift", or "none"
+
 [ui.command_input]
 row = 27
 col = 0

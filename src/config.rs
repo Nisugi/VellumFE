@@ -211,6 +211,9 @@ pub struct UiConfig {
     pub selection_respect_window_boundaries: bool,
     #[serde(default = "default_selection_bg_color")]
     pub selection_bg_color: String,
+    // Drag and drop settings
+    #[serde(default = "default_drag_modifier_key")]
+    pub drag_modifier_key: String,  // Modifier key required for drag and drop (e.g., "ctrl", "alt", "shift")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -629,6 +632,10 @@ fn default_selection_respect_window_boundaries() -> bool {
 
 fn default_selection_bg_color() -> String {
     "#4a4a4a".to_string()
+}
+
+fn default_drag_modifier_key() -> String {
+    "ctrl".to_string()
 }
 
 fn default_command_input() -> CommandInputConfig {
@@ -2827,6 +2834,7 @@ impl Default for Config {
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
                 selection_bg_color: default_selection_bg_color(),
+                drag_modifier_key: default_drag_modifier_key(),
             },
             presets: {
                 let mut map = HashMap::new();

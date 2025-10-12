@@ -148,8 +148,52 @@ Game objects (items, NPCs, players, etc.) appear as **clickable links** in your 
 | Mouse Action | Result |
 |--------------|--------|
 | **Left-click on link word** | Open context menu at cursor |
+| **Click and drag link word** | Drag and drop item (see below) |
 | **Click menu item** | Execute that action |
 | **Click outside menu** | Close menu |
+
+### Drag and Drop
+
+VellumFE supports dragging game objects (items) to perform actions like putting items in containers or dropping them.
+
+**How it works:**
+
+1. **Hold Ctrl** (or configured modifier key) and **click** on any word in an item link
+2. **Drag** the mouse to a new location while holding Ctrl
+3. **Release** to complete the action:
+   - **Drop on another item link** → Sends `put my X in my Y`
+   - **Drop in empty space** → Sends `drop my X`
+
+**Without modifier key:** Clicking a link without holding Ctrl opens the context menu immediately.
+
+**Examples:**
+
+- Ctrl+drag "apple" onto "backpack" → `put my apple in my backpack`
+- Ctrl+drag "sword" onto "scabbard" → `put my sword in my scabbard`
+- Ctrl+drag "torch" to empty space → `drop my torch`
+- Click "apple" (no Ctrl) → Opens context menu
+
+**Configuration:**
+
+The modifier key can be customized in your config file (`~/.vellum-fe/configs/default.toml`):
+
+```toml
+[ui]
+drag_modifier_key = "ctrl"  # Options: "ctrl", "alt", "shift", or "none"
+```
+
+**Tips:**
+
+- The drag must move at least 2 pixels to register as a drag (prevents accidental drags)
+- You can drag items to any text window (not just the same window)
+- Works with the same link detection as context menus (multi-word priority, etc.)
+- Set `drag_modifier_key = "none"` to enable drag without holding any key
+
+**Limitations:**
+
+- Currently only supports "put X in Y" and "drop X" commands
+- Does not yet support "give X to Y" for NPCs/players
+- The game server determines whether the action is valid
 
 ### Keyboard Navigation
 

@@ -649,7 +649,14 @@ Experimental features requiring significant research and development.
 
 **Status:** ✅ Completed (moved to P0)
 
-Make text elements clickable with context menus.
+Make text elements clickable with context menus and drag-and-drop functionality.
+
+**Completed features:**
+- Wrayth-style clickable links with hierarchical context menus
+- 588 commands from cmdlist1.xml
+- Drag and drop items to containers or empty space
+- Smart link detection with multi-word priority
+- Mouse and keyboard navigation
 
 ---
 
@@ -741,6 +748,7 @@ Track completed features from this roadmap:
 - ✅ Hand widgets (left/right hand display)
 - ✅ Basic active effects widget
 - ✅ **Clickable links and context menus (Wrayth-style)**
+- ✅ **Drag and drop for items (put in containers, drop)**
 
 ---
 
