@@ -137,10 +137,10 @@ Use `.templates` to see the full list.
 
 ## Next Steps
 
-- **[Window Management](Window-Management.md)** - Learn all window operations
-- **[Widget Reference](Widget-Reference.md)** - Explore all 40+ widgets
-- **[Commands Reference](Commands-Reference.md)** - Complete command list
-- **[Configuration Guide](Configuration-Guide.md)** - Customize your setup
+- **[Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management)** - Learn all window operations
+- **[Widget Reference](https://github.com/Nisugi/VellumFE/wiki/Widget-Reference)** - Explore all 40+ widgets
+- **[Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference)** - Complete command list
+- **[Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)** - Customize your setup
 
 ## Troubleshooting
 
@@ -158,8 +158,8 @@ Use `.templates` to see the full list.
 - Use `.windows` to list active windows
 - Windows might be off-screen - try resizing terminal
 
-See [Troubleshooting Guide](Troubleshooting.md) for more help.
+See [Troubleshooting Guide](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting) for more help.
 
 ---
 
-← [Installation](Installation.md) | [Window Management](Window-Management.md) →
+← [Installation](https://github.com/Nisugi/VellumFE/wiki/Installation) | [Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management) →

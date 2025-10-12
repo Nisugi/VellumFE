@@ -91,7 +91,7 @@ Create a custom text window with specified stream routing.
 - Use mouse to move and resize the window
 - Available streams: main, thoughts, speech, whisper, familiar, room, logons, deaths, arrivals, ambients, announcements, loot
 
-**See also:** [Stream Routing Guide](Stream-Routing.md)
+**See also:** [Stream Routing Guide](https://github.com/Nisugi/VellumFE/wiki/Stream-Routing)
 
 ---
 
@@ -697,7 +697,7 @@ Open the interactive highlight management form to create a new highlight pattern
 - Opens a full-screen form for creating highlights
 - Use Tab/Shift+Tab to navigate between fields
 - Press Enter on Save button or Escape to exit
-- See [Highlight Management Guide](Highlight-Management.md) for detailed form usage
+- See [Highlight Management Guide](https://github.com/Nisugi/VellumFE/wiki/Highlight-Management) for detailed form usage
 
 ---
 
@@ -798,7 +798,7 @@ Test a highlight pattern against sample text to see if it matches.
 - Shows the position in the string
 - Reports what styling would be applied (colors, bold, etc.)
 
-**See also:** [Highlight Management Guide](Highlight-Management.md)
+**See also:** [Highlight Management Guide](https://github.com/Nisugi/VellumFE/wiki/Highlight-Management)
 
 ---
 
@@ -823,7 +823,7 @@ Open the interactive keybind management form to create a new keybind.
 - Opens a full-screen form for creating keybinds
 - Use Tab to navigate between fields
 - Press Enter on Save button or Escape to exit
-- See [Keybind Management Guide](Keybind-Management.md) for detailed form usage
+- See [Keybind Management Guide](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management) for detailed form usage
 
 ---
 
@@ -897,7 +897,7 @@ List all configured keybinds.
 → 8 keybinds: alt+1, alt+2, ctrl+e, ctrl+f, f1, f5, shift+f1, shift+up
 ```
 
-**See also:** [Keybind Management Guide](Keybind-Management.md)
+**See also:** [Keybind Management Guide](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management)
 
 ---
 
@@ -926,7 +926,7 @@ Create a scrollable targets list widget for tracking combat targets.
 .rename targets "Combat Targets"
 ```
 
-**See also:** [Targets and Players Widget Guide](Targets-and-Players.md)
+**See also:** [Targets and Players Widget Guide](https://github.com/Nisugi/VellumFE/wiki/Targets-and-Players)
 
 ---
 
@@ -965,7 +965,7 @@ Create a scrollable players list widget for tracking players in the room.
 ;autostart add targetlist
 ```
 
-**See also:** [Targets and Players Widget Guide](Targets-and-Players.md)
+**See also:** [Targets and Players Widget Guide](https://github.com/Nisugi/VellumFE/wiki/Targets-and-Players)
 
 ---
 
@@ -1075,4 +1075,4 @@ Randomize all countdown timers (for testing).
 
 ---
 
-[← Back to Wiki Home](Home.md) | [Next: Configuration Guide →](Configuration-Guide.md)
+[← Back to Wiki Home](https://github.com/Nisugi/VellumFE/wiki/Home) | [Next: Configuration Guide →](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)

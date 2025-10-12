@@ -385,10 +385,7 @@ Highlight when specific players arrive in your room:
 
 ## Related Documentation
 
-- [Configuration System](Configuration.md) - Overall config file structure
-- [Window Management](Window-Management.md) - Managing text windows that display highlights
-- [Keyboard Shortcuts](Keyboard-Shortcuts.md) - All keybinds including highlight form navigation
-- [Sound System](Sound-System.md) - Audio playback configuration
+- [Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management) - Managing text windows that display highlights
 
 ## See Also
 

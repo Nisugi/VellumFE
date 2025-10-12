@@ -66,7 +66,7 @@ Wrayth-style clickable links with hierarchical context menus for game objects.
 - Esc or Left to go back one level
 - Right or Enter on submenu items to drill down
 
-**Related:** See [Mouse and Keyboard Guide](Mouse-and-Keyboard.md)
+**Related:** See [Mouse and Keyboard Guide](https://github.com/Nisugi/VellumFE/wiki/Mouse-and-Keyboard)
 
 ---
 
@@ -692,7 +692,7 @@ Want to help build these features?
 1. **Pick a feature** from this roadmap
 2. **Check GitHub issues** for related discussions
 3. **Comment on the issue** to claim it
-4. **Read the [Development Guide](Development-Guide.md)**
+4. **Read the [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide)**
 5. **Create a feature branch** and start coding
 6. **Submit a pull request** when ready
 
@@ -752,4 +752,4 @@ Track completed features from this roadmap:
 
 ---
 
-[← Previous: Development Guide](Development-Guide.md) | [Back to Wiki Home →](Home.md)
+[← Previous: Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide) | [Back to Wiki Home →](https://github.com/Nisugi/VellumFE/wiki/Home)

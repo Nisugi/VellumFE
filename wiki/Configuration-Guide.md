@@ -32,7 +32,7 @@ On first launch, vellum-fe creates a default `config.toml` with sensible default
 
 ### Reloading Configuration
 
-Most configuration changes require restarting the application. However, some changes can be made at runtime using dot commands (see [Commands Reference](Commands-Reference.md)).
+Most configuration changes require restarting the application. However, some changes can be made at runtime using dot commands (see [Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference)).
 
 ---
 
@@ -176,7 +176,7 @@ fg = "#00ff00"
 
 Highlights apply custom colors and styles to text matching specific patterns. Fully implemented with Aho-Corasick optimization for fast pattern matching and optional sound support.
 
-For a complete guide with in-app management commands, see [Highlight Management](Highlight-Management.md).
+For a complete guide with in-app management commands, see [Highlight Management](https://github.com/Nisugi/VellumFE/wiki/Highlight-Management).
 
 ```toml
 [highlights]
@@ -209,7 +209,7 @@ death_alert = { pattern = ".*dies.*", fg = "#ffffff", bg = "#ff0000", sound = "d
 
 Keybinds map key combinations to commands or actions. Fully implemented with 24 built-in actions and macro support.
 
-For a complete guide with in-app management commands, see [Keybind Management](Keybind-Management.md).
+For a complete guide with in-app management commands, see [Keybind Management](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management).
 
 ```toml
 [keybinds]
@@ -230,7 +230,7 @@ Keybinds can be either:
 - A table for macros: `num_8 = { macro_text = "n\r" }`
 
 **Built-in Actions** (24 available):
-See [Keybind Management](Keybind-Management.md#built-in-actions) for complete list.
+See [Keybind Management](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management#built-in-actions) for complete list.
 
 **Macro format:**
 - `macro_text` - Text to send, use `\r` for Enter key
@@ -726,4 +726,4 @@ show_border = false
 
 ---
 
-[← Previous: Commands Reference](Commands-Reference.md) | [Next: Stream Routing →](Stream-Routing.md)
+[← Previous: Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference) | [Next: Stream Routing →](https://github.com/Nisugi/VellumFE/wiki/Stream-Routing)

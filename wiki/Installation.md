@@ -167,10 +167,10 @@ To remove vellum-fe:
 
 ## Next Steps
 
-- **[Quick Start Guide](Quick-Start.md)** - Launch and connect to Lich
-- **[Window Management](Window-Management.md)** - Create your first windows
-- **[Configuration Guide](Configuration-Guide.md)** - Customize your setup
+- **[Quick Start Guide](https://github.com/Nisugi/VellumFE/wiki/Quick-Start)** - Launch and connect to Lich
+- **[Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management)** - Create your first windows
+- **[Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)** - Customize your setup
 
 ---
 
-← [Home](Home.md) | [Quick Start](Quick-Start.md) →
+← [Home](https://github.com/Nisugi/VellumFE/wiki/Home) | [Quick Start](https://github.com/Nisugi/VellumFE/wiki/Quick-Start) →

@@ -431,10 +431,10 @@ Since autosave is recreated on every exit:
 
 ## Next Steps
 
-- **[Configuration Guide](Configuration-Guide.md)** - Advanced config options
-- **[Window Management](Window-Management.md)** - Creating and customizing windows
-- **[Commands Reference](Commands-Reference.md)** - Complete command list
+- **[Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)** - Advanced config options
+- **[Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management)** - Creating and customizing windows
+- **[Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference)** - Complete command list
 
 ---
 
-← [Widget Reference](Widget-Reference.md) | [Commands Reference](Commands-Reference.md) →
+← [Widget Reference](https://github.com/Nisugi/VellumFE/wiki/Widget-Reference) | [Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference) →

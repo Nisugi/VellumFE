@@ -993,4 +993,4 @@ debug!("Focused window: {}", self.focused_window_index);
 
 ---
 
-[← Previous: Troubleshooting](Troubleshooting.md) | [Next: Feature Roadmap →](Feature-Roadmap.md)
+[← Previous: Troubleshooting](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting) | [Next: Feature Roadmap →](https://github.com/Nisugi/VellumFE/wiki/Feature-Roadmap)

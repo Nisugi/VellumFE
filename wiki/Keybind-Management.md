@@ -433,10 +433,7 @@ Quick access to frequently used commands:
 
 ## Related Documentation
 
-- [Configuration System](Configuration.md) - Overall config file structure
-- [Keyboard Shortcuts](Keyboard-Shortcuts.md) - All default keybinds
-- [Window Management](Window-Management.md) - Window navigation and operations
-- [Command Input](Command-Input.md) - Command line features and history
+- [Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management) - Window navigation and operations
 
 ## See Also
 
