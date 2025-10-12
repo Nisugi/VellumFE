@@ -30,6 +30,46 @@ This roadmap outlines planned features for vellum-fe, organized by priority. Fea
 
 These features are the highest priority and will be implemented first.
 
+### Clickable Links and Context Menus
+
+**Status:** ✅ Completed
+
+Wrayth-style clickable links with hierarchical context menus for game objects.
+
+**Features:**
+- Click any word in a game object link to open context menu
+- 588 commands loaded from `cmdlist1.xml` (look, examine, get, drop, etc.)
+- Hierarchical 3-level menu system:
+  - Main menu → Category submenu (e.g., roleplay) → Nested submenu (e.g., swear)
+  - Categories with underscore become submenus
+  - Category 0 always appears at end
+- Multi-word link prioritization ("raven feather" over "raven")
+- Recent links cache (last 100) for efficient lookups
+- Menu request/response protocol with server
+- Secondary noun support for held items (`%` placeholder)
+- Menu text formatting (removes `#` and `@`, substitutes `%`)
+- Mouse and keyboard navigation (arrows, Enter, Esc)
+- All menu levels visible simultaneously
+- Menus auto-position at click location with bounds checking
+- Stream discard for missing windows
+
+**Implementation:**
+- Link detection from `<a exist="..." noun="...">` XML tags
+- Text window caches recent links with accumulated text
+- Parser handles `<menuResponse>` with `<mi coord="..." noun="..."/>` tags
+- PopupMenu widget renders overlays with solid backgrounds
+- App manages 3 menu levels (main, submenu, nested_submenu)
+
+**Usage:**
+- Left-click any word in a link to open menu
+- Arrow keys to navigate, Enter to select
+- Esc or Left to go back one level
+- Right or Enter on submenu items to drill down
+
+**Related:** See [Mouse and Keyboard Guide](Mouse-and-Keyboard.md)
+
+---
+
 ### Active Effects System
 
 **Status:** Partially implemented
@@ -607,37 +647,9 @@ Experimental features requiring significant research and development.
 
 ### Clickable Links and Context Menus
 
-**Status:** Research phase
+**Status:** ✅ Completed (moved to P0)
 
 Make text elements clickable with context menus.
-
-**Features:**
-
-#### Link Detection
-- Detect clickable elements (items, NPCs, players, directions)
-- Render with underline or different color
-- Handle click events
-- Execute appropriate command on click
-
-#### Context Menus
-- Right-click on items → look/get/put actions
-- Right-click on NPCs → look/attack/talk actions
-- Right-click on players → whisper/look/follow actions
-- Right-click on direction → go that way
-
-**Performance considerations:**
-- Lazy detection (only active window)
-- Configurable enable/disable
-- Cache parsed elements
-- Benchmark impact on render performance
-
-**Challenges:**
-- Requires parsing all text for clickable elements
-- May impact rendering performance
-- Complex state management
-- UI/UX design
-
-**Related:** Issue #XX
 
 ---
 
@@ -728,6 +740,7 @@ Track completed features from this roadmap:
 - ✅ Performance monitoring
 - ✅ Hand widgets (left/right hand display)
 - ✅ Basic active effects widget
+- ✅ **Clickable links and context menus (Wrayth-style)**
 
 ---
 

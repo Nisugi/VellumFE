@@ -587,4 +587,8 @@
 <cli coord="2524,1979" menu="help @" command="cman help @" menu_cat="1"/>
 <cli coord="2524,1617" menu="look under @" command="look under #" menu_cat="1"/>
 <cli coord="2524,1738" menu="whisper group" command="_dialog # whisper group" menu_cat="9"/>
+<cli coord="2524,2544" menu="analyze" command="analyze #" menu_cat="1"/>
+<cli coord="2524,2452" menu="speak to" command="_dialog # say" menu_cat="12"/>
+<cli coord="2524,2453" menu="sing to" command="_dialog # sing" menu_cat="12"/>
+<cli coord="2524,2670" menu="recite to" command="_dialog # recite" menu_cat="12"/>
 </cmdlist>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**VellumFE** is a modern, high-performance terminal frontend for GemStone IV, built with Ratatui. It connects to Lich (Ruby scripting engine) via detached mode and provides a blazing-fast TUI with dynamic window management, custom highlights with Aho-Corasick optimization, mouse support, and full XML stream parsing.
+**VellumFE** is a modern, high-performance terminal frontend for GemStone IV, built with Ratatui. It connects to Lich (Ruby scripting engine) via detached mode and provides a blazing-fast TUI with dynamic window management, custom highlights with Aho-Corasick optimization, Wrayth-style clickable links with context menus, mouse support, and full XML stream parsing.
 
 ## Build and Development Commands
 
@@ -126,6 +126,34 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
   - Escape or click anywhere to clear selection
   - Shift+Mouse enables native terminal selection (bypasses VellumFE selection)
 
+**Clickable Links & Context Menus (Wrayth-style):**
+- Game objects wrapped in `<a exist="..." noun="...">text</a>` tags become clickable links
+- Left-click on any word in a link to open context menu with available actions
+- Multi-word link prioritization: "raven feather" preferred over individual "raven"
+- Recent links cache (last 100) for efficient lookup without position tracking
+- Context menus populated from 588 command entries in `defaults/cmdlist1.xml`
+- Hierarchical menu system supports 3 levels deep:
+  - Main menu → Category submenu → Subcategory menu
+  - Categories with `_` become submenus (e.g., `5_roleplay`)
+  - Nested categories use hyphens (e.g., `5_roleplay-swear`)
+  - Category 0 always appears at end
+  - Category names displayed in lowercase
+- Menu request/response protocol: `_menu #<exist_id> <counter>`
+- Secondary noun support from `<mi noun="..."/>` tags for `%` placeholder substitution
+- Menu text formatting:
+  - `#` and `@` are removed/truncated from displayed text
+  - `%` is substituted with secondary noun (e.g., held item) if available
+  - If no secondary noun, `%` displays as-is for debugging
+- Mouse and keyboard navigation:
+  - Arrow keys to navigate, Enter to select
+  - Esc or Left arrow to close submenu (keeps parent open)
+  - Right arrow or Enter on submenu items to open nested menu
+  - All three menu levels stay visible simultaneously
+- Menus positioned at click location with automatic bounds checking
+- Commands not in cmdlist1.xml won't appear (need investigation and manual addition)
+- `_dialog` commands currently skipped (dialog box not yet implemented)
+- Stream discard: If no window exists for a pushed stream, text is discarded until pop
+
 ## Module Structure
 
 ### src/main.rs
@@ -191,12 +219,26 @@ Text selection state and coordinate tracking. Contains:
 - Selection boundary checking and normalization
 - Window-relative coordinate conversion helpers
 
+### src/cmdlist.rs
+Command list parser for clickable link context menus. Contains:
+- `CmdList` - Parses `defaults/cmdlist1.xml` with 588 command entries
+- `CmdListEntry` - Command definition (coord, menu text, command, category)
+- `get()` - Look up command by coordinate string (e.g., "2524,2061")
+- `substitute_command()` - Replace placeholders in commands:
+  - `#` → exist_id (unique object ID)
+  - `@` → noun (object name)
+  - `%` → secondary noun (e.g., held item)
+- Command categories for hierarchical menus (e.g., "5_roleplay", "5_roleplay-swear")
+- Loads at startup, shared across all menu requests
+
 **Important XML Elements:**
 - `<pushStream id='...'/>` / `<popStream/>` - Stream routing
 - `<progressBar id='...' value='...' text='...'/>` - Vitals updates
 - `<roundTime value='...'/>` / `<castTime value='...'/>` - Timers
 - `<preset id='...'> ... </preset>` - Styled text sections
 - `<prompt time='...'>...</prompt>` - Game prompts (colored per character)
+- `<a exist='...' noun='...'>text</a>` - Clickable links for game objects
+- `<menuResponse id='...'><mi coord='...' noun='...'/></menuResponse>` - Menu data from server
 
 ### src/ui/window_manager.rs
 Manages multiple windows and their layouts. Contains:
@@ -234,9 +276,20 @@ Tabbed text window widget with activity indicators. Contains:
 - `switch_to_tab()` / `switch_to_tab_by_name()` - Change active tab
 - `add_text_to_stream()` - Route text to correct tab, set unread flag if inactive
 - `finish_line_for_stream()` - Finish line for specific tab's stream
-- Activity tracking: tabs show unread indicator when receiving messages while inactive
-- Tab bar can be positioned at top or bottom
-- Mouse click support for tab switching
+
+### src/ui/popup_menu.rs
+Context menu widget for clickable links. Contains:
+- `PopupMenu` - Renders menu as overlay at specified position
+- `MenuItem` - Menu entry with display text and command to execute
+- `new()` - Create menu with items and position
+- `select_next()` / `select_previous()` - Arrow key navigation
+- `get_selected_command()` - Get command for current selection
+- `check_click()` - Handle mouse clicks on menu items
+- `get_items()` / `get_position()` / `get_selected_index()` - Accessors for state
+- Rendering: Solid black background with bordered menu
+- Supports nested menus via `__SUBMENU__<category>` command format
+- Menu items show ">" indicator for submenus
+- Multiple menu levels (popup_menu, submenu, nested_submenu) can be displayed simultaneously
 
 **Key Features:**
 - Each tab contains its own TextWindow instance

@@ -729,6 +729,11 @@ impl WindowManager {
         }
     }
 
+    /// Check if a window exists for a specific stream
+    pub fn has_window_for_stream(&self, stream: &str) -> bool {
+        self.stream_map.contains_key(stream)
+    }
+
     /// Get window for a specific stream name
     pub fn get_window_for_stream(&mut self, stream: &str) -> Option<&mut Widget> {
         let window_name = self.stream_map.get(stream)?;

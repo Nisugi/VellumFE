@@ -32,6 +32,7 @@ pub enum SpanType {
 pub struct LinkData {
     pub exist_id: String,  // Unique ID for this game object
     pub noun: String,      // The noun/name of the object
+    pub text: String,      // The actual displayed text (e.g., "nacreous pearl bangle")
 }
 
 #[derive(Clone)]
@@ -100,6 +101,9 @@ pub struct TextWindow {
     fast_matcher: Option<AhoCorasick>,
     // Maps Aho-Corasick match index -> highlight index
     fast_pattern_map: Vec<usize>,
+    // Recent links cache for click detection
+    recent_links: VecDeque<LinkData>,
+    max_recent_links: usize,
 }
 
 impl TextWindow {
@@ -125,6 +129,8 @@ impl TextWindow {
             highlight_regexes: Vec::new(),  // No precompiled regexes by default
             fast_matcher: None,  // No Aho-Corasick matcher by default
             fast_pattern_map: Vec::new(),  // No fast pattern mapping by default
+            recent_links: VecDeque::new(),  // No recent links yet
+            max_recent_links: 100,  // Keep last 100 links
         }
     }
 
@@ -203,6 +209,10 @@ impl TextWindow {
         self.title = title;
     }
 
+    pub fn has_border(&self) -> bool {
+        self.show_border
+    }
+
     pub fn add_text(&mut self, styled: StyledText) {
         let style = Style::default()
             .fg(styled.fg.unwrap_or(Color::Gray))
@@ -212,6 +222,35 @@ impl TextWindow {
             } else {
                 Modifier::empty()
             });
+
+        // Cache link data if present, accumulating text for the same exist_id
+        if let Some(ref link_data) = styled.link_data {
+            tracing::debug!("Caching link: noun='{}' exist_id='{}' content='{}'",
+                link_data.noun, link_data.exist_id, styled.content);
+
+            // Check if we already have this exist_id in the most recent entry
+            let should_append = if let Some(last) = self.recent_links.back_mut() {
+                if last.exist_id == link_data.exist_id {
+                    // Append to existing text
+                    last.text.push_str(&styled.content);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !should_append {
+                // New link - create new entry with this content as the text
+                let mut new_link = link_data.clone();
+                new_link.text = styled.content.clone();
+                self.recent_links.push_back(new_link);
+                if self.recent_links.len() > self.max_recent_links {
+                    self.recent_links.pop_front();
+                }
+            }
+        }
 
         // Add this styled chunk to current line with semantic type
         self.current_line_spans.push((styled.content, style, styled.span_type));
@@ -882,6 +921,75 @@ impl TextWindow {
                 }).collect(),
             })
             .collect()
+    }
+
+    /// Find a link in the recent cache that matches the given word
+    /// Returns the LinkData if found, otherwise None
+    pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
+        // Search from most recent to oldest
+        // First pass: word appears in multi-word link text (HIGHEST priority - prefer complete phrases)
+        for link in self.recent_links.iter().rev() {
+            let link_text_lower = link.text.to_lowercase();
+            let word_lower = word.to_lowercase();
+
+            // Only check multi-word links (2+ words)
+            if link_text_lower.split_whitespace().count() > 1 {
+                // Check if word appears in the text
+                if link_text_lower.split_whitespace().any(|w| w == word_lower) {
+                    tracing::debug!("Found multi-word text match: '{}' in text='{}' -> noun='{}' exist_id='{}'",
+                        word, link.text, link.noun, link.exist_id);
+                    return Some(link.clone());
+                }
+            }
+        }
+
+        // Second pass: exact noun match for single-word links
+        for link in self.recent_links.iter().rev() {
+            if link.noun.eq_ignore_ascii_case(word) {
+                tracing::debug!("Found exact noun match: '{}' -> noun='{}' exist_id='{}' text='{}'",
+                    word, link.noun, link.exist_id, link.text);
+                return Some(link.clone());
+            }
+        }
+
+        tracing::debug!("No link found for word '{}'", word);
+        None
+    }
+
+    /// Get visible line information for click detection
+    /// Returns (start_line_index, visible_lines)
+    pub fn get_visible_lines_info(&self, visible_height: usize) -> (usize, Vec<LineSegments>) {
+        let total_lines = self.wrapped_lines.len();
+
+        // Calculate which lines are visible based on scroll mode
+        let (start_line, end_line) = if let Some(pos) = self.scroll_position {
+            // Scrolled back - use absolute position
+            let start = pos;
+            let end = (pos + visible_height).min(total_lines);
+            (start, end)
+        } else {
+            // Live view mode - show the last visible_height lines
+            let end = total_lines.saturating_sub(self.scroll_offset);
+            let start = end.saturating_sub(visible_height);
+            (start, end)
+        };
+
+        // Collect visible lines
+        let visible_lines: Vec<LineSegments> = (start_line..end_line)
+            .filter_map(|idx| {
+                self.wrapped_lines.get(idx).map(|line| LineSegments {
+                    segments: line.spans.iter().map(|(text, style, span_type)| TextSegment {
+                        text: text.clone(),
+                        fg: style.fg,
+                        bg: style.bg,
+                        bold: style.add_modifier.contains(Modifier::BOLD),
+                        span_type: *span_type,
+                    }).collect(),
+                })
+            })
+            .collect();
+
+        (start_line, visible_lines)
     }
 }
 

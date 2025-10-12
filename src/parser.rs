@@ -84,8 +84,8 @@ pub enum ParsedElement {
         category: String,  // Which category to clear
     },
     MenuResponse {
-        id: String,           // Correlation ID (counter)
-        coords: Vec<String>,  // List of coord values from <mi coord="..."/> tags
+        id: String,                              // Correlation ID (counter)
+        coords: Vec<(String, Option<String>)>,  // List of (coord, optional noun) pairs from <mi> tags
     },
 }
 
@@ -123,7 +123,7 @@ pub struct XmlParser {
     current_link_data: Option<LinkData>,  // Current link metadata (exist_id, noun)
     // Menu tracking
     current_menu_id: Option<String>,  // ID of menu being parsed
-    current_menu_coords: Vec<String>, // Accumulated coords for current menu
+    current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
 }
 
 impl XmlParser {
@@ -711,6 +711,7 @@ impl XmlParser {
             self.current_link_data = Some(LinkData {
                 exist_id: exist,
                 noun: n,
+                text: String::new(),  // Will be populated as text is rendered
             });
         }
 
@@ -771,11 +772,16 @@ impl XmlParser {
     }
 
     fn handle_menu_item(&mut self, tag: &str) {
-        // <mi coord="2524,1898"/>
+        // <mi coord="2524,1898"/> or <mi coord="2524,1735" noun="gleaming steel baselard"/>
         if self.current_menu_id.is_some() {
             if let Some(coord) = Self::extract_attribute(tag, "coord") {
-                tracing::debug!("Adding coord to menu: {}", coord);
-                self.current_menu_coords.push(coord);
+                let secondary_noun = Self::extract_attribute(tag, "noun");
+                if let Some(ref noun) = secondary_noun {
+                    tracing::debug!("Adding coord to menu: {} with secondary noun: {}", coord, noun);
+                } else {
+                    tracing::debug!("Adding coord to menu: {}", coord);
+                }
+                self.current_menu_coords.push((coord, secondary_noun));
             }
         }
     }

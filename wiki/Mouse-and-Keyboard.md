@@ -6,6 +6,7 @@ This guide covers all keyboard shortcuts and mouse operations available in vellu
 
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Mouse Operations](#mouse-operations)
+- [Clickable Links and Context Menus](#clickable-links-and-context-menus)
 - [Text Selection](#text-selection)
 - [Window Focus](#window-focus)
 - [Scrolling](#scrolling)
@@ -131,6 +132,108 @@ Click anywhere in a window to focus it:
 **Focused window:**
 - Receives keyboard scrolling commands (`Page Up`/`Page Down`)
 - Visually indicated (implementation may vary)
+
+---
+
+## Clickable Links and Context Menus
+
+VellumFE features Wrayth-style clickable links with hierarchical context menus for game objects.
+
+### How It Works
+
+Game objects (items, NPCs, players, etc.) appear as **clickable links** in your text windows. Click any word in a link to open a context menu showing available actions.
+
+### Basic Usage
+
+| Mouse Action | Result |
+|--------------|--------|
+| **Left-click on link word** | Open context menu at cursor |
+| **Click menu item** | Execute that action |
+| **Click outside menu** | Close menu |
+
+### Keyboard Navigation
+
+When a context menu is open:
+
+| Key | Action |
+|-----|--------|
+| `Up Arrow` | Select previous menu item |
+| `Down Arrow` | Select next menu item |
+| `Enter` | Execute selected item |
+| `Right Arrow` | Open submenu (if available) |
+| `Esc` or `Left Arrow` | Close current menu (keeps parent open) |
+
+### Menu Hierarchy
+
+Menus support 3 levels of nesting:
+
+1. **Main Menu** - Primary actions (look, get, drop, etc.)
+2. **Category Submenu** - Grouped actions (e.g., "roleplay >")
+3. **Nested Submenu** - Subcategories (e.g., "swear >" under roleplay)
+
+**Example flow:**
+```
+Click "staff" → Main menu appears
+Click "roleplay >" → Roleplay submenu opens (main stays visible)
+Click "swear >" → Swear submenu opens (all three visible)
+Click "swear at flamingly" → Command sent, menus close
+```
+
+### Available Commands
+
+VellumFE includes 588 commands from `cmdlist1.xml`:
+
+**Common categories:**
+- **General actions:** look, examine, get, drop, put, raise, spin, turn
+- **Roleplay:** bow, curtsy, wave, nod, smile, laugh, etc.
+  - **Roleplay-Swear:** Various swearing actions
+- **Combat maneuvers:** Specialized combat actions
+- **Item manipulation:** Specific item actions based on type
+
+### Menu Indicators
+
+- **">"** after menu text = Submenu available (click or press Right to open)
+- **No ">"** = Regular command (click or press Enter to execute)
+
+### Smart Link Detection
+
+- **Multi-word priority:** Clicking "raven" in "raven feather" finds the feather, not a separate raven NPC
+- **Recent links cache:** Last 100 links cached for fast lookups
+- **Context-aware:** Menus show actions relevant to the clicked object
+
+### Secondary Items
+
+Some actions require a held item (indicated by `%` placeholder):
+
+- **"throw %"** - Throw your held item
+- **"wave % at"** - Wave your held item at the target
+
+If you're holding an item when you click a target, these actions will show the item name:
+- **"throw gleaming steel baselard"**
+- **"wave gleaming steel baselard at"**
+
+### Tips
+
+**Quick actions:**
+1. Click any word in a link (not just the first word)
+2. Use arrow keys for fast navigation
+3. Press Esc to close menus quickly
+
+**Nested menus:**
+1. All menu levels stay visible
+2. Use Left arrow to go back one level
+3. Click outside to close all menus
+
+**Learning new commands:**
+1. Click objects you haven't interacted with before
+2. Explore submenu categories
+3. Discover roleplay and combat actions
+
+### Limitations
+
+- `_dialog` commands not yet supported (require text input dialogs)
+- Commands not in cmdlist1.xml won't appear
+- Menu positioning respects terminal boundaries
 
 ---
 

@@ -12,6 +12,7 @@ VellumFE is a complete rewrite of the popular [ProfanityFE](https://github.com/e
 - **Dynamic Windows** - Create, delete, move, and resize windows at any time
 - **40+ Widget Types** - Pre-built widgets for every need
 - **Mouse Support** - Full mouse control for drag, resize, scroll, and text selection
+- **Clickable Links** - Wrayth-style context menus with 588 commands for game objects
 - **Layout System** - Save and load custom window arrangements
 
 ### Rich Widget Library

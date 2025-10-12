@@ -17,8 +17,10 @@ mod targets;
 mod players;
 mod highlight_form;
 mod keybind_form;
+mod popup_menu;
 
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
+pub use popup_menu::{PopupMenu, MenuItem};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
 pub use command_input::CommandInput;
 pub use window_manager::{WindowManager, WindowConfig, Widget};

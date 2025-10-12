@@ -46,6 +46,7 @@ pub struct App {
     running: bool,
     prompt_shown: bool, // Track if we've shown a prompt since last real text
     current_stream: String, // Track which stream we're currently writing to
+    discard_current_stream: bool, // If true, discard text because no window exists for current stream
     skip_next_prompt: bool, // Skip the next prompt (after returning from a non-main stream)
     focused_window_index: usize, // Index of currently focused window for scrolling
     mouse_mode_enabled: bool, // Whether mouse features are enabled (vs text selection)
@@ -64,6 +65,11 @@ pub struct App {
     cmdlist: Option<CmdList>,  // Command list for context menus (None if failed to load)
     menu_request_counter: u32,  // Counter for menu request correlation IDs
     pending_menu_requests: HashMap<String, PendingMenuRequest>,  // counter -> (exist_id, noun)
+    popup_menu: Option<crate::ui::PopupMenu>,  // Active main popup menu (None when no menu shown)
+    submenu: Option<crate::ui::PopupMenu>,  // Active submenu (None when no submenu shown)
+    nested_submenu: Option<crate::ui::PopupMenu>,  // Active nested submenu (third level)
+    last_link_click_pos: Option<(u16, u16)>,  // Position of last link click (for menu positioning)
+    menu_categories: HashMap<String, Vec<crate::ui::MenuItem>>,  // Cached categories for submenus
 }
 
 /// Pending menu request information
@@ -245,6 +251,7 @@ impl App {
             running: true,
             prompt_shown: false,
             current_stream: "main".to_string(),
+            discard_current_stream: false,
             skip_next_prompt: false,
             focused_window_index: 0, // Start with first window focused
             mouse_mode_enabled: false, // Start with mouse mode off (text selection enabled)
@@ -262,6 +269,11 @@ impl App {
             cmdlist,  // Command list (may be None if failed to load)
             menu_request_counter: 0,  // Start counter at 0
             pending_menu_requests: HashMap::new(),  // No pending requests initially
+            popup_menu: None,  // No popup menu initially
+            submenu: None,  // No submenu initially
+            nested_submenu: None,  // No nested submenu initially
+            last_link_click_pos: None,  // No last click position initially
+            menu_categories: HashMap::new(),  // No cached categories initially
         })
     }
 
@@ -1929,8 +1941,32 @@ impl App {
         }
     }
 
+    /// Request a context menu for a game object
+    fn request_menu(&mut self, exist_id: &str, noun: &str, command_tx: Option<&mpsc::UnboundedSender<String>>) -> Result<()> {
+        // Generate counter and store pending request
+        self.menu_request_counter += 1;
+        let counter = self.menu_request_counter.to_string();
+
+        self.pending_menu_requests.insert(counter.clone(), PendingMenuRequest {
+            exist_id: exist_id.to_string(),
+            noun: noun.to_string(),
+        });
+
+        // Send _menu command to server
+        let menu_cmd = format!("_menu #{} {}", exist_id, counter);
+        tracing::debug!("Requesting context menu for #{} (noun: {}, counter: {})", exist_id, noun, counter);
+
+        if let Some(tx) = command_tx {
+            tx.send(menu_cmd)?;
+        } else {
+            self.add_system_message("Error: Cannot send menu request (no command channel)");
+        }
+
+        Ok(())
+    }
+
     /// Handle menu response from server
-    fn handle_menu_response(&mut self, counter: &str, coords: &[String]) {
+    fn handle_menu_response(&mut self, counter: &str, coords: &[(String, Option<String>)]) {
         // Look up the pending request
         let pending = self.pending_menu_requests.remove(counter);
 
@@ -1949,32 +1985,254 @@ impl App {
             return;
         }
 
-        // Build menu items list (to avoid borrowing issues)
-        let mut menu_items = Vec::new();
+        // Group menu items by category
+        let mut categories: HashMap<String, Vec<crate::ui::MenuItem>> = HashMap::new();
+
         if let Some(ref cmdlist) = self.cmdlist {
-            for coord in coords.iter() {
+            for (coord, secondary_noun) in coords.iter() {
                 if let Some(entry) = cmdlist.get(coord) {
-                    // Substitute placeholders in menu text and command
-                    let menu_text = crate::cmdlist::CmdList::substitute_menu(&entry.menu, &pending.noun);
+                    // Skip _dialog commands for now (until dialog box is implemented)
+                    if entry.command.starts_with("_dialog") {
+                        tracing::debug!("Skipping _dialog command: {}", entry.command);
+                        continue;
+                    }
+
+                    // For menu display: handle special characters
+                    // # and @ are removed/truncated
+                    // % is substituted with secondary noun (if present)
+                    let menu_text = {
+                        let mut text = entry.menu.clone();
+
+                        // First, substitute % with secondary noun (if present)
+                        if let Some(ref sec_noun) = secondary_noun {
+                            text = text.replace("%", sec_noun);
+                        }
+
+                        // Then find first occurrence of # or @
+                        let mut special_char_pos = None;
+                        for (pos, ch) in text.char_indices() {
+                            if ch == '#' || ch == '@' {
+                                special_char_pos = Some(pos);
+                                break;
+                            }
+                        }
+
+                        if let Some(pos) = special_char_pos {
+                            let after_special = pos + 1;
+
+                            // Check if there's meaningful text after the special character
+                            let remaining = text[after_special..].trim();
+
+                            if remaining.is_empty() {
+                                // Special char is at the end - truncate at it
+                                text[..pos].trim_end().to_string()
+                            } else {
+                                // Special char is in the middle - remove it but keep the rest
+                                // Keep one space between words
+                                let before = text[..pos].trim_end();
+                                let after = text[after_special..].trim_start();
+
+                                if before.is_empty() {
+                                    after.to_string()
+                                } else if after.is_empty() {
+                                    before.to_string()
+                                } else {
+                                    format!("{} {}", before, after)
+                                }
+                            }
+                        } else {
+                            // No # or @ found - return text (% already substituted)
+                            text
+                        }
+                    };
+
                     let command = crate::cmdlist::CmdList::substitute_command(
                         &entry.command,
                         &pending.noun,
                         &pending.exist_id,
-                        None, // No secondary item for now
+                        secondary_noun.as_deref(), // Pass secondary noun for % substitution
                     );
-                    menu_items.push((menu_text, command));
+
+                    let category = if entry.menu_cat.is_empty() {
+                        "0".to_string()
+                    } else {
+                        entry.menu_cat.clone()
+                    };
+
+                    categories.entry(category).or_insert_with(Vec::new).push(crate::ui::MenuItem {
+                        text: menu_text,
+                        command,
+                    });
                 } else {
                     tracing::debug!("Coord {} not found in cmdlist", coord);
                 }
             }
         }
 
-        // Now output the menu (after releasing cmdlist borrow)
-        self.add_system_message(&format!("=== Context Menu for {} (#{}) ===", pending.noun, pending.exist_id));
-        for (idx, (menu_text, command)) in menu_items.iter().enumerate() {
-            self.add_system_message(&format!("  {}. {} -> {}", idx + 1, menu_text, command));
+        if categories.is_empty() {
+            self.add_system_message("No menu items available for this object");
+            return;
         }
-        self.add_system_message("=================================");
+
+        // Build final menu with categories
+        let mut menu_items = Vec::new();
+        let mut sorted_cats: Vec<_> = categories.keys().cloned().collect();
+
+        // Sort categories, but keep "0" at the end
+        sorted_cats.sort_by(|a, b| {
+            if a == "0" {
+                std::cmp::Ordering::Greater
+            } else if b == "0" {
+                std::cmp::Ordering::Less
+            } else {
+                a.cmp(b)
+            }
+        });
+
+        // Detect parent-child category relationships
+        // Example: "5_roleplay" is parent of "5_roleplay-swear"
+        // Note: Hyphens indicate subcategories, not underscores
+        let mut child_categories: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for cat in &sorted_cats {
+            if cat.contains('_') && cat != "0" {
+                // Check if this contains a hyphen (subcategory indicator)
+                if cat.contains('-') {
+                    // Extract potential parent by removing hyphen and everything after
+                    if let Some(hyphen_pos) = cat.find('-') {
+                        let potential_parent = &cat[..hyphen_pos];
+                        if sorted_cats.iter().any(|c| c == potential_parent) {
+                            child_categories.insert(cat.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build menu items for parent categories (including their child submenus)
+        for cat in &sorted_cats {
+            // Skip if this is a child category (it will be added under its parent)
+            if child_categories.contains(cat) {
+                continue;
+            }
+
+            let items = categories.get(cat).unwrap();
+
+            // Categories with _ in the name become submenus (e.g., "5_roleplay", "6_combat maneuvers")
+            // Exception: category "0" never becomes a submenu
+            if cat.contains('_') && cat != "0" {
+                // Build submenu items for this parent category
+                let mut submenu_items = items.clone();
+
+                // Add child category submenus
+                for child_cat in &sorted_cats {
+                    if child_categories.contains(child_cat) {
+                        // Check if this child belongs to current parent
+                        // Child format: "5_roleplay-swear", parent format: "5_roleplay"
+                        if let Some(hyphen_pos) = child_cat.find('-') {
+                            let parent = &child_cat[..hyphen_pos];
+                            if parent == cat {
+                                let child_name = Self::format_subcategory_name(child_cat, cat);
+                                submenu_items.push(crate::ui::MenuItem {
+                                    text: format!("{} >", child_name),
+                                    command: format!("__SUBMENU__{}", child_cat),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Cache the parent category with its items AND child submenus
+                self.menu_categories.insert(cat.clone(), submenu_items.clone());
+
+                // Add parent to main menu
+                let cat_name = Self::format_category_name(cat);
+                menu_items.push(crate::ui::MenuItem {
+                    text: format!("{} >", cat_name),
+                    command: format!("__SUBMENU__{}", cat),
+                });
+            } else {
+                // Add items directly to main menu
+                menu_items.extend(items.clone());
+            }
+        }
+
+        // Cache all child categories (they already have their items from earlier)
+        for cat in &sorted_cats {
+            if child_categories.contains(cat) {
+                let items = categories.get(cat).unwrap();
+                self.menu_categories.insert(cat.clone(), items.clone());
+            }
+        }
+
+        if menu_items.is_empty() {
+            self.add_system_message("No menu items available for this object");
+            return;
+        }
+
+        // Create popup menu at last click position
+        let position = self.last_link_click_pos.unwrap_or((0, 0));
+        let item_count = menu_items.len();
+        self.popup_menu = Some(crate::ui::PopupMenu::new(menu_items, position));
+        tracing::info!("Created popup menu with {} items at {:?}", item_count, position);
+    }
+
+    /// Format a category code into a display name
+    fn format_category_name(cat: &str) -> String {
+        // Category format: "0", "1", "5_roleplay", "6_combat maneuvers", "9_challenge", etc.
+        if let Some((_num, name)) = cat.split_once('_') {
+            // Handle names with spaces (e.g., "combat maneuvers")
+            // Return lowercase (no capitalization)
+            name.to_string()
+        } else {
+            // Just a number - use generic names (lowercase)
+            match cat {
+                "0" => "general".to_string(),
+                "1" => "basic".to_string(),
+                "2" => "item".to_string(),
+                "3" => "social".to_string(),
+                "4" => "combat".to_string(),
+                "5" => "roleplay".to_string(),
+                "6" => "religious".to_string(),
+                "7" => "magic".to_string(),
+                "8" => "healing".to_string(),
+                "9" => "challenge".to_string(),
+                _ => format!("category {}", cat),
+            }
+        }
+    }
+
+    /// Format a subcategory name by extracting the part after the parent
+    /// Example: "5_roleplay-swear" with parent "5_roleplay" -> "swear"
+    fn format_subcategory_name(child: &str, parent: &str) -> String {
+        if let Some(suffix) = child.strip_prefix(&format!("{}-", parent)) {
+            suffix.to_string()
+        } else {
+            Self::format_category_name(child)
+        }
+    }
+
+    /// Calculate menu rectangle for a popup menu
+    /// Returns the actual Rect that will be used for rendering
+    fn calculate_menu_rect(menu: &crate::ui::PopupMenu, terminal_area: Rect) -> Rect {
+        let max_width = menu.get_items().iter()
+            .map(|item| item.text.len())
+            .max()
+            .unwrap_or(20)
+            .min(60);
+        let menu_width = (max_width + 4) as u16;
+        let menu_height = (menu.get_items().len() + 2) as u16;
+        let position = menu.get_position();
+
+        // Ensure menu fits within terminal area
+        let x = position.0.min(terminal_area.width.saturating_sub(menu_width));
+        let y = position.1.min(terminal_area.height.saturating_sub(menu_height));
+
+        Rect {
+            x,
+            y,
+            width: menu_width.min(terminal_area.width),
+            height: menu_height.min(terminal_area.height),
+        }
     }
 
     /// Toggle mouse mode on/off
@@ -2138,6 +2396,22 @@ impl App {
                     form.render(f.area(), f.buffer_mut());
                 }
 
+                // Render popup menu (if open)
+                // Render main popup menu
+                if let Some(ref menu) = self.popup_menu {
+                    menu.render(f.area(), f.buffer_mut());
+                }
+
+                // Render submenu on top of main menu
+                if let Some(ref submenu) = self.submenu {
+                    submenu.render(f.area(), f.buffer_mut());
+                }
+
+                // Render nested submenu on top of everything
+                if let Some(ref nested_submenu) = self.nested_submenu {
+                    nested_submenu.render(f.area(), f.buffer_mut());
+                }
+
                 // Record UI render time
                 let ui_render_duration = ui_render_start.elapsed();
                 self.perf_stats.record_ui_render_time(ui_render_duration);
@@ -2161,7 +2435,7 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => {
-                        self.handle_mouse_event(mouse, &window_layouts)?;
+                        self.handle_mouse_event(mouse, &window_layouts, &command_tx)?;
                     }
                     Event::Resize(width, height) => {
                         const MIN_WIDTH: u16 = 80;
@@ -2244,6 +2518,148 @@ impl App {
         modifiers: KeyModifiers,
         command_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        // Handle popup menu keys first (highest priority)
+        // Check nested submenu first, then submenu, then main menu
+        if self.nested_submenu.is_some() {
+            match key {
+                KeyCode::Esc | KeyCode::Left => {
+                    // Close nested submenu, keep submenu and main menu
+                    self.nested_submenu = None;
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    if let Some(ref mut menu) = self.nested_submenu {
+                        menu.select_previous();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    if let Some(ref mut menu) = self.nested_submenu {
+                        menu.select_next();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    if let Some(ref menu) = self.nested_submenu {
+                        if let Some(command) = menu.get_selected_command() {
+                            debug!("Nested submenu item selected via Enter: {}", command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                            self.submenu = None;
+                            self.nested_submenu = None;
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    // Other keys close all menus
+                    self.popup_menu = None;
+                    self.submenu = None;
+                    self.nested_submenu = None;
+                }
+            }
+        } else if self.submenu.is_some() {
+            match key {
+                KeyCode::Esc | KeyCode::Left => {
+                    // Close submenu, keep main menu
+                    self.submenu = None;
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    if let Some(ref mut menu) = self.submenu {
+                        menu.select_previous();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    if let Some(ref mut menu) = self.submenu {
+                        menu.select_next();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Enter | KeyCode::Right => {
+                    if let Some(ref menu) = self.submenu {
+                        if let Some(command) = menu.get_selected_command() {
+                            // Check if this is a nested submenu
+                            if command.starts_with("__SUBMENU__") {
+                                let cat = command.strip_prefix("__SUBMENU__").unwrap();
+                                debug!("Opening nested submenu for category: {}", cat);
+                                if let Some(items) = self.menu_categories.get(cat) {
+                                    let menu_pos = menu.get_position();
+                                    let selected_idx = menu.get_selected_index();
+                                    let nested_submenu_pos = (menu_pos.0 + 5, menu_pos.1 + selected_idx as u16 + 1);
+                                    self.nested_submenu = Some(crate::ui::PopupMenu::new(items.clone(), nested_submenu_pos));
+                                }
+                                return Ok(());
+                            }
+
+                            debug!("Submenu item selected via Enter: {}", command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                            self.submenu = None;
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    // Other keys close all menus
+                    self.popup_menu = None;
+                    self.submenu = None;
+                }
+            }
+        } else if self.popup_menu.is_some() {
+            match key {
+                KeyCode::Esc => {
+                    self.popup_menu = None;
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    if let Some(ref mut menu) = self.popup_menu {
+                        menu.select_previous();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    if let Some(ref mut menu) = self.popup_menu {
+                        menu.select_next();
+                    }
+                    return Ok(());
+                }
+                KeyCode::Enter | KeyCode::Right => {
+                    if let Some(ref menu) = self.popup_menu {
+                        if let Some(command) = menu.get_selected_command() {
+                            // Check if this is a submenu
+                            if command.starts_with("__SUBMENU__") {
+                                let cat = command.strip_prefix("__SUBMENU__").unwrap();
+                                debug!("Opening submenu for category: {}", cat);
+                                debug!("Available categories: {:?}", self.menu_categories.keys().collect::<Vec<_>>());
+                                if let Some(items) = self.menu_categories.get(cat) {
+                                    debug!("Found {} items for category {}", items.len(), cat);
+                                    // Get current menu position for offset
+                                    let menu_pos = menu.get_position();
+                                    let selected_idx = menu.get_selected_index();
+                                    let submenu_pos = (menu_pos.0 + 5, menu_pos.1 + selected_idx as u16 + 1);
+                                    self.submenu = Some(crate::ui::PopupMenu::new(items.clone(), submenu_pos));
+                                } else {
+                                    debug!("ERROR: Category '{}' not found in menu_categories!", cat);
+                                }
+                                return Ok(());
+                            }
+
+                            debug!("Menu item selected via Enter: {}", command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    // Other keys close the menu
+                    self.popup_menu = None;
+                }
+            }
+        }
+
         // In HighlightForm mode, handle in the form directly (except Ctrl+C to quit)
         if self.input_mode == InputMode::HighlightForm {
             // Allow Ctrl+C to quit
@@ -2858,6 +3274,7 @@ impl App {
         &mut self,
         mouse: event::MouseEvent,
         window_layouts: &HashMap<String, ratatui::layout::Rect>,
+        command_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use event::{MouseButton, MouseEventKind};
 
@@ -2866,6 +3283,117 @@ impl App {
                 // If Shift is held, let native terminal handle selection (passthrough)
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) {
                     return Ok(());
+                }
+
+                // Get terminal area for menu calculations
+                let terminal_area = Rect {
+                    x: 0,
+                    y: 0,
+                    width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                    height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                };
+
+                // Check if clicking on nested submenu first (highest priority)
+                if let Some(ref nested_submenu) = self.nested_submenu {
+                    let nested_submenu_rect = Self::calculate_menu_rect(nested_submenu, terminal_area);
+
+                    if let Some(item_idx) = nested_submenu.check_click(mouse.column, mouse.row, nested_submenu_rect) {
+                        // Clicked on a nested submenu item
+                        if let Some(command) = nested_submenu.get_items().get(item_idx).map(|i| i.command.clone()) {
+                            debug!("Nested submenu item {} selected: {}", item_idx, command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                            self.submenu = None;
+                            self.nested_submenu = None;
+                            return Ok(());
+                        }
+                    } else if mouse.column < nested_submenu_rect.x || mouse.column >= nested_submenu_rect.x + nested_submenu_rect.width
+                        || mouse.row < nested_submenu_rect.y || mouse.row >= nested_submenu_rect.y + nested_submenu_rect.height {
+                        // Clicked outside nested submenu - close it (keep main menu and submenu)
+                        debug!("Clicked outside nested submenu, closing nested submenu");
+                        self.nested_submenu = None;
+                        return Ok(());
+                    }
+                }
+
+                // Check if clicking on submenu (second priority)
+                if let Some(ref submenu) = self.submenu {
+                    let submenu_rect = Self::calculate_menu_rect(submenu, terminal_area);
+
+                    if let Some(item_idx) = submenu.check_click(mouse.column, mouse.row, submenu_rect) {
+                        // Clicked on a submenu item
+                        if let Some(command) = submenu.get_items().get(item_idx).map(|i| i.command.clone()) {
+                            // Check if this is a nested submenu (e.g., swear under roleplay)
+                            if command.starts_with("__SUBMENU__") {
+                                let cat = command.strip_prefix("__SUBMENU__").unwrap();
+                                debug!("Opening nested submenu for category: {}", cat);
+                                debug!("Available categories: {:?}", self.menu_categories.keys().collect::<Vec<_>>());
+                                if let Some(items) = self.menu_categories.get(cat) {
+                                    debug!("Found {} items for category {}", items.len(), cat);
+                                    // Open nested submenu, keep both main menu and submenu
+                                    let nested_submenu_pos = (submenu_rect.x + 5, submenu_rect.y + item_idx as u16 + 1);
+                                    self.nested_submenu = Some(crate::ui::PopupMenu::new(items.clone(), nested_submenu_pos));
+                                } else {
+                                    debug!("ERROR: Category '{}' not found in menu_categories!", cat);
+                                }
+                                return Ok(());
+                            }
+
+                            debug!("Submenu item {} selected: {}", item_idx, command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                            self.submenu = None;
+                            return Ok(());
+                        }
+                    } else if mouse.column < submenu_rect.x || mouse.column >= submenu_rect.x + submenu_rect.width
+                        || mouse.row < submenu_rect.y || mouse.row >= submenu_rect.y + submenu_rect.height {
+                        // Clicked outside submenu - close it (keep main menu)
+                        debug!("Clicked outside submenu, closing submenu");
+                        self.submenu = None;
+                        self.nested_submenu = None; // Also close nested if open
+                        return Ok(());
+                    }
+                }
+
+                // Check if clicking on main popup menu
+                if let Some(ref menu) = self.popup_menu {
+                    let menu_rect = Self::calculate_menu_rect(menu, terminal_area);
+
+                    if let Some(item_idx) = menu.check_click(mouse.column, mouse.row, menu_rect) {
+                        // Clicked on a menu item
+                        if let Some(command) = menu.get_items().get(item_idx).map(|i| i.command.clone()) {
+                            // Check if this is a submenu
+                            if command.starts_with("__SUBMENU__") {
+                                let cat = command.strip_prefix("__SUBMENU__").unwrap();
+                                debug!("Opening submenu for category: {}", cat);
+                                debug!("Available categories: {:?}", self.menu_categories.keys().collect::<Vec<_>>());
+                                if let Some(items) = self.menu_categories.get(cat) {
+                                    debug!("Found {} items for category {}", items.len(), cat);
+                                    // Open submenu at slightly offset position
+                                    let submenu_pos = (menu_rect.x + 5, menu_rect.y + item_idx as u16 + 1);
+                                    self.submenu = Some(crate::ui::PopupMenu::new(items.clone(), submenu_pos));
+                                } else {
+                                    debug!("ERROR: Category '{}' not found in menu_categories!", cat);
+                                }
+                                return Ok(());
+                            }
+
+                            debug!("Menu item {} selected: {}", item_idx, command);
+                            command_tx.send(command)?;
+                            self.popup_menu = None;
+                            self.submenu = None;
+                            self.nested_submenu = None;
+                            return Ok(());
+                        }
+                    } else if mouse.column < menu_rect.x || mouse.column >= menu_rect.x + menu_rect.width
+                        || mouse.row < menu_rect.y || mouse.row >= menu_rect.y + menu_rect.height {
+                        // Clicked outside menu - close all menus
+                        debug!("Clicked outside menu, closing all menus");
+                        self.popup_menu = None;
+                        self.submenu = None;
+                        self.nested_submenu = None;
+                        return Ok(());
+                    }
                 }
 
                 // Clear any existing selection on new click
@@ -2912,6 +3440,8 @@ impl App {
                                 debug!("Clicked window '{}' (index {})", name, idx);
 
                                 // Check if this is a tabbed window and if we clicked on a tab
+                                let mut should_request_menu = None;
+
                                 if let Some(widget) = self.window_manager.get_window(name) {
                                     if let Widget::Tabbed(tabbed) = widget {
                                         // Use the tabbed window's method to get correct tab bar rect
@@ -2929,7 +3459,27 @@ impl App {
                                                 debug!("get_tab_at_position returned None");
                                             }
                                         }
+                                    } else if let Widget::Text(text_window) = widget {
+                                        // Check if we clicked on a link in a text window
+                                        debug!("Click on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                        if let Some(word) = Self::extract_word_at_position(text_window, mouse.column, mouse.row, *rect) {
+                                            debug!("Extracted word at click: '{}'", word);
+                                            if let Some(link_data) = text_window.find_link_by_word(&word) {
+                                                debug!("Found link for word '{}': exist_id={}", word, link_data.exist_id);
+                                                should_request_menu = Some((link_data.exist_id.clone(), link_data.noun.clone()));
+                                            } else {
+                                                debug!("No link found for word '{}'", word);
+                                            }
+                                        } else {
+                                            debug!("Could not extract word at click position");
+                                        }
                                     }
+                                }
+
+                                // Request menu after releasing the borrow
+                                if let Some((exist_id, noun)) = should_request_menu {
+                                    self.last_link_click_pos = Some((mouse.column, mouse.row));
+                                    self.request_menu(&exist_id, &noun, Some(command_tx))?;
                                 }
 
                                 break;
@@ -3070,6 +3620,82 @@ impl App {
         Ok(())
     }
 
+    /// Extract the word at a given mouse position in a text window
+    fn extract_word_at_position(
+        text_window: &crate::ui::TextWindow,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: ratatui::layout::Rect,
+    ) -> Option<String> {
+        // Calculate the relative position within the window (accounting for borders)
+        let border_offset = if text_window.has_border() { 1 } else { 0 };
+
+        // Check if click is within the window content area
+        if mouse_col < window_rect.x + border_offset || mouse_col >= window_rect.x + window_rect.width - border_offset {
+            tracing::debug!("Click outside horizontal bounds");
+            return None;
+        }
+        if mouse_row < window_rect.y + border_offset || mouse_row >= window_rect.y + window_rect.height - border_offset {
+            tracing::debug!("Click outside vertical bounds");
+            return None;
+        }
+
+        // Calculate visible height and get only visible lines
+        let visible_height = (window_rect.height.saturating_sub(2 * border_offset)) as usize;
+        let (_start_idx, visible_lines) = text_window.get_visible_lines_info(visible_height);
+
+        // Calculate line index relative to visible lines (not all lines)
+        let line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        tracing::debug!("Visible lines: {}, line_idx: {}, col_offset: {}",
+            visible_lines.len(), line_idx, col_offset);
+
+        // Get the line at this position
+        if line_idx >= visible_lines.len() {
+            tracing::debug!("Line index {} out of range (visible lines: {})", line_idx, visible_lines.len());
+            return None;
+        }
+
+        let line = &visible_lines[line_idx];
+
+        // Build the full text of the line from segments
+        let mut full_text = String::new();
+        for segment in &line.segments {
+            full_text.push_str(&segment.text);
+        }
+
+        tracing::debug!("Line text: '{}'", full_text);
+
+        // Find the word boundaries at the click position
+        let chars: Vec<char> = full_text.chars().collect();
+        if col_offset >= chars.len() {
+            tracing::debug!("Column offset {} out of range (line length: {})", col_offset, chars.len());
+            return None;
+        }
+
+        // Find start of word (go left until whitespace or punctuation)
+        let mut start = col_offset;
+        while start > 0 && chars[start - 1].is_alphanumeric() {
+            start -= 1;
+        }
+
+        // Find end of word (go right until whitespace or punctuation)
+        let mut end = col_offset;
+        while end < chars.len() && chars[end].is_alphanumeric() {
+            end += 1;
+        }
+
+        if start >= end {
+            tracing::debug!("No word at position (start={}, end={})", start, end);
+            return None;
+        }
+
+        let word: String = chars[start..end].iter().collect();
+        tracing::debug!("Found word: '{}'", word);
+        Some(word)
+    }
+
     fn handle_server_message(&mut self, msg: ServerMessage) {
         match msg {
             ServerMessage::Connected => {
@@ -3123,6 +3749,11 @@ impl App {
                 for element in elements {
                     match element {
                         ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } => {
+                            // Skip text if we're discarding the current stream (no window exists for it)
+                            if self.discard_current_stream {
+                                continue;
+                            }
+
                             // Special handling for target/player streams
                             match self.current_stream.as_str() {
                                 "targetcount" => {
@@ -3218,6 +3849,15 @@ impl App {
                             debug!("Pushing stream: {}", id);
                             self.current_stream = id.clone();
 
+                            // Check if a window exists for this stream
+                            // If not, discard all text until StreamPop
+                            if !self.window_manager.has_window_for_stream(&id) {
+                                debug!("No window exists for stream '{}', discarding text", id);
+                                self.discard_current_stream = true;
+                            } else {
+                                self.discard_current_stream = false;
+                            }
+
                             // Clear stream buffer for accumulation streams
                             match id.as_str() {
                                 "combat" | "playerlist" => {
@@ -3262,6 +3902,8 @@ impl App {
                                 self.skip_next_prompt = true;
                             }
 
+                            // Reset discard flag when returning to main stream
+                            self.discard_current_stream = false;
                             self.current_stream = "main".to_string();
                         }
                         ParsedElement::ProgressBar { id, value, max, text } => {
