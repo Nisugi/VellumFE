@@ -23,6 +23,8 @@ pub struct Config {
     pub spell_colors: Vec<SpellColorRange>,
     #[serde(default)]
     pub sound: SoundConfig,
+    #[serde(default)]
+    pub event_patterns: HashMap<String, EventPattern>,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
 }
@@ -38,7 +40,13 @@ pub struct PresetColor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptColor {
     pub character: String, // The character to match (e.g., "R", "S", "H", ">")
-    pub color: String,     // Hex color
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    // Legacy field for backwards compatibility - maps to fg if present
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +125,9 @@ pub struct WindowDef {
     // Hand widget configuration
     #[serde(default)]
     pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
+    // Countdown widget configuration
+    #[serde(default)]
+    pub countdown_icon: Option<String>,  // Icon for countdown widgets (overrides global default)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +172,7 @@ impl Default for WindowDef {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         }
     }
 }
@@ -247,6 +259,8 @@ pub struct UiConfig {
     pub prompt_colors: Vec<PromptColor>,
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
+    #[serde(default = "default_poll_timeout_ms")]
+    pub poll_timeout_ms: u64,  // Event poll timeout in milliseconds (lower = higher FPS, higher CPU)
     // Text selection settings
     #[serde(default = "default_selection_enabled")]
     pub selection_enabled: bool,
@@ -307,6 +321,7 @@ impl CommandInputConfig {
             dashboard_hide_inactive: None,
             visible_count: None,
             hand_icon: None,
+            countdown_icon: None,
             tab_bar_position: None,
             tab_active_color: None,
             tab_inactive_color: None,
@@ -410,7 +425,41 @@ pub struct HighlightPattern {
     pub sound: Option<String>,  // Sound file to play when pattern matches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound_volume: Option<f32>,  // Volume override for this sound (0.0 to 1.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,  // Category for grouping highlights (e.g., "Combat", "Healing", "Death")
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventPattern {
+    pub pattern: String,           // Regex pattern to match
+    pub event_type: String,        // Event type: "stun", "webbed", "prone", etc.
+    pub action: EventAction,       // Action to perform: set/clear/increment
+    #[serde(default)]
+    pub duration: u32,             // Duration in seconds (0 = don't change)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_capture: Option<usize>,  // Regex capture group for duration (1-based)
+    #[serde(default = "default_duration_multiplier")]
+    pub duration_multiplier: f32,  // Multiply captured duration (e.g., 5.0 for rounds->seconds)
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,             // Can disable without deleting
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EventAction {
+    Set,       // Set state/timer (e.g., start stun countdown)
+    Clear,     // Clear state/timer (e.g., recover from stun)
+    Increment, // Add to existing value (future use)
+}
+
+impl Default for EventAction {
+    fn default() -> Self {
+        EventAction::Set
+    }
+}
+
+fn default_duration_multiplier() -> f32 { 1.0 }
+fn default_enabled() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundConfig {
@@ -715,6 +764,10 @@ fn default_countdown_icon() -> String {
     "\u{f0c8}".to_string()  // Nerd Font square icon
 }
 
+fn default_poll_timeout_ms() -> u64 {
+    16  // 16ms = ~60 FPS, 8ms = ~120 FPS, 4ms = ~240 FPS
+}
+
 fn default_selection_enabled() -> bool {
     true
 }
@@ -807,6 +860,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -843,6 +897,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "mana".to_string(),
@@ -878,6 +933,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -913,6 +969,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -948,6 +1005,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -983,6 +1041,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -1019,6 +1078,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -1054,6 +1114,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1090,6 +1151,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1125,6 +1187,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1160,6 +1223,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1196,6 +1260,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1231,6 +1296,7 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_color: None,
             tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
         },
     ]
 }
@@ -1349,6 +1415,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1384,6 +1451,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1419,6 +1487,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1454,6 +1523,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1489,6 +1559,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1524,6 +1595,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1559,6 +1631,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1594,6 +1667,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1629,6 +1703,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -1664,6 +1739,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -1699,6 +1775,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -1734,6 +1811,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -1769,6 +1847,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -1804,6 +1883,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -1839,6 +1919,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -1874,6 +1955,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -1909,6 +1991,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -1944,6 +2027,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -1979,6 +2063,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -2014,6 +2099,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -2049,6 +2135,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -2084,6 +2171,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2119,6 +2207,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2154,6 +2243,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "hands" => Some(WindowDef {
                 name: "hands".to_string(),
@@ -2189,6 +2279,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2224,6 +2315,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
                 hand_icon: Some("L:".to_string()),
+                countdown_icon: None,
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2259,6 +2351,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
                 hand_icon: Some("R:".to_string()),
+                countdown_icon: None,
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2294,6 +2387,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
                 hand_icon: Some("S:".to_string()),
+                countdown_icon: None,
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2329,6 +2423,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2364,6 +2459,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2399,6 +2495,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2434,6 +2531,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2469,6 +2567,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -2530,6 +2629,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -2565,6 +2665,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -2600,6 +2701,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -2635,6 +2737,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -2670,6 +2773,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -2705,6 +2809,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
@@ -2740,6 +2845,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
@@ -2775,6 +2881,7 @@ impl Config {
                 tab_unread_color: None,
                 tab_unread_prefix: None,
             hand_icon: None,
+            countdown_icon: None,
             }),
             _ => None,
         }
@@ -3025,12 +3132,13 @@ impl Default for Config {
                 layout: LayoutConfig::default(),
                 command_echo_color: default_command_echo_color(),
                 prompt_colors: vec![
-                    PromptColor { character: "R".to_string(), color: "#ff0000".to_string() }, // Red for Roundtime
-                    PromptColor { character: "S".to_string(), color: "#ffff00".to_string() }, // Yellow for Stunned
-                    PromptColor { character: "H".to_string(), color: "#9370db".to_string() }, // Purple for Hidden
-                    PromptColor { character: ">".to_string(), color: "#a9a9a9".to_string() }, // DarkGray default
+                    PromptColor { character: "R".to_string(), fg: Some("#ff0000".to_string()), bg: None, color: None }, // Red for Roundtime
+                    PromptColor { character: "S".to_string(), fg: Some("#ffff00".to_string()), bg: None, color: None }, // Yellow for Stunned
+                    PromptColor { character: "H".to_string(), fg: Some("#9370db".to_string()), bg: None, color: None }, // Purple for Hidden
+                    PromptColor { character: ">".to_string(), fg: Some("#a9a9a9".to_string()), bg: None, color: None }, // DarkGray default
                 ],
                 countdown_icon: default_countdown_icon(),
+                poll_timeout_ms: default_poll_timeout_ms(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
                 selection_bg_color: default_selection_bg_color(),
@@ -3052,6 +3160,7 @@ impl Default for Config {
                 // Example: Fast highlight for multiple player names (ultra-fast with Aho-Corasick)
                 map.insert("friends".to_string(), HighlightPattern {
                     pattern: "Alice|Bob|Charlie|David|Eve|Frank".to_string(),
+                    category: Some("Social".to_string()),
                     fg: Some("#ff00ff".to_string()),
                     bg: None,
                     bold: true,
@@ -3063,6 +3172,7 @@ impl Default for Config {
                 // Example: Highlight your combat actions in red (partial line, regex)
                 map.insert("swing".to_string(), HighlightPattern {
                     pattern: r"You swing.*".to_string(),
+                    category: Some("Combat".to_string()),
                     fg: Some("#ff0000".to_string()),
                     bg: None,
                     bold: true,
@@ -3074,6 +3184,7 @@ impl Default for Config {
                 // Example: Highlight damage numbers in yellow (partial line, regex)
                 map.insert("damage".to_string(), HighlightPattern {
                     pattern: r"\d+ points? of damage".to_string(),
+                    category: Some("Combat".to_string()),
                     fg: Some("#ffff00".to_string()),
                     bg: None,
                     bold: true,
@@ -3085,6 +3196,7 @@ impl Default for Config {
                 // Example: Highlight death messages with bright background (whole line, regex)
                 map.insert("death".to_string(), HighlightPattern {
                     pattern: r".*dies.*".to_string(),
+                    category: Some("Combat".to_string()),
                     fg: Some("#ffffff".to_string()),
                     bg: Some("#ff0000".to_string()),
                     bold: true,
@@ -3150,6 +3262,7 @@ impl Default for Config {
                 },
             ],
             sound: SoundConfig::default(),
+            event_patterns: HashMap::new(),  // Empty by default - user adds via config
             character: None,  // Set at runtime via load_with_options
         }
     }

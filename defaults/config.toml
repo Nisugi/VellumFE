@@ -132,3 +132,65 @@ enemies = { pattern = "Sihtric|Ehria|Ayvain|Deddalus|Daluthas", fg = "#ffffff", 
 enabled = true          # Enable/disable all sounds
 volume = 0.7            # Master volume (0.0 to 1.0)
 cooldown_ms = 500       # Cooldown between same sound plays (milliseconds)
+
+#==============================================================================
+# Event Patterns
+#==============================================================================
+# Configurable patterns for detecting game events and updating UI state
+# Similar to highlights, but triggers state changes instead of just coloring text
+#
+# event_type: "stun", "webbed", "prone", etc.
+# action: "set" (activate), "clear" (deactivate), "increment" (add to value)
+# duration: hardcoded duration in seconds (optional)
+# duration_capture: regex capture group number for extracting duration (optional)
+# duration_multiplier: multiply captured value (e.g., 5.0 for rounds->seconds)
+# enabled: true/false to enable/disable pattern
+
+[event_patterns]
+
+# Primary stun detection - extracts rounds from message and converts to seconds
+[event_patterns.stun_rounds]
+pattern = '^\s*You are stunned for ([0-9]+) rounds?'
+event_type = "stun"
+action = "set"
+duration_capture = 1          # Capture group 1 = number of rounds
+duration_multiplier = 5.0     # 1 round = 5 seconds
+enabled = true
+
+# Shadow Valley exit stun (hardcoded duration from Profanity)
+[event_patterns.stun_shadow_valley]
+pattern = 'Just as you think the falling will never end, you crash through an ethereal barrier'
+event_type = "stun"
+action = "set"
+duration = 16                 # Profanity uses 16.2s
+enabled = true
+
+# Raise dead stun (hardcoded duration from Profanity)
+[event_patterns.stun_raise_dead]
+pattern = 'Your surroundings grow dim\.\.\.you lapse into a state of awareness only'
+event_type = "stun"
+action = "set"
+duration = 31                 # Profanity uses 30.6s
+enabled = true
+
+# Stun recovery message
+[event_patterns.stun_recovery]
+pattern = 'You recover from being stunned\.'
+event_type = "stun"
+action = "clear"
+enabled = true
+
+# Example: Web entanglement (future - requires indicator support)
+# [event_patterns.web_trapped]
+# pattern = 'You become entangled in a mass of sticky webbing!'
+# event_type = "webbed"
+# action = "set"
+# duration = 5
+# enabled = false
+
+# Example: Knocked down (future - requires indicator support)
+# [event_patterns.knocked_down]
+# pattern = 'You are knocked to the ground!'
+# event_type = "prone"
+# action = "set"
+# enabled = false

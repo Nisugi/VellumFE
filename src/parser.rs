@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::collections::HashMap;
 use crate::ui::{SpanType, LinkData};
+use crate::config::EventAction;
 
 #[derive(Debug, Clone)]
 pub enum ParsedElement {
@@ -87,6 +88,11 @@ pub enum ParsedElement {
         id: String,                              // Correlation ID (counter)
         coords: Vec<(String, Option<String>)>,  // List of (coord, optional noun) pairs from <mi> tags
     },
+    Event {
+        event_type: String,  // "stun", "webbed", "prone", etc.
+        action: EventAction, // Set/Clear/Increment
+        duration: u32,       // Duration in seconds (for countdowns)
+    },
 }
 
 // Color/style tracking for nested tags
@@ -124,19 +130,46 @@ pub struct XmlParser {
     // Menu tracking
     current_menu_id: Option<String>,  // ID of menu being parsed
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
+
+    // Event pattern matching
+    event_matchers: Vec<(Regex, crate::config::EventPattern)>,  // Compiled regexes + patterns
 }
 
 impl XmlParser {
     pub fn new() -> Self {
-        Self::with_presets(vec![])
+        Self::with_presets(vec![], HashMap::new())
     }
 
-    pub fn with_presets(preset_list: Vec<(String, Option<String>, Option<String>)>) -> Self {
+    pub fn with_presets(
+        preset_list: Vec<(String, Option<String>, Option<String>)>,
+        event_patterns: HashMap<String, crate::config::EventPattern>,
+    ) -> Self {
         let mut presets = HashMap::new();
 
         // Load presets from config
         for (id, fg, bg) in preset_list {
             presets.insert(id, (fg, bg));
+        }
+
+        // Compile event pattern regexes
+        let mut event_matchers = Vec::new();
+        for (name, pattern) in event_patterns {
+            if !pattern.enabled {
+                continue;
+            }
+
+            match Regex::new(&pattern.pattern) {
+                Ok(regex) => {
+                    event_matchers.push((regex, pattern));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Invalid event pattern '{}': {}",
+                        name,
+                        e
+                    );
+                }
+            }
         }
 
         Self {
@@ -151,6 +184,7 @@ impl XmlParser {
             current_link_data: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
+            event_matchers,
         }
     }
 
@@ -225,9 +259,7 @@ impl XmlParser {
         }
 
         // Flush any remaining text
-        if !text_buffer.is_empty() {
-            elements.push(self.create_text_element(text_buffer));
-        }
+        self.flush_text_with_events(text_buffer, &mut elements);
 
         elements
     }
@@ -243,13 +275,13 @@ impl XmlParser {
 
         // Flush before opening new colors (so old styled text is emitted with old colors)
         if color_opening && !text_buffer.is_empty() {
-            elements.push(self.create_text_element(text_buffer.clone()));
+            self.flush_text_with_events(text_buffer.clone(), elements);
             text_buffer.clear();
         }
 
         // Flush before closing colors (so text gets the color before we pop it)
         if color_closing && !text_buffer.is_empty() {
-            elements.push(self.create_text_element(text_buffer.clone()));
+            self.flush_text_with_events(text_buffer.clone(), elements);
             text_buffer.clear();
         }
 
@@ -265,7 +297,7 @@ impl XmlParser {
         } else if tag.starts_with("<style ") {
             // Flush before style change
             if !text_buffer.is_empty() {
-                elements.push(self.create_text_element(text_buffer.clone()));
+                self.flush_text_with_events(text_buffer.clone(), elements);
                 text_buffer.clear();
             }
             self.handle_style(tag);
@@ -281,13 +313,13 @@ impl XmlParser {
             // These are for separate windows we're not implementing yet
         } else if tag.starts_with("<pushStream ") {
             if !text_buffer.is_empty() {
-                elements.push(self.create_text_element(text_buffer.clone()));
+                self.flush_text_with_events(text_buffer.clone(), elements);
                 text_buffer.clear();
             }
             self.handle_push_stream(tag, elements);
         } else if tag.starts_with("<popStream") || tag == "</component>" {
             if !text_buffer.is_empty() {
-                elements.push(self.create_text_element(text_buffer.clone()));
+                self.flush_text_with_events(text_buffer.clone(), elements);
                 text_buffer.clear();
             }
             elements.push(ParsedElement::StreamPop);
@@ -875,6 +907,56 @@ impl XmlParser {
             .replace("&amp;", "&")
             .replace("&quot;", "\"")
             .replace("&apos;", "'")
+    }
+
+    /// Flush text buffer and check for event patterns
+    fn flush_text_with_events(&self, text: String, elements: &mut Vec<ParsedElement>) {
+        if text.is_empty() {
+            return;
+        }
+
+        // Check for event patterns on the text
+        let event_elements = self.check_event_patterns(&text);
+        elements.extend(event_elements);
+
+        // Add the text element itself
+        elements.push(self.create_text_element(text));
+    }
+
+    /// Check text against event patterns and return any matching events
+    fn check_event_patterns(&self, text: &str) -> Vec<ParsedElement> {
+        let mut events = Vec::new();
+
+        for (regex, pattern) in &self.event_matchers {
+            if let Some(captures) = regex.captures(text) {
+                let mut duration = pattern.duration;
+
+                // Extract duration from capture group if specified
+                if let Some(group_idx) = pattern.duration_capture {
+                    if let Some(capture) = captures.get(group_idx) {
+                        if let Ok(captured_value) = capture.as_str().parse::<f32>() {
+                            // Apply multiplier (e.g., rounds to seconds)
+                            duration = (captured_value * pattern.duration_multiplier) as u32;
+                        }
+                    }
+                }
+
+                tracing::debug!(
+                    "Event pattern '{}' matched: '{}' (duration: {}s)",
+                    pattern.pattern,
+                    text,
+                    duration
+                );
+
+                events.push(ParsedElement::Event {
+                    event_type: pattern.event_type.clone(),
+                    action: pattern.action.clone(),
+                    duration,
+                });
+            }
+        }
+
+        events
     }
 
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {

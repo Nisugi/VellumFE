@@ -75,10 +75,20 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Decodes HTML entities (`&gt;`, `&lt;`, etc.)
 
 **Event Loop:**
-- Terminal events polled with 100ms timeout
+- Terminal events polled with configurable timeout (default 16ms for ~60 FPS)
+- Poll timeout adjustable via `poll_timeout_ms` setting (lower = higher FPS, higher CPU usage)
 - Server messages processed via mpsc channel (non-blocking `try_recv`)
 - UI redrawn every frame with window layouts recalculated
 - Mouse drag operations (resize/move) track delta from last position
+
+**InputMode Pattern:**
+- `InputMode` enum tracks current input mode (Normal, Search, HighlightForm, KeybindForm, SettingsEditor, HighlightBrowser, WindowEditor)
+- Single source of truth for what mode the app is in
+- All popup editors use InputMode to manage state (prevents multiple editors open at once)
+- Command input hidden when popup editor is active (InputMode != Normal/Search)
+- Keyboard and mouse events routed based on InputMode
+- Esc key in any editor returns to Normal mode
+- Uniform behavior: all popups draggable, black background, cyan border
 
 ### Critical Implementation Details
 
@@ -298,6 +308,83 @@ Context menu widget for clickable links. Contains:
 - Clicking a tab clears its unread status
 - Customizable colors for active, inactive, and unread tabs
 
+### src/ui/settings_editor.rs
+Settings editor widget for all configuration values. Contains:
+- `SettingsEditor` - Popup editor with category grouping and keyboard/mouse navigation
+- `SettingItem` - Individual setting with category, key, display name, value, description, editable flag
+- `SettingValue` - Enum for different value types (String, Number, Float, Boolean, Color)
+- `with_items()` - Create editor with settings list
+- `previous()` / `next()` / `page_up()` / `page_down()` - Navigation
+- `start_edit()` - Enter edit mode (or no-op for booleans)
+- `toggle_boolean()` - Toggle boolean values (updates internal state)
+- `finish_edit()` - Complete edit and return new value
+- `handle_mouse()` - Mouse drag support for moving popup
+- `render()` - Draws popup with black background, cyan border, category headers
+- Popup positioned at (10, 2) with 70x25 size, draggable by title bar
+- Boolean values display as `[✓]` / `[ ]` checkboxes
+- Preset colors use "fg bg" format (e.g., `#9BA2B2 #395573` or `#53a684 -`)
+- Real-time validation for hex colors, port ranges, volume, poll timeout
+- Changes save immediately to config file and refresh display
+
+### src/ui/highlight_browser.rs
+Highlight browser widget for viewing and managing highlights. Contains:
+- `HighlightBrowser` - Popup browser with category grouping and color/sound indicators
+- `HighlightEntry` - Display entry with name, pattern, category, colors, has_sound
+- `new()` - Create browser from HashMap of highlights
+- `previous()` / `next()` / `page_up()` / `page_down()` - Navigation
+- `get_selected()` - Returns currently selected highlight name
+- `handle_mouse()` - Mouse drag support for moving popup
+- `render()` - Draws popup with category headers in yellow/bold
+- Groups highlights by category with sorted display
+- Shows color preview `[#RRGGBB]` for fg/bg colors
+- Shows ♫ indicator for highlights with sounds
+- Popup positioned at (10, 2), draggable by title bar
+
+### src/ui/highlight_form.rs
+Highlight form widget for creating/editing highlights. Contains:
+- `HighlightFormWidget` - Popup form with text fields, checkboxes, buttons
+- `FormMode` - Create or Edit(name) mode
+- `FormResult` - Save, Delete, or Cancel result
+- `new()` - Create form for new highlight
+- `new_edit()` / `with_pattern()` - Create form for editing existing highlight
+- `input()` - Handle keyboard input
+- `handle_mouse()` - Mouse drag support for moving popup
+- `render()` - Draws popup with black background, cyan border
+- Fields: Name, Pattern (regex), Category, FG Color, BG Color, Bold, Color Entire Line, Fast Parse, Sound File, Volume
+- Tab/Shift+Tab navigation between fields
+- Color preview boxes for fg/bg colors
+- Popup positioned at (10, 2) with 62x40 size, draggable by title bar
+
+### src/ui/keybind_form.rs
+Keybind form widget for creating/editing keybinds. Contains:
+- `KeybindFormWidget` - Popup form with text fields, radio buttons, dropdown
+- `FormMode` - Create or Edit mode
+- `KeybindFormResult` - Save, Delete, or Cancel result
+- `KeybindActionType` - Action (built-in) or Macro (text)
+- `new()` - Create form for new keybind
+- `new_edit()` - Create form for editing existing keybind
+- `input()` - Handle keyboard input
+- `handle_mouse()` - Mouse drag support for moving popup
+- `render()` - Draws popup with black background, cyan border
+- Fields: Key Combo, Action Type (radio buttons), Action/Macro field
+- Action dropdown with 23 built-in actions
+- Popup positioned at (10, 2) with 80x25 size, draggable by title bar
+
+### src/ui/window_editor_v2.rs
+Window editor widget for creating/editing windows. Contains:
+- `WindowEditor` - Comprehensive popup editor for all window types
+- `EditorMode` - SelectingWindow, Editing, or Dropdown mode
+- `WindowEditorResult` - Save or Cancel result
+- `open_for_window()` - Open in window selection mode
+- `open_for_new_window()` - Open for creating new window
+- `load_window()` - Load window for editing
+- `handle_key()` - Handle keyboard input (uses ratatui KeyEvent)
+- `handle_mouse()` - Mouse drag support for moving popup
+- `render()` - Draws popup with widget-specific fields
+- Dynamic field display based on widget_type
+- Supports all widget types: text, progress, countdown, tabbed, indicator, compass, injury_doll, hands, dashboard, active_effects
+- Popup uses `InputMode::WindowEditor` for state management
+
 ## Configuration
 
 **Directory Structure:**
@@ -414,6 +501,53 @@ stream = "whisper"
 - `.savelayout [name]` - Save current layout (default: "default")
 - `.loadlayout [name]` - Load saved layout
 - `.layouts` - List saved layouts
+
+### Popup Editors
+All popup editors (Settings, Highlights, Keybinds, Windows) follow the same pattern:
+- Draggable via title bar (click and drag)
+- Black background with cyan border
+- Use `InputMode` enum to manage state (only one editor open at a time)
+- Hide command input when open
+- `Esc` closes the editor
+
+**Settings Editor:**
+- `.settings` / `.config` - Open settings editor
+  - Navigate: `↑/↓` arrows, `PgUp/PgDn` for pages
+  - Edit/Toggle: `Enter` or `Space`
+  - Categories: Connection, UI, Sound, Presets, Spells, Prompts
+  - All changes save immediately to config file
+  - Boolean settings show as `[✓]` / `[ ]` and toggle on Enter/Space
+  - Preset colors use format: `#RRGGBB #RRGGBB` (fg bg), use `-` for no color
+  - Validation: Hex colors, port ranges (1-65535), volume (0.0-1.0), poll timeout (1-1000ms)
+
+**Highlight Browser:**
+- `.highlights` / `.listhl` - Open highlight browser
+  - Navigate: `↑/↓` arrows, `PgUp/PgDn` for pages
+  - Edit: `Enter` on selected highlight
+  - Delete: `Delete` key on selected highlight
+  - Groups highlights by category with yellow headers
+  - Shows color preview `[#RRGGBB]` and sound indicator ♫
+  - Sorts by category then name
+
+**Highlight Form:**
+- `.addhl` - Add new highlight
+- Opens automatically when editing from browser
+  - Fields: Name, Pattern (regex), Category, FG Color, BG Color, Bold, Color Entire Line, Fast Parse, Sound File, Volume
+  - Tab/Shift+Tab to navigate fields
+  - Category field enables grouping in browser
+
+**Keybind Form:**
+- `.addkeybind` - Add new keybind
+  - Fields: Key Combo, Action Type (Action/Macro), Action/Macro Text
+  - Tab/Shift+Tab to navigate fields
+  - Action dropdown for built-in actions
+
+**Window Editor:**
+- `.editwindow [name]` - Edit existing window
+- `.addwindow` / `.newwindow` - Create new window
+- `.editinput` - Edit command input box
+  - Widget-specific fields displayed dynamically
+  - Comprehensive window configuration
 
 ## Common Development Patterns
 

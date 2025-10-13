@@ -441,10 +441,15 @@ pub struct WindowManager {
     config: Vec<WindowConfig>,
     pub stream_map: HashMap<String, String>, // stream name -> window name (public for routing)
     highlights: HashMap<String, crate::config::HighlightPattern>, // Highlight patterns for text windows
+    global_countdown_icon: String,  // Global default countdown icon
 }
 
 impl WindowManager {
-    pub fn new(configs: Vec<WindowConfig>, highlights: HashMap<String, crate::config::HighlightPattern>) -> Self {
+    pub fn new(
+        configs: Vec<WindowConfig>,
+        highlights: HashMap<String, crate::config::HighlightPattern>,
+        global_countdown_icon: String,
+    ) -> Self {
         let mut windows = HashMap::new();
         let mut stream_map = HashMap::new();
 
@@ -480,11 +485,10 @@ impl WindowManager {
                     countdown.set_transparent_background(config.transparent_background);
                     countdown.set_content_align(config.content_align.clone());
 
-                    // Set countdown icon if specified
-                    if let Some(ref icon_str) = config.countdown_icon {
-                        if let Some(icon_char) = icon_str.chars().next() {
-                            countdown.set_icon(icon_char);
-                        }
+                    // Set countdown icon: use window-specific if set, otherwise global default
+                    let icon_str = config.countdown_icon.as_ref().unwrap_or(&global_countdown_icon);
+                    if let Some(icon_char) = icon_str.chars().next() {
+                        countdown.set_icon(icon_char);
                     }
 
                     Widget::Countdown(countdown)
@@ -763,6 +767,7 @@ impl WindowManager {
             config: configs,
             stream_map,
             highlights,
+            global_countdown_icon,
         }
     }
 
@@ -905,11 +910,10 @@ impl WindowManager {
                         countdown.set_transparent_background(config.transparent_background);
                         countdown.set_content_align(config.content_align.clone());
 
-                        // Set countdown icon if specified
-                        if let Some(ref icon_str) = config.countdown_icon {
-                            if let Some(icon_char) = icon_str.chars().next() {
-                                countdown.set_icon(icon_char);
-                            }
+                        // Set countdown icon: use window-specific if set, otherwise global default
+                        let icon_str = config.countdown_icon.as_ref().unwrap_or(&self.global_countdown_icon);
+                        if let Some(icon_char) = icon_str.chars().next() {
+                            countdown.set_icon(icon_char);
                         }
 
                         Widget::Countdown(countdown)

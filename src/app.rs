@@ -34,6 +34,9 @@ enum InputMode {
     Search,   // Search mode (typing search query)
     HighlightForm,  // Highlight management form
     KeybindForm,  // Keybind management form
+    SettingsEditor,  // Settings editor form
+    HighlightBrowser,  // Highlight browser
+    WindowEditor,  // Window configuration editor
 }
 
 pub struct App {
@@ -71,6 +74,8 @@ pub struct App {
     menu_categories: HashMap<String, Vec<crate::ui::MenuItem>>,  // Cached categories for submenus
     drag_state: Option<DragState>,  // Active drag operation (None when not dragging)
     window_editor: crate::ui::WindowEditor,  // Window configuration editor
+    settings_editor: Option<crate::ui::SettingsEditor>,  // Settings editor (None when not shown)
+    highlight_browser: Option<crate::ui::HighlightBrowser>,  // Highlight browser (None when not shown)
 }
 
 /// Drag and drop state
@@ -127,7 +132,9 @@ impl App {
 
         debug!("Loaded {} prompt color mappings:", config.ui.prompt_colors.len());
         for pc in &config.ui.prompt_colors {
-            debug!("  '{}' -> {}", pc.character, pc.color);
+            let fg = pc.fg.as_ref().or(pc.color.as_ref()).map(|s| s.as_str()).unwrap_or("none");
+            let bg = pc.bg.as_ref().map(|s| s.as_str()).unwrap_or("none");
+            debug!("  '{}' -> fg: {}, bg: {}", pc.character, fg, bg);
         }
 
         // Convert window configs from layout
@@ -252,10 +259,14 @@ impl App {
         };
 
         Ok(Self {
-            window_manager: WindowManager::new(window_configs, config.highlights.clone()),
+            window_manager: WindowManager::new(
+                window_configs,
+                config.highlights.clone(),
+                config.ui.countdown_icon.clone(),
+            ),
             command_input,
             search_input: CommandInput::new(50),  // Smaller history for search
-            parser: XmlParser::with_presets(presets),
+            parser: XmlParser::with_presets(presets, config.event_patterns.clone()),
             keybind_map,
             config,
             layout,
@@ -286,6 +297,8 @@ impl App {
             menu_categories: HashMap::new(),  // No cached categories initially
             drag_state: None,  // No drag operation initially
             window_editor: crate::ui::WindowEditor::new(),  // Initialize window editor
+            settings_editor: None,  // Settings editor not shown initially
+            highlight_browser: None,  // Highlight browser not shown initially
         })
     }
 
@@ -958,6 +971,7 @@ impl App {
                     tab_unread_color: None,
                     tab_unread_prefix: None,
                     hand_icon: None,
+                    countdown_icon: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1035,6 +1049,7 @@ impl App {
                     tab_unread_color: Some("#ffffff".to_string()),
                     tab_unread_prefix: Some("* ".to_string()),
                     hand_icon: None,
+                    countdown_icon: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1326,17 +1341,20 @@ impl App {
 
                 // Open window editor
                 self.window_editor.open_for_window(window_names, selected_window);
+                self.input_mode = InputMode::WindowEditor;
                 self.add_system_message("Window editor opened - select window to edit");
             }
             "addwindow" | "newwindow" => {
                 // Open window editor for new window
                 self.window_editor.open_for_new_window();
+                self.input_mode = InputMode::WindowEditor;
                 self.add_system_message("Window editor opened - select widget type");
             }
             "editinput" | "editcommandbox" => {
                 // Convert command input config to window def for editing
                 let window_def = self.layout.command_input.to_window_def();
                 self.window_editor.load_window(window_def);
+                self.input_mode = InputMode::WindowEditor;
                 self.add_system_message("Editing command input box");
             }
             "lockwindows" | "lockall" => {
@@ -1848,12 +1866,8 @@ impl App {
                 }
             }
             "listhighlights" | "listhl" | "highlights" => {
-                if self.config.highlights.is_empty() {
-                    self.add_system_message("No highlights configured");
-                } else {
-                    let names: Vec<_> = self.config.highlights.keys().collect();
-                    self.add_system_message(&format!("{} highlights: {}", names.len(), names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
-                }
+                // Open highlight browser
+                self.open_highlight_browser();
             }
             "testhighlight" | "testhl" => {
                 if parts.len() < 3 {
@@ -1971,6 +1985,10 @@ impl App {
                     names.sort();
                     self.add_system_message(&format!("{} keybinds: {}", count, names.join(", ")));
                 }
+            }
+            "settings" | "config" => {
+                // Open settings editor with all config values
+                self.open_settings_editor();
             }
             "testmenu" => {
                 // Test command: .testmenu <exist_id> [noun]
@@ -2245,6 +2263,53 @@ impl App {
     }
 
     /// Format a category code into a display name
+    /// Handle event pattern matches (stun, webbed, etc.)
+    fn handle_event(&mut self, event_type: &str, action: crate::config::EventAction, duration: u32) {
+        use crate::config::EventAction;
+
+        match event_type {
+            "stun" => {
+                match action {
+                    EventAction::Set => {
+                        if duration > 0 {
+                            // Find stuntime countdown widget and set it
+                            if let Some(window) = self.window_manager.get_window("stuntime") {
+                                // Calculate end time: current time + duration
+                                let end_time = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs() + duration as u64;
+
+                                window.set_countdown(end_time);
+                                tracing::debug!("Set stun countdown to {}s (end_time: {})", duration, end_time);
+                            } else {
+                                tracing::warn!("Stun event matched but no 'stuntime' window found");
+                            }
+                        }
+                    }
+                    EventAction::Clear => {
+                        // Clear stun countdown
+                        if let Some(window) = self.window_manager.get_window("stuntime") {
+                            window.set_countdown(0);
+                            tracing::debug!("Cleared stun countdown");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Future: Handle other event types (webbed, prone, etc.)
+            "webbed" | "prone" | "kneeling" | "sitting" | "hidden" | "invisible" | "silenced" => {
+                tracing::debug!("Event type '{}' matched but not yet implemented", event_type);
+                // TODO: Set indicator state when indicator support is added
+            }
+
+            _ => {
+                tracing::debug!("Unknown event type: {}", event_type);
+            }
+        }
+    }
+
     fn format_category_name(cat: &str) -> String {
         // Category format: "0", "1", "5_roleplay", "6_combat maneuvers", "9_challenge", etc.
         if let Some((_num, name)) = cat.split_once('_') {
@@ -2406,8 +2471,8 @@ impl App {
                         // Render search input with prompt
                         self.render_search_input(layout.input_area, f.buffer_mut());
                     }
-                    InputMode::HighlightForm | InputMode::KeybindForm => {
-                        // Hide command input when form is open
+                    InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::WindowEditor => {
+                        // Hide command input when form/browser/editor is open
                     }
                     _ => {
                         self.command_input.render(layout.input_area, f.buffer_mut());
@@ -2424,8 +2489,18 @@ impl App {
                     form.render(f.area(), f.buffer_mut());
                 }
 
+                // Render settings editor as popup (if open)
+                if let Some(ref mut editor) = self.settings_editor {
+                    editor.render(f.area(), f.buffer_mut());
+                }
+
+                // Render highlight browser as popup (if open)
+                if let Some(ref mut browser) = self.highlight_browser {
+                    browser.render(f.area(), f.buffer_mut());
+                }
+
                 // Render window editor as popup (if open)
-                if self.window_editor.active {
+                if self.input_mode == InputMode::WindowEditor {
                     self.window_editor.render(f.area(), f.buffer_mut());
                 }
 
@@ -2457,8 +2532,8 @@ impl App {
             // Record frame completion
             self.perf_stats.record_frame();
 
-            // Handle events with timeout
-            if event::poll(std::time::Duration::from_millis(100))? {
+            // Handle events with timeout (configurable via poll_timeout_ms setting)
+            if event::poll(std::time::Duration::from_millis(self.config.ui.poll_timeout_ms))? {
                 let event_start = std::time::Instant::now();
                 match event::read()? {
                     Event::Key(key) => {
@@ -2715,8 +2790,29 @@ impl App {
             return self.handle_keybind_form_input(key, modifiers);
         }
 
+        // In SettingsEditor mode, handle in the editor directly (except Ctrl+C to quit)
+        if self.input_mode == InputMode::SettingsEditor {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the editor
+            return self.handle_settings_editor_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::HighlightBrowser {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the browser
+            return self.handle_highlight_browser_input(key, modifiers);
+        }
+
         // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
-        if self.window_editor.active {
+        if self.input_mode == InputMode::WindowEditor {
             // Allow Ctrl+C to quit
             if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
                 self.running = false;
@@ -2800,9 +2896,12 @@ impl App {
                                 self.update_window_manager_config();
                             }
                         }
+                        // Close editor
+                        self.input_mode = InputMode::Normal;
                     },
                     WindowEditorResult::Cancel => {
-                        // Just closed, nothing to do
+                        // Close editor
+                        self.input_mode = InputMode::Normal;
                     }
                 }
                 return Ok(());
@@ -2860,6 +2959,9 @@ impl App {
             InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
             InputMode::HighlightForm => unreachable!(), // Handled above
             InputMode::KeybindForm => unreachable!(), // Handled above
+            InputMode::SettingsEditor => unreachable!(), // Handled above
+            InputMode::HighlightBrowser => unreachable!(), // Handled above
+            InputMode::WindowEditor => unreachable!(), // Handled above
         }
     }
 
@@ -3051,6 +3153,175 @@ impl App {
         Ok(())
     }
 
+    fn handle_settings_editor_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        // Collect message to send outside the editor borrow
+        let mut message_to_send: Option<String> = None;
+
+        if let Some(ref mut editor) = self.settings_editor {
+            match (key, modifiers) {
+                (KeyCode::Esc, _) => {
+                    // Close editor without saving
+                    self.settings_editor = None;
+                    self.input_mode = InputMode::Normal;
+                    message_to_send = Some("Settings editor closed".to_string());
+                }
+                (KeyCode::Up, _) => {
+                    editor.previous();
+                }
+                (KeyCode::Down, _) => {
+                    editor.next();
+                }
+                (KeyCode::PageUp, _) => {
+                    editor.page_up();
+                }
+                (KeyCode::PageDown, _) => {
+                    editor.page_down();
+                }
+                (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => {
+                    if editor.is_editing() {
+                        // Finish editing and save value
+                        if let Some((idx, new_value)) = editor.finish_edit() {
+                            if let Some(item) = editor.get_item(idx) {
+                                let key = item.key.clone();
+                                let display_name = item.display_name.clone();
+                                drop(editor); // Drop borrow before calling update
+                                if self.update_setting(&key, &new_value) {
+                                    message_to_send = Some(format!("Setting '{}' updated to: {}", display_name, new_value));
+                                    // Refresh the settings editor to show new values
+                                    self.refresh_settings_editor();
+                                } else {
+                                    message_to_send = Some(format!("Failed to update setting '{}'", display_name));
+                                }
+                            }
+                        }
+                    } else {
+                        // Check if it's a boolean - if so, toggle it
+                        if let Some((idx, new_bool)) = editor.toggle_boolean() {
+                            if let Some(item) = editor.get_item(idx) {
+                                let key = item.key.clone();
+                                let display_name = item.display_name.clone();
+                                drop(editor); // Drop borrow before calling update
+                                if self.update_setting(&key, &new_bool.to_string()) {
+                                    message_to_send = Some(format!("Setting '{}' toggled to: {}", display_name, new_bool));
+                                    // Refresh the settings editor to show new values
+                                    self.refresh_settings_editor();
+                                } else {
+                                    message_to_send = Some(format!("Failed to toggle setting '{}'", display_name));
+                                }
+                            }
+                        } else {
+                            // Not a boolean, start editing current item
+                            editor.start_edit();
+                        }
+                    }
+                }
+                (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                    if editor.is_editing() {
+                        editor.handle_edit_input(c);
+                    }
+                }
+                (KeyCode::Backspace, _) => {
+                    if editor.is_editing() {
+                        editor.handle_edit_backspace();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Send message after editor borrow is dropped
+        if let Some(msg) = message_to_send {
+            self.add_system_message(&msg);
+        }
+
+        Ok(())
+    }
+
+    fn handle_highlight_browser_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        let mut message_to_send: Option<String> = None;
+        let mut selected_name: Option<String> = None;
+        let mut delete_name: Option<String> = None;
+
+        if let Some(ref mut browser) = self.highlight_browser {
+            match (key, modifiers) {
+                (KeyCode::Esc, _) => {
+                    // Close browser
+                    self.highlight_browser = None;
+                    self.input_mode = InputMode::Normal;
+                    message_to_send = Some("Highlight browser closed".to_string());
+                }
+                (KeyCode::Up, _) => {
+                    browser.previous();
+                }
+                (KeyCode::Down, _) => {
+                    browser.next();
+                }
+                (KeyCode::PageUp, _) => {
+                    browser.page_up();
+                }
+                (KeyCode::PageDown, _) => {
+                    browser.page_down();
+                }
+                (KeyCode::Enter, _) => {
+                    // Edit selected highlight
+                    if let Some(name) = browser.get_selected() {
+                        selected_name = Some(name.clone());
+                    }
+                }
+                (KeyCode::Delete, _) => {
+                    // Delete selected highlight
+                    if let Some(name) = browser.get_selected() {
+                        delete_name = Some(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle edit action (after browser borrow is dropped)
+        if let Some(name) = selected_name {
+            if let Some(pattern) = self.config.highlights.get(&name).cloned() {
+                // Close browser and open highlight form in edit mode
+                self.highlight_browser = None;
+
+                // Create form with existing pattern
+                let form = crate::ui::HighlightFormWidget::with_pattern(name.clone(), pattern);
+                self.highlight_form = Some(form);
+                self.input_mode = InputMode::HighlightForm;
+                message_to_send = Some(format!("Editing highlight: {}", name));
+            }
+        }
+
+        // Handle delete action (after browser borrow is dropped)
+        if let Some(name) = delete_name {
+            if self.config.highlights.remove(&name).is_some() {
+                // Save config
+                if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                    message_to_send = Some(format!("Failed to save config: {}", e));
+                } else {
+                    // Update window manager with new highlights
+                    self.window_manager.update_highlights(self.config.highlights.clone());
+
+                    // Refresh the browser with updated list
+                    if let Some(ref mut browser) = self.highlight_browser {
+                        *browser = crate::ui::HighlightBrowser::new(&self.config.highlights);
+                    }
+
+                    message_to_send = Some(format!("Deleted highlight: {}", name));
+                }
+            } else {
+                message_to_send = Some(format!("Highlight '{}' not found", name));
+            }
+        }
+
+        // Send message after all borrows are dropped
+        if let Some(msg) = message_to_send {
+            self.add_system_message(&msg);
+        }
+
+        Ok(())
+    }
+
     fn handle_search_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
         match (key, modifiers) {
             (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
@@ -3197,7 +3468,8 @@ impl App {
                         let prompt_color = self.config.ui.prompt_colors
                             .iter()
                             .find(|pc| pc.character == ">")
-                            .and_then(|pc| Self::parse_hex_color(&pc.color))
+                            .and_then(|pc| pc.fg.as_ref().or(pc.color.as_ref()))
+                            .and_then(|color_str| Self::parse_hex_color(color_str))
                             .unwrap_or(Color::DarkGray);
 
                         let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
@@ -3356,7 +3628,8 @@ impl App {
                     let prompt_color = self.config.ui.prompt_colors
                         .iter()
                         .find(|pc| pc.character == ">")
-                        .and_then(|pc| Self::parse_hex_color(&pc.color))
+                        .and_then(|pc| pc.fg.as_ref().or(pc.color.as_ref()))
+                        .and_then(|color_str| Self::parse_hex_color(color_str))
                         .unwrap_or(Color::DarkGray);
 
                     let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
@@ -3409,9 +3682,69 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Window editor drag handling (highest priority)
-                if self.window_editor.active {
+                if self.input_mode == InputMode::WindowEditor {
                     if self.window_editor.handle_mouse(mouse.column, mouse.row, true) {
                         return Ok(());
+                    }
+                }
+
+                // Settings editor drag handling (second highest priority)
+                if self.input_mode == InputMode::SettingsEditor {
+                    if let Some(ref mut editor) = self.settings_editor {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if editor.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight browser drag handling (third highest priority)
+                if self.input_mode == InputMode::HighlightBrowser {
+                    if let Some(ref mut browser) = self.highlight_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if browser.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight form drag handling (fourth highest priority)
+                if self.input_mode == InputMode::HighlightForm {
+                    if let Some(ref mut form) = self.highlight_form {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if form.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Keybind form drag handling (fifth highest priority)
+                if self.input_mode == InputMode::KeybindForm {
+                    if let Some(ref mut form) = self.keybind_form {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if form.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
                     }
                 }
 
@@ -3653,9 +3986,73 @@ impl App {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 // Window editor drag release (highest priority)
-                if self.window_editor.active && self.window_editor.is_dragging {
+                if self.input_mode == InputMode::WindowEditor && self.window_editor.is_dragging {
                     self.window_editor.handle_mouse(mouse.column, mouse.row, false);
                     return Ok(());
+                }
+
+                // Settings editor drag release (second priority)
+                if self.input_mode == InputMode::SettingsEditor {
+                    if let Some(ref mut editor) = self.settings_editor {
+                        if editor.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            editor.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight browser drag release (third priority)
+                if self.input_mode == InputMode::HighlightBrowser {
+                    if let Some(ref mut browser) = self.highlight_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight form drag release (fourth priority)
+                if self.input_mode == InputMode::HighlightForm {
+                    if let Some(ref mut form) = self.highlight_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Keybind form drag release (fifth priority)
+                if self.input_mode == InputMode::KeybindForm {
+                    if let Some(ref mut form) = self.keybind_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
                 }
 
                 // Handle drag and drop completion (highest priority)
@@ -3750,9 +4147,73 @@ impl App {
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 // Window editor dragging (highest priority)
-                if self.window_editor.active && self.window_editor.is_dragging {
+                if self.input_mode == InputMode::WindowEditor && self.window_editor.is_dragging {
                     self.window_editor.handle_mouse(mouse.column, mouse.row, true);
                     return Ok(());
+                }
+
+                // Settings editor dragging (second priority)
+                if self.input_mode == InputMode::SettingsEditor {
+                    if let Some(ref mut editor) = self.settings_editor {
+                        if editor.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            editor.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight browser dragging (third priority)
+                if self.input_mode == InputMode::HighlightBrowser {
+                    if let Some(ref mut browser) = self.highlight_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight form dragging (fourth priority)
+                if self.input_mode == InputMode::HighlightForm {
+                    if let Some(ref mut form) = self.highlight_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Keybind form dragging (fifth priority)
+                if self.input_mode == InputMode::KeybindForm {
+                    if let Some(ref mut form) = self.keybind_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
                 }
 
                 // Handle active drag and drop (highest priority)
@@ -4067,8 +4528,9 @@ impl App {
                                         .iter()
                                         .find(|pc| pc.character == char_str)
                                         .and_then(|pc| {
-                                            debug!("Matched prompt char '{}' to color {}", char_str, pc.color);
-                                            Self::parse_hex_color(&pc.color)
+                                            let fg = pc.fg.as_ref().or(pc.color.as_ref()).map(|s| s.as_str()).unwrap_or("none");
+                                            debug!("Matched prompt char '{}' to fg color {}", char_str, fg);
+                                            pc.fg.as_ref().or(pc.color.as_ref()).and_then(|color_str| Self::parse_hex_color(color_str))
                                         })
                                         .unwrap_or_else(|| {
                                             debug!("No match for prompt char '{}', using default", char_str);
@@ -4383,6 +4845,10 @@ impl App {
                             // Handle menu response
                             self.handle_menu_response(&id, &coords);
                         }
+                        ParsedElement::Event { event_type, action, duration } => {
+                            // Handle event patterns (stun, webbed, etc.)
+                            self.handle_event(&event_type, action, duration);
+                        }
                         _ => {
                             // Other element types don't add visible content
                         }
@@ -4465,6 +4931,8 @@ impl App {
             ".editkeybind".to_string(), ".editkey".to_string(),
             ".deletekeybind".to_string(), ".delkey".to_string(),
             ".listkeybinds".to_string(), ".listkeys".to_string(), ".keybinds".to_string(),
+            // Settings
+            ".settings".to_string(), ".config".to_string(),
             // Debug
             ".randominjuries".to_string(), ".randinjuries".to_string(),
             ".randomcompass".to_string(), ".randcompass".to_string(),
@@ -4556,5 +5024,530 @@ impl App {
             return false;
         }
         self.layout.windows[window_idx].locked
+    }
+
+    /// Open the settings editor with all configuration values
+    fn open_settings_editor(&mut self) {
+        use crate::ui::{SettingsEditor, SettingItem, SettingValue};
+
+        let mut items = Vec::new();
+
+        // Connection settings
+        items.push(SettingItem {
+            category: "Connection".to_string(),
+            key: "host".to_string(),
+            display_name: "Host".to_string(),
+            value: SettingValue::String(self.config.connection.host.clone()),
+            description: Some("Lich server hostname or IP address".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Connection".to_string(),
+            key: "port".to_string(),
+            display_name: "Port".to_string(),
+            value: SettingValue::Number(self.config.connection.port as i64),
+            description: Some("Lich server port number".to_string()),
+            editable: true,
+        });
+
+        // UI settings
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "command_echo_color".to_string(),
+            display_name: "Command Echo Color".to_string(),
+            value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
+            description: Some("Color for echoed commands (hex color code)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "countdown_icon".to_string(),
+            display_name: "Countdown Icon".to_string(),
+            value: SettingValue::String(self.config.ui.countdown_icon.clone()),
+            description: Some("Unicode character for countdown fill (default: \u{f0c8})".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "poll_timeout_ms".to_string(),
+            display_name: "Poll Timeout (ms)".to_string(),
+            value: SettingValue::Number(self.config.ui.poll_timeout_ms as i64),
+            description: Some("Event poll timeout - lower = higher FPS but more CPU (16ms=60fps, 8ms=120fps, 4ms=240fps)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "selection_enabled".to_string(),
+            display_name: "Selection Enabled".to_string(),
+            value: SettingValue::Boolean(self.config.ui.selection_enabled),
+            description: Some("Enable text selection with mouse".to_string()),
+            editable: true,
+        });
+
+        // Sound settings
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "sound_enabled".to_string(),
+            display_name: "Sound Enabled".to_string(),
+            value: SettingValue::Boolean(self.config.sound.enabled),
+            description: Some("Enable sound effects for highlights".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "volume".to_string(),
+            display_name: "Volume".to_string(),
+            value: SettingValue::Float(self.config.sound.volume as f64),
+            description: Some("Master volume (0.0 to 1.0)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "sound_cooldown_ms".to_string(),
+            display_name: "Sound Cooldown (ms)".to_string(),
+            value: SettingValue::Number(self.config.sound.cooldown_ms as i64),
+            description: Some("Minimum milliseconds between sound plays".to_string()),
+            editable: true,
+        });
+
+        // Preset colors (sorted alphabetically) - show as "fg bg" format
+        let mut preset_names: Vec<String> = self.config.presets.keys().cloned().collect();
+        preset_names.sort();
+        for preset_name in preset_names {
+            if let Some(preset) = self.config.presets.get(&preset_name) {
+                let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+                let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+                let display = format!("{} {}", fg, bg);
+                items.push(SettingItem {
+                    category: "Presets".to_string(),
+                    key: format!("preset_{}", preset_name),
+                    display_name: preset_name.clone(),
+                    value: SettingValue::String(display),
+                    description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+                    editable: true,
+                });
+            }
+        }
+
+        // Spell colors
+        for (idx, spell_range) in self.config.spell_colors.iter().enumerate() {
+            let spell_ids = spell_range.spells.iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            items.push(SettingItem {
+                category: "Spells".to_string(),
+                key: format!("spell_color_{}", idx),
+                display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
+                value: SettingValue::Color(spell_range.color.clone()),
+                description: Some(format!("Color for spells: {}", spell_ids)),
+                editable: true,
+            });
+        }
+
+        // Prompt colors
+        for prompt_color in &self.config.ui.prompt_colors {
+            // Migrate legacy color field to fg if needed
+            let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
+            let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+            let display = format!("{} {}", fg, bg);
+            items.push(SettingItem {
+                category: "Prompts".to_string(),
+                key: format!("prompt_{}", prompt_color.character),
+                display_name: format!("Prompt '{}'", prompt_color.character),
+                value: SettingValue::String(display),
+                description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+                editable: true,
+            });
+        }
+
+        let editor = SettingsEditor::with_items(items);
+        self.settings_editor = Some(editor);
+        self.input_mode = InputMode::SettingsEditor;
+        self.add_system_message("Opening settings editor (Up/Down to navigate, Enter to edit, Esc to close)");
+    }
+
+    /// Refresh the settings editor with current config values (preserves scroll position and selection)
+    fn refresh_settings_editor(&mut self) {
+        use crate::ui::{SettingsEditor, SettingItem, SettingValue};
+
+        // Get current position from existing editor
+        let (selected_index, scroll_offset, popup_x, popup_y) = if let Some(ref editor) = self.settings_editor {
+            (editor.get_selected_index(), editor.get_scroll_offset(), editor.popup_x, editor.popup_y)
+        } else {
+            return; // No editor open, nothing to refresh
+        };
+
+        let mut items = Vec::new();
+
+        // Connection settings
+        items.push(SettingItem {
+            category: "Connection".to_string(),
+            key: "host".to_string(),
+            display_name: "Host".to_string(),
+            value: SettingValue::String(self.config.connection.host.clone()),
+            description: Some("Lich server hostname or IP address".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Connection".to_string(),
+            key: "port".to_string(),
+            display_name: "Port".to_string(),
+            value: SettingValue::Number(self.config.connection.port as i64),
+            description: Some("Lich server port number".to_string()),
+            editable: true,
+        });
+
+        // UI settings
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "command_echo_color".to_string(),
+            display_name: "Command Echo Color".to_string(),
+            value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
+            description: Some("Color for echoed commands (hex color code)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "countdown_icon".to_string(),
+            display_name: "Countdown Icon".to_string(),
+            value: SettingValue::String(self.config.ui.countdown_icon.clone()),
+            description: Some("Unicode character for countdown fill (default: \u{f0c8})".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "poll_timeout_ms".to_string(),
+            display_name: "Poll Timeout (ms)".to_string(),
+            value: SettingValue::Number(self.config.ui.poll_timeout_ms as i64),
+            description: Some("Event poll timeout - lower = higher FPS but more CPU (16ms=60fps, 8ms=120fps, 4ms=240fps)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "selection_enabled".to_string(),
+            display_name: "Selection Enabled".to_string(),
+            value: SettingValue::Boolean(self.config.ui.selection_enabled),
+            description: Some("Enable text selection with mouse".to_string()),
+            editable: true,
+        });
+
+        // Sound settings
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "sound_enabled".to_string(),
+            display_name: "Sound Enabled".to_string(),
+            value: SettingValue::Boolean(self.config.sound.enabled),
+            description: Some("Enable sound effects for highlights".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "volume".to_string(),
+            display_name: "Volume".to_string(),
+            value: SettingValue::Float(self.config.sound.volume as f64),
+            description: Some("Master volume (0.0 to 1.0)".to_string()),
+            editable: true,
+        });
+        items.push(SettingItem {
+            category: "Sound".to_string(),
+            key: "sound_cooldown_ms".to_string(),
+            display_name: "Sound Cooldown (ms)".to_string(),
+            value: SettingValue::Number(self.config.sound.cooldown_ms as i64),
+            description: Some("Minimum milliseconds between sound plays".to_string()),
+            editable: true,
+        });
+
+        // Preset colors (sorted alphabetically) - show as "fg bg" format
+        let mut preset_names: Vec<String> = self.config.presets.keys().cloned().collect();
+        preset_names.sort();
+        for preset_name in preset_names {
+            if let Some(preset) = self.config.presets.get(&preset_name) {
+                let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+                let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+                let display = format!("{} {}", fg, bg);
+                items.push(SettingItem {
+                    category: "Presets".to_string(),
+                    key: format!("preset_{}", preset_name),
+                    display_name: preset_name.clone(),
+                    value: SettingValue::String(display),
+                    description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+                    editable: true,
+                });
+            }
+        }
+
+        // Spell colors
+        for (idx, spell_range) in self.config.spell_colors.iter().enumerate() {
+            let spell_ids = spell_range.spells.iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            items.push(SettingItem {
+                category: "Spells".to_string(),
+                key: format!("spell_color_{}", idx),
+                display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
+                value: SettingValue::Color(spell_range.color.clone()),
+                description: Some(format!("Color for spells: {}", spell_ids)),
+                editable: true,
+            });
+        }
+
+        // Prompt colors
+        for prompt_color in &self.config.ui.prompt_colors {
+            // Migrate legacy color field to fg if needed
+            let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
+            let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+            let display = format!("{} {}", fg, bg);
+            items.push(SettingItem {
+                category: "Prompts".to_string(),
+                key: format!("prompt_{}", prompt_color.character),
+                display_name: format!("Prompt '{}'", prompt_color.character),
+                value: SettingValue::String(display),
+                description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+                editable: true,
+            });
+        }
+
+        // Create new editor with updated values but preserve position
+        let mut editor = SettingsEditor::with_items(items);
+        editor.set_selected_index(selected_index);
+        editor.set_scroll_offset(scroll_offset);
+        editor.popup_x = popup_x;
+        editor.popup_y = popup_y;
+        self.settings_editor = Some(editor);
+    }
+
+    /// Open the highlight browser
+    fn open_highlight_browser(&mut self) {
+        use crate::ui::HighlightBrowser;
+
+        let browser = HighlightBrowser::new(&self.config.highlights);
+        self.highlight_browser = Some(browser);
+        self.input_mode = InputMode::HighlightBrowser;
+        self.add_system_message("Opening highlight browser (Up/Down to navigate, Enter to edit, Delete to remove, Esc to close)");
+    }
+
+    /// Validate a setting value
+    fn validate_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "port" => {
+                if let Ok(port) = value.parse::<u16>() {
+                    if port == 0 {
+                        return Err("Port must be between 1 and 65535".to_string());
+                    }
+                    Ok(())
+                } else {
+                    Err("Port must be a valid number".to_string())
+                }
+            }
+            "poll_timeout_ms" => {
+                if let Ok(timeout) = value.parse::<u64>() {
+                    if timeout == 0 {
+                        return Err("Poll timeout must be at least 1ms".to_string());
+                    }
+                    if timeout > 1000 {
+                        return Err("Poll timeout should be less than 1000ms for responsiveness".to_string());
+                    }
+                    Ok(())
+                } else {
+                    Err("Poll timeout must be a valid number".to_string())
+                }
+            }
+            "volume" => {
+                if let Ok(vol) = value.parse::<f32>() {
+                    if vol < 0.0 || vol > 1.0 {
+                        return Err("Volume must be between 0.0 and 1.0".to_string());
+                    }
+                    Ok(())
+                } else {
+                    Err("Volume must be a valid number".to_string())
+                }
+            }
+            // Preset and prompt colors (special "fg bg" format validation)
+            key if key.starts_with("preset_") || key.starts_with("prompt_") => {
+                let parts: Vec<&str> = value.split_whitespace().collect();
+                if parts.len() != 2 {
+                    return Err("Format must be: #RRGGBB #RRGGBB (fg bg) or - for no color".to_string());
+                }
+                for (i, part) in parts.iter().enumerate() {
+                    if *part == "-" {
+                        continue; // "-" is valid for no color
+                    }
+                    if !part.starts_with('#') {
+                        return Err(format!("{} color must start with # or be -", if i == 0 { "Foreground" } else { "Background" }));
+                    }
+                    let hex = &part[1..];
+                    if hex.len() != 6 && hex.len() != 8 {
+                        return Err(format!("{} color must be #RRGGBB or #RRGGBBAA", if i == 0 { "Foreground" } else { "Background" }));
+                    }
+                    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                        return Err(format!("{} color must contain only hex digits", if i == 0 { "Foreground" } else { "Background" }));
+                    }
+                }
+                Ok(())
+            }
+            // Color validation (hex colors for single colors)
+            key if key.contains("color") || key.starts_with("spell_color_") || key.starts_with("prompt_") => {
+                if !value.starts_with('#') {
+                    return Err("Color must start with #".to_string());
+                }
+                let hex = &value[1..];
+                if hex.len() != 6 && hex.len() != 8 {
+                    return Err("Color must be #RRGGBB or #RRGGBBAA format".to_string());
+                }
+                if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err("Color must contain only hex digits (0-9, A-F)".to_string());
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Update a setting by key and save to config file
+    fn update_setting(&mut self, key: &str, value: &str) -> bool {
+        // Validate first
+        if let Err(msg) = self.validate_setting(key, value) {
+            self.add_system_message(&format!("Validation error: {}", msg));
+            return false;
+        }
+
+        let result = match key {
+            // Connection settings
+            "host" => {
+                self.config.connection.host = value.to_string();
+                true
+            }
+            "port" => {
+                if let Ok(port) = value.parse::<u16>() {
+                    self.config.connection.port = port;
+                    true
+                } else {
+                    false
+                }
+            }
+            // UI settings
+            "command_echo_color" => {
+                self.config.ui.command_echo_color = value.to_string();
+                true
+            }
+            "countdown_icon" => {
+                self.config.ui.countdown_icon = value.to_string();
+                true
+            }
+            "poll_timeout_ms" => {
+                if let Ok(timeout) = value.parse::<u64>() {
+                    self.config.ui.poll_timeout_ms = timeout;
+                    true
+                } else {
+                    false
+                }
+            }
+            "selection_enabled" => {
+                if let Ok(enabled) = value.parse::<bool>() {
+                    self.config.ui.selection_enabled = enabled;
+                    true
+                } else {
+                    false
+                }
+            }
+            // Sound settings
+            "sound_enabled" => {
+                if let Ok(enabled) = value.parse::<bool>() {
+                    self.config.sound.enabled = enabled;
+                    true
+                } else {
+                    false
+                }
+            }
+            "volume" => {
+                if let Ok(vol) = value.parse::<f32>() {
+                    self.config.sound.volume = vol;
+                    true
+                } else {
+                    false
+                }
+            }
+            "sound_cooldown_ms" => {
+                if let Ok(cooldown) = value.parse::<u64>() {
+                    self.config.sound.cooldown_ms = cooldown;
+                    true
+                } else {
+                    false
+                }
+            }
+            // Spell colors (key format: "spell_color_<idx>")
+            key if key.starts_with("spell_color_") => {
+                if let Some(idx_str) = key.strip_prefix("spell_color_") {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        if let Some(spell_range) = self.config.spell_colors.get_mut(idx) {
+                            spell_range.color = value.to_string();
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            // Prompt colors (key format: "prompt_<character>", value format: "fg bg")
+            key if key.starts_with("prompt_") => {
+                if let Some(character) = key.strip_prefix("prompt_") {
+                    // Parse "fg bg" format
+                    let parts: Vec<&str> = value.split_whitespace().collect();
+                    if parts.len() == 2 {
+                        if let Some(prompt) = self.config.ui.prompt_colors.iter_mut().find(|p| p.character == character) {
+                            prompt.fg = if parts[0] == "-" { None } else { Some(parts[0].to_string()) };
+                            prompt.bg = if parts[1] == "-" { None } else { Some(parts[1].to_string()) };
+                            prompt.color = None; // Clear legacy field
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        self.add_system_message("Format must be: #RRGGBB #RRGGBB (fg bg), use - for no color");
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            // Preset colors (key format: "preset_<name>", value format: "fg bg" or "- bg" or "fg -")
+            key if key.starts_with("preset_") => {
+                if let Some(preset_name) = key.strip_prefix("preset_") {
+                    // Parse "fg bg" format
+                    let parts: Vec<&str> = value.split_whitespace().collect();
+                    if parts.len() == 2 {
+                        if let Some(preset) = self.config.presets.get_mut(preset_name) {
+                            preset.fg = if parts[0] == "-" { None } else { Some(parts[0].to_string()) };
+                            preset.bg = if parts[1] == "-" { None } else { Some(parts[1].to_string()) };
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        self.add_system_message("Format must be: #RRGGBB #RRGGBB (fg bg), use - for no color");
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if result {
+            // Save config to file
+            if let Err(e) = self.config.save(None) {
+                tracing::error!("Failed to save config: {}", e);
+                return false;
+            }
+        }
+
+        result
     }
 }

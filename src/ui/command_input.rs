@@ -24,6 +24,7 @@ pub struct CommandInput {
     completion_candidates: Vec<String>,  // Current completion candidates
     completion_index: Option<usize>,     // Index of current completion
     completion_prefix: Option<String>,   // Original text before completion started
+    is_user_typed: bool,                 // True if current text was typed by user (not from history)
 }
 
 impl CommandInput {
@@ -42,6 +43,7 @@ impl CommandInput {
             completion_candidates: Vec::new(),
             completion_index: None,
             completion_prefix: None,
+            is_user_typed: false,
         }
     }
 
@@ -66,6 +68,8 @@ impl CommandInput {
         self.cursor_pos += 1;
         // Reset completion state when typing
         self.reset_completion();
+        // Mark as user-typed
+        self.is_user_typed = true;
     }
 
     pub fn delete_char(&mut self) {
@@ -202,6 +206,7 @@ impl CommandInput {
         self.input.clear();
         self.cursor_pos = 0;
         self.history_index = None;
+        self.is_user_typed = false;
     }
 
     pub fn get_input(&self) -> Option<String> {
@@ -252,23 +257,33 @@ impl CommandInput {
             self.input = cmd.clone();
             self.cursor_pos = self.input.chars().count();
             self.history_index = Some(new_index);
+            self.is_user_typed = false;  // Text is now from history
         }
     }
 
     pub fn history_next(&mut self) {
         match self.history_index {
-            None => {}
+            None => {
+                // Not in history navigation - if user typed something, clear it
+                if self.is_user_typed && !self.input.is_empty() {
+                    self.clear();
+                }
+            }
             Some(0) => {
+                // At most recent history entry, go back to empty
                 self.input.clear();
                 self.cursor_pos = 0;
                 self.history_index = None;
+                self.is_user_typed = false;
             }
             Some(idx) => {
+                // Cycle down through history
                 let new_index = idx - 1;
                 if let Some(cmd) = self.history.get(new_index) {
                     self.input = cmd.clone();
                     self.cursor_pos = self.input.chars().count();
                     self.history_index = Some(new_index);
+                    self.is_user_typed = false;
                 }
             }
         }

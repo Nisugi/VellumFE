@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget as RatatuiWidget},
+    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
 };
 use tui_textarea::TextArea;
 
@@ -32,6 +32,13 @@ pub struct KeybindFormWidget {
     status_message: String,
     key_combo_error: Option<String>,
     mode: FormMode,
+
+    // Popup position (for dragging)
+    pub popup_x: u16,
+    pub popup_y: u16,
+    pub is_dragging: bool,
+    pub drag_offset_x: u16,
+    pub drag_offset_y: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +92,11 @@ impl KeybindFormWidget {
             status_message: String::new(),
             key_combo_error: None,
             mode: FormMode::Create,
+            popup_x: 10,
+            popup_y: 2,
+            is_dragging: false,
+            drag_offset_x: 0,
+            drag_offset_y: 0,
         }
     }
 
@@ -273,30 +285,34 @@ impl KeybindFormWidget {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        // Clear the area
-        Clear.render(area, buf);
-
-        // Calculate popup size and position (centered)
-        let popup_width = 80.min(area.width);
-        let popup_height = 25.min(area.height);
-        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        let popup_width = 80;
+        let popup_height = 25;
 
         let popup_area = Rect {
-            x: popup_x,
-            y: popup_y,
-            width: popup_width,
-            height: popup_height,
+            x: self.popup_x,
+            y: self.popup_y,
+            width: popup_width.min(area.width.saturating_sub(self.popup_x)),
+            height: popup_height.min(area.height.saturating_sub(self.popup_y)),
         };
 
-        // Draw popup background
+        // Draw solid black background
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                    cell.set_bg(Color::Black);
+                }
+            }
+        }
+
+        // Draw popup border
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
             .title(match self.mode {
                 FormMode::Create => " Add Keybind ",
                 FormMode::Edit { .. } => " Edit Keybind ",
-            })
-            .style(Style::default().bg(Color::Black));
+            });
         block.render(popup_area, buf);
 
         // Content area (inside borders)
@@ -460,5 +476,50 @@ impl KeybindFormWidget {
             let delete_para = Paragraph::new(delete_text).style(delete_style);
             delete_para.render(Rect { x: x + 24, y, width: 12, height: 1 }, buf);
         }
+    }
+
+    /// Handle mouse events for dragging
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
+        let popup_width = 80;
+        let popup_height = 25;
+
+        let popup_area = Rect {
+            x: self.popup_x,
+            y: self.popup_y,
+            width: popup_width.min(terminal_area.width.saturating_sub(self.popup_x)),
+            height: popup_height.min(terminal_area.height.saturating_sub(self.popup_y)),
+        };
+
+        // Check if click is on title bar (top border, excluding corners)
+        let on_title_bar = row == popup_area.y
+            && col > popup_area.x
+            && col < popup_area.x + popup_area.width - 1;
+
+        if pressed {
+            if on_title_bar && !self.is_dragging {
+                // Start dragging
+                self.is_dragging = true;
+                self.drag_offset_x = col.saturating_sub(self.popup_x);
+                self.drag_offset_y = row.saturating_sub(self.popup_y);
+                return true;
+            } else if self.is_dragging {
+                // Continue dragging
+                let new_x = col.saturating_sub(self.drag_offset_x);
+                let new_y = row.saturating_sub(self.drag_offset_y);
+
+                // Clamp to terminal bounds
+                self.popup_x = new_x.min(terminal_area.width.saturating_sub(popup_width));
+                self.popup_y = new_y.min(terminal_area.height.saturating_sub(popup_height));
+                return true;
+            }
+        } else {
+            // Mouse released
+            if self.is_dragging {
+                self.is_dragging = false;
+                return true;
+            }
+        }
+
+        false
     }
 }

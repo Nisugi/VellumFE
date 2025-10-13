@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Widget as RatatuiWidget},
+    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
 };
 use tui_textarea::TextArea;
 use regex::Regex;
@@ -29,6 +29,7 @@ pub struct HighlightFormWidget {
     // Text input fields (using tui-textarea)
     name: TextArea<'static>,
     pattern: TextArea<'static>,
+    category: TextArea<'static>,
     fg_color: TextArea<'static>,
     bg_color: TextArea<'static>,
     sound: TextArea<'static>,
@@ -40,10 +41,17 @@ pub struct HighlightFormWidget {
     fast_parse: bool,
 
     // Form state
-    focused_field: usize,          // 0-11: which field has focus
+    focused_field: usize,          // 0-12: which field has focus
     status_message: String,
     pattern_error: Option<String>,
     mode: FormMode,
+
+    // Popup position (for dragging)
+    pub popup_x: u16,
+    pub popup_y: u16,
+    pub is_dragging: bool,
+    pub drag_offset_x: u16,
+    pub drag_offset_y: u16,
 }
 
 impl HighlightFormWidget {
@@ -56,6 +64,10 @@ impl HighlightFormWidget {
         let mut pattern = TextArea::default();
         pattern.set_cursor_line_style(Style::default());
         pattern.set_placeholder_text("e.g., You swing.*");
+
+        let mut category = TextArea::default();
+        category.set_cursor_line_style(Style::default());
+        category.set_placeholder_text("e.g., Combat, Loot, Spells");
 
         let mut fg_color = TextArea::default();
         fg_color.set_cursor_line_style(Style::default());
@@ -76,6 +88,7 @@ impl HighlightFormWidget {
         Self {
             name,
             pattern,
+            category,
             fg_color,
             bg_color,
             sound,
@@ -87,6 +100,11 @@ impl HighlightFormWidget {
             status_message: "Ready".to_string(),
             pattern_error: None,
             mode: FormMode::Create,
+            popup_x: 10,
+            popup_y: 2,
+            is_dragging: false,
+            drag_offset_x: 0,
+            drag_offset_y: 0,
         }
     }
 
@@ -101,6 +119,11 @@ impl HighlightFormWidget {
 
         form.pattern = TextArea::from([pattern.pattern.clone()]);
         form.pattern.set_cursor_line_style(Style::default());
+
+        if let Some(ref cat) = pattern.category {
+            form.category = TextArea::from([cat.clone()]);
+            form.category.set_cursor_line_style(Style::default());
+        }
 
         if let Some(ref fg) = pattern.fg {
             form.fg_color = TextArea::from([fg.clone()]);
@@ -130,15 +153,20 @@ impl HighlightFormWidget {
         form
     }
 
+    /// Alias for new_edit - create form in Edit mode with existing highlight
+    pub fn with_pattern(name: String, pattern: HighlightPattern) -> Self {
+        Self::new_edit(name, &pattern)
+    }
+
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 12;
+        self.focused_field = (self.focused_field + 1) % 13;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            11
+            12
         } else {
             self.focused_field - 1
         };
@@ -158,25 +186,25 @@ impl HighlightFormWidget {
                 None
             }
             KeyCode::Esc => Some(FormResult::Cancel),
-            KeyCode::Char(' ') if (4..=6).contains(&self.focused_field) => {
+            KeyCode::Char(' ') if (5..=7).contains(&self.focused_field) => {
                 // Toggle checkboxes
                 match self.focused_field {
-                    4 => self.bold = !self.bold,
-                    5 => self.color_entire_line = !self.color_entire_line,
-                    6 => self.fast_parse = !self.fast_parse,
+                    5 => self.bold = !self.bold,
+                    6 => self.color_entire_line = !self.color_entire_line,
+                    7 => self.fast_parse = !self.fast_parse,
                     _ => {}
                 }
                 None
             }
-            KeyCode::Enter if self.focused_field == 9 => {
+            KeyCode::Enter if self.focused_field == 10 => {
                 // Save button
                 self.try_save()
             }
-            KeyCode::Enter if self.focused_field == 10 => {
+            KeyCode::Enter if self.focused_field == 11 => {
                 // Cancel button
                 Some(FormResult::Cancel)
             }
-            KeyCode::Enter if self.focused_field == 11 => {
+            KeyCode::Enter if self.focused_field == 12 => {
                 // Delete button (only in Edit mode)
                 if let FormMode::Edit(ref name) = self.mode {
                     Some(FormResult::Delete { name: name.clone() })
@@ -197,10 +225,11 @@ impl HighlightFormWidget {
                         self.validate_pattern();
                         result
                     }
-                    2 => self.fg_color.input(input.clone()),
-                    3 => self.bg_color.input(input.clone()),
-                    7 => self.sound.input(input.clone()),
-                    8 => self.sound_volume.input(input.clone()),
+                    2 => self.category.input(input.clone()),
+                    3 => self.fg_color.input(input.clone()),
+                    4 => self.bg_color.input(input.clone()),
+                    8 => self.sound.input(input.clone()),
+                    9 => self.sound_volume.input(input.clone()),
                     _ => false,
                 };
 
@@ -290,8 +319,18 @@ impl HighlightFormWidget {
             }
         };
 
+        let category = {
+            let cat_text = self.category.lines()[0].as_str().trim();
+            if cat_text.is_empty() {
+                None
+            } else {
+                Some(cat_text.to_string())
+            }
+        };
+
         let pattern = HighlightPattern {
             pattern: pattern_text.to_string(),
+            category,
             fg,
             bg,
             bold: self.bold,
@@ -307,21 +346,27 @@ impl HighlightFormWidget {
         })
     }
 
-    /// Render the form as a centered popup
+    /// Render the form as a draggable popup
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        // Clear the area
-        RatatuiWidget::render(Clear, area, buf);
-
-        // Create centered popup - larger now with bordered text fields
         let popup_width = 62;
-        let popup_height = 40;  // Increased from 28 to accommodate bordered fields
+        let popup_height = 40;
 
         let popup_area = Rect {
-            x: area.x + (area.width.saturating_sub(popup_width)) / 2,
-            y: area.y + (area.height.saturating_sub(popup_height)) / 2,
-            width: popup_width.min(area.width),
-            height: popup_height.min(area.height),
+            x: self.popup_x,
+            y: self.popup_y,
+            width: popup_width.min(area.width.saturating_sub(self.popup_x)),
+            height: popup_height.min(area.height.saturating_sub(self.popup_y)),
         };
+
+        // Draw solid black background
+        for y in popup_area.y..popup_area.y + popup_area.height {
+            for x in popup_area.x..popup_area.x + popup_area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                    cell.set_bg(Color::Black);
+                }
+            }
+        }
 
         // Render outer block
         let title = match &self.mode {
@@ -369,34 +414,38 @@ impl HighlightFormWidget {
             y += 1;
         }
 
+        // Category field (height 3)
+        Self::render_text_field(2, focused, "Category:", &mut self.category, area.x, y, area.width, buf);
+        y += 3;
+
         // Foreground color (height 3)
         let fg_line = self.fg_color.lines()[0].to_string();
-        Self::render_text_field(2, focused, "Foreground:", &mut self.fg_color, area.x, y, area.width - 8, buf);
+        Self::render_text_field(3, focused, "Foreground:", &mut self.fg_color, area.x, y, area.width - 8, buf);
         // Color preview box (positioned in middle of the 3-row field)
         self.render_color_preview(&fg_line, area.x + area.width - 6, y + 1, buf);
         y += 3;
 
         // Background color (height 3)
         let bg_line = self.bg_color.lines()[0].to_string();
-        Self::render_text_field(3, focused, "Background:", &mut self.bg_color, area.x, y, area.width - 8, buf);
+        Self::render_text_field(4, focused, "Background:", &mut self.bg_color, area.x, y, area.width - 8, buf);
         // Color preview box (positioned in middle of the 3-row field)
         self.render_color_preview(&bg_line, area.x + area.width - 6, y + 1, buf);
         y += 4;
 
         // Checkboxes (height 1 each)
-        self.render_checkbox(4, "Bold", self.bold, area.x, y, buf);
+        self.render_checkbox(5, "Bold", self.bold, area.x, y, buf);
         y += 1;
-        self.render_checkbox(5, "Color entire line", self.color_entire_line, area.x, y, buf);
+        self.render_checkbox(6, "Color entire line", self.color_entire_line, area.x, y, buf);
         y += 1;
-        self.render_checkbox(6, "Fast parse", self.fast_parse, area.x, y, buf);
+        self.render_checkbox(7, "Fast parse", self.fast_parse, area.x, y, buf);
         y += 2;
 
         // Sound field (height 3)
-        Self::render_text_field(7, focused, "Sound:", &mut self.sound, area.x, y, area.width, buf);
+        Self::render_text_field(8, focused, "Sound:", &mut self.sound, area.x, y, area.width, buf);
         y += 3;
 
         // Sound volume field (height 3) - value 0.0-1.0
-        Self::render_text_field(8, focused, "Volume:", &mut self.sound_volume, area.x, y, 30, buf);
+        Self::render_text_field(9, focused, "Volume:", &mut self.sound_volume, area.x, y, 30, buf);
         y += 4;
 
         // Buttons
@@ -515,7 +564,7 @@ impl HighlightFormWidget {
     /// Render action buttons
     fn render_buttons(&self, x: u16, y: u16, buf: &mut Buffer) {
         // Save button
-        let (save_text, save_style) = if self.focused_field == 9 {
+        let (save_text, save_style) = if self.focused_field == 10 {
             // Focused: inverted colors with bold
             ("[ SAVE ]", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
         } else {
@@ -527,7 +576,7 @@ impl HighlightFormWidget {
         RatatuiWidget::render(save_para, save_area, buf);
 
         // Cancel button
-        let (cancel_text, cancel_style) = if self.focused_field == 10 {
+        let (cancel_text, cancel_style) = if self.focused_field == 11 {
             // Focused: inverted colors with bold
             ("[ CANCEL ]", Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD))
         } else {
@@ -540,7 +589,7 @@ impl HighlightFormWidget {
 
         // Delete button (only in Edit mode)
         if matches!(self.mode, FormMode::Edit(_)) {
-            let (delete_text, delete_style) = if self.focused_field == 11 {
+            let (delete_text, delete_style) = if self.focused_field == 12 {
                 // Focused: inverted colors with bold
                 ("[ DELETE ]", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
             } else {
@@ -551,5 +600,50 @@ impl HighlightFormWidget {
             let delete_area = Rect { x: x + 24, y, width: 11, height: 1 };
             RatatuiWidget::render(delete_para, delete_area, buf);
         }
+    }
+
+    /// Handle mouse events for dragging
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
+        let popup_width = 62;
+        let popup_height = 40;
+
+        let popup_area = Rect {
+            x: self.popup_x,
+            y: self.popup_y,
+            width: popup_width.min(terminal_area.width.saturating_sub(self.popup_x)),
+            height: popup_height.min(terminal_area.height.saturating_sub(self.popup_y)),
+        };
+
+        // Check if click is on title bar (top border, excluding corners)
+        let on_title_bar = row == popup_area.y
+            && col > popup_area.x
+            && col < popup_area.x + popup_area.width - 1;
+
+        if pressed {
+            if on_title_bar && !self.is_dragging {
+                // Start dragging
+                self.is_dragging = true;
+                self.drag_offset_x = col.saturating_sub(self.popup_x);
+                self.drag_offset_y = row.saturating_sub(self.popup_y);
+                return true;
+            } else if self.is_dragging {
+                // Continue dragging
+                let new_x = col.saturating_sub(self.drag_offset_x);
+                let new_y = row.saturating_sub(self.drag_offset_y);
+
+                // Clamp to terminal bounds
+                self.popup_x = new_x.min(terminal_area.width.saturating_sub(popup_width));
+                self.popup_y = new_y.min(terminal_area.height.saturating_sub(popup_height));
+                return true;
+            }
+        } else {
+            // Mouse released
+            if self.is_dragging {
+                self.is_dragging = false;
+                return true;
+            }
+        }
+
+        false
     }
 }
