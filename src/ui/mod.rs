@@ -21,6 +21,10 @@ mod popup_menu;
 mod window_editor_v2;
 mod settings_editor;
 mod highlight_browser;
+mod keybind_browser;
+mod color_picker;
+mod color_palette_browser;
+mod color_form;
 
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
 pub use popup_menu::{PopupMenu, MenuItem};
@@ -53,6 +57,10 @@ pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
 pub use window_editor_v2::{WindowEditor, WindowEditorResult};
 pub use settings_editor::{SettingsEditor, SettingItem, SettingValue};
 pub use highlight_browser::{HighlightBrowser, HighlightEntry};
+pub use keybind_browser::KeybindBrowser;
+pub use color_picker::ColorPicker;
+pub use color_palette_browser::ColorPaletteBrowser;
+pub use color_form::{ColorForm, FormAction as ColorFormAction};
 
 use ratatui::{
     layout::Rect,
@@ -93,13 +101,8 @@ impl UiLayout {
             height: cmd_height.min(area.height),
         };
 
-        // Main area is everything above the command input
-        let main_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: input_row.saturating_sub(area.y),
-        };
+        // Main area is the full terminal area (windows can be placed anywhere, including over command input)
+        let main_area = area;
 
         Self {
             main_area,

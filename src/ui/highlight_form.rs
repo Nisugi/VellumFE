@@ -347,7 +347,7 @@ impl HighlightFormWidget {
     }
 
     /// Render the form as a draggable popup
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         let popup_width = 62;
         let popup_height = 40;
 
@@ -391,11 +391,11 @@ impl HighlightFormWidget {
         };
 
         // Render fields
-        self.render_fields(inner, buf);
+        self.render_fields(inner, buf, config);
     }
 
     /// Render all form fields
-    fn render_fields(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_fields(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         let mut y = area.y;
         let focused = self.focused_field;
 
@@ -422,14 +422,14 @@ impl HighlightFormWidget {
         let fg_line = self.fg_color.lines()[0].to_string();
         Self::render_text_field(3, focused, "Foreground:", &mut self.fg_color, area.x, y, area.width - 8, buf);
         // Color preview box (positioned in middle of the 3-row field)
-        self.render_color_preview(&fg_line, area.x + area.width - 6, y + 1, buf);
+        self.render_color_preview(&fg_line, area.x + area.width - 6, y + 1, buf, config);
         y += 3;
 
         // Background color (height 3)
         let bg_line = self.bg_color.lines()[0].to_string();
         Self::render_text_field(4, focused, "Background:", &mut self.bg_color, area.x, y, area.width - 8, buf);
         // Color preview box (positioned in middle of the 3-row field)
-        self.render_color_preview(&bg_line, area.x + area.width - 6, y + 1, buf);
+        self.render_color_preview(&bg_line, area.x + area.width - 6, y + 1, buf, config);
         y += 4;
 
         // Checkboxes (height 1 each)
@@ -524,7 +524,7 @@ impl HighlightFormWidget {
     }
 
     /// Render color preview box
-    fn render_color_preview(&self, color_text: &str, x: u16, y: u16, buf: &mut Buffer) {
+    fn render_color_preview(&self, color_text: &str, x: u16, y: u16, buf: &mut Buffer, config: &crate::config::Config) {
         let color_text = color_text.trim();
 
         if color_text.is_empty() {
@@ -535,17 +535,21 @@ impl HighlightFormWidget {
             return;
         }
 
-        // Try to parse hex color
-        if let Ok(color) = Self::parse_hex_color(color_text) {
-            let block = Block::default().style(Style::default().bg(color));
-            let area = Rect { x, y, width: 4, height: 1 };
-            RatatuiWidget::render(block, area, buf);
-        } else {
-            // Invalid color
-            let para = Paragraph::new("[ERR]").style(Style::default().fg(Color::Red));
-            let area = Rect { x, y, width: 6, height: 1 };
-            RatatuiWidget::render(para, area, buf);
+        // Resolve color name to hex (or use hex directly)
+        let resolved_color = config.resolve_color(color_text);
+        if let Some(hex_color) = resolved_color {
+            if let Ok(color) = Self::parse_hex_color(&hex_color) {
+                let block = Block::default().style(Style::default().bg(color));
+                let area = Rect { x, y, width: 4, height: 1 };
+                RatatuiWidget::render(block, area, buf);
+                return;
+            }
         }
+
+        // Invalid color
+        let para = Paragraph::new("[ERR]").style(Style::default().fg(Color::Red));
+        let area = Rect { x, y, width: 6, height: 1 };
+        RatatuiWidget::render(para, area, buf);
     }
 
     /// Parse hex color string (#RRGGBB)
@@ -559,6 +563,64 @@ impl HighlightFormWidget {
         let b = u8::from_str_radix(&hex[5..7], 16).map_err(|_| ())?;
 
         Ok(Color::Rgb(r, g, b))
+    }
+
+    fn render_color_field(
+        field_id: usize,
+        focused_field: usize,
+        label: &str,
+        textarea: &mut TextArea,
+        x: u16,
+        y: u16,
+        width: u16,
+        buf: &mut Buffer,
+        config: &crate::config::Config,
+    ) {
+        // Label
+        let label_span = Span::styled(label, Style::default().fg(Color::White));
+        let label_area = Rect { x, y, width: 12, height: 1 };
+        let label_para = Paragraph::new(Line::from(label_span));
+        RatatuiWidget::render(label_para, label_area, buf);
+
+        // Set style based on focus
+        let style = if focused_field == field_id {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        textarea.set_style(style);
+        textarea.set_cursor_style(Style::default().bg(Color::Yellow));
+
+        // Input area - leave space for preview
+        let input_area = Rect {
+            x: x + 12,
+            y,
+            width: width.saturating_sub(17), // Extra space for preview
+            height: 3,
+        };
+
+        RatatuiWidget::render(textarea.widget(), input_area, buf);
+
+        // Draw color preview
+        let color_text = textarea.lines()[0].to_string();
+        if !color_text.is_empty() {
+            // Resolve color name to hex
+            let resolved_color = config.resolve_color(&color_text);
+            if let Some(hex_color) = resolved_color {
+                if let Ok(color) = Self::parse_hex_color(&hex_color) {
+                    // Draw preview block (███) to the right of input
+                    let preview_x = x + width.saturating_sub(4);
+                    for i in 0..3 {
+                        if let Some(cell) = buf.cell_mut((preview_x + i, y + 1)) {
+                            cell.set_char('█');
+                            cell.set_fg(color);
+                            cell.set_bg(Color::Black);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Render action buttons

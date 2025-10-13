@@ -95,12 +95,14 @@ impl Countdown {
     }
 
     /// Get remaining seconds
-    fn remaining_seconds(&self) -> i64 {
-        let now = SystemTime::now()
+    /// Applies server_time_offset to local time to account for clock drift
+    fn remaining_seconds(&self, server_time_offset: i64) -> i64 {
+        let local_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        (self.end_time as i64) - (now as i64)
+            .as_secs() as i64;
+        let adjusted_time = local_time + server_time_offset;
+        (self.end_time as i64) - adjusted_time
     }
 
     /// Parse a hex color string to ratatui Color
@@ -117,16 +119,46 @@ impl Countdown {
         Color::Rgb(r, g, b)
     }
 
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&self, area: Rect, buf: &mut Buffer, server_time_offset: i64) {
         if area.width < 3 || area.height < 1 {
             return;
         }
 
-        let mut block = Block::default();
+        // Determine which borders to show
+        let borders = if self.show_border {
+            crate::config::parse_border_sides(&self.border_sides)
+        } else {
+            ratatui::widgets::Borders::NONE
+        };
 
-        if self.show_border {
-            let borders = crate::config::parse_border_sides(&self.border_sides);
-            block = block.borders(borders);
+        let border_color = self.border_color.as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
+
+        // Check if we only have left/right borders (no top/bottom)
+        let only_horizontal_borders = self.show_border &&
+            (borders.contains(ratatui::widgets::Borders::LEFT) || borders.contains(ratatui::widgets::Borders::RIGHT)) &&
+            !borders.contains(ratatui::widgets::Borders::TOP) &&
+            !borders.contains(ratatui::widgets::Borders::BOTTOM);
+
+        let inner_area: Rect;
+
+        if only_horizontal_borders {
+            // For left/right only borders, we'll manually render them on the content row
+            let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+            let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+            let border_width = (if has_left { 1 } else { 0 }) + (if has_right { 1 } else { 0 });
+
+            inner_area = Rect {
+                x: area.x + (if has_left { 1 } else { 0 }),
+                y: area.y,
+                width: area.width.saturating_sub(border_width),
+                height: area.height,
+            };
+            // We'll render the borders later after content
+        } else if self.show_border {
+            // Use Block widget for all other border combinations
+            let mut block = Block::default().borders(borders);
 
             if let Some(ref style) = self.border_style {
                 use ratatui::widgets::BorderType;
@@ -134,28 +166,20 @@ impl Countdown {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);
             }
 
-            if let Some(ref color_str) = self.border_color {
-                let color = Self::parse_color(color_str);
-                block = block.border_style(Style::default().fg(color));
-            }
-
+            block = block.border_style(Style::default().fg(border_color));
             block = block.title(self.label.as_str());
-        }
 
-        let inner_area = if self.show_border {
-            block.inner(area)
-        } else {
-            area
-        };
-
-        // Render the block first
-        if self.show_border {
+            inner_area = block.inner(area);
             block.render(area, buf);
+        } else {
+            inner_area = area;
         }
 
         if inner_area.width == 0 || inner_area.height == 0 {
@@ -172,7 +196,7 @@ impl Countdown {
             0
         };
 
-        let remaining = self.remaining_seconds().max(0) as u32;
+        let remaining = self.remaining_seconds(server_time_offset).max(0) as u32;
 
         let bar_color = self.bar_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Green);
         let bg_color = self.background_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Reset);
@@ -246,9 +270,32 @@ impl Countdown {
                 }
             }
         }
+
+        // If we have left/right only borders, render them manually on the content row
+        if only_horizontal_borders {
+            let content_y = inner_area.y + row_offset;
+            if content_y < buf.area().height {
+                let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+                let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+
+                // Render left border
+                if has_left && area.x < buf.area().width {
+                    buf[(area.x, content_y)].set_char('│');
+                    buf[(area.x, content_y)].set_fg(border_color);
+                }
+                // Render right border
+                if has_right {
+                    let right_x = area.x + area.width.saturating_sub(1);
+                    if right_x < buf.area().width {
+                        buf[(right_x, content_y)].set_char('│');
+                        buf[(right_x, content_y)].set_fg(border_color);
+                    }
+                }
+            }
+        }
     }
 
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        self.render(area, buf);
+    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool, server_time_offset: i64) {
+        self.render(area, buf, server_time_offset);
     }
 }

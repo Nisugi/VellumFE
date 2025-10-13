@@ -377,14 +377,20 @@ The editor organizes fields into logical sections:
 - **Notes:** Useful for creating borderless edges between windows
 
 #### Border Color
-- **Type:** Text field (hex color)
+- **Type:** Text field
 - **Purpose:** Color for border
-- **Format:** `#RRGGBB` (e.g., `#ff0000` for red)
+- **Format:**
+  - Hex color: `#RRGGBB` (e.g., `#ff0000` for red)
+  - Color name: Named colors from palette (e.g., `red`, `cyan`, `darkblue`)
 - **Default:** Empty (uses terminal default)
 - **Examples:**
-  - `#ffffff` - White
-  - `#00ff00` - Green
-  - `#ff00ff` - Magenta
+  - `#ffffff` - White (hex)
+  - `red` - Red (color name)
+  - `cyan` - Cyan (color name)
+  - `darkblue` - Dark blue (color name)
+- **Notes:**
+  - Use `.colors` to browse available color names
+  - Use `.addcolor` to create custom color names
 
 ---
 
@@ -403,11 +409,20 @@ The editor organizes fields into logical sections:
 - **Notes:** Useful for fixed layouts
 
 #### BG Color
-- **Type:** Text field (hex color)
+- **Type:** Text field
 - **Purpose:** Background color for window content area
-- **Format:** `#RRGGBB`
+- **Format:**
+  - Hex color: `#RRGGBB` (e.g., `#1a1a1a`)
+  - Color name: Named colors from palette (e.g., `navy`, `darkgray`, `black`)
 - **Default:** Empty (uses terminal default)
-- **Notes:** Only used if Transparent BG is unchecked
+- **Examples:**
+  - `#1a1a1a` - Dark gray (hex)
+  - `navy` - Navy blue (color name)
+  - `darkgray` - Dark gray (color name)
+- **Notes:**
+  - Only used if Transparent BG is unchecked
+  - Fills entire content area of the window
+  - Use `.colors` to browse available color names
 
 #### Content Align
 - **Type:** Dropdown

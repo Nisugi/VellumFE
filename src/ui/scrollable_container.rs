@@ -150,11 +150,94 @@ impl ScrollableContainer {
             return;
         }
 
-        let mut block = Block::default();
+        // Determine which borders to show
+        let borders = if self.show_border {
+            crate::config::parse_border_sides(&self.border_sides)
+        } else {
+            ratatui::widgets::Borders::NONE
+        };
 
-        if self.show_border {
-            let borders = crate::config::parse_border_sides(&self.border_sides);
-            block = block.borders(borders);
+        let border_color = self.border_color.as_ref()
+            .map(|c| ProgressBar::parse_color(c))
+            .unwrap_or(ratatui::style::Color::White);
+
+        // Check if we have partial borders (not all four sides)
+        let has_top = borders.contains(ratatui::widgets::Borders::TOP);
+        let has_bottom = borders.contains(ratatui::widgets::Borders::BOTTOM);
+        let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+        let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+        let is_partial_borders = self.show_border && !(has_top && has_bottom && has_left && has_right);
+
+        let inner_area: Rect;
+
+        if is_partial_borders {
+            // For partial borders, we'll manually render them
+            // Calculate inner area manually
+            let top_offset = if has_top { 1 } else { 0 };
+            let bottom_offset = if has_bottom { 1 } else { 0 };
+            let left_offset = if has_left { 1 } else { 0 };
+            let right_offset = if has_right { 1 } else { 0 };
+
+            inner_area = Rect {
+                x: area.x + left_offset,
+                y: area.y + top_offset,
+                width: area.width.saturating_sub(left_offset + right_offset),
+                height: area.height.saturating_sub(top_offset + bottom_offset),
+            };
+
+            // Render top border with title if enabled
+            if has_top {
+                // Draw top border line
+                for x in area.x..area.x + area.width {
+                    if x < buf.area().width {
+                        let ch = if x == area.x && has_left {
+                            '┌'  // Top-left corner
+                        } else if x == area.x + area.width - 1 && has_right {
+                            '┐'  // Top-right corner
+                        } else if x > area.x && has_left && x == area.x + left_offset - 1 {
+                            '┬'  // T-junction (shouldn't happen with this logic)
+                        } else {
+                            '─'  // Horizontal line
+                        };
+                        buf[(x, area.y)].set_char(ch);
+                        buf[(x, area.y)].set_fg(border_color);
+                    }
+                }
+
+                // Render title on top border
+                let title_text = format!(" {} ", self.label);
+                let title_start = area.x + 2;  // Start 2 chars from left edge
+                for (i, ch) in title_text.chars().enumerate() {
+                    let x = title_start + i as u16;
+                    if x < area.x + area.width - 1 {
+                        buf[(x, area.y)].set_char(ch);
+                        buf[(x, area.y)].set_fg(border_color);
+                    }
+                }
+            }
+
+            // Render bottom border if enabled
+            if has_bottom {
+                let bottom_y = area.y + area.height - 1;
+                for x in area.x..area.x + area.width {
+                    if x < buf.area().width && bottom_y < buf.area().height {
+                        let ch = if x == area.x && has_left {
+                            '└'  // Bottom-left corner
+                        } else if x == area.x + area.width - 1 && has_right {
+                            '┘'  // Bottom-right corner
+                        } else {
+                            '─'  // Horizontal line
+                        };
+                        buf[(x, bottom_y)].set_char(ch);
+                        buf[(x, bottom_y)].set_fg(border_color);
+                    }
+                }
+            }
+
+            // We'll render left/right borders per content row later
+        } else if self.show_border {
+            // Use Block widget for all borders or no borders
+            let mut block = Block::default().borders(borders);
 
             if let Some(ref style) = self.border_style {
                 use ratatui::widgets::BorderType;
@@ -162,27 +245,20 @@ impl ScrollableContainer {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);
             }
 
-            if let Some(ref color_str) = self.border_color {
-                let color = ProgressBar::parse_color(color_str);
-                block = block.border_style(ratatui::style::Style::default().fg(color));
-            }
-
+            block = block.border_style(ratatui::style::Style::default().fg(border_color));
             block = block.title(self.label.as_str());
-        }
 
-        let inner_area = if self.show_border {
-            block.inner(area)
-        } else {
-            area
-        };
-
-        if self.show_border {
+            inner_area = block.inner(area);
             block.render(area, buf);
+        } else {
+            inner_area = area;
         }
 
         if inner_area.width == 0 || inner_area.height == 0 {
@@ -275,6 +351,27 @@ impl ScrollableContainer {
                 };
 
                 pb.render(row_area, buf);
+            }
+        }
+
+        // If we have partial borders with left/right enabled, render them on all content rows
+        if is_partial_borders && (has_left || has_right) {
+            for y in inner_area.y..inner_area.y + inner_area.height {
+                if y < buf.area().height {
+                    // Render left border
+                    if has_left && area.x < buf.area().width {
+                        buf[(area.x, y)].set_char('│');
+                        buf[(area.x, y)].set_fg(border_color);
+                    }
+                    // Render right border
+                    if has_right {
+                        let right_x = area.x + area.width - 1;
+                        if right_x < buf.area().width {
+                            buf[(right_x, y)].set_char('│');
+                            buf[(right_x, y)].set_fg(border_color);
+                        }
+                    }
+                }
             }
         }
 

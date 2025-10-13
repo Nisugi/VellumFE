@@ -131,6 +131,9 @@ pub struct XmlParser {
     current_menu_id: Option<String>,  // ID of menu being parsed
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
 
+    // Inventory tag tracking (to discard content)
+    in_inv_tag: bool,  // True when inside <inv>...</inv> tags
+
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>,  // Compiled regexes + patterns
 }
@@ -184,6 +187,7 @@ impl XmlParser {
             current_link_data: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
+            in_inv_tag: false,
             event_matchers,
         }
     }
@@ -211,8 +215,8 @@ impl XmlParser {
                     if let Some(tag_end_start) = remaining[tag_start..].find(&end_pattern) {
                         let tag_end = tag_start + tag_end_start + end_pattern.len();
 
-                        // Add text before the paired tag
-                        if tag_start > 0 {
+                        // Add text before the paired tag (unless inside inv tag)
+                        if tag_start > 0 && !self.in_inv_tag {
                             text_buffer.push_str(&remaining[..tag_start]);
                         }
 
@@ -233,8 +237,8 @@ impl XmlParser {
 
             // Find next single XML tag
             if let Some(tag_start) = remaining.find('<') {
-                // Add text before tag to buffer
-                if tag_start > 0 {
+                // Add text before tag to buffer (unless we're inside an inv tag)
+                if tag_start > 0 && !self.in_inv_tag {
                     text_buffer.push_str(&remaining[..tag_start]);
                 }
 
@@ -247,13 +251,17 @@ impl XmlParser {
 
                     remaining = &remaining[tag_start + tag_end + 1..];
                 } else {
-                    // No closing >, treat rest as text
-                    text_buffer.push_str(remaining);
+                    // No closing >, treat rest as text (unless inside inv tag)
+                    if !self.in_inv_tag {
+                        text_buffer.push_str(remaining);
+                    }
                     break;
                 }
             } else {
-                // No more tags, add remaining as text
-                text_buffer.push_str(remaining);
+                // No more tags, add remaining as text (unless inside inv tag)
+                if !self.in_inv_tag {
+                    text_buffer.push_str(remaining);
+                }
                 break;
             }
         }
@@ -347,7 +355,9 @@ impl XmlParser {
             if let Some(id) = Self::extract_attribute(tag, "id") {
                 tracing::debug!("Parser received dialogData id='{}'", id);
             }
+            // Call both handlers to cover all dialogData processing
             self.handle_dialog_data(tag, elements);
+            self.handle_dialogdata(tag, elements);
         } else if tag.starts_with("<progressBar ") {
             tracing::debug!("Parser received progressBar tag: {}", tag);
             self.handle_progressbar(tag, elements);
@@ -355,8 +365,6 @@ impl XmlParser {
             self.handle_label(tag, elements);
         } else if tag.starts_with("<nav ") {
             self.handle_nav(tag, elements);
-        } else if tag.starts_with("<dialogData ") {
-            self.handle_dialogdata(tag, elements);
         } else if tag.starts_with("<d ") {
             self.handle_d_tag(tag);
         } else if tag == "</d>" {
@@ -372,11 +380,27 @@ impl XmlParser {
         } else if tag.starts_with("<mi ") {
             self.handle_menu_item(tag);
         }
+        // Handle inventory tags - need to discard content between <inv> and </inv>
+        else if tag.starts_with("<inv ") {
+            // Flush text before entering inv tag
+            if !text_buffer.is_empty() {
+                self.flush_text_with_events(text_buffer.clone(), elements);
+                text_buffer.clear();
+            }
+            // Set flag to discard content
+            self.in_inv_tag = true;
+        } else if tag == "</inv>" {
+            // Clear text buffer (discard inv content) and clear flag
+            text_buffer.clear();
+            self.in_inv_tag = false;
+        }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ") || tag == "</compDef>" ||
                 tag.starts_with("<streamWindow ") || tag.starts_with("<dropDownBox ") ||
-                tag.starts_with("<skin ") {
-            // Ignore these entirely
+                tag.starts_with("<skin ") ||
+                tag.starts_with("<clearContainer ") ||
+                tag.starts_with("<container ") || tag.starts_with("<exposeContainer ") {
+            // Ignore these entirely (inventory window tags)
         }
     }
 
@@ -679,15 +703,29 @@ impl XmlParser {
         // <dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100' ...
         // Extract blood points if present
         if tag.contains("id='BetrayerPanel'") || tag.contains("id=\"BetrayerPanel\"") {
+            tracing::debug!("Found BetrayerPanel dialogData tag: {}", tag);
             // Look for Blood Points label
             if let Some(bp_start) = tag.find("Blood Points:") {
-                // Extract the number after "Blood Points: "
-                let after_bp = &tag[bp_start + 13..];
+                // Extract the number after "Blood Points: " (skip the colon and space = 14 chars)
+                let after_bp = &tag[bp_start + 14..].trim_start();
+                // Find the end of the number (first non-digit)
                 if let Some(end) = after_bp.find(|c: char| !c.is_ascii_digit()) {
-                    if let Ok(value) = after_bp[..end].trim().parse::<u32>() {
+                    let num_str = &after_bp[..end];
+                    if let Ok(value) = num_str.parse::<u32>() {
+                        tracing::debug!("Parsed blood points value: {}", value);
+                        elements.push(ParsedElement::BloodPoints { value });
+                    } else {
+                        tracing::debug!("Failed to parse blood points number: '{}'", num_str);
+                    }
+                } else {
+                    // All remaining characters are digits
+                    if let Ok(value) = after_bp.parse::<u32>() {
+                        tracing::debug!("Parsed blood points value: {}", value);
                         elements.push(ParsedElement::BloodPoints { value });
                     }
                 }
+            } else {
+                tracing::debug!("BetrayerPanel tag found but no 'Blood Points:' string");
             }
         }
 

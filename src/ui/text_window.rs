@@ -91,6 +91,7 @@ pub struct TextWindow {
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
     background_color: Option<String>,
+    content_align: Option<String>,
     // Search functionality
     search_state: Option<SearchState>,
     // Highlight patterns
@@ -122,6 +123,7 @@ impl TextWindow {
             border_color: None,
             border_sides: None,
             background_color: None,
+            content_align: None,
             scroll_position: None,  // Start in live view mode
             last_visible_height: 20,  // Reasonable default
             search_state: None,  // No active search
@@ -204,6 +206,10 @@ impl TextWindow {
         self.background_color = color;
     }
 
+    pub fn set_content_align(&mut self, align: Option<String>) {
+        self.content_align = align;
+    }
+
     /// Update the window title
     pub fn set_title(&mut self, title: String) {
         self.title = title;
@@ -225,13 +231,10 @@ impl TextWindow {
 
         // Cache link data if present, accumulating text for the same exist_id
         if let Some(ref link_data) = styled.link_data {
-            tracing::debug!("Caching link: noun='{}' exist_id='{}' content='{}'",
-                link_data.noun, link_data.exist_id, styled.content);
-
             // Check if we already have this exist_id in the most recent entry
             let should_append = if let Some(last) = self.recent_links.back_mut() {
                 if last.exist_id == link_data.exist_id {
-                    // Append to existing text
+                    // Append to existing text (no debug log for appends - too spammy)
                     last.text.push_str(&styled.content);
                     true
                 } else {
@@ -243,6 +246,8 @@ impl TextWindow {
 
             if !should_append {
                 // New link - create new entry with this content as the text
+                tracing::debug!("Caching new link: noun='{}' exist_id='{}' content='{}'",
+                    link_data.noun, link_data.exist_id, styled.content);
                 let mut new_link = link_data.clone();
                 new_link.text = styled.content.clone();
                 self.recent_links.push_back(new_link);
@@ -1010,8 +1015,9 @@ pub struct TextSegment {
 impl TextWindow {
     /// Render the window with optional focus indicator
     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        // Update width for wrapping
-        let inner_width = area.width.saturating_sub(2); // Account for borders
+        // Update width for wrapping - only subtract for borders if they're shown
+        let border_padding = if self.show_border { 2 } else { 0 };
+        let inner_width = area.width.saturating_sub(border_padding);
         self.set_width(inner_width);
 
         // Re-wrap all lines if width changed
@@ -1026,7 +1032,7 @@ impl TextWindow {
         // scroll_offset=0 means viewing the bottom (live, newest lines)
         // scroll_offset>0 means scrolled back to view older lines
 
-        let visible_height = area.height.saturating_sub(2) as usize; // Account for borders
+        let visible_height = area.height.saturating_sub(border_padding) as usize;
         self.last_visible_height = visible_height;  // Save for scroll calculations
         let total_lines = self.wrapped_lines.len();
 
@@ -1126,6 +1132,8 @@ impl TextWindow {
                 "double" => BorderType::Double,
                 "rounded" => BorderType::Rounded,
                 "thick" => BorderType::Thick,
+                "quadrant_inside" => BorderType::QuadrantInside,
+                "quadrant_outside" => BorderType::QuadrantOutside,
                 _ => BorderType::Plain, // "single" or default
             };
             block = block.border_type(border_type);
@@ -1168,7 +1176,38 @@ impl TextWindow {
             }
         }
 
-        let paragraph = Paragraph::new(display_lines).block(block);
+        // Calculate content alignment offset if specified
+        // Only apply centering when content is LESS than window height
+        // Once content fills the window, behave normally (top-aligned scrolling)
+        let row_offset = if let Some(ref align_str) = self.content_align {
+            let content_height = display_lines.len() as u16;
+            let inner_area = if self.show_border {
+                block.inner(area)
+            } else {
+                area
+            };
+
+            // Only apply alignment if content is shorter than window
+            if content_height < inner_area.height {
+                let align = crate::config::ContentAlign::from_str(align_str);
+                let (offset, _) = align.calculate_offset(inner_area.width, content_height, inner_area.width, inner_area.height);
+                offset
+            } else {
+                // Content fills or exceeds window - use default top alignment
+                0
+            }
+        } else {
+            0
+        };
+
+        // Apply row offset by padding top with empty lines
+        let mut padded_lines = display_lines;
+        if row_offset > 0 {
+            let empty_lines: Vec<Line> = (0..row_offset).map(|_| Line::from("")).collect();
+            padded_lines.splice(0..0, empty_lines);
+        }
+
+        let paragraph = Paragraph::new(padded_lines).block(block);
         paragraph.render(area, buf);
     }
 

@@ -153,6 +153,8 @@ impl Dashboard {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);

@@ -23,12 +23,12 @@ pub enum Widget {
 
 impl Widget {
     /// Render the widget with focus indicator
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool, server_time_offset: i64) {
         match self {
             Widget::Text(w) => w.render_with_focus(area, buf, focused),
             Widget::Tabbed(w) => w.render_with_focus(area, buf, focused),
             Widget::Progress(w) => w.render_with_focus(area, buf, focused),
-            Widget::Countdown(w) => w.render_with_focus(area, buf, focused),
+            Widget::Countdown(w) => w.render_with_focus(area, buf, focused, server_time_offset),
             Widget::Indicator(w) => w.render_with_focus(area, buf, focused),
             Widget::Compass(w) => w.render_with_focus(area, buf, focused),
             Widget::InjuryDoll(w) => w.render_with_focus(area, buf, focused),
@@ -257,6 +257,17 @@ impl Widget {
         }
     }
 
+    /// Set background color
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        match self {
+            Widget::Hands(w) => w.set_background_color(color),
+            Widget::Hand(w) => w.set_background_color(color),
+            Widget::Compass(w) => w.set_background_color(color),
+            Widget::InjuryDoll(w) => w.set_background_color(color),
+            _ => {}
+        }
+    }
+
     /// Add or update an active effect (only for ActiveEffects widgets)
     pub fn add_or_update_effect(&mut self, id: String, name: String, value: u32, time: String, color: Option<String>) {
         if let Widget::ActiveEffects(w) = self {
@@ -418,9 +429,12 @@ pub struct WindowConfig {
     pub background_color: Option<String>, // Background color for entire widget area
     pub bar_color: Option<String>,  // Progress bar color
     pub bar_background_color: Option<String>, // Progress bar background
+    pub text_color: Option<String>, // Text color for progress bars and other widgets
     pub transparent_background: bool,  // If true, unfilled portions are transparent
     pub countdown_icon: Option<String>, // Icon character for countdown widgets
     pub indicator_colors: Option<Vec<String>>, // Indicator state colors
+    pub compass_active_color: Option<String>, // Compass active exit color
+    pub compass_inactive_color: Option<String>, // Compass inactive exit color
     pub dashboard_layout: Option<String>,  // Dashboard layout type
     pub dashboard_indicators: Option<Vec<crate::config::DashboardIndicatorDef>>, // Dashboard indicators
     pub dashboard_spacing: Option<u16>,  // Dashboard spacing
@@ -466,11 +480,13 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    progress_bar.set_border_sides(config.border_sides.clone());
 
                     tracing::debug!("ProgressBar {}: bar_color={:?}, bg_color={:?}",
                         config.name, config.bar_color, config.bar_background_color);
                     progress_bar.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
                     progress_bar.set_transparent_background(config.transparent_background);
+                    progress_bar.set_text_color(config.text_color.clone());
                     progress_bar.set_content_align(config.content_align.clone());
                     Widget::Progress(progress_bar)
                 }
@@ -481,6 +497,7 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    countdown.set_border_sides(config.border_sides.clone());
                     countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
                     countdown.set_transparent_background(config.transparent_background);
                     countdown.set_content_align(config.content_align.clone());
@@ -500,6 +517,7 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    indicator.set_border_sides(config.border_sides.clone());
                     if let Some(ref colors) = config.indicator_colors {
                         indicator.set_colors(colors.clone());
                     }
@@ -513,8 +531,10 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    compass.set_border_sides(config.border_sides.clone());
                     compass.set_content_align(config.content_align.clone());
                     compass.set_background_color(config.background_color.clone());
+                    compass.set_colors(config.compass_active_color.clone(), config.compass_inactive_color.clone());
                     Widget::Compass(compass)
                 }
                 "injury_doll" | "injuries" => {
@@ -529,12 +549,15 @@ impl WindowManager {
                     Widget::InjuryDoll(injury_doll)
                 }
                 "hands" => {
-                    let hands = Hands::new(&title)
+                    let mut hands = Hands::new(&title)
                         .with_border_config(
                             config.show_border,
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    hands.set_border_sides(config.border_sides.clone());
+                    hands.set_background_color(config.background_color.clone());
+                    hands.set_text_color(config.text_color.clone());
                     Widget::Hands(hands)
                 }
                 "lefthand" => {
@@ -544,9 +567,12 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    hand.set_border_sides(config.border_sides.clone());
                     if let Some(ref icon) = config.hand_icon {
                         hand.set_icon(icon.clone());
                     }
+                    hand.set_background_color(config.background_color.clone());
+                    hand.set_text_color(config.text_color.clone());
                     Widget::Hand(hand)
                 }
                 "righthand" => {
@@ -556,9 +582,12 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    hand.set_border_sides(config.border_sides.clone());
                     if let Some(ref icon) = config.hand_icon {
                         hand.set_icon(icon.clone());
                     }
+                    hand.set_background_color(config.background_color.clone());
+                    hand.set_text_color(config.text_color.clone());
                     Widget::Hand(hand)
                 }
                 "spellhand" => {
@@ -568,9 +597,12 @@ impl WindowManager {
                             config.border_style.clone(),
                             config.border_color.clone(),
                         );
+                    hand.set_border_sides(config.border_sides.clone());
                     if let Some(ref icon) = config.hand_icon {
                         hand.set_icon(icon.clone());
                     }
+                    hand.set_background_color(config.background_color.clone());
+                    hand.set_text_color(config.text_color.clone());
                     Widget::Hand(hand)
                 }
                 "dashboard" => {
@@ -738,6 +770,7 @@ impl WindowManager {
                             config.border_color.clone(),
                         );
                     text_window.set_background_color(config.background_color.clone());
+                    text_window.set_content_align(config.content_align.clone());
                     // Set highlights (convert HashMap to Vec)
                     let highlights_vec: Vec<_> = highlights.values().cloned().collect();
                     text_window.set_highlights(highlights_vec);
@@ -824,6 +857,22 @@ impl WindowManager {
             .and_then(|c| c.effect_category.clone())
     }
 
+    /// Get window's configured width (cols)
+    pub fn get_window_width(&self, name: &str) -> Option<u16> {
+        self.config
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.cols)
+    }
+
+    /// Get window's border setting
+    pub fn get_window_border(&self, name: &str) -> Option<bool> {
+        self.config
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.show_border)
+    }
+
     /// Calculate layout rectangles for all windows
     /// Windows use absolute row/col positions (in terminal cells), not relative grid
     pub fn calculate_layout(&self, area: Rect) -> HashMap<String, Rect> {
@@ -894,8 +943,10 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        progress_bar.set_border_sides(config.border_sides.clone());
                         progress_bar.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
                         progress_bar.set_transparent_background(config.transparent_background);
+                        progress_bar.set_text_color(config.text_color.clone());
                         progress_bar.set_content_align(config.content_align.clone());
                         Widget::Progress(progress_bar)
                     }
@@ -906,6 +957,7 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        countdown.set_border_sides(config.border_sides.clone());
                         countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
                         countdown.set_transparent_background(config.transparent_background);
                         countdown.set_content_align(config.content_align.clone());
@@ -925,6 +977,7 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        indicator.set_border_sides(config.border_sides.clone());
                         if let Some(ref colors) = config.indicator_colors {
                             indicator.set_colors(colors.clone());
                         }
@@ -938,8 +991,10 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        compass.set_border_sides(config.border_sides.clone());
                         compass.set_content_align(config.content_align.clone());
                         compass.set_background_color(config.background_color.clone());
+                        compass.set_colors(config.compass_active_color.clone(), config.compass_inactive_color.clone());
                         Widget::Compass(compass)
                     }
                     "injury_doll" | "injuries" => {
@@ -954,12 +1009,15 @@ impl WindowManager {
                         Widget::InjuryDoll(injury_doll)
                     }
                     "hands" => {
-                        let hands = Hands::new(&title)
+                        let mut hands = Hands::new(&title)
                             .with_border_config(
                                 config.show_border,
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        hands.set_border_sides(config.border_sides.clone());
+                        hands.set_background_color(config.background_color.clone());
+                        hands.set_text_color(config.text_color.clone());
                         Widget::Hands(hands)
                     }
                     "lefthand" => {
@@ -969,9 +1027,12 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        hand.set_border_sides(config.border_sides.clone());
                         if let Some(ref icon) = config.hand_icon {
                             hand.set_icon(icon.clone());
                         }
+                        hand.set_background_color(config.background_color.clone());
+                        hand.set_text_color(config.text_color.clone());
                         Widget::Hand(hand)
                     }
                     "righthand" => {
@@ -981,9 +1042,12 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        hand.set_border_sides(config.border_sides.clone());
                         if let Some(ref icon) = config.hand_icon {
                             hand.set_icon(icon.clone());
                         }
+                        hand.set_background_color(config.background_color.clone());
+                        hand.set_text_color(config.text_color.clone());
                         Widget::Hand(hand)
                     }
                     "spellhand" => {
@@ -993,9 +1057,12 @@ impl WindowManager {
                                 config.border_style.clone(),
                                 config.border_color.clone(),
                             );
+                        hand.set_border_sides(config.border_sides.clone());
                         if let Some(ref icon) = config.hand_icon {
                             hand.set_icon(icon.clone());
                         }
+                        hand.set_background_color(config.background_color.clone());
+                        hand.set_text_color(config.text_color.clone());
                         Widget::Hand(hand)
                     }
                     "dashboard" => {
@@ -1140,6 +1207,7 @@ impl WindowManager {
                                 config.border_color.clone(),
                             );
                         text_window.set_background_color(config.background_color.clone());
+                        text_window.set_content_align(config.content_align.clone());
                         // Set highlights (convert HashMap to Vec)
                         let highlights_vec: Vec<_> = self.highlights.values().cloned().collect();
                         text_window.set_highlights(highlights_vec);
@@ -1252,6 +1320,7 @@ impl WindowManager {
                         Widget::Compass(compass) => {
                             compass.set_content_align(config.content_align.clone());
                             compass.set_background_color(config.background_color.clone());
+                            compass.set_colors(config.compass_active_color.clone(), config.compass_inactive_color.clone());
                         }
                         Widget::InjuryDoll(injury_doll) => {
                             injury_doll.set_content_align(config.content_align.clone());

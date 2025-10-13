@@ -146,6 +146,16 @@ impl KeybindFormWidget {
                 }
                 None
             }
+            KeyCode::BackTab => {
+                // Shift+Tab sent as BackTab by some terminals
+                let max_field = if matches!(self.mode, FormMode::Edit { .. }) { 6 } else { 5 };
+                if self.focused_field == 0 {
+                    self.focused_field = max_field;
+                } else {
+                    self.focused_field -= 1;
+                }
+                None
+            }
             KeyCode::Esc => Some(KeybindFormResult::Cancel),
             KeyCode::Char(' ') if self.focused_field == 1 => {
                 // Toggle to Action type

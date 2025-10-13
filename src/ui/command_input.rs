@@ -16,6 +16,7 @@ pub struct CommandInput {
     history: VecDeque<String>,
     history_index: Option<usize>,
     max_history: usize,
+    min_command_length: usize,           // Minimum command length to save to history
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
@@ -35,6 +36,7 @@ impl CommandInput {
             history: VecDeque::with_capacity(max_history),
             history_index: None,
             max_history,
+            min_command_length: 3,  // Default to 3 characters
             show_border: true,
             border_style: None,
             border_color: None,
@@ -45,6 +47,10 @@ impl CommandInput {
             completion_prefix: None,
             is_user_typed: false,
         }
+    }
+
+    pub fn set_min_command_length(&mut self, min_length: usize) {
+        self.min_command_length = min_length;
     }
 
     pub fn set_border_config(&mut self, show_border: bool, border_style: Option<String>, border_color: Option<String>) {
@@ -232,10 +238,20 @@ impl CommandInput {
 
         let command = self.input.clone();
 
-        // Add to history
-        self.history.push_front(command.clone());
-        if self.history.len() > self.max_history {
-            self.history.pop_back();
+        // Add to history only if:
+        // 1. Command meets minimum length requirement
+        // 2. Command is different from the last command in history (avoid consecutive duplicates)
+        if command.len() >= self.min_command_length {
+            let should_add = self.history.front()
+                .map(|last_cmd| last_cmd != &command)
+                .unwrap_or(true);  // If history is empty, add the command
+
+            if should_add {
+                self.history.push_front(command.clone());
+                if self.history.len() > self.max_history {
+                    self.history.pop_back();
+                }
+            }
         }
 
         self.clear();
@@ -312,6 +328,8 @@ impl CommandInput {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);
@@ -323,20 +341,18 @@ impl CommandInput {
                     block = block.border_style(Style::default().fg(color));
                 }
             }
+
+            // Only show title if border is shown
+            block = block.title(title);
         }
 
-        block = block.title(title);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        // Fill background if explicitly set
+        // Fill background if explicitly set (do this BEFORE rendering block so it covers entire area)
         if let Some(ref color_hex) = self.background_color {
             if let Some(bg_color) = Self::parse_color(color_hex) {
-                for row in 0..inner.height {
-                    for col in 0..inner.width {
-                        let x = inner.x + col;
-                        let y = inner.y + row;
+                for row in 0..area.height {
+                    for col in 0..area.width {
+                        let x = area.x + col;
+                        let y = area.y + row;
                         if x < buf.area().width && y < buf.area().height {
                             buf[(x, y)].set_bg(bg_color);
                         }
@@ -345,13 +361,58 @@ impl CommandInput {
             }
         }
 
-        // Create line with cursor
-        // cursor_pos is now a character position, not byte index
-        let chars: Vec<char> = self.input.chars().collect();
+        let inner = block.inner(area);
+        block.render(area, buf);
 
-        let before_cursor: String = chars.iter().take(self.cursor_pos).collect();
-        let cursor_char = chars.get(self.cursor_pos).copied().unwrap_or(' ');
-        let after_cursor: String = chars.iter().skip(self.cursor_pos + 1).collect();
+        // Calculate horizontal scroll to keep cursor visible
+        let available_width = inner.width as usize;
+        let chars: Vec<char> = self.input.chars().collect();
+        let total_chars = chars.len();
+
+        // We need space for: text before cursor + cursor block + text after cursor
+        // The cursor block takes 1 position, so max visible cursor position is (available_width - 1)
+        let max_visible_cursor_pos = available_width.saturating_sub(1);
+
+        let scroll_offset = if available_width == 0 {
+            0
+        } else if total_chars < available_width {
+            // Everything fits - no scroll needed
+            0
+        } else {
+            // Text is longer than visible area - need to scroll
+            // Keep cursor at 30% from left edge when scrolling
+            let target_cursor_pos = (available_width * 3 / 10).min(max_visible_cursor_pos);
+
+            // Calculate scroll to position cursor at target_cursor_pos from left
+            if self.cursor_pos < target_cursor_pos {
+                // Near start - show from beginning
+                0
+            } else if self.cursor_pos >= total_chars.saturating_sub(available_width - target_cursor_pos) {
+                // Near end - anchor to end, ensuring cursor stays within bounds
+                total_chars.saturating_sub(available_width)
+            } else {
+                // Middle - keep cursor at target position from left
+                self.cursor_pos.saturating_sub(target_cursor_pos)
+            }
+        };
+
+        // Extract visible portion of text with scroll applied
+        // Take up to available_width chars, which includes the cursor position
+        let visible_chars: Vec<char> = chars.iter()
+            .skip(scroll_offset)
+            .take(available_width)
+            .copied()
+            .collect();
+
+        // Adjust cursor position relative to visible window
+        let visible_cursor_pos = self.cursor_pos.saturating_sub(scroll_offset);
+
+        // Ensure cursor position doesn't exceed available space
+        let visible_cursor_pos = visible_cursor_pos.min(available_width.saturating_sub(1));
+
+        let before_cursor: String = visible_chars.iter().take(visible_cursor_pos).collect();
+        let cursor_char = visible_chars.get(visible_cursor_pos).copied().unwrap_or(' ');
+        let after_cursor: String = visible_chars.iter().skip(visible_cursor_pos + 1).collect();
 
         let line = Line::from(vec![
             Span::raw(before_cursor),

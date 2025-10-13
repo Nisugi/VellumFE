@@ -25,8 +25,31 @@ pub struct Config {
     pub sound: SoundConfig,
     #[serde(default)]
     pub event_patterns: HashMap<String, EventPattern>,
+    #[serde(default)]
+    pub color_palette: Vec<PaletteColor>,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
+}
+
+/// Named color in the user's palette
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaletteColor {
+    pub name: String,
+    pub color: String,  // Hex color code
+    pub category: String,  // Color family: "red", "blue", "green", etc.
+    #[serde(default)]
+    pub favorite: bool,
+}
+
+impl PaletteColor {
+    pub fn new(name: &str, color: &str, category: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            color: color.to_string(),
+            category: category.to_string(),
+            favorite: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,9 +148,16 @@ pub struct WindowDef {
     // Hand widget configuration
     #[serde(default)]
     pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
+    #[serde(default)]
+    pub text_color: Option<String>,  // Text color for hand widgets and progress bars
     // Countdown widget configuration
     #[serde(default)]
     pub countdown_icon: Option<String>,  // Icon for countdown widgets (overrides global default)
+    // Compass widget configuration
+    #[serde(default)]
+    pub compass_active_color: Option<String>,    // Color for available exits (default: #00ff00)
+    #[serde(default)]
+    pub compass_inactive_color: Option<String>,  // Color for unavailable exits (default: #333333)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +186,7 @@ impl Default for WindowDef {
             background_color: None,
             bar_color: None,
             bar_background_color: None,
+            text_color: None,
             transparent_background: default_transparent_background(),
             locked: false,
             indicator_colors: None,
@@ -173,6 +204,8 @@ impl Default for WindowDef {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         }
     }
 }
@@ -271,6 +304,18 @@ pub struct UiConfig {
     // Drag and drop settings
     #[serde(default = "default_drag_modifier_key")]
     pub drag_modifier_key: String,  // Modifier key required for drag and drop (e.g., "ctrl", "alt", "shift")
+    // Command history settings
+    #[serde(default = "default_min_command_length")]
+    pub min_command_length: usize,  // Minimum command length to save to history (commands shorter than this are not saved)
+    // Performance stats settings
+    #[serde(default = "default_perf_stats_x")]
+    pub perf_stats_x: u16,
+    #[serde(default = "default_perf_stats_y")]
+    pub perf_stats_y: u16,
+    #[serde(default = "default_perf_stats_width")]
+    pub perf_stats_width: u16,
+    #[serde(default = "default_perf_stats_height")]
+    pub perf_stats_height: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,6 +355,7 @@ impl CommandInputConfig {
             background_color: self.background_color.clone(),
             bar_color: None,
             bar_background_color: None,
+            text_color: None,
             transparent_background: self.background_color.is_none(),
             border_sides: None,
             content_align: None,
@@ -329,6 +375,8 @@ impl CommandInputConfig {
             tab_unread_prefix: None,
             tabs: None,
             effect_category: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         }
     }
 
@@ -377,13 +425,14 @@ pub enum ContentAlign {
 impl ContentAlign {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "top" => ContentAlign::Top,
+            "top-left" | "topleft" => ContentAlign::TopLeft,
+            "top" | "top-center" | "topcenter" => ContentAlign::Top,
             "top-right" | "topright" => ContentAlign::TopRight,
-            "left" => ContentAlign::Left,
+            "left" | "center-left" | "centerleft" => ContentAlign::Left,
             "center" => ContentAlign::Center,
-            "right" => ContentAlign::Right,
+            "right" | "center-right" | "centerright" => ContentAlign::Right,
             "bottom-left" | "bottomleft" => ContentAlign::BottomLeft,
-            "bottom" => ContentAlign::Bottom,
+            "bottom" | "bottom-center" | "bottomcenter" => ContentAlign::Bottom,
             "bottom-right" | "bottomright" => ContentAlign::BottomRight,
             _ => ContentAlign::TopLeft, // Default
         }
@@ -784,6 +833,26 @@ fn default_drag_modifier_key() -> String {
     "ctrl".to_string()
 }
 
+fn default_min_command_length() -> usize {
+    3
+}
+
+fn default_perf_stats_x() -> u16 {
+    0  // Calculated dynamically: terminal_width - 35
+}
+
+fn default_perf_stats_y() -> u16 {
+    0
+}
+
+fn default_perf_stats_width() -> u16 {
+    35
+}
+
+fn default_perf_stats_height() -> u16 {
+    23
+}
+
 fn default_command_input() -> CommandInputConfig {
     CommandInputConfig {
         row: 0,     // Will be calculated based on terminal height
@@ -840,10 +909,11 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
             bar_color: None,
             bar_background_color: None,
+            text_color: None,
             transparent_background: true,
             locked: false,
             indicator_colors: None,
@@ -861,6 +931,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -881,6 +953,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#6e0202".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -898,6 +971,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "mana".to_string(),
@@ -917,6 +992,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#08086d".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -934,6 +1010,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -953,6 +1031,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#bd7b00".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -970,6 +1049,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -989,6 +1070,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#6e727c".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1006,6 +1088,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -1025,6 +1109,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#008b8b".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1042,6 +1127,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -1062,6 +1149,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#000080".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1079,6 +1167,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -1098,6 +1188,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#006400".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1115,6 +1206,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1124,7 +1217,7 @@ fn default_windows() -> Vec<WindowDef> {
             row: 27,
             col: 45,
             rows: 3,
-            cols: 15,
+            cols: 10,
             buffer_size: 0,
             show_border: true,
             border_style: Some("single".to_string()),
@@ -1135,6 +1228,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#ff0000".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1152,6 +1246,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1160,7 +1256,7 @@ fn default_windows() -> Vec<WindowDef> {
             row: 27,
             col: 60,
             rows: 3,
-            cols: 15,
+            cols: 10,
             buffer_size: 0,
             show_border: true,
             border_style: Some("single".to_string()),
@@ -1171,6 +1267,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#0000ff".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1188,6 +1285,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1196,7 +1295,7 @@ fn default_windows() -> Vec<WindowDef> {
             row: 27,
             col: 75,
             rows: 3,
-            cols: 15,
+            cols: 10,
             buffer_size: 0,
             show_border: true,
             border_style: Some("single".to_string()),
@@ -1207,6 +1306,7 @@ fn default_windows() -> Vec<WindowDef> {
             background_color: None,
             bar_color: Some("#ffff00".to_string()),
             bar_background_color: Some("#000000".to_string()),
+            text_color: None,
             transparent_background: false,
             locked: false,
             indicator_colors: None,
@@ -1224,6 +1324,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1240,10 +1342,11 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
             bar_color: None,
             bar_background_color: None,
+            text_color: None,
             transparent_background: true,
             locked: false,
             indicator_colors: None,
@@ -1261,6 +1364,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1276,10 +1381,11 @@ fn default_windows() -> Vec<WindowDef> {
             border_color: None,
             border_sides: None,
             title: None,
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
             bar_color: None,
             bar_background_color: None,
+            text_color: None,
             transparent_background: true,
             locked: false,
             indicator_colors: None,
@@ -1297,6 +1403,8 @@ fn default_windows() -> Vec<WindowDef> {
             tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
         },
     ]
 }
@@ -1371,6 +1479,34 @@ impl Layout {
 }
 
 impl Config {
+    /// Resolve a color name to a hex code
+    /// If the input is already a hex code, return it unchanged
+    /// If it's a color name, look it up in the palette
+    /// Returns None if the color name is not found
+    pub fn resolve_color(&self, color_input: &str) -> Option<String> {
+        // If it's already a hex code, return it
+        if color_input.starts_with('#') && color_input.len() == 7 {
+            return Some(color_input.to_string());
+        }
+
+        // If it's "none" or empty, return None
+        if color_input.is_empty() || color_input.eq_ignore_ascii_case("none") || color_input == "-" {
+            return None;
+        }
+
+        // Look up in palette
+        let color_lower = color_input.to_lowercase();
+        for palette_color in &self.color_palette {
+            if palette_color.name.to_lowercase() == color_lower {
+                return Some(palette_color.color.clone());
+            }
+        }
+
+        // Not found - return the input as-is (might be a hex code without #, or invalid)
+        // Let the caller handle validation
+        Some(color_input.to_string())
+    }
+
     /// Get a window template by name
     /// Returns a WindowDef with default positioning that can be customized
     pub fn get_window_template(name: &str) -> Option<WindowDef> {
@@ -1395,10 +1531,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Main".to_string()),
-                content_align: None,
+                content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1416,6 +1553,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1431,10 +1570,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Thoughts".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1452,6 +1592,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1467,10 +1609,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Speech".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1488,6 +1631,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1503,10 +1648,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Familiar".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1524,6 +1670,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1539,10 +1687,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Room".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1560,6 +1709,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1575,10 +1726,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Logons".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1596,6 +1748,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1611,10 +1765,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Deaths".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1632,6 +1787,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1647,10 +1804,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Arrivals".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1668,6 +1826,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1683,10 +1843,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Ambients".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1704,6 +1865,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -1719,10 +1882,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Announcements".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1740,6 +1904,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -1755,10 +1921,11 @@ impl Config {
                 border_color: None,
             border_sides: None,
                 title: Some("Loot".to_string()),
-            content_align: None,
+            content_align: Some("center".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -1776,6 +1943,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -1795,6 +1964,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#6e0202".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1812,6 +1982,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -1831,6 +2003,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#08086d".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1848,6 +2021,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -1867,6 +2042,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#bd7b00".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1884,6 +2060,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -1903,6 +2081,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#6e727c".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1920,6 +2099,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -1939,6 +2120,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#008b8b".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1956,6 +2138,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -1975,6 +2159,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#006400".to_string()), // Will change dynamically based on value
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -1992,6 +2177,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -2011,6 +2198,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#000080".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -2028,6 +2216,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -2047,6 +2237,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#4d0085".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -2064,6 +2255,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -2072,7 +2265,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,
-                cols: 15,
+                cols: 10,
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2083,6 +2276,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#ff0000".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -2100,6 +2294,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -2108,7 +2304,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,
-                cols: 15,
+                cols: 10,
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2119,6 +2315,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#0000ff".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -2136,6 +2333,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -2144,7 +2343,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,
-                cols: 15,
+                cols: 10,
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2155,6 +2354,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#ffff00".to_string()),
                 bar_background_color: Some("#000000".to_string()),
+                text_color: None,
                 transparent_background: false,
                 locked: false,
                 indicator_colors: None,
@@ -2172,6 +2372,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2180,17 +2382,18 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 5,  // 3 rows for grid + 2 for border
-                cols: 17, // 4 columns * 4 chars wide + border
+                cols: 10,
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
                 border_color: None,
             border_sides: None,
                 title: Some("Exits".to_string()),
-            content_align: None,
+            content_align: Some("center-left".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2208,6 +2411,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2216,17 +2421,18 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 8,  // 6 rows for body + 2 for border
-                cols: 15, // ~13 chars wide + border
+                cols: 10,
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
                 border_color: None,
             border_sides: None,
                 title: Some("Injuries".to_string()),
-            content_align: None,
+            content_align: Some("center-left".to_string()),
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2244,42 +2450,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
-            }),
-            "hands" => Some(WindowDef {
-                name: "hands".to_string(),
-                widget_type: "hands".to_string(),
-                streams: vec![],
-                row: default_row,
-                col: default_col,
-                rows: 5,  // 3 rows for hands + 2 for border
-                cols: 29, // "L: " + 24 chars + border (2+24+3)
-                buffer_size: 0,
-                show_border: true,
-                border_style: Some("single".to_string()),
-                border_color: None,
-            border_sides: None,
-                title: Some("Hands".to_string()),
-            content_align: None,
-            background_color: None,
-                bar_color: None,
-                bar_background_color: None,
-                transparent_background: true,
-                locked: false,
-                indicator_colors: None,
-                dashboard_layout: None,
-                dashboard_indicators: None,
-                dashboard_spacing: None,
-                dashboard_hide_inactive: None,
-                visible_count: None,
-                effect_category: None,
-                tabs: None,
-                tab_bar_position: None,
-                tab_active_color: None,
-                tab_inactive_color: None,
-                tab_unread_color: None,
-                tab_unread_prefix: None,
-            hand_icon: None,
-            countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2288,7 +2460,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,  // 1 row + 2 for border
-                cols: 29, // "L: " + 24 chars + border (2+24+3)
+                cols: 20, // Hand item display
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2299,6 +2471,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2316,6 +2489,8 @@ impl Config {
                 tab_unread_prefix: None,
                 hand_icon: Some("L:".to_string()),
                 countdown_icon: None,
+                compass_active_color: None,
+                compass_inactive_color: None,
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2324,7 +2499,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,  // 1 row + 2 for border
-                cols: 29, // "R: " + 24 chars + border (2+24+3)
+                cols: 20, // Hand item display
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2335,6 +2510,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2352,6 +2528,8 @@ impl Config {
                 tab_unread_prefix: None,
                 hand_icon: Some("R:".to_string()),
                 countdown_icon: None,
+                compass_active_color: None,
+                compass_inactive_color: None,
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2360,7 +2538,7 @@ impl Config {
                 row: default_row,
                 col: default_col,
                 rows: 3,  // 1 row + 2 for border
-                cols: 29, // "S: " + 24 chars + border (2+24+3)
+                cols: 20, // Hand item display
                 buffer_size: 0,
                 show_border: true,
                 border_style: Some("single".to_string()),
@@ -2371,6 +2549,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2388,6 +2567,8 @@ impl Config {
                 tab_unread_prefix: None,
                 hand_icon: Some("S:".to_string()),
                 countdown_icon: None,
+                compass_active_color: None,
+                compass_inactive_color: None,
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2407,6 +2588,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: Some(vec!["#000000".to_string(), "#00ff00".to_string()]), // off, green
@@ -2424,6 +2606,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2443,6 +2627,7 @@ impl Config {
                 title: Some("\u{e286}".to_string()), // Nerd Font disease icon
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: Some(vec!["#000000".to_string(), "#8b4513".to_string()]), // off, brownish-red
@@ -2460,6 +2645,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2479,6 +2666,7 @@ impl Config {
                 title: Some("\u{f043}".to_string()), // Nerd Font bleeding icon
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: Some(vec!["#000000".to_string(), "#ff0000".to_string()]), // off, red
@@ -2496,6 +2684,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2515,6 +2705,7 @@ impl Config {
                 title: Some("\u{f0e7}".to_string()), // Nerd Font stunned icon
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: Some(vec!["#000000".to_string(), "#ffff00".to_string()]), // off, yellow
@@ -2532,6 +2723,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2551,6 +2744,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: Some(vec!["#000000".to_string(), "#cccccc".to_string()]), // off, bright grey
@@ -2568,6 +2762,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -2587,6 +2783,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2630,6 +2827,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -2649,6 +2848,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#40FF40".to_string()),
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2666,6 +2866,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -2685,6 +2887,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#FF4040".to_string()),
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2702,6 +2905,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -2721,6 +2926,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#FFB040".to_string()),
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2738,6 +2944,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -2757,6 +2965,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#4080FF".to_string()),
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2765,7 +2974,7 @@ impl Config {
                 dashboard_spacing: None,
                 dashboard_hide_inactive: None,
                 visible_count: None,
-                effect_category: Some("Active Spells".to_string()),
+                effect_category: Some("ActiveSpells".to_string()),
                 tabs: None,
                 tab_bar_position: None,
                 tab_active_color: None,
@@ -2774,6 +2983,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -2793,6 +3004,7 @@ impl Config {
             background_color: None,
                 bar_color: Some("#808080".to_string()),
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2810,6 +3022,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
@@ -2829,6 +3043,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2846,6 +3061,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
@@ -2865,6 +3082,7 @@ impl Config {
             background_color: None,
                 bar_color: None,
                 bar_background_color: None,
+                text_color: None,
                 transparent_background: true,
                 locked: false,
                 indicator_colors: None,
@@ -2882,6 +3100,8 @@ impl Config {
                 tab_unread_prefix: None,
             hand_icon: None,
             countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
             }),
             _ => None,
         }
@@ -2914,7 +3134,6 @@ impl Config {
             "stuntime",
             "compass",
             "injuries",
-            "hands",
             "lefthand",
             "righthand",
             "spellhand",
@@ -2966,6 +3185,13 @@ impl Config {
             // If keybinds is empty, populate with defaults
             if config.keybinds.is_empty() {
                 config.keybinds = default_keybinds();
+            }
+
+            // If color_palette is empty, populate with defaults from embedded config
+            if config.color_palette.is_empty() {
+                if let Ok(default_config) = toml::from_str::<Config>(DEFAULT_CONFIG) {
+                    config.color_palette = default_config.color_palette;
+                }
             }
 
             return Ok(config);
@@ -3143,6 +3369,11 @@ impl Default for Config {
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
                 selection_bg_color: default_selection_bg_color(),
                 drag_modifier_key: default_drag_modifier_key(),
+                min_command_length: default_min_command_length(),
+                perf_stats_x: default_perf_stats_x(),
+                perf_stats_y: default_perf_stats_y(),
+                perf_stats_width: default_perf_stats_width(),
+                perf_stats_height: default_perf_stats_height(),
             },
             presets: {
                 let mut map = HashMap::new();
@@ -3263,6 +3494,7 @@ impl Default for Config {
             ],
             sound: SoundConfig::default(),
             event_patterns: HashMap::new(),  // Empty by default - user adds via config
+            color_palette: Vec::new(),  // Empty by default - loaded from embedded defaults
             character: None,  // Set at runtime via load_with_options
         }
     }

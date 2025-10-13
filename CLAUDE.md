@@ -573,6 +573,49 @@ All popup editors (Settings, Highlights, Keybinds, Windows) follow the same patt
 4. Call `update_window_manager_config()` if changing windows
 5. Call `add_system_message()` to provide feedback
 
+## Recent Feature Additions (2025)
+
+### Command Input Horizontal Scrolling
+- Command input now scrolls horizontally for long commands
+- Cursor stays visible when typing past window width
+- Smooth scrolling keeps cursor at ~30% from left edge when in middle of text
+- Implemented in `src/ui/command_input.rs`
+
+### Configurable Compass Colors
+- Compass widget supports customizable colors for active/inactive exits
+- Config fields: `compass_active_color` (default: #00ff00), `compass_inactive_color` (default: #333333)
+- Configurable via layout TOML or window editor UI
+- Added to WindowDef, WindowConfig, and window editor (fields 24, 25)
+
+### Text Color for Hands and Progress Bars
+- Added `text_color` field to WindowDef for customizing text color on widgets
+- Applies to Hand, Hands, and ProgressBar widgets
+- Configurable via layout TOML or window editor UI (field 23)
+- Default: white
+
+### Window Editor Improvements
+- Dynamic tab order that skips hidden fields based on widget type
+- Compass colors (active/inactive) added for compass widgets
+- Text color field added for hands and progress widgets
+- Bar color field for countdown and progress widgets
+- All conditionally rendered fields now in correct tab order
+
+### Bloodpoints Support
+- Added handler for `<dialogData id='BetrayerPanel'>` XML tags
+- Updates lblBPs/bloodpoints/blood windows with blood points value
+- Parses "Blood Points: XX" format from label values
+
+### Border Fixes
+- Fixed text windows to respect `show_border` flag for width calculations
+- Text no longer shifts left by one column when border is removed
+- Border padding only applied when borders are actually shown
+
+### Content Alignment
+- Text windows now support `content_align` setting
+- Only centers content when text is shorter than window height
+- Once content fills window, reverts to normal top-aligned scrolling
+- Prevents jarring "filling from center" effect
+
 ## Testing Tips
 
 - Use `.setprogress health 50 100` to manually test progress bars
@@ -580,6 +623,17 @@ All popup editors (Settings, Highlights, Keybinds, Windows) follow the same patt
 - Check `~/.vellum-fe/debug.log` for tracing output
 - Terminal size changes require layout recalculation (handled automatically)
 - Mouse operations log to debug when RUST_LOG=debug
+- Test compass colors: Edit compass window, set `compass_active_color` and `compass_inactive_color`
+- Test command input scrolling: Type 120+ characters in command input
+
+## Future Features
+
+### VellumFE Companion Server (Planned)
+- WebSocket server to allow mobile/remote access
+- Broadcast game events (vitals, text, room updates) to companion apps
+- Receive commands from companion devices
+- See `COMPANION_APP.md` for full specification
+- Target: Allow playing GemStone IV from mobile devices via VellumFE proxy
 
 ## Known Limitations
 
@@ -587,3 +641,4 @@ All popup editors (Settings, Highlights, Keybinds, Windows) follow the same patt
 - No window Z-ordering (render order = definition order in config)
 - Mouse support depends on terminal emulator capabilities
 - Very long lines (>2000 chars) are truncated when read from files
+- Command input horizontal scrolling uses simple algorithm (not perfect edge cases)

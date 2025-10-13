@@ -162,7 +162,7 @@ impl HighlightBrowser {
         false
     }
 
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         // Calculate popup size
         let popup_width = 80.min(area.width);
         let popup_height = 30.min(area.height);
@@ -257,36 +257,76 @@ impl HighlightBrowser {
             // Determine if this item is selected
             let is_selected = display_idx == self.selected_index;
 
-            // Build display line with color preview and sound indicator
-            let color_preview = if let Some(ref fg) = entry.fg {
-                format!(" [{}]", fg)
-            } else {
-                String::new()
-            };
+            // Build display name with sound indicator
             let sound_indicator = if entry.has_sound { " \u{266B}" } else { "" };
-            let display_name = format!("  {}{}{}", entry.name, color_preview, sound_indicator);
-
-            // Truncate if too long
-            let max_len = content_width.saturating_sub(2) as usize;
-            let display = if display_name.len() > max_len {
-                format!("{}...", &display_name[..max_len.saturating_sub(3)])
-            } else {
-                display_name
-            };
+            let name_with_sound = format!("{}{}", entry.name, sound_indicator);
 
             // Style based on selection
-            let (fg, bg) = if is_selected {
+            let (text_fg, text_bg) = if is_selected {
                 (Color::Black, Color::Cyan)
             } else {
                 (Color::White, Color::Black)
             };
 
-            // Render item
-            for (i, ch) in display.chars().enumerate() {
-                if let Some(x) = content_x.checked_add(i as u16) {
-                    if x < content_x + content_width {
-                        buf[(x, y)].set_char(ch).set_fg(fg).set_bg(bg);
+            let mut x_pos = content_x;
+
+            // Render indent
+            for ch in "  ".chars() {
+                if x_pos < content_x + content_width {
+                    buf[(x_pos, y)].set_char(ch).set_fg(text_fg).set_bg(text_bg);
+                    x_pos += 1;
+                }
+            }
+
+            // Render foreground color preview (3 blocks)
+            if let Some(ref fg_color) = entry.fg {
+                let resolved_fg = config.resolve_color(fg_color);
+                if let Some(hex_fg) = resolved_fg {
+                    if let Some(color) = Self::parse_hex_color(&hex_fg) {
+                        for _ in 0..3 {
+                            if x_pos < content_x + content_width {
+                                buf[(x_pos, y)].set_char('█').set_fg(color).set_bg(text_bg);
+                                x_pos += 1;
+                            }
+                        }
                     }
+                }
+            }
+
+            // Space between fg and bg
+            if x_pos < content_x + content_width {
+                buf[(x_pos, y)].set_char(' ').set_fg(text_fg).set_bg(text_bg);
+                x_pos += 1;
+            }
+
+            // Render background color preview (3 blocks)
+            if let Some(ref bg_color) = entry.bg {
+                let resolved_bg = config.resolve_color(bg_color);
+                if let Some(hex_bg) = resolved_bg {
+                    if let Some(color) = Self::parse_hex_color(&hex_bg) {
+                        for _ in 0..3 {
+                            if x_pos < content_x + content_width {
+                                buf[(x_pos, y)].set_char('█').set_fg(color).set_bg(text_bg);
+                                x_pos += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Space before name
+            if x_pos < content_x + content_width {
+                buf[(x_pos, y)].set_char(' ').set_fg(text_fg).set_bg(text_bg);
+                x_pos += 1;
+            }
+
+            // Render name (no truncation, just fill to end of available space)
+            for ch in name_with_sound.chars() {
+                if x_pos < content_x + content_width {
+                    buf[(x_pos, y)].set_char(ch).set_fg(text_fg).set_bg(text_bg);
+                    x_pos += 1;
+                } else {
+                    break;
                 }
             }
 
@@ -352,5 +392,15 @@ impl HighlightBrowser {
         if bottom_right_x < buf.area.width && bottom_right_y < buf.area.height {
             buf[(bottom_right_x, bottom_right_y)].set_char('┘').set_fg(color).set_bg(Color::Black);
         }
+    }
+
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        if !hex.starts_with('#') || hex.len() != 7 {
+            return None;
+        }
+        let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
+        let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
+        let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
+        Some(Color::Rgb(r, g, b))
     }
 }

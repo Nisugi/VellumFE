@@ -61,9 +61,14 @@ pub struct WindowEditor {
     border_color_input: TextArea<'static>,
     title_input: TextArea<'static>,
     bg_color_input: TextArea<'static>,
+    text_color_input: TextArea<'static>,
     buffer_size_input: TextArea<'static>,
     streams_input: TextArea<'static>,
     hand_icon_input: TextArea<'static>,
+    countdown_icon_input: TextArea<'static>,
+    bar_color_input: TextArea<'static>,
+    compass_active_color_input: TextArea<'static>,
+    compass_inactive_color_input: TextArea<'static>,
 
     // Dropdown states (just store selected index)
     border_style_index: usize,
@@ -94,7 +99,7 @@ pub enum EditorMode {
 }
 
 // Dropdown options
-const BORDER_STYLES: &[&str] = &["none", "single", "double", "rounded", "thick"];
+const BORDER_STYLES: &[&str] = &["none", "single", "double", "rounded", "thick", "quadrant_inside", "quadrant_outside"];
 const CONTENT_ALIGNS: &[&str] = &["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"];
 const TAB_BAR_POSITIONS: &[&str] = &["top", "bottom"];
 const BORDER_SIDES: &[&str] = &["top", "bottom", "left", "right"];
@@ -151,17 +156,102 @@ impl WindowEditor {
             original_window_name: None,
             current_window: WindowDef::default(),
             focused_field: 0,
-            name_input: TextArea::default(),
-            row_input: TextArea::default(),
-            col_input: TextArea::default(),
-            rows_input: TextArea::default(),
-            cols_input: TextArea::default(),
-            border_color_input: TextArea::default(),
-            title_input: TextArea::default(),
-            bg_color_input: TextArea::default(),
-            buffer_size_input: TextArea::default(),
-            streams_input: TextArea::default(),
-            hand_icon_input: TextArea::default(),
+            name_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., my_window");
+                ta
+            },
+            row_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., 0");
+                ta
+            },
+            col_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., 0");
+                ta
+            },
+            rows_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., 20");
+                ta
+            },
+            cols_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., 80");
+                ta
+            },
+            border_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #00ff00 or green");
+                ta
+            },
+            title_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., My Window Title");
+                ta
+            },
+            bg_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #000000 or black");
+                ta
+            },
+            text_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #ffffff or white");
+                ta
+            },
+            buffer_size_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., 5000");
+                ta
+            },
+            streams_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., main, speech, thoughts");
+                ta
+            },
+            hand_icon_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., ✋");
+                ta
+            },
+            countdown_icon_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., ⏱");
+                ta
+            },
+            bar_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #0000ff or blue");
+                ta
+            },
+            compass_active_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #00ff00 or green");
+                ta
+            },
+            compass_inactive_color_input: {
+                let mut ta = TextArea::default();
+                ta.set_cursor_line_style(Style::default());
+                ta.set_placeholder_text("e.g., #333333 or gray");
+                ta
+            },
             border_style_index: 1, // "single"
             content_align_index: 0, // "top-left"
             tab_bar_position_index: 0, // "top"
@@ -303,44 +393,83 @@ impl WindowEditor {
 
     fn populate_fields_from_window(&mut self) {
         self.name_input.delete_line_by_head();
+        self.name_input.set_placeholder_text("e.g., my_window");
         self.name_input.insert_str(&self.current_window.name);
 
         self.row_input.delete_line_by_head();
+        self.row_input.set_placeholder_text("e.g., 0");
         self.row_input.insert_str(&self.current_window.row.to_string());
 
         self.col_input.delete_line_by_head();
+        self.col_input.set_placeholder_text("e.g., 0");
         self.col_input.insert_str(&self.current_window.col.to_string());
 
         self.rows_input.delete_line_by_head();
+        self.rows_input.set_placeholder_text("e.g., 20");
         self.rows_input.insert_str(&self.current_window.rows.to_string());
 
         self.cols_input.delete_line_by_head();
+        self.cols_input.set_placeholder_text("e.g., 80");
         self.cols_input.insert_str(&self.current_window.cols.to_string());
 
         self.buffer_size_input.delete_line_by_head();
+        self.buffer_size_input.set_placeholder_text("e.g., 5000");
         self.buffer_size_input.insert_str(&self.current_window.buffer_size.to_string());
 
         self.border_color_input.delete_line_by_head();
+        self.border_color_input.set_placeholder_text("e.g., #00ff00 or green");
         if let Some(color) = &self.current_window.border_color {
             self.border_color_input.insert_str(color);
         }
 
         self.title_input.delete_line_by_head();
+        self.title_input.set_placeholder_text("e.g., My Window Title");
         if let Some(title) = &self.current_window.title {
             self.title_input.insert_str(title);
         }
 
         self.bg_color_input.delete_line_by_head();
+        self.bg_color_input.set_placeholder_text("e.g., #000000 or black");
         if let Some(bg) = &self.current_window.background_color {
             self.bg_color_input.insert_str(bg);
         }
 
+        if let Some(text_color) = &self.current_window.text_color {
+            self.text_color_input.insert_str(text_color);
+        }
+
         self.streams_input.delete_line_by_head();
+        self.streams_input.set_placeholder_text("e.g., main, speech, thoughts");
         self.streams_input.insert_str(&self.current_window.streams.join(", "));
 
         self.hand_icon_input.delete_line_by_head();
+        self.hand_icon_input.set_placeholder_text("e.g., ✋");
         if let Some(ref icon) = self.current_window.hand_icon {
             self.hand_icon_input.insert_str(icon);
+        }
+
+        self.countdown_icon_input.delete_line_by_head();
+        self.countdown_icon_input.set_placeholder_text("(empty = default \u{f0c8})");
+        if let Some(ref icon) = self.current_window.countdown_icon {
+            self.countdown_icon_input.insert_str(icon);
+        }
+
+        self.bar_color_input.delete_line_by_head();
+        self.bar_color_input.set_placeholder_text("e.g., #0000ff or blue");
+        if let Some(ref color) = self.current_window.bar_color {
+            self.bar_color_input.insert_str(color);
+        }
+
+        self.compass_active_color_input.delete_line_by_head();
+        self.compass_active_color_input.set_placeholder_text("e.g., #00ff00 or green");
+        if let Some(ref color) = self.current_window.compass_active_color {
+            self.compass_active_color_input.insert_str(color);
+        }
+
+        self.compass_inactive_color_input.delete_line_by_head();
+        self.compass_inactive_color_input.set_placeholder_text("e.g., #333333 or gray");
+        if let Some(ref color) = self.current_window.compass_inactive_color {
+            self.compass_inactive_color_input.insert_str(color);
         }
 
         // Checkboxes
@@ -389,8 +518,8 @@ impl WindowEditor {
         self.current_window.name = self.name_input.lines()[0].to_string();
         self.current_window.row = self.row_input.lines()[0].parse().unwrap_or(0);
         self.current_window.col = self.col_input.lines()[0].parse().unwrap_or(0);
-        self.current_window.rows = self.rows_input.lines()[0].parse::<u16>().unwrap_or(10).max(3);
-        self.current_window.cols = self.cols_input.lines()[0].parse::<u16>().unwrap_or(40).max(10);
+        self.current_window.rows = self.rows_input.lines()[0].parse::<u16>().unwrap_or(10).max(1);
+        self.current_window.cols = self.cols_input.lines()[0].parse::<u16>().unwrap_or(40).max(1);
         self.current_window.buffer_size = self.buffer_size_input.lines()[0].parse::<usize>().unwrap_or(1000).max(100);
 
         let border_color = self.border_color_input.lines()[0].to_string();
@@ -411,6 +540,9 @@ impl WindowEditor {
         let bg = self.bg_color_input.lines()[0].to_string();
         self.current_window.background_color = if bg.is_empty() { None } else { Some(bg) };
 
+        let text_color = self.text_color_input.lines()[0].to_string();
+        self.current_window.text_color = if text_color.is_empty() { None } else { Some(text_color) };
+
         // Parse streams from comma-separated input
         let streams_text = self.streams_input.lines()[0].to_string();
         self.current_window.streams = if streams_text.trim().is_empty() {
@@ -426,6 +558,21 @@ impl WindowEditor {
         // Hand icon
         let hand_icon = self.hand_icon_input.lines()[0].to_string();
         self.current_window.hand_icon = if hand_icon.is_empty() { None } else { Some(hand_icon) };
+
+        // Countdown icon
+        let countdown_icon = self.countdown_icon_input.lines()[0].to_string();
+        self.current_window.countdown_icon = if countdown_icon.is_empty() { None } else { Some(countdown_icon) };
+
+        // Bar color (for countdown and progress bars)
+        let bar_color = self.bar_color_input.lines()[0].to_string();
+        self.current_window.bar_color = if bar_color.is_empty() { None } else { Some(bar_color) };
+
+        // Compass colors
+        let compass_active_color = self.compass_active_color_input.lines()[0].to_string();
+        self.current_window.compass_active_color = if compass_active_color.is_empty() { None } else { Some(compass_active_color) };
+
+        let compass_inactive_color = self.compass_inactive_color_input.lines()[0].to_string();
+        self.current_window.compass_inactive_color = if compass_inactive_color.is_empty() { None } else { Some(compass_inactive_color) };
 
         self.current_window.show_border = self.show_border;
         self.current_window.transparent_background = self.transparent_bg;
@@ -562,21 +709,8 @@ impl WindowEditor {
 
         match key.code {
             KeyCode::Tab => {
-                // Custom tab order to follow visual layout
-                // For command_input: skip name, lock, streams, effect_category, hand_icon, buffer_size
-                let tab_order = if self.current_window.widget_type == "command_input" {
-                    // 9(title) -> 20(show_title) -> 1(row) -> 2(col) -> 3(height) -> 4(width) ->
-                    // 5(show_border) -> 6(border_style) -> 7(border_sides) -> 8(border_color) ->
-                    // 11(transparent_bg) -> 12(bg_color) -> 10(content_align) -> 17(save) -> 18(cancel)
-                    vec![9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 10, 17, 18]
-                } else {
-                    // Full order for normal windows:
-                    // 0(name) -> 9(title) -> 20(show_title) -> 1(row) -> 2(col) -> 3(height) -> 4(width) ->
-                    // 5(show_border) -> 6(border_style) -> 7(border_sides) -> 8(border_color) ->
-                    // 11(transparent_bg) -> 13(lock) -> 12(bg_color) -> 10(content_align) ->
-                    // 14(streams) -> 19(effect_category) -> 15(hand_icon) -> 16(buffer_size) -> 17(save) -> 18(cancel)
-                    vec![0, 9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 12, 10, 14, 19, 15, 16, 17, 18]
-                };
+                // Dynamic tab order that skips hidden fields
+                let tab_order = self.get_tab_order();
 
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                     // Backward
@@ -604,11 +738,7 @@ impl WindowEditor {
             },
             KeyCode::BackTab => {
                 // Shift+Tab (BackTab) - same as Tab with Shift
-                let tab_order = if self.current_window.widget_type == "command_input" {
-                    vec![9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 10, 17, 18]
-                } else {
-                    vec![0, 9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 12, 10, 14, 19, 15, 16, 17, 18]
-                };
+                let tab_order = self.get_tab_order();
                 if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
                     if pos == 0 {
                         self.focused_field = tab_order[tab_order.len() - 1];
@@ -739,6 +869,11 @@ impl WindowEditor {
                     14 => self.streams_input.input(input.clone()),
                     15 => self.hand_icon_input.input(input.clone()),
                     16 => self.buffer_size_input.input(input.clone()),
+                    21 => self.countdown_icon_input.input(input.clone()),
+                    22 => self.bar_color_input.input(input.clone()),
+                    23 => self.text_color_input.input(input.clone()),
+                    24 => self.compass_active_color_input.input(input.clone()),
+                    25 => self.compass_inactive_color_input.input(input.clone()),
                     _ => false,
                 };
                 None
@@ -746,14 +881,14 @@ impl WindowEditor {
         }
     }
 
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         // Don't clear - render as popup on top of existing windows
 
         match self.mode {
             EditorMode::SelectingWindow => self.render_window_selection(area, buf),
             EditorMode::SelectingWidgetType => self.render_widget_type_selection(area, buf),
             EditorMode::SelectingTemplate => self.render_template_selection(area, buf),
-            EditorMode::EditingFields => self.render_fields(area, buf),
+            EditorMode::EditingFields => self.render_fields(area, buf, config),
         }
     }
 
@@ -946,7 +1081,7 @@ impl WindowEditor {
         status.render(chunks[2], buf);
     }
 
-    fn render_fields(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_fields(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         let popup_width = 100.min(area.width);
         let popup_height = 50.min(area.height);
 
@@ -1044,7 +1179,7 @@ impl WindowEditor {
         Self::render_multi_checkbox(7, self.focused_field, "Border Sides:", self.border_sides_selected, &self.border_sides_states, content.x, y, buf);
         y += 2;
 
-        Self::render_text_field(8, self.focused_field, "Border Color:", &mut self.border_color_input, content.x, y, content.width, buf);
+        Self::render_color_field(8, self.focused_field, "Border Color:", &mut self.border_color_input, content.x, y, content.width, buf, config);
         y += 3;
 
         // === DISPLAY SETTINGS ===
@@ -1059,14 +1194,20 @@ impl WindowEditor {
         }
         y += 2;
 
-        Self::render_text_field(12, self.focused_field, "BG Color:", &mut self.bg_color_input, content.x, y, content.width, buf);
+        Self::render_color_field(12, self.focused_field, "BG Color:", &mut self.bg_color_input, content.x, y, content.width, buf, config);
         y += 3;
+
+        // Text Color field (for hands and progress bars)
+        if matches!(self.current_window.widget_type.as_str(), "lefthand" | "righthand" | "spellhand" | "hands" | "progress") {
+            Self::render_color_field(23, self.focused_field, "Text Color:", &mut self.text_color_input, content.x, y, content.width, buf, config);
+            y += 3;
+        }
 
         Self::render_dropdown(10, self.focused_field, "Content Align:", CONTENT_ALIGNS[self.content_align_index], self.content_align_index, CONTENT_ALIGNS.len(), content.x, y, content.width, buf);
         y += 2;
 
         // === WIDGET-SPECIFIC SETTINGS ===
-        let has_widget_specific = matches!(self.current_window.widget_type.as_str(), "text" | "entity" | "lefthand" | "righthand" | "spellhand")
+        let has_widget_specific = matches!(self.current_window.widget_type.as_str(), "text" | "entity" | "lefthand" | "righthand" | "spellhand" | "countdown" | "progress")
             || self.current_window.widget_type == "active_effects";
 
         if has_widget_specific {
@@ -1092,6 +1233,28 @@ impl WindowEditor {
             // Hand icon field only for hand widgets
             if matches!(self.current_window.widget_type.as_str(), "lefthand" | "righthand" | "spellhand") {
                 Self::render_text_field(15, self.focused_field, "Hand Icon:", &mut self.hand_icon_input, content.x, y, content.width, buf);
+                y += 3;
+            }
+
+            // Countdown-specific fields (countdown icon and bar color)
+            if self.current_window.widget_type == "countdown" {
+                Self::render_text_field(21, self.focused_field, "Countdown Icon:", &mut self.countdown_icon_input, content.x, y, content.width, buf);
+                y += 3;
+                Self::render_color_field(22, self.focused_field, "Bar Color:", &mut self.bar_color_input, content.x, y, content.width, buf, config);
+                y += 3;
+            }
+
+            // Progress bar color (shared with countdown)
+            if self.current_window.widget_type == "progress" {
+                Self::render_color_field(22, self.focused_field, "Bar Color:", &mut self.bar_color_input, content.x, y, content.width, buf, config);
+                y += 3;
+            }
+
+            // Compass colors (only for compass widgets)
+            if self.current_window.widget_type == "compass" {
+                Self::render_color_field(24, self.focused_field, "Active Color:", &mut self.compass_active_color_input, content.x, y, content.width, buf, config);
+                y += 3;
+                Self::render_color_field(25, self.focused_field, "Inactive Color:", &mut self.compass_inactive_color_input, content.x, y, content.width, buf, config);
                 y += 3;
             }
 
@@ -1140,6 +1303,59 @@ impl WindowEditor {
         textarea.set_block(Block::default().borders(Borders::ALL).border_style(border_style));
         textarea.set_cursor_line_style(Style::default());
         textarea.render(input_area, buf);
+    }
+
+    fn render_color_field(field_id: usize, focused_field: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: u16, buf: &mut Buffer, config: &crate::config::Config) {
+        let label_para = Paragraph::new(label);
+        label_para.render(Rect { x, y, width: 15, height: 1 }, buf);
+
+        let input_area = Rect {
+            x: x + 15,
+            y,
+            width: width.saturating_sub(20),  // Leave space for preview
+            height: 3,
+        };
+
+        let border_style = if focused_field == field_id {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        textarea.set_block(Block::default().borders(Borders::ALL).border_style(border_style));
+        textarea.set_cursor_line_style(Style::default());
+        textarea.render(input_area, buf);
+
+        // Draw color preview
+        let color_text = textarea.lines()[0].to_string();
+        if !color_text.is_empty() {
+            // Resolve color name to hex
+            let resolved_color = config.resolve_color(&color_text);
+            if let Some(hex_color) = resolved_color {
+                if let Some(color) = Self::parse_hex_color(&hex_color) {
+                    // Draw preview block (███) to the right of input
+                    let preview_x = x + width.saturating_sub(4);
+                    for i in 0..3 {
+                        if let Some(cell) = buf.cell_mut((preview_x + i, y + 1)) {
+                            cell.set_char('█');
+                            cell.set_fg(color);
+                            cell.set_bg(Color::Black);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        if !hex.starts_with('#') || hex.len() != 7 {
+            return None;
+        }
+
+        let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
+        let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
+        let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
+
+        Some(Color::Rgb(r, g, b))
     }
 
     fn render_checkbox(field_id: usize, focused_field: usize, label: &str, checked: bool, x: u16, y: u16, buf: &mut Buffer) {
@@ -1219,6 +1435,84 @@ impl WindowEditor {
         };
         let cancel_btn = Paragraph::new("[ Cancel ]").style(cancel_style);
         cancel_btn.render(Rect { x: x + 12, y, width: 12, height: 1 }, buf);
+    }
+
+    /// Get dynamic tab order that skips hidden fields based on widget type
+    fn get_tab_order(&self) -> Vec<usize> {
+        let widget_type = self.current_window.widget_type.as_str();
+
+        // Base order for command_input (shorter, skips name and lock)
+        if widget_type == "command_input" {
+            return vec![9, 20, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 10, 17, 18];
+        }
+
+        // Build dynamic order for normal windows
+        let mut order = vec![
+            0,  // name
+            9,  // title
+            20, // show_title
+            1,  // row
+            2,  // col
+            3,  // height
+            4,  // width
+            5,  // show_border
+            6,  // border_style
+            7,  // border_sides
+            8,  // border_color
+            11, // transparent_bg
+            13, // lock
+            12, // bg_color
+        ];
+
+        // Text Color (field 23) - only for hands and progress widgets
+        if matches!(widget_type, "lefthand" | "righthand" | "spellhand" | "hands" | "progress") {
+            order.push(23);
+        }
+
+        // Content Align (field 10)
+        order.push(10);
+
+        // Bar Color (field 22) - only for countdown and progress widgets
+        if matches!(widget_type, "countdown" | "progress") {
+            order.push(22);
+        }
+
+        // Compass Colors (fields 24, 25) - only for compass widgets
+        if widget_type == "compass" {
+            order.push(24); // active color
+            order.push(25); // inactive color
+        }
+
+        // Streams (field 14) - only for text and entity widgets
+        if matches!(widget_type, "text" | "entity") {
+            order.push(14);
+        }
+
+        // Effect Category (field 19) - only for active_effects widgets
+        if widget_type == "active_effects" {
+            order.push(19);
+        }
+
+        // Hand Icon (field 15) - only for hand widgets
+        if matches!(widget_type, "lefthand" | "righthand" | "spellhand") {
+            order.push(15);
+        }
+
+        // Countdown Icon (field 21) - only for countdown widgets
+        if widget_type == "countdown" {
+            order.push(21);
+        }
+
+        // Buffer Size (field 16) - only for text windows (not tabbed)
+        if widget_type == "text" {
+            order.push(16);
+        }
+
+        // Save and Cancel buttons
+        order.push(17);
+        order.push(18);
+
+        order
     }
 
     pub fn get_selected_window_name(&self) -> Option<String> {

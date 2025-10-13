@@ -36,6 +36,10 @@ enum InputMode {
     KeybindForm,  // Keybind management form
     SettingsEditor,  // Settings editor form
     HighlightBrowser,  // Highlight browser
+    KeybindBrowser,  // Keybind browser
+    ColorPaletteBrowser,  // Color palette browser
+    ColorBrowserFilter,  // Color palette browser filter input
+    ColorForm,  // Color palette editor form
     WindowEditor,  // Window configuration editor
 }
 
@@ -51,6 +55,7 @@ pub struct App {
     current_stream: String, // Track which stream we're currently writing to
     discard_current_stream: bool, // If true, discard text because no window exists for current stream
     skip_next_prompt: bool, // Skip the next prompt (after returning from a non-main stream)
+    server_time_offset: i64, // Offset between server time and local time (server_time - local_time) - used for countdown calculations to avoid clock drift
     focused_window_index: usize, // Index of currently focused window for scrolling
     resize_state: Option<ResizeState>, // Track active resize operation
     move_state: Option<MoveState>, // Track active window move operation
@@ -76,6 +81,9 @@ pub struct App {
     window_editor: crate::ui::WindowEditor,  // Window configuration editor
     settings_editor: Option<crate::ui::SettingsEditor>,  // Settings editor (None when not shown)
     highlight_browser: Option<crate::ui::HighlightBrowser>,  // Highlight browser (None when not shown)
+    keybind_browser: Option<crate::ui::KeybindBrowser>,  // Keybind browser (None when not shown)
+    color_palette_browser: Option<crate::ui::ColorPaletteBrowser>,  // Color palette browser (None when not shown)
+    color_form: Option<crate::ui::ColorForm>,  // Color editor form (None when not shown)
 }
 
 /// Drag and drop state
@@ -160,6 +168,7 @@ impl App {
                 background_color: w.background_color.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
+                text_color: w.text_color.clone(),
                 transparent_background: w.transparent_background,
                 countdown_icon: countdown_icon.clone(),
                 indicator_colors: w.indicator_colors.clone(),
@@ -176,6 +185,8 @@ impl App {
                 tab_unread_color: w.tab_unread_color.clone(),
                 tab_unread_prefix: w.tab_unread_prefix.clone(),
                 hand_icon: w.hand_icon.clone(),
+                compass_active_color: w.compass_active_color.clone(),
+                compass_inactive_color: w.compass_inactive_color.clone(),
             })
             .collect();
 
@@ -212,6 +223,7 @@ impl App {
 
         // Create command input with layout config
         let mut command_input = CommandInput::new(100);
+        command_input.set_min_command_length(config.ui.min_command_length);
         command_input.set_border_config(
             layout.command_input.show_border,
             layout.command_input.border_style.clone(),
@@ -275,6 +287,7 @@ impl App {
             current_stream: "main".to_string(),
             discard_current_stream: false,
             skip_next_prompt: false,
+            server_time_offset: 0, // No offset until first prompt
             focused_window_index: 0, // Start with first window focused
             resize_state: None, // No active resize initially
             move_state: None, // No active move initially
@@ -299,6 +312,9 @@ impl App {
             window_editor: crate::ui::WindowEditor::new(),  // Initialize window editor
             settings_editor: None,  // Settings editor not shown initially
             highlight_browser: None,  // Highlight browser not shown initially
+            keybind_browser: None,  // Keybind browser not shown initially
+            color_palette_browser: None,  // Color palette browser not shown initially
+            color_form: None,  // Color form not shown initially
         })
     }
 
@@ -682,6 +698,7 @@ impl App {
                 background_color: w.background_color.clone(),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
+                text_color: w.text_color.clone(),
                 transparent_background: w.transparent_background,
                 countdown_icon: countdown_icon.clone(),
                 indicator_colors: w.indicator_colors.clone(),
@@ -698,6 +715,8 @@ impl App {
                 tab_unread_color: w.tab_unread_color.clone(),
                 tab_unread_prefix: w.tab_unread_prefix.clone(),
                 hand_icon: w.hand_icon.clone(),
+                compass_active_color: w.compass_active_color.clone(),
+                compass_inactive_color: w.compass_inactive_color.clone(),
             })
             .collect();
 
@@ -955,6 +974,7 @@ impl App {
             background_color: None,
                     bar_color: None,
                     bar_background_color: None,
+                    text_color: None,
                     transparent_background: true,
                     locked: false,
                     indicator_colors: None,
@@ -972,6 +992,8 @@ impl App {
                     tab_unread_prefix: None,
                     hand_icon: None,
                     countdown_icon: None,
+                    compass_active_color: None,
+                    compass_inactive_color: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1033,6 +1055,7 @@ impl App {
             background_color: None,
                     bar_color: None,
                     bar_background_color: None,
+                    text_color: None,
                     transparent_background: true,
                     locked: false,
                     indicator_colors: None,
@@ -1050,6 +1073,8 @@ impl App {
                     tab_unread_prefix: Some("* ".to_string()),
                     hand_icon: None,
                     countdown_icon: None,
+                    compass_active_color: None,
+                    compass_inactive_color: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1977,18 +2002,20 @@ impl App {
                 }
             }
             "listkeybinds" | "listkeys" | "keybinds" => {
-                let count = self.config.keybinds.len();
-                if count == 0 {
-                    self.add_system_message("No custom keybinds configured");
-                } else {
-                    let mut names: Vec<String> = self.config.keybinds.keys().cloned().collect();
-                    names.sort();
-                    self.add_system_message(&format!("{} keybinds: {}", count, names.join(", ")));
-                }
+                // Open keybind browser
+                self.open_keybind_browser();
             }
             "settings" | "config" => {
                 // Open settings editor with all config values
                 self.open_settings_editor();
+            }
+            "colors" | "palette" | "colorpalette" => {
+                // Open color palette browser
+                self.open_color_palette_browser();
+            }
+            "addcolor" | "newcolor" | "createcolor" => {
+                // Open color editor form for creating new color
+                self.open_color_form_create();
             }
             "testmenu" => {
                 // Test command: .testmenu <exist_id> [noun]
@@ -2429,8 +2456,13 @@ impl App {
             let layout = UiLayout::calculate(terminal_rect, cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width);
 
             // Calculate window layouts using proportional sizing
+            let layout_calc_start = std::time::Instant::now();
             let window_layouts = self.window_manager.calculate_layout(layout.main_area);
             self.window_manager.update_widths(&window_layouts);
+            let layout_calc_duration = layout_calc_start.elapsed();
+            if layout_calc_duration.as_millis() > 100 {
+                tracing::warn!("Layout calculation took {}ms - possible freeze!", layout_calc_duration.as_millis());
+            }
 
             // Draw UI and track render time
             let render_start = std::time::Instant::now();
@@ -2447,19 +2479,25 @@ impl App {
                     if let Some(rect) = window_layouts.get(name) {
                         if let Some(window) = self.window_manager.get_window(name) {
                             let focused = idx == self.focused_window_index;
-                            window.render_with_focus(*rect, f.buffer_mut(), focused);
+                            window.render_with_focus(*rect, f.buffer_mut(), focused, self.server_time_offset);
                         }
                     }
                 }
 
                 // Render performance stats if enabled
                 if self.show_perf_stats {
-                    // Create a larger window in the top-right corner for expanded stats
+                    // Use config values, but calculate X dynamically if set to 0 (right-align)
+                    let x = if self.config.ui.perf_stats_x == 0 {
+                        f.area().width.saturating_sub(self.config.ui.perf_stats_width)
+                    } else {
+                        self.config.ui.perf_stats_x
+                    };
+
                     let perf_rect = Rect {
-                        x: f.area().width.saturating_sub(35),
-                        y: 0,
-                        width: 35,
-                        height: 23,  // Increased from 13 to 23 for more stats
+                        x,
+                        y: self.config.ui.perf_stats_y,
+                        width: self.config.ui.perf_stats_width,
+                        height: self.config.ui.perf_stats_height,
                     };
                     let perf_widget = PerformanceStatsWidget::new();
                     perf_widget.render(perf_rect, f.buffer_mut(), &self.perf_stats);
@@ -2471,7 +2509,7 @@ impl App {
                         // Render search input with prompt
                         self.render_search_input(layout.input_area, f.buffer_mut());
                     }
-                    InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::WindowEditor => {
+                    InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::KeybindBrowser | InputMode::WindowEditor | InputMode::ColorPaletteBrowser | InputMode::ColorForm => {
                         // Hide command input when form/browser/editor is open
                     }
                     _ => {
@@ -2481,7 +2519,7 @@ impl App {
 
                 // Render highlight form as popup (if open)
                 if let Some(ref mut form) = self.highlight_form {
-                    form.render(f.area(), f.buffer_mut());
+                    form.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render keybind form as popup (if open)
@@ -2491,17 +2529,32 @@ impl App {
 
                 // Render settings editor as popup (if open)
                 if let Some(ref mut editor) = self.settings_editor {
-                    editor.render(f.area(), f.buffer_mut());
+                    editor.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render highlight browser as popup (if open)
                 if let Some(ref mut browser) = self.highlight_browser {
+                    browser.render(f.area(), f.buffer_mut(), &self.config);
+                }
+
+                // Render keybind browser as popup (if open)
+                if let Some(ref mut browser) = self.keybind_browser {
                     browser.render(f.area(), f.buffer_mut());
+                }
+
+                // Render color palette browser as popup (if open)
+                if let Some(ref browser) = self.color_palette_browser {
+                    browser.render(f.area(), f.buffer_mut());
+                }
+
+                // Render color form as popup (if open)
+                if let Some(ref form) = self.color_form {
+                    form.render(f.area(), f.buffer_mut());
                 }
 
                 // Render window editor as popup (if open)
                 if self.input_mode == InputMode::WindowEditor {
-                    self.window_editor.render(f.area(), f.buffer_mut());
+                    self.window_editor.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render popup menu (if open)
@@ -2571,8 +2624,16 @@ impl App {
             }
 
             // Handle server messages
+            let msg_start = std::time::Instant::now();
+            let mut msg_count = 0;
             while let Ok(msg) = server_rx.try_recv() {
                 self.handle_server_message(msg);
+                msg_count += 1;
+            }
+            let msg_duration = msg_start.elapsed();
+            if msg_duration.as_millis() > 100 {
+                tracing::warn!("Message processing took {}ms ({} messages) - possible freeze!",
+                    msg_duration.as_millis(), msg_count);
             }
 
             // Update memory stats periodically (count total lines buffered)
@@ -2811,6 +2872,46 @@ impl App {
             return self.handle_highlight_browser_input(key, modifiers);
         }
 
+        if self.input_mode == InputMode::KeybindBrowser {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the browser
+            return self.handle_keybind_browser_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::ColorPaletteBrowser {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the browser
+            return self.handle_color_palette_browser_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::ColorForm {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the form
+            return self.handle_color_form_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::ColorBrowserFilter {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to filter input handler
+            return self.handle_color_browser_filter_input(key, modifiers);
+        }
+
         // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
         if self.input_mode == InputMode::WindowEditor {
             // Allow Ctrl+C to quit
@@ -2877,7 +2978,21 @@ impl App {
             // Process key and handle result
             if let Some(result) = self.window_editor.handle_key(key_event) {
                 match result {
-                    WindowEditorResult::Save { window, is_new, original_name } => {
+                    WindowEditorResult::Save { mut window, is_new, original_name } => {
+                        // Resolve color names to hex codes
+                        if let Some(ref border_color) = window.border_color {
+                            window.border_color = self.config.resolve_color(border_color);
+                        }
+                        if let Some(ref bg_color) = window.background_color {
+                            window.background_color = self.config.resolve_color(bg_color);
+                        }
+                        if let Some(ref bar_color) = window.bar_color {
+                            window.bar_color = self.config.resolve_color(bar_color);
+                        }
+                        if let Some(ref bar_bg_color) = window.bar_background_color {
+                            window.bar_background_color = self.config.resolve_color(bar_bg_color);
+                        }
+
                         // Special handling for command_input
                         if window.widget_type == "command_input" {
                             self.layout.command_input.update_from_window_def(&window);
@@ -2956,11 +3071,15 @@ impl App {
         // Handle mode-specific keys
         match self.input_mode {
             InputMode::Search => self.handle_search_input(key, modifiers),
+            InputMode::ColorBrowserFilter => self.handle_color_browser_filter_input(key, modifiers),
             InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
             InputMode::HighlightForm => unreachable!(), // Handled above
             InputMode::KeybindForm => unreachable!(), // Handled above
             InputMode::SettingsEditor => unreachable!(), // Handled above
             InputMode::HighlightBrowser => unreachable!(), // Handled above
+            InputMode::KeybindBrowser => unreachable!(), // Handled above
+            InputMode::ColorPaletteBrowser => unreachable!(), // Handled above
+            InputMode::ColorForm => unreachable!(), // Handled above
             InputMode::WindowEditor => unreachable!(), // Handled above
         }
     }
@@ -3319,6 +3438,273 @@ impl App {
             self.add_system_message(&msg);
         }
 
+        Ok(())
+    }
+
+    fn handle_keybind_browser_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        let mut message_to_send: Option<String> = None;
+        let mut selected_key: Option<String> = None;
+        let mut delete_key: Option<String> = None;
+
+        if let Some(ref mut browser) = self.keybind_browser {
+            match (key, modifiers) {
+                (KeyCode::Esc, _) => {
+                    // Close browser
+                    self.keybind_browser = None;
+                    self.input_mode = InputMode::Normal;
+                    message_to_send = Some("Keybind browser closed".to_string());
+                }
+                (KeyCode::Up, _) => {
+                    browser.previous();
+                }
+                (KeyCode::Down, _) => {
+                    browser.next();
+                }
+                (KeyCode::PageUp, _) => {
+                    browser.page_up();
+                }
+                (KeyCode::PageDown, _) => {
+                    browser.page_down();
+                }
+                (KeyCode::Enter, _) => {
+                    // Edit selected keybind
+                    if let Some(key_combo) = browser.get_selected() {
+                        selected_key = Some(key_combo.clone());
+                    }
+                }
+                (KeyCode::Delete, _) => {
+                    // Delete selected keybind
+                    if let Some(key_combo) = browser.get_selected() {
+                        delete_key = Some(key_combo.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle edit action (after browser borrow is dropped)
+        if let Some(key_combo) = selected_key {
+            if let Some(keybind_action) = self.config.keybinds.get(&key_combo).cloned() {
+                use crate::config::KeyBindAction;
+                use crate::ui::KeybindActionType;
+
+                // Close browser and open keybind form in edit mode
+                self.keybind_browser = None;
+
+                let (action_type, value) = match keybind_action {
+                    KeyBindAction::Action(action) => (KeybindActionType::Action, action),
+                    KeyBindAction::Macro(macro_action) => (KeybindActionType::Macro, macro_action.macro_text),
+                };
+
+                let form = crate::ui::KeybindFormWidget::new_edit(key_combo.clone(), action_type, value);
+                self.keybind_form = Some(form);
+                self.input_mode = InputMode::KeybindForm;
+                message_to_send = Some(format!("Editing keybind: {}", key_combo));
+            }
+        }
+
+        // Handle delete action (after browser borrow is dropped)
+        if let Some(key_combo) = delete_key {
+            if self.config.keybinds.remove(&key_combo).is_some() {
+                // Save config
+                if let Err(e) = self.config.save(None) {
+                    message_to_send = Some(format!("Failed to save config: {}", e));
+                } else {
+                    // Rebuild keybind map
+                    self.rebuild_keybind_map();
+
+                    // Refresh the browser with updated list
+                    if let Some(ref mut browser) = self.keybind_browser {
+                        *browser = crate::ui::KeybindBrowser::new(&self.config.keybinds);
+                    }
+
+                    message_to_send = Some(format!("Deleted keybind: {}", key_combo));
+                }
+            } else {
+                message_to_send = Some(format!("Keybind '{}' not found", key_combo));
+            }
+        }
+
+        // Send message after all borrows are dropped
+        if let Some(msg) = message_to_send {
+            self.add_system_message(&msg);
+        }
+
+        Ok(())
+    }
+
+    fn handle_color_palette_browser_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        let mut message_to_send: Option<String> = None;
+
+        if let Some(ref mut browser) = self.color_palette_browser {
+            match (key, modifiers) {
+                (KeyCode::Esc, _) => {
+                    // Close browser
+                    self.color_palette_browser = None;
+                    self.input_mode = InputMode::Normal;
+                    message_to_send = Some("Color palette browser closed".to_string());
+                }
+                (KeyCode::Up, _) => {
+                    browser.previous();
+                }
+                (KeyCode::Down, _) => {
+                    browser.next();
+                }
+                (KeyCode::PageUp, _) => {
+                    browser.page_up();
+                }
+                (KeyCode::PageDown, _) => {
+                    browser.page_down();
+                }
+                (KeyCode::Enter, _) => {
+                    // Edit selected color
+                    if let Some(color) = browser.get_selected_color() {
+                        let color_to_edit = color.clone();
+                        // Close browser
+                        self.color_palette_browser = None;
+                        // Open edit form
+                        self.open_color_form_edit(color_to_edit);
+                        return Ok(()); // Early return to avoid message
+                    }
+                }
+                (KeyCode::Delete, _) => {
+                    // Delete selected color
+                    if let Some(color_name) = browser.get_selected() {
+                        // Remove from config
+                        self.config.color_palette.retain(|c| c.name != color_name);
+
+                        // Save config
+                        if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                            message_to_send = Some(format!("Failed to save config: {}", e));
+                        } else {
+                            // Refresh browser with updated palette
+                            *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                            message_to_send = Some(format!("Deleted color: {}", color_name));
+                        }
+                    }
+                }
+                (KeyCode::Char('f') | KeyCode::Char('F'), _) => {
+                    // Toggle favorite
+                    browser.toggle_favorite();
+                    // Save config with updated palette
+                    self.config.color_palette = browser.get_colors().clone();
+                    if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                        message_to_send = Some(format!("Failed to save config: {}", e));
+                    }
+                }
+                (KeyCode::Char('/'), _) => {
+                    // Start filter input
+                    self.command_input.clear();
+                    self.input_mode = InputMode::ColorBrowserFilter;
+                    message_to_send = Some("Filter colors (Enter to apply, Esc to cancel):".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        // Send message after all borrows are dropped
+        if let Some(msg) = message_to_send {
+            self.add_system_message(&msg);
+        }
+
+        Ok(())
+    }
+
+    fn handle_color_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        use crate::ui::ColorFormAction;
+
+        if let Some(ref mut form) = self.color_form {
+            if let Some(action) = form.handle_input(key, modifiers) {
+                match action {
+                    ColorFormAction::Save { color, original_name } => {
+                        // Check if we're renaming (editing with name change)
+                        if let Some(ref old_name) = original_name {
+                            if old_name != &color.name {
+                                // Remove old color
+                                self.config.color_palette.retain(|c| &c.name != old_name);
+                            } else {
+                                // Just updating existing color
+                                self.config.color_palette.retain(|c| c.name != color.name);
+                            }
+                        } else {
+                            // Check for duplicate name when creating new
+                            if self.config.color_palette.iter().any(|c| c.name == color.name) {
+                                self.add_system_message(&format!("Color '{}' already exists", color.name));
+                                return Ok(());
+                            }
+                        }
+
+                        // Add the color
+                        self.config.color_palette.push(color.clone());
+
+                        // Save config
+                        if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                            self.add_system_message(&format!("Failed to save config: {}", e));
+                        } else {
+                            // Close form
+                            self.color_form = None;
+                            self.input_mode = InputMode::Normal;
+
+                            // Refresh browser if it's open
+                            if let Some(ref mut browser) = self.color_palette_browser {
+                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                            }
+
+                            let action_verb = if original_name.is_some() { "Updated" } else { "Added" };
+                            self.add_system_message(&format!("{} color: {}", action_verb, color.name));
+                        }
+                    }
+                    ColorFormAction::Cancel => {
+                        self.color_form = None;
+                        self.input_mode = InputMode::Normal;
+                        self.add_system_message("Color form cancelled");
+                    }
+                    ColorFormAction::Error(msg) => {
+                        self.add_system_message(&format!("Error: {}", msg));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_color_browser_filter_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        match (key, modifiers) {
+            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                self.command_input.insert_char(c);
+            }
+            (KeyCode::Backspace, _) => {
+                self.command_input.delete_char();
+            }
+            (KeyCode::Left, _) => {
+                self.command_input.move_cursor_left();
+            }
+            (KeyCode::Right, _) => {
+                self.command_input.move_cursor_right();
+            }
+            (KeyCode::Home, _) => {
+                self.command_input.move_cursor_home();
+            }
+            (KeyCode::End, _) => {
+                self.command_input.move_cursor_end();
+            }
+            (KeyCode::Enter, _) => {
+                // Apply filter
+                let filter_text = self.command_input.get_input().unwrap_or_default();
+                if let Some(ref mut browser) = self.color_palette_browser {
+                    browser.set_filter(filter_text);
+                }
+                self.input_mode = InputMode::ColorPaletteBrowser;
+                self.command_input.clear();
+            }
+            (KeyCode::Esc, _) => {
+                // Cancel filter
+                self.input_mode = InputMode::ColorPaletteBrowser;
+                self.command_input.clear();
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -3718,7 +4104,52 @@ impl App {
                     }
                 }
 
-                // Highlight form drag handling (fourth highest priority)
+                // Keybind browser drag handling (fourth highest priority)
+                if self.input_mode == InputMode::KeybindBrowser {
+                    if let Some(ref mut browser) = self.keybind_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if browser.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color palette browser drag handling (fourth highest priority)
+                if self.input_mode == InputMode::ColorPaletteBrowser {
+                    if let Some(ref mut browser) = self.color_palette_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if browser.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color form drag handling (fourth highest priority)
+                if self.input_mode == InputMode::ColorForm {
+                    if let Some(ref mut form) = self.color_form {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+                        if form.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Highlight form drag handling (fifth highest priority)
                 if self.input_mode == InputMode::HighlightForm {
                     if let Some(ref mut form) = self.highlight_form {
                         let terminal_area = Rect {
@@ -3959,6 +4390,8 @@ impl App {
                                                         current_pos: (mouse.column, mouse.row),
                                                         source_window: name.clone(),
                                                     });
+                                                    // Clear selection drag start since we're dragging an object
+                                                    self.selection_drag_start = None;
                                                 } else {
                                                     debug!("Found link for word '{}': exist_id={}, opening menu (no {} modifier held)", word, link_data.exist_id, drag_modifier);
                                                     // No modifier held - immediately request menu
@@ -3968,6 +4401,8 @@ impl App {
                                                         // Store the click position for positioning the menu when it arrives
                                                         self.last_link_click_pos = Some((mouse.column, mouse.row));
                                                     }
+                                                    // Clear selection drag start since we're opening a menu
+                                                    self.selection_drag_start = None;
                                                 }
                                             } else {
                                                 debug!("No link found for word '{}'", word);
@@ -4018,6 +4453,54 @@ impl App {
                                 height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
                             };
                             browser.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Keybind browser drag release (fourth priority)
+                if self.input_mode == InputMode::KeybindBrowser {
+                    if let Some(ref mut browser) = self.keybind_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color palette browser drag release (fourth priority)
+                if self.input_mode == InputMode::ColorPaletteBrowser {
+                    if let Some(ref mut browser) = self.color_palette_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color form drag release (fourth priority)
+                if self.input_mode == InputMode::ColorForm {
+                    if let Some(ref mut form) = self.color_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, false, terminal_area);
                             return Ok(());
                         }
                     }
@@ -4179,6 +4662,54 @@ impl App {
                                 height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
                             };
                             browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Keybind browser dragging (fourth priority)
+                if self.input_mode == InputMode::KeybindBrowser {
+                    if let Some(ref mut browser) = self.keybind_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color palette browser dragging (fourth priority)
+                if self.input_mode == InputMode::ColorPaletteBrowser {
+                    if let Some(ref mut browser) = self.color_palette_browser {
+                        if browser.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Color form dragging (fourth priority)
+                if self.input_mode == InputMode::ColorForm {
+                    if let Some(ref mut form) = self.color_form {
+                        if form.is_dragging {
+                            let terminal_area = Rect {
+                                x: 0,
+                                y: 0,
+                                width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                                height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                            };
+                            form.handle_mouse(mouse.column, mouse.row, true, terminal_area);
                             return Ok(());
                         }
                     }
@@ -4450,6 +4981,23 @@ impl App {
                 });
                 let _has_prompt = elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. }));
 
+                // Extract server time from this chunk's prompt (if present)
+                // Calculate offset between server time and local time
+                for element in &elements {
+                    if let ParsedElement::Prompt { time, .. } = element {
+                        if let Ok(server_time) = time.parse::<u64>() {
+                            let local_time = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            let offset = (server_time as i64) - (local_time as i64);
+                            self.server_time_offset = offset;
+                            // Commented out - too spammy (logs every prompt)
+                            // debug!("Server time offset: {}s (server={}, local={})", offset, server_time, local_time);
+                        }
+                    }
+                }
+
                 for element in elements {
                     match element {
                         ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } => {
@@ -4528,8 +5076,9 @@ impl App {
                                         .iter()
                                         .find(|pc| pc.character == char_str)
                                         .and_then(|pc| {
-                                            let fg = pc.fg.as_ref().or(pc.color.as_ref()).map(|s| s.as_str()).unwrap_or("none");
-                                            debug!("Matched prompt char '{}' to fg color {}", char_str, fg);
+                                            // Commented out - too spammy (logs every prompt)
+                                            // let fg = pc.fg.as_ref().or(pc.color.as_ref()).map(|s| s.as_str()).unwrap_or("none");
+                                            // debug!("Matched prompt char '{}' to fg color {}", char_str, fg);
                                             pc.fg.as_ref().or(pc.color.as_ref()).and_then(|color_str| Self::parse_hex_color(color_str))
                                         })
                                         .unwrap_or_else(|| {
@@ -4551,7 +5100,7 @@ impl App {
                         }
                         ParsedElement::StreamPush { id } => {
                             // Switch to new stream
-                            debug!("Pushing stream: {}", id);
+                            // debug!("Pushing stream: {}", id);  // Commented out - too spammy
                             self.current_stream = id.clone();
 
                             // Check if a window exists for this stream
@@ -4573,7 +5122,7 @@ impl App {
                         }
                         ParsedElement::StreamPop => {
                             // Return to main stream
-                            debug!("Popping stream, returning to main");
+                            // debug!("Popping stream, returning to main");  // Commented out - too spammy
 
                             // Process buffered stream content before popping
                             match self.current_stream.as_str() {
@@ -4627,6 +5176,10 @@ impl App {
                                 &id
                             };
 
+                            // Get window dimensions BEFORE borrowing window mutably
+                            let window_width = self.window_manager.get_window_width(&id).unwrap_or(20);
+                            let has_border = self.window_manager.get_window_border(&id).unwrap_or(true);
+
                             if let Some(window) = self.window_manager.get_window(window_id) {
                                 // Special handling for encumbrance - change color based on value
                                 if id == "encumlevel" {
@@ -4651,10 +5204,21 @@ impl App {
                                     // value is percentage (0-100), max is 100
                                     // text contains display text like "mana 407/407" or "clear as a bell"
 
-                                    // Strip the prefix from text (e.g., "mana 407/407" -> "407/407")
+                                    // Determine display text based on available width
                                     let display_text = if text.contains('/') {
-                                        // Has numbers - strip the prefix
-                                        text.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")
+                                        let available_width = if has_border {
+                                            window_width.saturating_sub(2)
+                                        } else {
+                                            window_width
+                                        };
+
+                                        // Try full text first (e.g., "Health 350/357")
+                                        if text.len() as u16 <= available_width {
+                                            text.clone()
+                                        } else {
+                                            // Strip prefix if too long (e.g., "350/357")
+                                            text.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")
+                                        }
                                     } else {
                                         // Custom text like "clear as a bell" - use as-is
                                         text.clone()
@@ -4688,14 +5252,27 @@ impl App {
                                     // Assume max is 100 for percentage-based displays
                                     // Show the original text with the extracted value
                                     window.set_progress_with_text(num, 100, Some(value.clone()));
-                                    debug!("Updated label '{}' to {}% with text '{}'", id, num, value);
+                                    tracing::debug!("Updated label '{}' to {}% with text '{}'", id, num, value);
                                 } else {
                                     // No number found, just show the text at 0%
                                     window.set_progress_with_text(0, 100, Some(value.clone()));
-                                    debug!("Updated label '{}' with text '{}' (no value)", id, value);
+                                    tracing::debug!("Updated label '{}' with text '{}' (no value)", id, value);
                                 }
                             } else {
-                                debug!("No window found for label id '{}'", id);
+                                tracing::warn!("No window found for label id '{}' - available windows: {:?}",
+                                    id, self.window_manager.get_window_names());
+                            }
+                        }
+                        ParsedElement::BloodPoints { value } => {
+                            // <dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100' />
+                            // Update blood points progress bar
+                            let blood_names = ["bloodpoints", "lblBPs", "blood"];
+                            for name in &blood_names {
+                                if let Some(window) = self.window_manager.get_window(name) {
+                                    window.set_progress_with_text(value, 100, Some(format!("Blood Points: {}", value)));
+                                    tracing::debug!("Updated {} blood points to {}", name, value);
+                                    break;
+                                }
                             }
                         }
                         ParsedElement::RoundTime { value } => {
@@ -4707,11 +5284,16 @@ impl App {
                             }
                         }
                         ParsedElement::CastTime { value } => {
-                            // <castTime value='3'/>
+                            // <castTime value='1760331899'/>
                             // value is Unix timestamp when cast time ends
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            let remaining = (value as i64) - (now as i64);
                             if let Some(window) = self.window_manager.get_window("casttime") {
                                 window.set_countdown(value as u64);
-                                debug!("Updated casttime to end at {}", value);
+                                debug!("Updated casttime: end={}, now={}, remaining={}s", value, now, remaining);
                             }
                         }
                         ParsedElement::Compass { directions } => {
@@ -4719,7 +5301,7 @@ impl App {
                             // Update compass widget with available exits
                             if let Some(window) = self.window_manager.get_window("compass") {
                                 window.set_compass_directions(directions.clone());
-                                debug!("Updated compass with directions: {:?}", directions);
+                                // debug!("Updated compass with directions: {:?}", directions);  // Commented out - too spammy
                             }
                         }
                         ParsedElement::InjuryImage { id, name } => {
@@ -5040,6 +5622,7 @@ impl App {
             value: SettingValue::String(self.config.connection.host.clone()),
             description: Some("Lich server hostname or IP address".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Connection".to_string(),
@@ -5048,6 +5631,7 @@ impl App {
             value: SettingValue::Number(self.config.connection.port as i64),
             description: Some("Lich server port number".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // UI settings
@@ -5058,6 +5642,7 @@ impl App {
             value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
             description: Some("Color for echoed commands (hex color code)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5066,6 +5651,7 @@ impl App {
             value: SettingValue::String(self.config.ui.countdown_icon.clone()),
             description: Some("Unicode character for countdown fill (default: \u{f0c8})".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5074,6 +5660,7 @@ impl App {
             value: SettingValue::Number(self.config.ui.poll_timeout_ms as i64),
             description: Some("Event poll timeout - lower = higher FPS but more CPU (16ms=60fps, 8ms=120fps, 4ms=240fps)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5082,6 +5669,7 @@ impl App {
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
             description: Some("Enable text selection with mouse".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // Sound settings
@@ -5092,6 +5680,7 @@ impl App {
             value: SettingValue::Boolean(self.config.sound.enabled),
             description: Some("Enable sound effects for highlights".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Sound".to_string(),
@@ -5100,6 +5689,7 @@ impl App {
             value: SettingValue::Float(self.config.sound.volume as f64),
             description: Some("Master volume (0.0 to 1.0)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Sound".to_string(),
@@ -5108,6 +5698,7 @@ impl App {
             value: SettingValue::Number(self.config.sound.cooldown_ms as i64),
             description: Some("Minimum milliseconds between sound plays".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // Preset colors (sorted alphabetically) - show as "fg bg" format
@@ -5125,6 +5716,7 @@ impl App {
                     value: SettingValue::String(display),
                     description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
                     editable: true,
+            name_width: None,
                 });
             }
         }
@@ -5142,6 +5734,7 @@ impl App {
                 value: SettingValue::Color(spell_range.color.clone()),
                 description: Some(format!("Color for spells: {}", spell_ids)),
                 editable: true,
+            name_width: None,
             });
         }
 
@@ -5158,6 +5751,7 @@ impl App {
                 value: SettingValue::String(display),
                 description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
                 editable: true,
+            name_width: None,
             });
         }
 
@@ -5188,6 +5782,7 @@ impl App {
             value: SettingValue::String(self.config.connection.host.clone()),
             description: Some("Lich server hostname or IP address".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Connection".to_string(),
@@ -5196,6 +5791,7 @@ impl App {
             value: SettingValue::Number(self.config.connection.port as i64),
             description: Some("Lich server port number".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // UI settings
@@ -5206,6 +5802,7 @@ impl App {
             value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
             description: Some("Color for echoed commands (hex color code)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5214,6 +5811,7 @@ impl App {
             value: SettingValue::String(self.config.ui.countdown_icon.clone()),
             description: Some("Unicode character for countdown fill (default: \u{f0c8})".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5222,6 +5820,7 @@ impl App {
             value: SettingValue::Number(self.config.ui.poll_timeout_ms as i64),
             description: Some("Event poll timeout - lower = higher FPS but more CPU (16ms=60fps, 8ms=120fps, 4ms=240fps)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
@@ -5230,6 +5829,7 @@ impl App {
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
             description: Some("Enable text selection with mouse".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // Sound settings
@@ -5240,6 +5840,7 @@ impl App {
             value: SettingValue::Boolean(self.config.sound.enabled),
             description: Some("Enable sound effects for highlights".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Sound".to_string(),
@@ -5248,6 +5849,7 @@ impl App {
             value: SettingValue::Float(self.config.sound.volume as f64),
             description: Some("Master volume (0.0 to 1.0)".to_string()),
             editable: true,
+            name_width: None,
         });
         items.push(SettingItem {
             category: "Sound".to_string(),
@@ -5256,6 +5858,7 @@ impl App {
             value: SettingValue::Number(self.config.sound.cooldown_ms as i64),
             description: Some("Minimum milliseconds between sound plays".to_string()),
             editable: true,
+            name_width: None,
         });
 
         // Preset colors (sorted alphabetically) - show as "fg bg" format
@@ -5273,6 +5876,7 @@ impl App {
                     value: SettingValue::String(display),
                     description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
                     editable: true,
+            name_width: None,
                 });
             }
         }
@@ -5290,6 +5894,7 @@ impl App {
                 value: SettingValue::Color(spell_range.color.clone()),
                 description: Some(format!("Color for spells: {}", spell_ids)),
                 editable: true,
+            name_width: None,
             });
         }
 
@@ -5306,6 +5911,7 @@ impl App {
                 value: SettingValue::String(display),
                 description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
                 editable: true,
+            name_width: None,
             });
         }
 
@@ -5326,6 +5932,44 @@ impl App {
         self.highlight_browser = Some(browser);
         self.input_mode = InputMode::HighlightBrowser;
         self.add_system_message("Opening highlight browser (Up/Down to navigate, Enter to edit, Delete to remove, Esc to close)");
+    }
+
+    /// Open the keybind browser
+    fn open_keybind_browser(&mut self) {
+        use crate::ui::KeybindBrowser;
+
+        let browser = KeybindBrowser::new(&self.config.keybinds);
+        self.keybind_browser = Some(browser);
+        self.input_mode = InputMode::KeybindBrowser;
+        self.add_system_message("Opening keybind browser (Up/Down to navigate, Enter to edit, Delete to remove, Esc to close)");
+    }
+
+    /// Open the color palette browser
+    fn open_color_palette_browser(&mut self) {
+        use crate::ui::ColorPaletteBrowser;
+
+        let browser = ColorPaletteBrowser::new(self.config.color_palette.clone());
+        self.color_palette_browser = Some(browser);
+        self.input_mode = InputMode::ColorPaletteBrowser;
+        self.add_system_message("Opening color palette (Up/Down to navigate, Enter to edit, F to favorite, / to filter, Esc to close)");
+    }
+
+    fn open_color_form_create(&mut self) {
+        use crate::ui::ColorForm;
+
+        let form = ColorForm::new_create();
+        self.color_form = Some(form);
+        self.input_mode = InputMode::ColorForm;
+        self.add_system_message("Add new color (Tab to navigate fields, Enter to save, Esc to cancel)");
+    }
+
+    fn open_color_form_edit(&mut self, color: crate::config::PaletteColor) {
+        use crate::ui::ColorForm;
+
+        let form = ColorForm::new_edit(&color);
+        self.color_form = Some(form);
+        self.input_mode = InputMode::ColorForm;
+        self.add_system_message("Edit color (Tab to navigate fields, Enter to save, Esc to cancel)");
     }
 
     /// Validate a setting value

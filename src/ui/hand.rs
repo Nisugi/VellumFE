@@ -17,6 +17,7 @@ pub struct Hand {
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
     text_color: Option<String>,
+    background_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +45,7 @@ impl Hand {
             border_color: None,
             border_sides: None,
             text_color: Some("#ffffff".to_string()),
+            background_color: None,
         }
     }
 
@@ -95,6 +97,10 @@ impl Hand {
         self.text_color = color;
     }
 
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
+    }
+
     fn parse_color(hex: &str) -> Color {
         if !hex.starts_with('#') || hex.len() != 7 {
             return Color::White;
@@ -108,54 +114,80 @@ impl Hand {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Create block for border
-        let mut block = Block::default();
+        // Determine which borders to show
+        let borders = if self.show_border {
+            crate::config::parse_border_sides(&self.border_sides)
+        } else {
+            ratatui::widgets::Borders::NONE
+        };
 
-        if self.show_border {
-            let borders = crate::config::parse_border_sides(&self.border_sides);
-            block = block.borders(borders);
+        let border_color = self.border_color.as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
+
+        // Check if we only have left/right borders (no top/bottom)
+        let only_horizontal_borders = self.show_border &&
+            (borders.contains(ratatui::widgets::Borders::LEFT) || borders.contains(ratatui::widgets::Borders::RIGHT)) &&
+            !borders.contains(ratatui::widgets::Borders::TOP) &&
+            !borders.contains(ratatui::widgets::Borders::BOTTOM);
+
+        let inner_area: Rect;
+
+        if only_horizontal_borders {
+            // For left/right only borders, we'll manually render them on the content row
+            let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+            let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+            let border_width = (if has_left { 1 } else { 0 }) + (if has_right { 1 } else { 0 });
+
+            inner_area = Rect {
+                x: area.x + (if has_left { 1 } else { 0 }),
+                y: area.y,
+                width: area.width.saturating_sub(border_width),
+                height: area.height,
+            };
+            // We'll render the borders later after content
+        } else if self.show_border {
+            // Use Block widget for all other border combinations
+            let mut block = Block::default().borders(borders);
 
             if let Some(ref style) = self.border_style {
                 let border_type = match style.as_str() {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);
             }
 
-            if let Some(ref color_str) = self.border_color {
-                let color = Self::parse_color(color_str);
-                block = block.border_style(Style::default().fg(color));
-            }
-
+            block = block.border_style(Style::default().fg(border_color));
             block = block.title(self.label.as_str());
-        }
 
-        let inner_area = if self.show_border {
-            block.inner(area)
-        } else {
-            area
-        };
-
-        // Render the block first
-        if self.show_border {
+            inner_area = block.inner(area);
             use ratatui::widgets::Widget;
             block.render(area, buf);
+        } else {
+            inner_area = area;
         }
 
         if inner_area.width == 0 || inner_area.height == 0 {
             return;
         }
 
-        // Fill entire area with black background
+        // Fill entire area with background color
+        let bg_color = self.background_color
+            .as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::Reset);
+
         for row in 0..inner_area.height {
             for col in 0..inner_area.width {
                 let x = inner_area.x + col;
                 let y = inner_area.y + row;
                 buf[(x, y)].set_char(' ');
-                buf[(x, y)].set_bg(Color::Black);
+                buf[(x, y)].set_bg(bg_color);
             }
         }
 
@@ -172,7 +204,7 @@ impl Hand {
             if x < inner_area.x + inner_area.width {
                 buf[(x, y)].set_char(ch);
                 buf[(x, y)].set_fg(text_color);
-                buf[(x, y)].set_bg(Color::Black);
+                buf[(x, y)].set_bg(bg_color);
             }
         }
 
@@ -183,7 +215,30 @@ impl Hand {
             if x < inner_area.x + inner_area.width {
                 buf[(x, y)].set_char(ch);
                 buf[(x, y)].set_fg(text_color);
-                buf[(x, y)].set_bg(Color::Black);
+                buf[(x, y)].set_bg(bg_color);
+            }
+        }
+
+        // If we have left/right only borders, render them manually on the content row
+        if only_horizontal_borders {
+            let content_y = inner_area.y; // Hand widgets always render at y=0 of inner area
+            if content_y < buf.area().height {
+                let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+                let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+
+                // Render left border
+                if has_left && area.x < buf.area().width {
+                    buf[(area.x, content_y)].set_char('│');
+                    buf[(area.x, content_y)].set_fg(border_color);
+                }
+                // Render right border
+                if has_right {
+                    let right_x = area.x + area.width.saturating_sub(1);
+                    if right_x < buf.area().width {
+                        buf[(right_x, content_y)].set_char('│');
+                        buf[(right_x, content_y)].set_fg(border_color);
+                    }
+                }
             }
         }
     }

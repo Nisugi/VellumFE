@@ -46,6 +46,7 @@ pub struct SettingItem {
     pub value: SettingValue,
     pub description: Option<String>,
     pub editable: bool,  // Some settings might be read-only
+    pub name_width: Option<u16>,  // Custom width for name column (None = auto)
 }
 
 pub struct SettingsEditor {
@@ -293,7 +294,7 @@ impl SettingsEditor {
         false
     }
 
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         // Calculate popup size
         let popup_width = 70.min(area.width);
         let popup_height = 25.min(area.height);
@@ -394,18 +395,45 @@ impl SettingsEditor {
             let is_selected = display_idx == self.selected_index;
             let is_being_edited = self.editing_index == Some(*original_idx);
 
-            // Build display line
-            let display_value = if is_being_edited {
-                format!("{}: [{}]", item.display_name, self.edit_buffer)
+            // Determine name column width based on category or item setting
+            let name_width = if let Some(width) = item.name_width {
+                width
             } else {
-                // For booleans, show checkbox-style indicator
-                match &item.value {
-                    SettingValue::Boolean(b) => {
-                        let indicator = if *b { "[✓]" } else { "[ ]" };
-                        format!("{}: {}", item.display_name, indicator)
-                    }
-                    _ => format!("{}: {}", item.display_name, item.value.to_display_string())
+                // Default widths per category
+                match item.category.as_str() {
+                    "Presets" => 20,
+                    "Prompts" => 20,  // Changed from 16 to align with other sections
+                    "Spells" => 40,
+                    _ => 20,  // Connection, UI, Sound
                 }
+            };
+
+            // Build display name and value
+            let (display_name, display_value) = if is_being_edited {
+                (item.display_name.clone(), format!("[{}]", self.edit_buffer))
+            } else {
+                let value_str = match &item.value {
+                    SettingValue::Boolean(b) => {
+                        if *b { "[✓]" } else { "[ ]" }
+                    }
+                    SettingValue::String(s) if item.category == "Presets" || item.category == "Prompts" => {
+                        // Format as "7chars 7chars" for presets/prompts
+                        let parts: Vec<&str> = s.split_whitespace().collect();
+                        let fg = parts.get(0).unwrap_or(&"-");
+                        let bg = parts.get(1).unwrap_or(&"-");
+                        &format!("{:<7} {:<7}", fg, bg)
+                    }
+                    _ => &item.value.to_display_string()
+                };
+                (item.display_name.clone(), value_str.to_string())
+            };
+
+            // Format line with padding: "  NAME:<spaces> VALUE"
+            let indent = "  ";
+            let name_part = if display_name.len() > name_width as usize {
+                format!("{}...", &display_name[..name_width.saturating_sub(3) as usize])
+            } else {
+                format!("{:<width$}", display_name, width = name_width as usize)
             };
 
             // Style based on state
@@ -419,19 +447,121 @@ impl SettingsEditor {
                 (Color::White, Color::Black, false)
             };
 
-            // Render item (indented under category)
-            let indent = "  ";
-            let full_line = format!("{}{}", indent, display_value);
+            // Render indent
+            let mut x_pos = content_x;
+            for ch in indent.chars() {
+                if x_pos < content_x + content_width {
+                    let mut cell = buf[(x_pos, y)].clone();
+                    cell.set_char(ch).set_fg(fg).set_bg(bg);
+                    if bold {
+                        cell.modifier.insert(Modifier::BOLD);
+                    }
+                    buf[(x_pos, y)] = cell;
+                    x_pos += 1;
+                }
+            }
 
-            for (i, ch) in full_line.chars().enumerate() {
-                if let Some(x) = content_x.checked_add(i as u16) {
-                    if x < content_x + content_width {
-                        let mut cell = buf[(x, y)].clone();
-                        cell.set_char(ch).set_fg(fg).set_bg(bg);
-                        if bold {
-                            cell.modifier.insert(Modifier::BOLD);
+            // Render name part
+            for ch in name_part.chars() {
+                if x_pos < content_x + content_width {
+                    let mut cell = buf[(x_pos, y)].clone();
+                    cell.set_char(ch).set_fg(fg).set_bg(bg);
+                    if bold {
+                        cell.modifier.insert(Modifier::BOLD);
+                    }
+                    buf[(x_pos, y)] = cell;
+                    x_pos += 1;
+                }
+            }
+
+            // Render colon separator
+            if x_pos < content_x + content_width {
+                let mut cell = buf[(x_pos, y)].clone();
+                cell.set_char(':').set_fg(fg).set_bg(bg);
+                if bold {
+                    cell.modifier.insert(Modifier::BOLD);
+                }
+                buf[(x_pos, y)] = cell;
+                x_pos += 1;
+            }
+
+            // Render space after colon
+            if x_pos < content_x + content_width {
+                let mut cell = buf[(x_pos, y)].clone();
+                cell.set_char(' ').set_fg(fg).set_bg(bg);
+                if bold {
+                    cell.modifier.insert(Modifier::BOLD);
+                }
+                buf[(x_pos, y)] = cell;
+                x_pos += 1;
+            }
+
+            // Render value (up to available space, leaving room for color blocks)
+            let value_max_width = content_width.saturating_sub((x_pos - content_x) + 10);
+            for (i, ch) in display_value.chars().enumerate() {
+                if i >= value_max_width as usize {
+                    break;
+                }
+                if x_pos < content_x + content_width {
+                    let mut cell = buf[(x_pos, y)].clone();
+                    cell.set_char(ch).set_fg(fg).set_bg(bg);
+                    if bold {
+                        cell.modifier.insert(Modifier::BOLD);
+                    }
+                    buf[(x_pos, y)] = cell;
+                    x_pos += 1;
+                }
+            }
+
+            let x_offset = x_pos - content_x;
+
+            // Render color preview blocks for Color and String settings that contain colors
+            // (Color settings, Presets, Prompts)
+            let should_render_colors = matches!(&item.value, SettingValue::Color(_) | SettingValue::String(_))
+                && (item.category == "UI" || item.category == "Presets" || item.category == "Prompts" || item.category == "Spells")
+                && !is_being_edited;
+
+            if should_render_colors {
+                let value_str = item.value.to_display_string();
+                let parts: Vec<&str> = value_str.split_whitespace().collect();
+
+                // For Presets/Prompts: value is "7chars 7chars", so previews start at fixed offset
+                let preview_x = if item.category == "Presets" || item.category == "Prompts" {
+                    content_x + x_offset + 1  // Right after the formatted value
+                } else {
+                    content_x + x_offset + 1  // Right after other values
+                };
+
+                // Foreground color preview (always render if we have a color)
+                if !parts.is_empty() && parts[0] != "-" {
+                    let resolved = config.resolve_color(parts[0]);
+                    if let Some(hex) = resolved {
+                        if let Some(color) = Self::parse_hex_color(&hex) {
+                            for i in 0..3 {
+                                if let Some(x) = preview_x.checked_add(i) {
+                                    if x < content_x + content_width {
+                                        buf[(x, y)].set_char('█').set_fg(color).set_bg(bg);
+                                    }
+                                }
+                            }
                         }
-                        buf[(x, y)] = cell;
+                    }
+                }
+
+                // Background color preview (always render space for alignment, even if no bg)
+                let bg_preview_x = preview_x + 4;  // 3 blocks + 1 space
+                if parts.len() > 1 && parts[1] != "-" {
+                    let resolved = config.resolve_color(parts[1]);
+                    if let Some(hex) = resolved {
+                        if let Some(color) = Self::parse_hex_color(&hex) {
+                            for i in 0..3 {
+                                if let Some(x) = bg_preview_x.checked_add(i) {
+                                    if x < content_x + content_width {
+                                        buf[(x, y)].set_char('█').set_fg(color).set_bg(bg);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -498,5 +628,15 @@ impl SettingsEditor {
         if bottom_right_x < buf.area.width && bottom_right_y < buf.area.height {
             buf[(bottom_right_x, bottom_right_y)].set_char('┘').set_fg(color).set_bg(Color::Black);
         }
+    }
+
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        if !hex.starts_with('#') || hex.len() != 7 {
+            return None;
+        }
+        let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
+        let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
+        let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
+        Some(Color::Rgb(r, g, b))
     }
 }

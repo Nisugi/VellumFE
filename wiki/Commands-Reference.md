@@ -14,6 +14,7 @@ This page documents all dot commands available in vellum-fe. Dot commands are lo
 - [Active Effects Commands](#active-effects-commands)
 - [Highlight Commands](#highlight-commands)
 - [Keybind Commands](#keybind-commands)
+- [Color Palette Commands](#color-palette-commands)
 - [Combat Tracking Commands](#combat-tracking-commands)
 - [Debug Commands](#debug-commands)
 
@@ -264,16 +265,21 @@ Change the border style and color of a window.
 **Parameters:**
 - `window_name` - Name of the window
 - `style` - Border style: `single`, `double`, `rounded`, `thick`, `none`
-- `color` - (Optional) Border color in hex format (e.g., `#00ff00`)
+- `color` - (Optional) Border color in hex format (e.g., `#00ff00`) or color name (e.g., `red`, `cyan`)
 - `sides` - (Optional) Which sides to show: `top`, `bottom`, `left`, `right`, `all`, `none` (default: `all`)
 
 **Examples:**
 ```
 .border main rounded
 .border health double #00ff00
-.border loot single #ffaa00 top bottom
+.border health double green
+.border loot single red top bottom
 .border thoughts none
 ```
+
+**Notes:**
+- Color names are resolved from the color palette (see `.colors`)
+- Use `.addcolor` to create custom color names
 
 ---
 
@@ -344,21 +350,24 @@ Set background color for a window. Useful for making borderless windows more vis
 
 **Parameters:**
 - `window_name` - Name of the window
-- `color` - Hex color code (e.g., `#1a1a1a`) or `none` to remove
+- `color` - Hex color code (e.g., `#1a1a1a`), color name (e.g., `navy`, `darkgray`), or `none` to remove
 
 **Examples:**
 ```
 .background command #1a1a1a
-.background compass #000033
-.bgcolor injuries #1a1a00
+.background command darkgray
+.background compass navy
+.bgcolor injuries darkred
 .background main none
 ```
 
 **Notes:**
-- Background color fills the entire widget area
+- Background color fills the entire widget content area
 - When not set, widgets have transparent backgrounds
 - Particularly useful for borderless windows to show boundaries
 - Works with all widget types
+- Color names are resolved from the color palette (see `.colors`)
+- Use `.addcolor` to create custom color names
 
 ---
 
@@ -648,15 +657,20 @@ Change the colors of a progress bar.
 
 **Parameters:**
 - `window_name` - Name of the progress bar window
-- `bar_color` - Color for the filled portion (hex format, e.g., `#00ff00`)
+- `bar_color` - Color for the filled portion (hex format or color name, e.g., `#00ff00` or `green`)
 - `background_color` - (Optional) Color for the unfilled portion
 
 **Examples:**
 ```
 .setbarcolor health #00ff00
-.setbarcolor mana #0000ff #333333
+.setbarcolor health green
+.setbarcolor mana blue darkgray
 .setbarcolor stamina #ffff00 #222222
 ```
+
+**Notes:**
+- Color names are resolved from the color palette (see `.colors`)
+- Use `.addcolor` to create custom color names
 
 ---
 
@@ -977,6 +991,101 @@ List all configured keybinds.
 ```
 
 **See also:** [Keybind Management Guide](https://github.com/Nisugi/VellumFE/wiki/Keybind-Management)
+
+---
+
+## Color Palette Commands
+
+### `.colors` / `.palette` / `.colorpalette`
+
+Open the color palette browser to view, edit, and manage color definitions.
+
+**Syntax:**
+```
+.colors
+.palette
+.colorpalette
+```
+
+**Example:**
+```
+.colors
+```
+
+**Features:**
+- Browse 85+ preconfigured colors organized by category (red, blue, green, etc.)
+- Navigate with Up/Down arrows, PgUp/PgDn
+- Press Enter to edit selected color
+- Press F to toggle favorite status
+- Press Del to delete selected color
+- Category headers automatically appear when scrolling
+- Draggable popup window (click title bar to move)
+
+**Notes:**
+- Colors are saved to `~/.vellum-fe/configs/default.toml` (or character-specific config)
+- All default colors are editable - customize as needed
+- Use color names anywhere colors are supported (window editor, border colors, etc.)
+- Color names automatically resolve to hex codes
+
+**See also:** `.addcolor`, [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)
+
+---
+
+### `.addcolor` / `.newcolor` / `.createcolor`
+
+Open the color editor form to create a new color definition.
+
+**Syntax:**
+```
+.addcolor
+.newcolor
+.createcolor
+```
+
+**Example:**
+```
+.addcolor
+```
+
+**Form Fields:**
+- **Name** - Unique name for the color (e.g., `myblue`, `darkpurple`)
+- **Color** - Hex color code in format `#RRGGBB` (e.g., `#0033FF`)
+  - Only accepts valid hex characters (0-9, A-F)
+  - Live color preview shown as `███`
+- **Category** - Category for organization (e.g., `blue`, `custom`, `ui`)
+- **Favorite** - Mark as favorite (checkbox, toggle with Space or X)
+
+**Navigation:**
+- Tab/Shift+Tab - Navigate between fields
+- Enter on Save button - Validates and saves color
+- Enter on Cancel or Esc - Cancel without saving
+- Arrow keys, Home, End - Text navigation in fields
+
+**Examples:**
+```
+# Create a custom blue
+.addcolor
+Name: myblue
+Color: #0033FF
+Category: blue
+Favorite: [X]
+
+# Create UI accent color
+.addcolor
+Name: accent
+Color: #FF6B35
+Category: ui
+Favorite: [ ]
+```
+
+**Notes:**
+- Color names must be unique (duplicates are rejected)
+- Hex color validation ensures valid format (#RRGGBB)
+- Category names are displayed in lowercase
+- Colors are immediately available for use after saving
+- Draggable popup window (click title bar to move)
+
+**See also:** `.colors` (to browse and edit existing colors)
 
 ---
 

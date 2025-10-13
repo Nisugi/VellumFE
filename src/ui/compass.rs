@@ -72,7 +72,7 @@ impl Compass {
     }
 
     pub fn set_directions(&mut self, directions: Vec<String>) {
-        tracing::debug!("Compass: Setting directions: {:?}", directions);
+        // tracing::debug!("Compass: Setting directions: {:?}", directions);  // Commented out - too spammy
         self.directions = directions.into_iter().collect();
     }
 
@@ -118,6 +118,8 @@ impl Compass {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);

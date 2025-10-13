@@ -10,6 +10,7 @@ use ratatui::{
 pub struct PerformanceStatsWidget {
     show_border: bool,
     border_color: Color,
+    background_color: Option<Color>,
 }
 
 impl PerformanceStatsWidget {
@@ -17,6 +18,7 @@ impl PerformanceStatsWidget {
         Self {
             show_border: true,
             border_color: Color::Gray,
+            background_color: Some(Color::Black),  // Default black background
         }
     }
 
@@ -30,7 +32,23 @@ impl PerformanceStatsWidget {
         self
     }
 
+    pub fn with_background_color(mut self, color: Option<Color>) -> Self {
+        self.background_color = color;
+        self
+    }
+
     pub fn render(&self, area: Rect, buf: &mut Buffer, stats: &PerformanceStats) {
+        // Fill background if specified
+        if let Some(bg_color) = self.background_color {
+            for y in area.y..area.y + area.height {
+                for x in area.x..area.x + area.width {
+                    if x < buf.area().width && y < buf.area().height {
+                        buf[(x, y)].set_bg(bg_color);
+                    }
+                }
+            }
+        }
+
         // Create block with border if enabled
         let block = if self.show_border {
             Block::default()

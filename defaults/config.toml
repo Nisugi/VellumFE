@@ -194,3 +194,440 @@ enabled = true
 # event_type = "prone"
 # action = "set"
 # enabled = false
+
+#==============================================================================
+# Color Palette
+#==============================================================================
+# Named colors that can be used anywhere colors are specified
+# Instead of typing "#FF0000", you can type "red" or "crimson"
+# All colors are editable - customize to your liking!
+
+# ─── Red Family ───
+[[color_palette]]
+name = "red"
+color = "#FF0000"
+category = "red"
+
+[[color_palette]]
+name = "crimson"
+color = "#DC143C"
+category = "red"
+
+[[color_palette]]
+name = "darkred"
+color = "#8B0000"
+category = "red"
+
+[[color_palette]]
+name = "firebrick"
+color = "#B22222"
+category = "red"
+
+[[color_palette]]
+name = "indianred"
+color = "#CD5C5C"
+category = "red"
+
+[[color_palette]]
+name = "lightcoral"
+color = "#F08080"
+category = "red"
+
+[[color_palette]]
+name = "salmon"
+color = "#FA8072"
+category = "red"
+
+# ─── Orange Family ───
+[[color_palette]]
+name = "orange"
+color = "#FFA500"
+category = "orange"
+
+[[color_palette]]
+name = "darkorange"
+color = "#FF8C00"
+category = "orange"
+
+[[color_palette]]
+name = "coral"
+color = "#FF7F50"
+category = "orange"
+
+[[color_palette]]
+name = "tomato"
+color = "#FF6347"
+category = "orange"
+
+[[color_palette]]
+name = "orangered"
+color = "#FF4500"
+category = "orange"
+
+# ─── Yellow Family ───
+[[color_palette]]
+name = "yellow"
+color = "#FFFF00"
+category = "yellow"
+
+[[color_palette]]
+name = "gold"
+color = "#FFD700"
+category = "yellow"
+
+[[color_palette]]
+name = "khaki"
+color = "#F0E68C"
+category = "yellow"
+
+[[color_palette]]
+name = "lightyellow"
+color = "#FFFFE0"
+category = "yellow"
+
+[[color_palette]]
+name = "palegoldenrod"
+color = "#EEE8AA"
+category = "yellow"
+
+# ─── Green Family ───
+[[color_palette]]
+name = "green"
+color = "#00FF00"
+category = "green"
+
+[[color_palette]]
+name = "lime"
+color = "#00FF00"
+category = "green"
+
+[[color_palette]]
+name = "darkgreen"
+color = "#006400"
+category = "green"
+
+[[color_palette]]
+name = "forestgreen"
+color = "#228B22"
+category = "green"
+
+[[color_palette]]
+name = "seagreen"
+color = "#2E8B57"
+category = "green"
+
+[[color_palette]]
+name = "mediumseagreen"
+color = "#3CB371"
+category = "green"
+
+[[color_palette]]
+name = "springgreen"
+color = "#00FF7F"
+category = "green"
+
+[[color_palette]]
+name = "limegreen"
+color = "#32CD32"
+category = "green"
+
+[[color_palette]]
+name = "lightgreen"
+color = "#90EE90"
+category = "green"
+
+[[color_palette]]
+name = "palegreen"
+color = "#98FB98"
+category = "green"
+
+# ─── Cyan/Aqua Family ───
+[[color_palette]]
+name = "cyan"
+color = "#00FFFF"
+category = "cyan"
+
+[[color_palette]]
+name = "aqua"
+color = "#00FFFF"
+category = "cyan"
+
+[[color_palette]]
+name = "darkcyan"
+color = "#008B8B"
+category = "cyan"
+
+[[color_palette]]
+name = "teal"
+color = "#008080"
+category = "cyan"
+
+[[color_palette]]
+name = "lightcyan"
+color = "#E0FFFF"
+category = "cyan"
+
+[[color_palette]]
+name = "turquoise"
+color = "#40E0D0"
+category = "cyan"
+
+[[color_palette]]
+name = "mediumturquoise"
+color = "#48D1CC"
+category = "cyan"
+
+# ─── Blue Family ───
+[[color_palette]]
+name = "blue"
+color = "#0000FF"
+category = "blue"
+
+[[color_palette]]
+name = "darkblue"
+color = "#00008B"
+category = "blue"
+
+[[color_palette]]
+name = "mediumblue"
+color = "#0000CD"
+category = "blue"
+
+[[color_palette]]
+name = "navy"
+color = "#000080"
+category = "blue"
+
+[[color_palette]]
+name = "royalblue"
+color = "#4169E1"
+category = "blue"
+
+[[color_palette]]
+name = "steelblue"
+color = "#4682B4"
+category = "blue"
+
+[[color_palette]]
+name = "dodgerblue"
+color = "#1E90FF"
+category = "blue"
+
+[[color_palette]]
+name = "deepskyblue"
+color = "#00BFFF"
+category = "blue"
+
+[[color_palette]]
+name = "skyblue"
+color = "#87CEEB"
+category = "blue"
+
+[[color_palette]]
+name = "lightskyblue"
+color = "#87CEFA"
+category = "blue"
+
+[[color_palette]]
+name = "lightblue"
+color = "#ADD8E6"
+category = "blue"
+
+[[color_palette]]
+name = "cornflowerblue"
+color = "#6495ED"
+category = "blue"
+
+# ─── Purple/Violet Family ───
+[[color_palette]]
+name = "purple"
+color = "#800080"
+category = "purple"
+
+[[color_palette]]
+name = "darkviolet"
+color = "#9400D3"
+category = "purple"
+
+[[color_palette]]
+name = "darkorchid"
+color = "#9932CC"
+category = "purple"
+
+[[color_palette]]
+name = "mediumorchid"
+color = "#BA55D3"
+category = "purple"
+
+[[color_palette]]
+name = "mediumpurple"
+color = "#9370DB"
+category = "purple"
+
+[[color_palette]]
+name = "blueviolet"
+color = "#8A2BE2"
+category = "purple"
+
+[[color_palette]]
+name = "indigo"
+color = "#4B0082"
+category = "purple"
+
+[[color_palette]]
+name = "violet"
+color = "#EE82EE"
+category = "purple"
+
+[[color_palette]]
+name = "plum"
+color = "#DDA0DD"
+category = "purple"
+
+[[color_palette]]
+name = "lavender"
+color = "#E6E6FA"
+category = "purple"
+
+# ─── Magenta/Pink Family ───
+[[color_palette]]
+name = "magenta"
+color = "#FF00FF"
+category = "magenta"
+
+[[color_palette]]
+name = "fuchsia"
+color = "#FF00FF"
+category = "magenta"
+
+[[color_palette]]
+name = "darkmagenta"
+color = "#8B008B"
+category = "magenta"
+
+[[color_palette]]
+name = "mediumvioletred"
+color = "#C71585"
+category = "magenta"
+
+[[color_palette]]
+name = "deeppink"
+color = "#FF1493"
+category = "magenta"
+
+[[color_palette]]
+name = "hotpink"
+color = "#FF69B4"
+category = "magenta"
+
+[[color_palette]]
+name = "pink"
+color = "#FFC0CB"
+category = "magenta"
+
+[[color_palette]]
+name = "lightpink"
+color = "#FFB6C1"
+category = "magenta"
+
+# ─── Brown Family ───
+[[color_palette]]
+name = "brown"
+color = "#A52A2A"
+category = "brown"
+
+[[color_palette]]
+name = "saddlebrown"
+color = "#8B4513"
+category = "brown"
+
+[[color_palette]]
+name = "sienna"
+color = "#A0522D"
+category = "brown"
+
+[[color_palette]]
+name = "chocolate"
+color = "#D2691E"
+category = "brown"
+
+[[color_palette]]
+name = "peru"
+color = "#CD853F"
+category = "brown"
+
+[[color_palette]]
+name = "tan"
+color = "#D2B48C"
+category = "brown"
+
+[[color_palette]]
+name = "burlywood"
+color = "#DEB887"
+category = "brown"
+
+[[color_palette]]
+name = "wheat"
+color = "#F5DEB3"
+category = "brown"
+
+# ─── Gray Family ───
+[[color_palette]]
+name = "white"
+color = "#FFFFFF"
+category = "gray"
+
+[[color_palette]]
+name = "black"
+color = "#000000"
+category = "gray"
+
+[[color_palette]]
+name = "gray"
+color = "#808080"
+category = "gray"
+
+[[color_palette]]
+name = "grey"
+color = "#808080"
+category = "gray"
+
+[[color_palette]]
+name = "darkgray"
+color = "#A9A9A9"
+category = "gray"
+
+[[color_palette]]
+name = "darkgrey"
+color = "#A9A9A9"
+category = "gray"
+
+[[color_palette]]
+name = "lightgray"
+color = "#D3D3D3"
+category = "gray"
+
+[[color_palette]]
+name = "lightgrey"
+color = "#D3D3D3"
+category = "gray"
+
+[[color_palette]]
+name = "silver"
+color = "#C0C0C0"
+category = "gray"
+
+[[color_palette]]
+name = "dimgray"
+color = "#696969"
+category = "gray"
+
+[[color_palette]]
+name = "slategray"
+color = "#708090"
+category = "gray"
+
+[[color_palette]]
+name = "lightslategray"
+color = "#778899"
+category = "gray"

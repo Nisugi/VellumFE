@@ -25,6 +25,7 @@ pub struct ProgressBar {
     bar_color: Option<String>,
     background_color: Option<String>,
     transparent_background: bool,  // If true, unfilled portion is transparent; if false, use background_color
+    text_color: Option<String>,  // Text color for bar content (default: white on filled, gray on empty)
     show_percentage: bool,
     show_values: bool,
     text_alignment: TextAlignment,  // How to align the text (left, center, right)
@@ -45,6 +46,7 @@ impl ProgressBar {
             bar_color: Some("#00ff00".to_string()), // Green by default
             background_color: None,
             transparent_background: true, // Transparent by default
+            text_color: None,  // Default: white on filled, gray on empty
             show_percentage: true,
             show_values: true,
             text_alignment: TextAlignment::Center,  // Center by default (for vitals)
@@ -118,6 +120,10 @@ impl ProgressBar {
         self.transparent_background = transparent;
     }
 
+    pub fn set_text_color(&mut self, color: Option<String>) {
+        self.text_color = color;
+    }
+
     pub fn set_content_align(&mut self, align: Option<String>) {
         self.content_align = align;
     }
@@ -147,11 +153,42 @@ impl ProgressBar {
             return;
         }
 
-        let mut block = Block::default();
+        // Determine which borders to show
+        let borders = if self.show_border {
+            crate::config::parse_border_sides(&self.border_sides)
+        } else {
+            ratatui::widgets::Borders::NONE
+        };
 
-        if self.show_border {
-            let borders = crate::config::parse_border_sides(&self.border_sides);
-            block = block.borders(borders);
+        let border_color = self.border_color.as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
+
+        // Check if we only have left/right borders (no top/bottom)
+        let only_horizontal_borders = self.show_border &&
+            (borders.contains(ratatui::widgets::Borders::LEFT) || borders.contains(ratatui::widgets::Borders::RIGHT)) &&
+            !borders.contains(ratatui::widgets::Borders::TOP) &&
+            !borders.contains(ratatui::widgets::Borders::BOTTOM);
+
+        let inner_area: Rect;
+
+        if only_horizontal_borders {
+            // For left/right only borders, we'll manually render them on the content row
+            // Don't use Block widget at all - just calculate the inner area manually
+            let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+            let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+            let border_width = (if has_left { 1 } else { 0 }) + (if has_right { 1 } else { 0 });
+
+            inner_area = Rect {
+                x: area.x + (if has_left { 1 } else { 0 }),
+                y: area.y,
+                width: area.width.saturating_sub(border_width),
+                height: area.height,
+            };
+            // We'll render the borders later after we know which row has content
+        } else if self.show_border {
+            // Use Block widget for all other border combinations
+            let mut block = Block::default().borders(borders);
 
             // Apply border style
             if let Some(ref style) = self.border_style {
@@ -160,29 +197,20 @@ impl ProgressBar {
                     "double" => BorderType::Double,
                     "rounded" => BorderType::Rounded,
                     "thick" => BorderType::Thick,
+                    "quadrant_inside" => BorderType::QuadrantInside,
+                    "quadrant_outside" => BorderType::QuadrantOutside,
                     _ => BorderType::Plain,
                 };
                 block = block.border_type(border_type);
             }
 
-            // Apply border color
-            if let Some(ref color_str) = self.border_color {
-                let color = Self::parse_color(color_str);
-                block = block.border_style(Style::default().fg(color));
-            }
-
+            block = block.border_style(Style::default().fg(border_color));
             block = block.title(self.label.as_str());
-        }
 
-        let inner_area = if self.show_border {
-            block.inner(area)
-        } else {
-            area
-        };
-
-        // Render the block first
-        if self.show_border {
+            inner_area = block.inner(area);
             block.render(area, buf);
+        } else {
+            inner_area = area;
         }
 
         // Now render the progress bar content
@@ -313,14 +341,20 @@ impl ProgressBar {
                             let char_position = x - inner_area.x;
 
                             if char_position < split_position {
-                                // On filled portion: white text on colored background
+                                // On filled portion: configurable text color (default white) on colored background
                                 buf[(x, y)].set_char(c);
-                                buf[(x, y)].set_fg(Color::White);
+                                let text_fg = self.text_color.as_ref()
+                                    .map(|c| Self::parse_color(c))
+                                    .unwrap_or(Color::White);
+                                buf[(x, y)].set_fg(text_fg);
                                 buf[(x, y)].set_bg(bar_color);
                             } else {
-                                // On empty portion: gray text, background depends on transparent_background
+                                // On empty portion: configurable text color (default gray), background depends on transparent_background
                                 buf[(x, y)].set_char(c);
-                                buf[(x, y)].set_fg(Color::DarkGray);
+                                let text_fg = self.text_color.as_ref()
+                                    .map(|c| Self::parse_color(c))
+                                    .unwrap_or(Color::DarkGray);
+                                buf[(x, y)].set_fg(text_fg);
                                 if !self.transparent_background {
                                     buf[(x, y)].set_bg(bg_color);
                                 }
@@ -342,6 +376,29 @@ impl ProgressBar {
                         } else if !self.transparent_background {
                             buf[(x, y)].set_bg(bg_color);
                         }
+                    }
+                }
+            }
+        }
+
+        // If we have left/right only borders, render them manually on the content row
+        if only_horizontal_borders {
+            let content_y = inner_area.y + row_offset;
+            if content_y < buf.area().height {
+                let has_left = borders.contains(ratatui::widgets::Borders::LEFT);
+                let has_right = borders.contains(ratatui::widgets::Borders::RIGHT);
+
+                // Render left border
+                if has_left && area.x < buf.area().width {
+                    buf[(area.x, content_y)].set_char('│');
+                    buf[(area.x, content_y)].set_fg(border_color);
+                }
+                // Render right border
+                if has_right {
+                    let right_x = area.x + area.width.saturating_sub(1);
+                    if right_x < buf.area().width {
+                        buf[(right_x, content_y)].set_char('│');
+                        buf[(right_x, content_y)].set_fg(border_color);
                     }
                 }
             }
