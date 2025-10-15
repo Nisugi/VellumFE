@@ -890,6 +890,99 @@ impl TextWindow {
         result_spans
     }
 
+    /// Create spans for a line with text selection highlighting
+    fn create_spans_with_selection(
+        &self,
+        wrapped: &WrappedLine,
+        line_idx: usize,
+        selection_state: Option<&crate::selection::SelectionState>,
+        selection_bg: Option<Color>,
+        window_index: usize,
+    ) -> Vec<Span> {
+        // If no selection or no background color, render normally
+        let selection = match (selection_state, selection_bg) {
+            (Some(sel), Some(bg)) if sel.active => (sel, bg),
+            _ => {
+                return wrapped.spans.iter()
+                    .map(|(text, style, _span_type)| Span::styled(text.clone(), *style))
+                    .collect();
+            }
+        };
+
+        let (sel, bg_color) = selection;
+
+        // Reconstruct spans, applying selection background where needed
+        let mut result_spans = Vec::new();
+        let mut char_pos = 0;
+
+        for (text, style, _span_type) in &wrapped.spans {
+            let text_chars: Vec<char> = text.chars().collect();
+            let text_len = text_chars.len();  // Character count, not byte count
+            let span_start = char_pos;
+            let span_end = char_pos + text_len;
+
+            let mut current_pos = span_start;
+            let mut char_idx = 0;
+
+            // Process each character to check if it's selected
+            while char_idx < text_chars.len() {
+                let char_col = current_pos;
+                let is_selected = sel.contains(window_index, line_idx, char_col);
+
+                // Collect consecutive characters with same selection state
+                let mut chunk = String::new();
+                chunk.push(text_chars[char_idx]);
+                char_idx += 1;
+                current_pos += 1;
+
+                while char_idx < text_chars.len() {
+                    let next_col = current_pos;
+                    let next_selected = sel.contains(window_index, line_idx, next_col);
+
+                    if next_selected == is_selected {
+                        chunk.push(text_chars[char_idx]);
+                        char_idx += 1;
+                        current_pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Create span with appropriate style
+                let span_style = if is_selected {
+                    style.bg(bg_color)
+                } else {
+                    *style
+                };
+
+                result_spans.push(Span::styled(chunk, span_style));
+            }
+
+            char_pos = span_end;
+        }
+
+        result_spans
+    }
+
+    /// Convert a relative row position (visible row in window) to absolute line index in wrapped_lines buffer
+    /// This accounts for scroll position to map visible coordinates to buffer coordinates
+    pub fn relative_row_to_absolute_line(&self, rel_row: usize, visible_height: usize) -> usize {
+        let total_lines = self.wrapped_lines.len();
+
+        // Calculate start_line using same logic as render_with_focus
+        let start_line = if let Some(pos) = self.scroll_position {
+            // Scrolled back - use absolute position (frozen view)
+            pos
+        } else {
+            // Live view mode - show the last visible_height lines
+            let end = total_lines.saturating_sub(self.scroll_offset);
+            end.saturating_sub(visible_height)
+        };
+
+        // Add relative row to start_line to get absolute line index
+        start_line + rel_row
+    }
+
     /// Re-wrap all logical lines with the current width
     fn rewrap_all(&mut self) {
         self.wrapped_lines.clear();
@@ -1013,8 +1106,16 @@ pub struct TextSegment {
 }
 
 impl TextWindow {
-    /// Render the window with optional focus indicator
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    /// Render the window with optional focus indicator and selection highlighting
+    pub fn render_with_focus(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        selection_state: Option<&crate::selection::SelectionState>,
+        selection_bg_color: &str,
+        window_index: usize,
+    ) {
         // Update width for wrapping - only subtract for borders if they're shown
         let border_padding = if self.show_border { 2 } else { 0 };
         let inner_width = area.width.saturating_sub(border_padding);
@@ -1072,6 +1173,9 @@ impl TextWindow {
             (start, end)
         };
 
+        // Parse selection background color
+        let selection_bg = Self::parse_hex_color(selection_bg_color);
+
         // Collect lines from buffer (oldest to newest order)
         let mut display_lines: Vec<Line> = Vec::new();
         for idx in start_line..end_line {
@@ -1089,10 +1193,14 @@ impl TextWindow {
                     .and_then(|state| state.matches.get(state.current_match_idx));
 
                 let spans: Vec<Span> = if line_matches.is_empty() {
-                    // No matches on this line - render normally
-                    wrapped.spans.iter()
-                        .map(|(text, style, _span_type)| Span::styled(text.clone(), *style))
-                        .collect()
+                    // No search matches - check for selection
+                    self.create_spans_with_selection(
+                        wrapped,
+                        idx,
+                        selection_state,
+                        selection_bg,
+                        window_index,
+                    )
                 } else {
                     // Has matches - need to highlight them
                     self.create_highlighted_spans(wrapped, &line_matches, current_match)
@@ -1225,6 +1333,7 @@ impl TextWindow {
 
 impl Widget for &mut TextWindow {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        self.render_with_focus(area, buf, false);
+        // No selection highlighting for basic Widget trait render
+        self.render_with_focus(area, buf, false, None, "#4a4a4a", 0);
     }
 }

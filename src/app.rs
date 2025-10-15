@@ -569,6 +569,17 @@ impl App {
                                 )
                             };
 
+                            // Convert relative row to absolute line index (accounting for scrolling)
+                            if let Widget::Text(text_window) = widget {
+                                let visible_height = if has_border {
+                                    rect.height.saturating_sub(2) as usize
+                                } else {
+                                    rect.height as usize
+                                };
+                                let absolute_line = text_window.relative_row_to_absolute_line(rel_row, visible_height);
+                                return Some((idx, absolute_line, rel_col));
+                            }
+
                             return Some((idx, rel_row, rel_col));
                         }
                     }
@@ -2479,7 +2490,15 @@ impl App {
                     if let Some(rect) = window_layouts.get(name) {
                         if let Some(window) = self.window_manager.get_window(name) {
                             let focused = idx == self.focused_window_index;
-                            window.render_with_focus(*rect, f.buffer_mut(), focused, self.server_time_offset);
+                            window.render_with_focus(
+                                *rect,
+                                f.buffer_mut(),
+                                focused,
+                                self.server_time_offset,
+                                self.selection_state.as_ref(),
+                                &self.config.ui.selection_bg_color,
+                                idx,
+                            );
                         }
                     }
                 }

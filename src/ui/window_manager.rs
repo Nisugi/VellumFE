@@ -23,9 +23,18 @@ pub enum Widget {
 
 impl Widget {
     /// Render the widget with focus indicator
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool, server_time_offset: i64) {
+    pub fn render_with_focus(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        server_time_offset: i64,
+        selection_state: Option<&crate::selection::SelectionState>,
+        selection_bg_color: &str,
+        window_index: usize,
+    ) {
         match self {
-            Widget::Text(w) => w.render_with_focus(area, buf, focused),
+            Widget::Text(w) => w.render_with_focus(area, buf, focused, selection_state, selection_bg_color, window_index),
             Widget::Tabbed(w) => w.render_with_focus(area, buf, focused),
             Widget::Progress(w) => w.render_with_focus(area, buf, focused),
             Widget::Countdown(w) => w.render_with_focus(area, buf, focused, server_time_offset),
