@@ -307,14 +307,33 @@ impl ProgressBar {
         if text_width > 0 {
             // Truncate text if it's too wide for available space
             let (final_text, final_text_width) = if text_width > available_width {
-                // Text is too wide, truncate from left to keep numbers on right
-                // For "health 325/326" we want to keep "325/326" not "health 3"
-                // No ellipsis - just show what fits
+                // Text is too wide, truncate from left by removing complete words
+                // For "health 325/326" we want to keep "325/326" not "ealth 325/326" or "health 3"
                 if available_width > 0 {
-                    let char_count = display_text.chars().count();
-                    let skip_count = char_count.saturating_sub(available_width as usize);
-                    let truncated: String = display_text.chars().skip(skip_count).collect();
-                    (truncated.clone(), truncated.chars().count() as u16)
+                    // Split into words and remove from the left until it fits
+                    let words: Vec<&str> = display_text.split_whitespace().collect();
+                    let mut result = String::new();
+
+                    // Try progressively removing words from the left
+                    for i in 0..words.len() {
+                        let candidate = words[i..].join(" ");
+                        let candidate_width = candidate.chars().count() as u16;
+                        if candidate_width <= available_width {
+                            result = candidate;
+                            break;
+                        }
+                    }
+
+                    // If even the last word is too long, truncate it from the left
+                    if result.is_empty() && !words.is_empty() {
+                        let last_word = words[words.len() - 1];
+                        let char_count = last_word.chars().count();
+                        let skip_count = char_count.saturating_sub(available_width as usize);
+                        result = last_word.chars().skip(skip_count).collect();
+                    }
+
+                    let result_width = result.chars().count() as u16;
+                    (result, result_width)
                 } else {
                     (String::new(), 0)
                 }

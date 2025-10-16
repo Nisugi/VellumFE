@@ -243,6 +243,13 @@ impl App {
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
                 numbers_only: w.numbers_only,
+                injury_default_color: w.injury_default_color.clone(),
+                injury1_color: w.injury1_color.clone(),
+                injury2_color: w.injury2_color.clone(),
+                injury3_color: w.injury3_color.clone(),
+                scar1_color: w.scar1_color.clone(),
+                scar2_color: w.scar2_color.clone(),
+                scar3_color: w.scar3_color.clone(),
             })
             .collect();
 
@@ -752,7 +759,7 @@ impl App {
 
     /// Apply proportional resizing to layout based on delta
     fn apply_proportional_resize(&mut self, width_delta: i32, height_delta: i32) {
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashSet;
 
         tracing::debug!("=== PROPORTIONAL RESIZE ===");
         tracing::debug!("Width delta: {:+}, Height delta: {:+}", width_delta, height_delta);
@@ -778,7 +785,7 @@ impl App {
                 "compass" | "injury_doll" | "dashboard" | "indicator" => {
                     static_both.insert(window.name.clone());
                 }
-                "progress" | "countdown" | "hands" | "hand" | "command_input" => {
+                "progress" | "countdown" | "hands" | "hand" | "lefthand" | "righthand" | "spellhand" | "command_input" => {
                     static_height.insert(window.name.clone());
                 }
                 _ => {} // Fully scalable
@@ -792,30 +799,58 @@ impl App {
             // Track which widgets have already received height adjustment
             let mut height_applied = HashSet::new();
 
-            // Group windows by column (with small tolerance for alignment)
-            let mut columns: HashMap<u16, Vec<(String, u16, u16, u16)>> = HashMap::new();
+            // Build list of all scalable widgets with their column ranges
+            let mut scalable_widgets: Vec<(String, u16, u16, u16, u16)> = Vec::new();
             for window in &self.layout.windows {
                 if static_both.contains(&window.name) || static_height.contains(&window.name) {
                     continue; // Skip static-height widgets for now
                 }
-
-                let col_key = window.col;
-                columns.entry(col_key).or_insert_with(Vec::new).push((
+                scalable_widgets.push((
                     window.name.clone(),
                     window.row,
                     window.rows,
+                    window.col,
                     window.cols,
                 ));
             }
 
-            // Process each column
-            for (_col, mut widgets_in_col) in columns {
+            // Process widgets in column groups (widgets whose column ranges overlap)
+            while !scalable_widgets.is_empty() {
+                // Take the first unprocessed widget as the anchor for this column group
+                let anchor = scalable_widgets.remove(0);
+                let (anchor_name, anchor_row, anchor_rows, anchor_col, anchor_cols) = anchor;
+
+                if height_applied.contains(&anchor_name) {
+                    continue;
+                }
+
+                let anchor_col_end = anchor_col + anchor_cols;
+                tracing::debug!("Processing column stack anchored by '{}' (col {}-{})", anchor_name, anchor_col, anchor_col_end);
+
+                // Find all widgets whose columns overlap with the anchor's column range
+                let mut widgets_in_col = vec![(anchor_name.clone(), anchor_row, anchor_rows, anchor_cols)];
+
+                scalable_widgets.retain(|(name, row, rows, col, cols)| {
+                    let col_end = *col + *cols;
+                    // Check if column ranges overlap
+                    let overlaps = *col < anchor_col_end && col_end > anchor_col;
+
+                    if overlaps && !height_applied.contains(name) {
+                        tracing::debug!("  - Found overlapping widget '{}' (col {}-{})", name, col, col_end);
+                        widgets_in_col.push((name.clone(), *row, *rows, *cols));
+                        false // Remove from scalable_widgets
+                    } else {
+                        true // Keep in scalable_widgets
+                    }
+                });
+
+            // Process each column group
+            {
                 // Sort by row (top to bottom)
                 widgets_in_col.sort_by_key(|(_, row, _, _)| *row);
 
-                // Calculate total scalable height in this column
+                // Calculate total scalable height in this column (include ALL widgets, even already-processed ones)
                 let total_scalable_height: u16 = widgets_in_col.iter()
-                    .filter(|(name, _, _, _)| !height_applied.contains(name))
                     .map(|(_, _, rows, _)| *rows)
                     .sum();
 
@@ -828,16 +863,18 @@ impl App {
                 let mut leftover = 0i32;
 
                 for (name, _row, rows, _cols) in &widgets_in_col {
-                    if height_applied.contains(name) {
-                        continue;
-                    }
-
-                    // Calculate proportional share
+                    // Calculate proportional share based on ALL widgets in column
                     let proportion = *rows as f64 / total_scalable_height as f64;
                     let share = (proportion * height_delta as f64).floor() as i32;
                     leftover += ((proportion * height_delta as f64) - share as f64).round() as i32;
 
-                    adjustments.push((name.clone(), share));
+                    // But only apply it if this widget hasn't been processed yet
+                    if !height_applied.contains(name) {
+                        adjustments.push((name.clone(), share));
+                    } else {
+                        // Widget already processed - discard its share to keep math consistent
+                        tracing::debug!("  - Discarding share for already-processed widget '{}'", name);
+                    }
                 }
 
                 // Give leftover to largest widget
@@ -897,10 +934,22 @@ impl App {
                     current_row = new_row + new_rows;
                 }
             }
+            } // End while loop
 
             // Static-height widgets: shift row by full height_delta
+            // Exception: command_input stays anchored to bottom
+            let new_height = if let Some((_, baseline_height)) = self.baseline_snapshot {
+                (baseline_height as i32 + height_delta).max(0) as u16
+            } else {
+                // No baseline - shouldn't happen, but fall back to shifting
+                0
+            };
+
             for window in self.layout.windows.iter_mut() {
-                if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                if window.widget_type == "command_input" {
+                    // Anchor command_input to bottom of terminal
+                    window.row = new_height.saturating_sub(window.rows);
+                } else if static_both.contains(&window.name) || static_height.contains(&window.name) {
                     window.row = (window.row as i32 + height_delta).max(0) as u16;
                 }
             }
@@ -921,9 +970,14 @@ impl App {
 
             // Process each row
             for current_row in 0..max_row {
-                // Find all widgets at this row
+                // Find all widgets at this row (excluding already-processed widgets)
                 let mut widgets_at_row: Vec<(String, String, u16, u16, u16, u16)> = Vec::new();
                 for window in &self.layout.windows {
+                    // Skip widgets that have already been resized in a previous row
+                    if width_applied.contains(&window.name) {
+                        continue;
+                    }
+
                     let widget_row_start = window.row;
                     let widget_row_end = window.row + window.rows;
                     if current_row >= widget_row_start && current_row < widget_row_end {
@@ -946,15 +1000,22 @@ impl App {
                 // Sort by column (left to right)
                 widgets_at_row.sort_by_key(|(_, _, _, col, _, _)| *col);
 
-                // Calculate total scalable width
+                tracing::debug!("--- Row {} ---", current_row);
+                for (name, widget_type, row, col, rows, cols) in &widgets_at_row {
+                    let is_static = if static_both.contains(name) { "STATIC" } else { "scalable" };
+                    tracing::debug!("  {} ({}) @ col={} width={} [{}]", name, widget_type, col, cols, is_static);
+                }
+
+                // Calculate total scalable width (include ALL scalable widgets, even already-processed ones)
                 let total_scalable_width: u16 = widgets_at_row.iter()
-                    .filter(|(name, _, _, _, _, _)| {
-                        !static_both.contains(name) && !width_applied.contains(name)
-                    })
+                    .filter(|(name, _, _, _, _, _)| !static_both.contains(name))
                     .map(|(_, _, _, _, _, cols)| *cols)
                     .sum();
 
+                tracing::debug!("  Total scalable width: {}", total_scalable_width);
+
                 if total_scalable_width == 0 {
+                    tracing::debug!("  No scalable widgets in this row, skipping");
                     continue;
                 }
 
@@ -963,16 +1024,22 @@ impl App {
                 let mut leftover = 0i32;
 
                 for (name, widget_type, _row, _col, _rows, cols) in &widgets_at_row {
-                    if static_both.contains(name) || width_applied.contains(name) {
-                        continue;
+                    if static_both.contains(name) {
+                        continue; // Skip static widgets entirely
                     }
 
-                    // Calculate proportional share
+                    // Calculate proportional share based on ALL scalable widgets in row
                     let proportion = *cols as f64 / total_scalable_width as f64;
                     let share = (proportion * width_delta as f64).floor() as i32;
                     leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
 
-                    adjustments.push((name.clone(), share));
+                    // But only apply it if this widget hasn't been processed yet
+                    if !width_applied.contains(name) {
+                        adjustments.push((name.clone(), share));
+                    } else {
+                        // Widget already processed - discard its share to keep math consistent
+                        tracing::debug!("  - Discarding width share for already-processed widget '{}'", name);
+                    }
                 }
 
                 // Give leftover to largest widget
@@ -997,8 +1064,18 @@ impl App {
                 let mut current_col = 0u16;
                 let mut previous_original_col = 0u16;
                 let mut previous_original_width = 0u16;
+                let mut first_widget_end = 0u16;  // Track end of first widget for overlap detection
 
                 for (idx, (name, widget_type, _row, orig_col, _rows, orig_cols)) in widgets_at_row.iter().enumerate() {
+                    // Skip static widgets entirely - they keep original position and size
+                    if static_both.contains(name) {
+                        // Static widget - track its position for cascade but don't modify it
+                        previous_original_col = *orig_col;
+                        previous_original_width = *orig_cols;
+                        current_col = *orig_col + *orig_cols;
+                        continue;
+                    }
+
                     if width_applied.contains(name) {
                         // Already applied - use current width from layout
                         let current_width = self.layout.windows.iter()
@@ -1026,7 +1103,16 @@ impl App {
                         new_cols = new_cols.min(max);
                     }
 
-                    // Check if overlapping with previous widget
+                    // Track the end of the first processed widget for overlap detection
+                    if idx == 0 {
+                        first_widget_end = *orig_col + *orig_cols;
+                    }
+
+                    // Check if this widget was originally positioned within the first widget's space
+                    // This handles cases like hands widgets inside main window
+                    let overlaps_first = idx > 0 && *orig_col < first_widget_end;
+
+                    // Also check if overlapping with immediate previous widget
                     let overlaps_previous = if idx == 0 {
                         false
                     } else {
@@ -1034,7 +1120,7 @@ impl App {
                     };
 
                     // Calculate new column position
-                    let new_col = if idx == 0 || overlaps_previous {
+                    let new_col = if idx == 0 || overlaps_previous || overlaps_first {
                         *orig_col  // First or overlapping widget keeps original column
                     } else {
                         // Cascade with gap preservation
@@ -1042,16 +1128,24 @@ impl App {
                         current_col + original_gap
                     };
 
+                    // Safety check: don't allow widgets to go off-screen or have negative width
+                    // We don't have direct access to terminal width here, so we'll just ensure
+                    // widgets don't have invalid positions/sizes
+                    let safe_col = new_col;
+                    let safe_cols = new_cols;
+
                     // Apply to layout
                     if let Some(window) = self.layout.windows.iter_mut().find(|w| &w.name == name) {
-                        window.col = new_col;
-                        window.cols = new_cols;
+                        tracing::debug!("    {} resized: col {} -> {}, width {} -> {} (adjustment: {:+})",
+                            name, *orig_col, safe_col, *orig_cols, safe_cols, adjustment);
+                        window.col = safe_col;
+                        window.cols = safe_cols;
                         width_applied.insert(name.clone());
                     }
 
                     previous_original_col = *orig_col;
                     previous_original_width = *orig_cols;
-                    current_col = new_col + new_cols;
+                    current_col = safe_col + safe_cols;
                 }
             }
         }
@@ -1103,6 +1197,13 @@ impl App {
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
                 numbers_only: w.numbers_only,
+                injury_default_color: w.injury_default_color.clone(),
+                injury1_color: w.injury1_color.clone(),
+                injury2_color: w.injury2_color.clone(),
+                injury3_color: w.injury3_color.clone(),
+                scar1_color: w.scar1_color.clone(),
+                scar2_color: w.scar2_color.clone(),
+                scar3_color: w.scar3_color.clone(),
             })
             .collect();
 
@@ -1399,6 +1500,10 @@ impl App {
                     min_cols: None,
                     max_cols: None,
                     numbers_only: None,
+                    progress_id: None,
+                    countdown_id: None,
+                    effect_default_color: None,
+                    ..Default::default()
                 };
 
                 self.layout.windows.push(window_def);
@@ -1485,6 +1590,10 @@ impl App {
                     min_cols: None,
                     max_cols: None,
                     numbers_only: None,
+                    progress_id: None,
+                    countdown_id: None,
+                    effect_default_color: None,
+                    ..Default::default()
                 };
 
                 self.layout.windows.push(window_def);

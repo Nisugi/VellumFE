@@ -154,7 +154,7 @@ impl ColorPaletteBrowser {
 
     /// Handle mouse events for dragging the popup
     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> bool {
-        let popup_width = 80.min(area.width);
+        let popup_width = 70.min(area.width);
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -186,8 +186,8 @@ impl ColorPaletteBrowser {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let popup_width = 80;
-        let popup_height = 25;
+        let popup_width = 70;
+        let popup_height = 20;
 
         let popup_area = Rect {
             x: self.popup_x,

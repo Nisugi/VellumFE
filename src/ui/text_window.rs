@@ -1315,7 +1315,12 @@ impl TextWindow {
             padded_lines.splice(0..0, empty_lines);
         }
 
-        let paragraph = Paragraph::new(padded_lines).block(block);
+        // Only apply block if show_border is true
+        let paragraph = if self.show_border {
+            Paragraph::new(padded_lines).block(block)
+        } else {
+            Paragraph::new(padded_lines)
+        };
         paragraph.render(area, buf);
     }
 

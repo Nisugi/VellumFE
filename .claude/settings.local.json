@@ -19,7 +19,11 @@
       "Read(//c/Ruby4Lich5/Lich5/scripts/**)",
       "Read(//c/Users/shawn/.vellum-fe/**)",
       "Read(//c/Gemstone/SIMU/Wrayth/settings/GS4/**)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(powershell:*)",
+      "Bash(del \"c:\\Gemstone\\VellumFE\\src\\ui\\window_editor_v3.rs\")",
+      "Bash(cargo check:*)",
+      "Bash(1)"
     ],
     "deny": [],
     "ask": []

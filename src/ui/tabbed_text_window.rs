@@ -150,6 +150,10 @@ impl TabbedTextWindow {
         self.border_color = border_color;
     }
 
+    pub fn set_tab_bar_position(&mut self, position: TabBarPosition) {
+        self.tab_bar_position = position;
+    }
+
     pub fn set_tab_active_color(&mut self, color: String) {
         self.tab_active_color = Some(color);
     }

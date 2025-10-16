@@ -194,6 +194,27 @@ pub struct WindowDef {
     // Progress bar display options
     #[serde(default)]
     pub numbers_only: Option<bool>,  // For progress bars: strip words, show only numbers (e.g., "health 325/326" -> "325/326")
+    #[serde(default)]
+    pub progress_id: Option<String>,  // ID for progress bar updates (e.g., "health", "mana", "stance")
+    #[serde(default)]
+    pub countdown_id: Option<String>,  // ID for countdown updates (e.g., "roundtime", "casttime", "stuntime")
+    #[serde(default)]
+    pub effect_default_color: Option<String>,  // Default color for effects without explicit color
+    // Injury doll color configuration
+    #[serde(default)]
+    pub injury_default_color: Option<String>,  // Default/none injury color (index 0)
+    #[serde(default)]
+    pub injury1_color: Option<String>,  // Injury level 1 color
+    #[serde(default)]
+    pub injury2_color: Option<String>,  // Injury level 2 color
+    #[serde(default)]
+    pub injury3_color: Option<String>,  // Injury level 3 color
+    #[serde(default)]
+    pub scar1_color: Option<String>,  // Scar level 1 color
+    #[serde(default)]
+    pub scar2_color: Option<String>,  // Scar level 2 color
+    #[serde(default)]
+    pub scar3_color: Option<String>,  // Scar level 3 color
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +268,16 @@ impl Default for WindowDef {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            progress_id: None,
+            countdown_id: None,
+            effect_default_color: None,
+            injury_default_color: None,
+            injury1_color: None,
+            injury2_color: None,
+            injury3_color: None,
+            scar1_color: None,
+            scar2_color: None,
+            scar3_color: None,
         }
     }
 }
@@ -876,6 +907,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -921,6 +953,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "mana".to_string(),
@@ -965,6 +998,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -1009,6 +1043,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -1053,6 +1088,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -1097,6 +1133,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -1142,6 +1179,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -1186,6 +1224,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1231,6 +1270,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1275,6 +1315,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1319,6 +1360,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1364,6 +1406,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1408,6 +1451,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
         },
         // Command input (bottom of screen)
         WindowDef {
@@ -1453,6 +1497,7 @@ fn default_windows() -> Vec<WindowDef> {
             min_cols: Some(20), // Needs some width to be usable
             max_cols: None,     // Can be full width
             numbers_only: None,
+            ..Default::default()
         },
     ]
 }
@@ -1631,6 +1676,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1675,6 +1721,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1719,6 +1766,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1763,6 +1811,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1807,6 +1856,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1851,6 +1901,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1895,6 +1946,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1939,6 +1991,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1983,6 +2036,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -2027,6 +2081,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -2071,6 +2126,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -2115,6 +2171,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -2159,6 +2216,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -2203,6 +2261,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -2247,6 +2306,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -2291,6 +2351,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -2335,6 +2396,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -2379,6 +2441,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -2423,6 +2486,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -2467,6 +2531,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -2511,6 +2576,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -2555,6 +2621,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2599,6 +2666,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2643,6 +2711,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2687,6 +2756,7 @@ impl Config {
                 min_cols: None,
                 max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2731,6 +2801,7 @@ impl Config {
                 min_cols: None,
                 max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2775,6 +2846,7 @@ impl Config {
                 min_cols: None,
                 max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2819,6 +2891,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2863,6 +2936,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2907,6 +2981,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2951,6 +3026,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2995,6 +3071,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -3065,6 +3142,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -3109,6 +3187,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -3153,6 +3232,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -3197,6 +3277,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -3241,6 +3322,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -3285,6 +3367,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
@@ -3329,6 +3412,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
@@ -3373,6 +3457,7 @@ impl Config {
             min_cols: None,
             max_cols: None,
             numbers_only: None,
+            ..Default::default()
             }),
             _ => None,
         }

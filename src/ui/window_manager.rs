@@ -458,6 +458,14 @@ pub struct WindowConfig {
     pub tab_unread_prefix: Option<String>,  // Prefix for tabs with unread (e.g., "* ")
     pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
     pub numbers_only: Option<bool>,  // For progress bars: strip words, show only numbers
+    // Injury doll colors
+    pub injury_default_color: Option<String>,
+    pub injury1_color: Option<String>,
+    pub injury2_color: Option<String>,
+    pub injury3_color: Option<String>,
+    pub scar1_color: Option<String>,
+    pub scar2_color: Option<String>,
+    pub scar3_color: Option<String>,
 }
 
 pub struct WindowManager {
@@ -557,6 +565,19 @@ impl WindowManager {
                         );
                     injury_doll.set_content_align(config.content_align.clone());
                     injury_doll.set_background_color(config.background_color.clone());
+
+                    // Set custom injury/scar colors if configured
+                    let colors = vec![
+                        config.injury_default_color.clone().unwrap_or_else(|| "#333333".to_string()),
+                        config.injury1_color.clone().unwrap_or_else(|| "#aa5500".to_string()),
+                        config.injury2_color.clone().unwrap_or_else(|| "#ff8800".to_string()),
+                        config.injury3_color.clone().unwrap_or_else(|| "#ff0000".to_string()),
+                        config.scar1_color.clone().unwrap_or_else(|| "#999999".to_string()),
+                        config.scar2_color.clone().unwrap_or_else(|| "#777777".to_string()),
+                        config.scar3_color.clone().unwrap_or_else(|| "#555555".to_string()),
+                    ];
+                    injury_doll.set_colors(colors);
+
                     Widget::InjuryDoll(injury_doll)
                 }
                 "hands" => {
@@ -1018,6 +1039,19 @@ impl WindowManager {
                             );
                         injury_doll.set_content_align(config.content_align.clone());
                         injury_doll.set_background_color(config.background_color.clone());
+
+                        // Set custom injury/scar colors if configured
+                        let colors = vec![
+                            config.injury_default_color.clone().unwrap_or_else(|| "#333333".to_string()),
+                            config.injury1_color.clone().unwrap_or_else(|| "#aa5500".to_string()),
+                            config.injury2_color.clone().unwrap_or_else(|| "#ff8800".to_string()),
+                            config.injury3_color.clone().unwrap_or_else(|| "#ff0000".to_string()),
+                            config.scar1_color.clone().unwrap_or_else(|| "#999999".to_string()),
+                            config.scar2_color.clone().unwrap_or_else(|| "#777777".to_string()),
+                            config.scar3_color.clone().unwrap_or_else(|| "#555555".to_string()),
+                        ];
+                        injury_doll.set_colors(colors);
+
                         Widget::InjuryDoll(injury_doll)
                     }
                     "hands" => {
@@ -1261,6 +1295,17 @@ impl WindowManager {
                             // Update background settings
                             tabbed.set_transparent_background(config.transparent_background);
                             tabbed.set_background_color(config.background_color.clone());
+
+                            // Update tab bar position
+                            let tab_bar_position = if let Some(ref pos_str) = config.tab_bar_position {
+                                match pos_str.to_lowercase().as_str() {
+                                    "bottom" => TabBarPosition::Bottom,
+                                    _ => TabBarPosition::Top,
+                                }
+                            } else {
+                                TabBarPosition::Top
+                            };
+                            tabbed.set_tab_bar_position(tab_bar_position);
 
                             // Update tab colors
                             if let Some(ref color) = config.tab_active_color {
