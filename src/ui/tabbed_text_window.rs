@@ -214,6 +214,16 @@ impl TabbedTextWindow {
         self.tabs.get(self.active_tab_index).map(|t| t.stream.as_str())
     }
 
+    /// Get the active tab's text window (for selection/link detection)
+    pub fn get_active_window(&self) -> Option<&TextWindow> {
+        self.tabs.get(self.active_tab_index).map(|t| &t.window)
+    }
+
+    /// Get the active tab's text window mutably (for clipboard copy)
+    pub fn get_active_window_mut(&mut self) -> Option<&mut TextWindow> {
+        self.tabs.get_mut(self.active_tab_index).map(|t| &mut t.window)
+    }
+
     /// Get all stream names for this tabbed window
     pub fn get_all_streams(&self) -> Vec<String> {
         self.tabs.iter().map(|t| t.stream.clone()).collect()
@@ -395,7 +405,15 @@ impl TabbedTextWindow {
     }
 
     /// Render with focus indicator
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    pub fn render_with_focus(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        selection_state: Option<&crate::selection::SelectionState>,
+        selection_bg_color: &str,
+        window_index: usize,
+    ) {
         // Create border block
         let mut block = Block::default();
 
@@ -498,7 +516,7 @@ impl TabbedTextWindow {
 
         // Render active tab's content
         if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
-            tab.window.render(content_area, buf);
+            tab.window.render_with_focus(content_area, buf, focused, selection_state, selection_bg_color, window_index);
         }
     }
 

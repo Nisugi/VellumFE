@@ -659,40 +659,83 @@ impl App {
                     && mouse_row >= rect.y
                     && mouse_row < rect.y + rect.height
                 {
-                    // Only handle text windows for selection
+                    // Only handle text windows and tabbed windows for selection
                     if let Some(widget) = self.window_manager.get_window_const(name) {
-                        if let Widget::Text(_) = widget {
-                            // Convert to window-relative coordinates
-                            // Account for border (if present)
-                            let has_border = self.layout.windows.get(idx)
-                                .map(|w| w.show_border)
-                                .unwrap_or(false);
+                        match widget {
+                            Widget::Text(_) | Widget::Tabbed(_) => {
+                                // Convert to window-relative coordinates
+                                // Account for border (if present)
+                                let has_border = self.layout.windows.get(idx)
+                                    .map(|w| w.show_border)
+                                    .unwrap_or(false);
 
-                            let (rel_col, rel_row) = if has_border {
-                                // Border takes 1 cell on each side
-                                (
-                                    (mouse_col.saturating_sub(rect.x + 1)) as usize,
-                                    (mouse_row.saturating_sub(rect.y + 1)) as usize,
-                                )
-                            } else {
-                                (
-                                    (mouse_col - rect.x) as usize,
-                                    (mouse_row - rect.y) as usize,
-                                )
-                            };
-
-                            // Convert relative row to absolute line index (accounting for scrolling)
-                            if let Widget::Text(text_window) = widget {
-                                let visible_height = if has_border {
-                                    rect.height.saturating_sub(2) as usize
+                                let (rel_col, rel_row) = if has_border {
+                                    // Border takes 1 cell on each side
+                                    (
+                                        (mouse_col.saturating_sub(rect.x + 1)) as usize,
+                                        (mouse_row.saturating_sub(rect.y + 1)) as usize,
+                                    )
                                 } else {
-                                    rect.height as usize
+                                    (
+                                        (mouse_col - rect.x) as usize,
+                                        (mouse_row - rect.y) as usize,
+                                    )
                                 };
-                                let absolute_line = text_window.relative_row_to_absolute_line(rel_row, visible_height);
-                                return Some((idx, absolute_line, rel_col));
-                            }
 
-                            return Some((idx, rel_row, rel_col));
+                                // Convert relative row to absolute line index (accounting for scrolling)
+                                match widget {
+                                    Widget::Text(text_window) => {
+                                        let visible_height = if has_border {
+                                            rect.height.saturating_sub(2) as usize
+                                        } else {
+                                            rect.height as usize
+                                        };
+                                        let absolute_line = text_window.relative_row_to_absolute_line(rel_row, visible_height);
+                                        return Some((idx, absolute_line, rel_col));
+                                    }
+                                    Widget::Tabbed(tabbed) => {
+                                        // For tabbed windows, get the active tab's text window
+                                        if let Some(active_window) = tabbed.get_active_window() {
+                                            // Get tab bar position from config
+                                            let tab_bar_at_top = self.layout.windows.get(idx)
+                                                .and_then(|w| w.tab_bar_position.as_ref())
+                                                .map(|pos| pos == "top")
+                                                .unwrap_or(true); // default to top
+
+                                            // Account for tab bar height (usually 1 row at top or bottom)
+                                            let tab_bar_height: usize = 1;
+
+                                            // Account for inner TextWindow border (always present)
+                                            let inner_border_height = if active_window.has_border() { 1 } else { 0 };
+
+                                            // Calculate total offset from rel_row (which is after outer border)
+                                            // Structure: [outer border (has_border)] + [tab bar] + [inner border] + [content]
+                                            let mut offset = 0;
+                                            if tab_bar_at_top {
+                                                offset += tab_bar_height; // Tab bar
+                                            }
+                                            offset += inner_border_height; // Inner TextWindow border
+
+                                            let adjusted_row = rel_row.saturating_sub(offset);
+
+                                            // Calculate visible height: total height - outer borders - tab bar - inner borders
+                                            let outer_border_height = if has_border { 2 } else { 0 };
+                                            let inner_border_total = if active_window.has_border() { 2 } else { 0 };
+                                            let visible_height = rect.height
+                                                .saturating_sub(outer_border_height as u16)
+                                                .saturating_sub(tab_bar_height as u16)
+                                                .saturating_sub(inner_border_total as u16) as usize;
+
+                                            let absolute_line = active_window.relative_row_to_absolute_line(adjusted_row, visible_height);
+                                            return Some((idx, absolute_line, rel_col));
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                                return Some((idx, rel_row, rel_col));
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -716,10 +759,21 @@ impl App {
         }
 
         let window_name = &window_names[selection.start.window_index];
-        let widget = match self.window_manager.get_window(window_name) {
+
+        // Get the text window (either standalone or from active tab)
+        let text_window = match self.window_manager.get_window(window_name) {
             Some(Widget::Text(text_window)) => text_window,
+            Some(Widget::Tabbed(tabbed)) => {
+                // For tabbed windows, get the active tab's text window
+                match tabbed.get_active_window_mut() {
+                    Some(active_window) => active_window,
+                    None => return,
+                }
+            }
             _ => return,
         };
+
+        let widget = text_window;
 
         // Extract selected text
         let (start, end) = selection.normalized_range();
@@ -3296,10 +3350,7 @@ impl App {
                 };
 
                 if let Some(rect) = cmd_input_rect {
-                    tracing::debug!(
-                        "Command input rect: x={}, y={}, width={}, height={} (terminal: {}x{})",
-                        rect.x, rect.y, rect.width, rect.height, terminal_area.width, terminal_area.height
-                    );
+                    // Debug logging removed - was logging on every frame (~60 FPS)
                     window_layouts.insert("command_input".to_string(), rect);
                 }
 
