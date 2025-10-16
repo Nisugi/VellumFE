@@ -5583,10 +5583,57 @@ impl App {
                                                 debug!("get_tab_at_position returned None");
                                             }
                                         }
-                                    } else if let Widget::Text(text_window) = widget {
-                                        // Check if we clicked on a link in a text window
+                                    }
+                                }
+
+                                // Check if we clicked on a link (text window or tabbed window)
+                                // Do this after tab switching check
+                                if let Some(widget) = self.window_manager.get_window_const(name) {
+                                    // Determine if this is a tabbed window and calculate adjusted rect
+                                    let (text_window, adjusted_rect) = match widget {
+                                        Widget::Text(tw) => (Some(tw), *rect),
+                                        Widget::Tabbed(tabbed) => {
+                                            // For tabbed windows, get the active tab's text window
+                                            // But first check we didn't click on the tab bar itself
+                                            let tab_bar_rect = tabbed.get_tab_bar_rect(*rect);
+                                            if mouse.row >= tab_bar_rect.y && mouse.row < tab_bar_rect.y + tab_bar_rect.height {
+                                                (None, *rect) // Clicked on tab bar, don't check for links
+                                            } else {
+                                                // Calculate adjusted rect accounting for outer border and tab bar
+                                                let has_outer_border = self.layout.windows.get(idx)
+                                                    .map(|w| w.show_border)
+                                                    .unwrap_or(false);
+
+                                                let tab_bar_at_top = self.layout.windows.get(idx)
+                                                    .and_then(|w| w.tab_bar_position.as_ref())
+                                                    .map(|pos| pos == "top")
+                                                    .unwrap_or(true);
+
+                                                let outer_border_offset = if has_outer_border { 1 } else { 0 };
+                                                let tab_bar_height = 1;
+
+                                                let y_offset = if tab_bar_at_top {
+                                                    outer_border_offset + tab_bar_height
+                                                } else {
+                                                    outer_border_offset
+                                                };
+
+                                                let adjusted = Rect {
+                                                    x: rect.x + outer_border_offset,
+                                                    y: rect.y + y_offset as u16,
+                                                    width: rect.width.saturating_sub(2 * outer_border_offset as u16),
+                                                    height: rect.height.saturating_sub((2 * outer_border_offset + tab_bar_height) as u16),
+                                                };
+
+                                                (tabbed.get_active_window(), adjusted)
+                                            }
+                                        }
+                                        _ => (None, *rect),
+                                    };
+
+                                    if let Some(text_window) = text_window {
                                         debug!("Mouse down on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
-                                        if let Some(word) = Self::extract_word_at_position(text_window, mouse.column, mouse.row, *rect) {
+                                        if let Some(word) = Self::extract_word_at_position(text_window, mouse.column, mouse.row, adjusted_rect) {
                                             debug!("Extracted word at mouse down: '{}'", word);
                                             if let Some(link_data) = text_window.find_link_by_word(&word) {
                                                 // Check if the required modifier key is held for drag and drop
