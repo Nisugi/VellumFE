@@ -920,31 +920,46 @@ impl WindowManager {
             let x = area.x + config.col;
             let y = area.y + config.row;
 
-            // Skip windows that are completely outside the visible area
-            if x >= area.x + area.width || y >= area.y + area.height {
-                tracing::debug!(
-                    "Window '{}' at ({}, {}) is outside terminal bounds ({}x{})",
-                    config.name, x, y, area.width, area.height
+            // CRITICAL: Ensure rect coordinates are within buffer bounds
+            // Ratatui will panic if we try to render outside the buffer
+            // Check absolute positions against buffer bounds
+            let buffer_right = area.x + area.width;
+            let buffer_bottom = area.y + area.height;
+
+            if x >= buffer_right || y >= buffer_bottom {
+                tracing::warn!(
+                    "SKIPPING window '{}' - position ({}, {}) outside buffer bounds (right: {}, bottom: {})",
+                    config.name, x, y, buffer_right, buffer_bottom
                 );
                 continue;
             }
 
-            // Clamp window dimensions to fit within terminal bounds
-            let max_width = (area.x + area.width).saturating_sub(x);
-            let max_height = (area.y + area.height).saturating_sub(y);
+            // Clamp window dimensions to fit within buffer bounds
+            let max_width = buffer_right.saturating_sub(x);
+            let max_height = buffer_bottom.saturating_sub(y);
 
             let width = config.cols.min(max_width);
             let height = config.rows.min(max_height);
 
-            // Only add window if it has non-zero dimensions
-            if width > 0 && height > 0 {
-                result.insert(config.name.clone(), Rect::new(x, y, width, height));
-            } else {
-                tracing::debug!(
-                    "Window '{}' has zero dimensions after clamping: {}x{}",
+            // Skip if dimensions would be zero
+            if width == 0 || height == 0 {
+                tracing::warn!(
+                    "SKIPPING window '{}' - zero dimensions after clamping ({}x{})",
                     config.name, width, height
                 );
+                continue;
             }
+
+            // Final safety check: ensure rect doesn't extend beyond buffer
+            if x + width > buffer_right || y + height > buffer_bottom {
+                tracing::warn!(
+                    "SKIPPING window '{}' - rect would extend beyond buffer (x:{} y:{} w:{} h:{} right:{} bottom:{})",
+                    config.name, x, y, width, height, buffer_right, buffer_bottom
+                );
+                continue;
+            }
+
+            result.insert(config.name.clone(), Rect::new(x, y, width, height));
         }
 
         result

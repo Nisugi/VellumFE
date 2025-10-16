@@ -6,7 +6,7 @@ use crate::performance::PerformanceStats;
 use crate::selection::SelectionState;
 use crate::sound::SoundPlayer;
 use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
@@ -138,7 +138,9 @@ pub struct App {
     spell_color_browser: Option<crate::ui::SpellColorBrowser>,  // Spell color browser (None when not shown)
     spell_color_form: Option<crate::ui::SpellColorFormWidget>,  // Spell color editor form (None when not shown)
     baseline_snapshot: Option<(u16, u16)>,  // Baseline terminal size (width, height) for proportional resizing
+    baseline_layout: Option<Layout>,  // Baseline layout (original widget positions/sizes) for proportional resizing
     resize_debouncer: ResizeDebouncer,  // Debouncer for terminal resize events (300ms default)
+    shown_bounds_warning: bool,  // Track if we've shown the out-of-bounds warning
 }
 
 /// Drag and drop state
@@ -183,8 +185,11 @@ impl App {
     pub fn new(config: Config) -> Result<Self> {
         // Load layout (separate from config)
         // Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
-        let layout = Layout::load(config.character.as_deref())?;
+        let mut layout = Layout::load(config.character.as_deref())?;
         info!("Loaded layout with {} windows", layout.windows.len());
+
+        // Clone layout as baseline for resize calculations (before any modifications)
+        let baseline_layout = layout.clone();
 
         // Convert config presets to parser format
         let presets: Vec<(String, Option<String>, Option<String>)> = config
@@ -386,8 +391,40 @@ impl App {
             spell_color_browser: None,  // Spell color browser not shown initially
             spell_color_form: None,  // Spell color form not shown initially
             baseline_snapshot: None,  // No baseline snapshot initially (will be set after layout load)
+            baseline_layout: Some(baseline_layout),  // Store baseline layout for resize calculations
             resize_debouncer: ResizeDebouncer::new(300),  // 300ms debounce for terminal resize
+            shown_bounds_warning: false,  // Haven't shown warning yet
         })
+    }
+
+    /// Check if layout fits terminal and warn if not
+    pub fn check_and_auto_resize(&mut self) -> Result<()> {
+        // Check if layout has designed terminal size
+        if let (Some(layout_w), Some(layout_h)) = (self.layout.terminal_width, self.layout.terminal_height) {
+            // Get current terminal size
+            let (current_w, current_h) = crossterm::terminal::size()
+                .context("Failed to get terminal size")?;
+
+            // Check if terminal size doesn't match layout
+            if current_w != layout_w || current_h != layout_h {
+                let message = if current_w < layout_w || current_h < layout_h {
+                    format!(
+                        "⚠️  Terminal {}x{} smaller than layout {}x{} - some widgets hidden. Use .resize to adapt.",
+                        current_w, current_h, layout_w, layout_h
+                    )
+                } else {
+                    format!(
+                        "Terminal {}x{} larger than layout {}x{} - use .resize to expand layout.",
+                        current_w, current_h, layout_w, layout_h
+                    )
+                };
+
+                tracing::warn!("{}", message);
+                self.add_system_message(&message);
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the window for the current stream, falling back to main window
@@ -938,10 +975,15 @@ impl App {
 
             // Static-height widgets: shift row by full height_delta
             // Exception: command_input stays anchored to bottom
-            let new_height = if let Some((_, baseline_height)) = self.baseline_snapshot {
-                (baseline_height as i32 + height_delta).max(0) as u16
+            let new_height = if let Some(ref baseline) = self.baseline_layout {
+                if let (Some(baseline_width), Some(baseline_height)) = (baseline.terminal_width, baseline.terminal_height) {
+                    (baseline_height as i32 + height_delta).max(0) as u16
+                } else {
+                    // Baseline has no terminal size - shouldn't happen
+                    0
+                }
             } else {
-                // No baseline - shouldn't happen, but fall back to shifting
+                // No baseline layout - shouldn't happen
                 0
             };
 
@@ -1347,7 +1389,9 @@ impl App {
             }
             "savelayout" => {
                 let name = parts.get(1).unwrap_or(&"default");
-                match self.layout.save(name) {
+                let terminal_size = crossterm::terminal::size().ok();
+                // Don't force terminal size for manual saves (preserve baseline)
+                match self.layout.save(name, terminal_size, false) {
                     Ok(_) => self.add_system_message(&format!("Layout saved as '{}'", name)),
                     Err(e) => self.add_system_message(&format!("Failed to save layout: {}", e)),
                 }
@@ -1363,14 +1407,16 @@ impl App {
                 };
                 match Layout::load_from_file(&layout_path) {
                     Ok(new_layout) => {
-                        self.layout = new_layout;
+                        self.layout = new_layout.clone();
+                        self.baseline_layout = Some(new_layout);  // Store as new baseline
                         self.add_system_message(&format!("Layout '{}' loaded", name));
                         self.update_window_manager_config();
 
-                        // Auto-capture baseline after loading layout
-                        if let Ok(size) = crossterm::terminal::size() {
-                            self.baseline_snapshot = Some((size.0, size.1));
-                            tracing::info!("Auto-captured baseline after layout load: {}x{}", size.0, size.1);
+                        // Log if layout has terminal size info
+                        if let (Some(w), Some(h)) = (self.layout.terminal_width, self.layout.terminal_height) {
+                            tracing::info!("Loaded layout with designed terminal size: {}x{}", w, h);
+                        } else {
+                            tracing::warn!("Layout has no terminal size - .resize will use .baseline snapshot if set");
                         }
                     }
                     Err(e) => self.add_system_message(&format!("Failed to load layout: {}", e)),
@@ -2546,6 +2592,20 @@ impl App {
                 // Open color editor form for creating new color
                 self.open_color_form_create();
             }
+            "addspellcolor" | "newspellcolor" => {
+                // Open spell color form in Create mode
+                let form = crate::ui::SpellColorFormWidget::new();
+                self.spell_color_form = Some(form);
+                self.input_mode = InputMode::SpellColorForm;
+                self.add_system_message("Opening spell color form (Tab to navigate, Esc to cancel)");
+            }
+            "spellcolors" => {
+                // Open spell color browser
+                let browser = crate::ui::SpellColorBrowser::new(&self.config.spell_colors);
+                self.spell_color_browser = Some(browser);
+                self.input_mode = InputMode::SpellColorBrowser;
+                self.add_system_message("Opening spell color browser (↑/↓ to navigate, Enter to edit, Del to delete)");
+            }
             "testmenu" => {
                 // Test command: .testmenu <exist_id> [noun]
                 // Example: .testmenu 12345 pendant
@@ -2588,16 +2648,34 @@ impl App {
                 }
             }
             "resize" => {
-                // Apply proportional resizing based on baseline snapshot
-                if self.baseline_snapshot.is_none() {
-                    self.add_system_message("No baseline snapshot - run .baseline first");
+                // Get baseline layout (original widget positions/sizes)
+                let baseline_layout = if let Some(ref bl) = self.baseline_layout {
+                    bl.clone()
+                } else {
+                    self.add_system_message("No baseline layout - cannot resize");
                     return;
-                }
+                };
 
-                let baseline = self.baseline_snapshot.unwrap();
+                // Get baseline terminal size from baseline layout
+                let baseline = if let (Some(w), Some(h)) = (baseline_layout.terminal_width, baseline_layout.terminal_height) {
+                    tracing::info!("Using baseline layout terminal size: {}x{}", w, h);
+                    (w, h)
+                } else if let Some(snapshot) = self.baseline_snapshot {
+                    tracing::info!("Using baseline snapshot: {}x{}", snapshot.0, snapshot.1);
+                    snapshot
+                } else {
+                    self.add_system_message("No baseline terminal size - cannot resize");
+                    return;
+                };
+
                 if let Ok(current_size) = crossterm::terminal::size() {
                     let width_delta = current_size.0 as i32 - baseline.0 as i32;
                     let height_delta = current_size.1 as i32 - baseline.1 as i32;
+
+                    tracing::info!(
+                        "Resize: baseline={}x{}, current={}x{}, delta=({:+}, {:+})",
+                        baseline.0, baseline.1, current_size.0, current_size.1, width_delta, height_delta
+                    );
 
                     self.add_system_message(&format!(
                         "Resizing from {}x{} to {}x{} (delta: {:+}x{:+})",
@@ -2606,15 +2684,29 @@ impl App {
                         width_delta, height_delta
                     ));
 
-                    // Apply proportional resize to layout
+                    // Replace current layout with baseline layout (resets to original positions/sizes)
+                    self.layout = baseline_layout;
+
+                    // Apply proportional resize to layout (now working from baseline)
                     self.apply_proportional_resize(width_delta, height_delta);
 
                     // Update window manager with new layout
                     self.update_window_manager_config();
 
-                    // Capture new baseline
-                    self.baseline_snapshot = Some((current_size.0, current_size.1));
-                    self.add_system_message("Resize complete - new baseline captured");
+                    // Autosave resized layout (force update terminal size to match resized widgets)
+                    let autosave_name = if let Some(ref char_name) = self.config.character {
+                        format!("auto_{}", char_name)
+                    } else {
+                        "autosave".to_string()
+                    };
+
+                    if let Err(e) = self.layout.save(&autosave_name, Some(current_size), true) {
+                        tracing::error!("Failed to autosave resized layout: {}", e);
+                        self.add_system_message(&format!("Resize complete (autosave failed: {})", e));
+                    } else {
+                        tracing::info!("Resized layout autosaved as {}", autosave_name);
+                        self.add_system_message("Resize complete - layout autosaved");
+                    }
                 } else {
                     self.add_system_message("Failed to get current terminal size");
                 }
@@ -3066,20 +3158,69 @@ impl App {
                 let layout = UiLayout::calculate(f.area(), cmd_row, cmd_col, cmd_height, cmd_width);
                 let mut window_layouts = self.window_manager.calculate_layout(layout.main_area);
 
-                // Add command_input to window_layouts for mouse operations
-                window_layouts.insert(
-                    "command_input".to_string(),
-                    ratatui::layout::Rect::new(cmd_col, cmd_row, cmd_width, cmd_height)
-                );
+                // Add command_input to window_layouts for mouse operations (with bounds checking)
+                let terminal_area = f.area();
+                let cmd_input_rect = if cmd_row < terminal_area.height && cmd_col < terminal_area.width {
+                    // Clip command_input to terminal bounds
+                    let clipped_height = cmd_height.min(terminal_area.height.saturating_sub(cmd_row));
+                    let clipped_width = cmd_width.min(terminal_area.width.saturating_sub(cmd_col));
+
+                    if clipped_height > 0 && clipped_width > 0 {
+                        Some(ratatui::layout::Rect::new(cmd_col, cmd_row, clipped_width, clipped_height))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(rect) = cmd_input_rect {
+                    window_layouts.insert("command_input".to_string(), rect);
+                }
 
                 // Render all windows in order with focus indicator
                 let window_names = self.window_manager.get_window_names();
+                let terminal_area = f.area();
+                let mut out_of_bounds_count = 0;
+
                 for (idx, name) in window_names.iter().enumerate() {
                     if let Some(rect) = window_layouts.get(name) {
+                        // Layer 2: Bounds checking safety net
+                        // Skip widgets that start beyond terminal bounds
+                        if rect.y >= terminal_area.height || rect.x >= terminal_area.width {
+                            tracing::warn!(
+                                "Skipping out-of-bounds widget '{}' at {}x{} (terminal: {}x{})",
+                                name, rect.x, rect.y, terminal_area.width, terminal_area.height
+                            );
+                            out_of_bounds_count += 1;
+                            continue;
+                        }
+
+                        // Clip widgets that extend beyond terminal bounds
+                        let clipped_rect = if rect.y + rect.height > terminal_area.height || rect.x + rect.width > terminal_area.width {
+                            let clipped_height = rect.height.min(terminal_area.height.saturating_sub(rect.y));
+                            let clipped_width = rect.width.min(terminal_area.width.saturating_sub(rect.x));
+
+                            if clipped_height > 0 && clipped_width > 0 {
+                                tracing::warn!(
+                                    "Clipping widget '{}' from {}x{} to {}x{} (terminal: {}x{})",
+                                    name, rect.width, rect.height, clipped_width, clipped_height,
+                                    terminal_area.width, terminal_area.height
+                                );
+                                ratatui::layout::Rect::new(rect.x, rect.y, clipped_width, clipped_height)
+                            } else {
+                                tracing::warn!("Skipping widget '{}' - would be clipped to zero size", name);
+                                out_of_bounds_count += 1;
+                                continue;
+                            }
+                        } else {
+                            *rect
+                        };
+
                         if let Some(window) = self.window_manager.get_window(name) {
                             let focused = idx == self.focused_window_index;
                             window.render_with_focus(
-                                *rect,
+                                clipped_rect,
                                 f.buffer_mut(),
                                 focused,
                                 self.server_time_offset,
@@ -3089,6 +3230,15 @@ impl App {
                             );
                         }
                     }
+                }
+
+                // Layer 3: User feedback (show once)
+                if out_of_bounds_count > 0 && !self.shown_bounds_warning {
+                    tracing::error!(
+                        "{} widgets out of bounds! Terminal: {}x{}, use .resize to adapt layout",
+                        out_of_bounds_count, terminal_area.width, terminal_area.height
+                    );
+                    self.shown_bounds_warning = true;
                 }
 
                 // Render performance stats if enabled
@@ -3110,23 +3260,23 @@ impl App {
                     perf_widget.render(perf_rect, f.buffer_mut(), &self.perf_stats);
                 }
 
-                // Render input based on mode
-                // Get command_input rect from window_layouts (already computed above)
-                let cmd_input_rect = window_layouts.get("command_input")
-                    .copied()
-                    .unwrap_or(layout.input_area); // Fallback to old position
-
-                match self.input_mode {
-                    InputMode::Search => {
-                        // Render search input with prompt
-                        self.render_search_input(cmd_input_rect, f.buffer_mut());
+                // Render input based on mode (only if command_input is in bounds)
+                if let Some(cmd_input_rect) = window_layouts.get("command_input").copied() {
+                    match self.input_mode {
+                        InputMode::Search => {
+                            // Render search input with prompt
+                            self.render_search_input(cmd_input_rect, f.buffer_mut());
+                        }
+                        InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::KeybindBrowser | InputMode::WindowEditor | InputMode::ColorPaletteBrowser | InputMode::ColorForm | InputMode::SpellColorBrowser | InputMode::SpellColorForm => {
+                            // Hide command input when form/browser/editor is open
+                        }
+                        _ => {
+                            self.command_input.render(cmd_input_rect, f.buffer_mut());
+                        }
                     }
-                    InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::KeybindBrowser | InputMode::WindowEditor | InputMode::ColorPaletteBrowser | InputMode::ColorForm => {
-                        // Hide command input when form/browser/editor is open
-                    }
-                    _ => {
-                        self.command_input.render(cmd_input_rect, f.buffer_mut());
-                    }
+                } else {
+                    // Command input is out of bounds - skip rendering but you can still type commands
+                    tracing::debug!("Command input is out of bounds - not rendering");
                 }
 
                 // Render highlight form as popup (if open)
@@ -3161,6 +3311,16 @@ impl App {
 
                 // Render color form as popup (if open)
                 if let Some(ref mut form) = self.color_form {
+                    form.render(f.area(), f.buffer_mut());
+                }
+
+                // Render spell color browser as popup (if open)
+                if let Some(ref browser) = self.spell_color_browser {
+                    browser.render(f.area(), f.buffer_mut());
+                }
+
+                // Render spell color form as popup (if open)
+                if let Some(ref mut form) = self.spell_color_form {
                     form.render(f.area(), f.buffer_mut());
                 }
 
@@ -3280,23 +3440,15 @@ impl App {
             self.perf_stats.update_memory_stats(total_lines, window_count);
         }
 
-        // Autosave config and layout before exiting
+        // Autosave config before exiting
         if let Err(e) = self.config.save(None) {
             tracing::error!("Failed to autosave config: {}", e);
         } else {
             tracing::info!("Config autosaved");
         }
 
-        let autosave_name = if let Some(ref char_name) = self.config.character {
-            format!("auto_{}", char_name)
-        } else {
-            "autosave".to_string()
-        };
-        if let Err(e) = self.layout.save(&autosave_name) {
-            tracing::error!("Failed to autosave layout: {}", e);
-        } else {
-            tracing::info!("Layout autosaved as {}", autosave_name);
-        }
+        // Note: Layout autosave removed - layouts are now saved after .resize instead
+        // This prevents corrupting the designed terminal size on exit
 
         // Save command history
         if let Err(e) = self.command_input.save_history(self.config.character.as_deref()) {
@@ -3542,6 +3694,26 @@ impl App {
             }
             // Everything else goes to filter input handler
             return self.handle_color_browser_filter_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::SpellColorBrowser {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the spell color browser
+            return self.handle_spell_color_browser_input(key, modifiers);
+        }
+
+        if self.input_mode == InputMode::SpellColorForm {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the spell color form
+            return self.handle_spell_color_form_input(key, modifiers);
         }
 
         // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
@@ -4347,6 +4519,170 @@ impl App {
                     }
                     ColorFormAction::Error(msg) => {
                         self.add_system_message(&format!("Error: {}", msg));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_spell_color_browser_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        let mut message_to_send: Option<String> = None;
+        let mut selected_index: Option<usize> = None;
+        let mut delete_index: Option<usize> = None;
+
+        if let Some(ref mut browser) = self.spell_color_browser {
+            match (key, modifiers) {
+                (KeyCode::Esc, _) => {
+                    // Close browser
+                    self.spell_color_browser = None;
+                    self.input_mode = InputMode::Normal;
+                    message_to_send = Some("Spell color browser closed".to_string());
+                }
+                (KeyCode::Up, _) => {
+                    browser.previous();
+                }
+                (KeyCode::Down, _) => {
+                    browser.next();
+                }
+                (KeyCode::PageUp, _) => {
+                    browser.page_up();
+                }
+                (KeyCode::PageDown, _) => {
+                    browser.page_down();
+                }
+                (KeyCode::Enter, _) => {
+                    // Edit selected spell color
+                    if let Some(index) = browser.get_selected() {
+                        selected_index = Some(index);
+                    }
+                }
+                (KeyCode::Delete, _) => {
+                    // Delete selected spell color
+                    if let Some(index) = browser.get_selected() {
+                        delete_index = Some(index);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle edit action (after browser borrow is dropped)
+        if let Some(index) = selected_index {
+            if let Some(spell_color) = self.config.spell_colors.get(index).cloned() {
+                // Close browser and open spell color form in edit mode
+                self.spell_color_browser = None;
+
+                let form = crate::ui::SpellColorFormWidget::new_edit(index, &spell_color);
+                self.spell_color_form = Some(form);
+                self.input_mode = InputMode::SpellColorForm;
+                let spell_ids = spell_color.spells.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+                message_to_send = Some(format!("Editing spell colors for: {}", spell_ids));
+            }
+        }
+
+        // Handle delete action (after browser borrow is dropped)
+        if let Some(index) = delete_index {
+            if index < self.config.spell_colors.len() {
+                let removed = self.config.spell_colors.remove(index);
+                // Save config
+                if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                    message_to_send = Some(format!("Failed to save config: {}", e));
+                } else {
+                    // Refresh the browser with updated list
+                    if let Some(ref mut browser) = self.spell_color_browser {
+                        *browser = crate::ui::SpellColorBrowser::new(&self.config.spell_colors);
+                    }
+
+                    let spell_ids = removed.spells.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+                    message_to_send = Some(format!("Deleted spell colors for: {}", spell_ids));
+                }
+            } else {
+                message_to_send = Some("Spell color not found".to_string());
+            }
+        }
+
+        // Send message after all borrows are dropped
+        if let Some(msg) = message_to_send {
+            self.add_system_message(&msg);
+        }
+
+        Ok(())
+    }
+
+    fn handle_spell_color_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        if let Some(ref mut form) = self.spell_color_form {
+            // Create crossterm KeyEvent directly (form expects crossterm::event::KeyEvent)
+            use crossterm::event as ct_event;
+
+            let key_event = ct_event::KeyEvent {
+                code: key,
+                modifiers,
+                kind: ct_event::KeyEventKind::Press,
+                state: ct_event::KeyEventState::empty(),
+            };
+
+            if let Some(result) = form.input(key_event) {
+                use crate::ui::SpellColorFormResult;
+
+                match result {
+                    SpellColorFormResult::Save(spell_color) => {
+                        // Add or update spell color in config
+                        // First check if any of these spell IDs already exist
+                        let mut replaced_index = None;
+                        for spell_id in &spell_color.spells {
+                            if let Some(idx) = self.config.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
+                                replaced_index = Some(idx);
+                                break;
+                            }
+                        }
+
+                        // If we found an existing entry, replace it; otherwise add new
+                        if let Some(idx) = replaced_index {
+                            self.config.spell_colors[idx] = spell_color.clone();
+                        } else {
+                            self.config.spell_colors.push(spell_color.clone());
+                        }
+
+                        if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                            self.add_system_message(&format!("Failed to save spell color: {}", e));
+                        } else {
+                            let spell_ids = spell_color.spells.iter()
+                                .map(|id| id.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.add_system_message(&format!("Spell color saved for spells: {}", spell_ids));
+                        }
+
+                        // Close form
+                        self.spell_color_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    SpellColorFormResult::Delete(index) => {
+                        // Delete from config
+                        if index < self.config.spell_colors.len() {
+                            let removed = self.config.spell_colors.remove(index);
+                            if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                                self.add_system_message(&format!("Failed to delete spell color: {}", e));
+                            } else {
+                                let spell_ids = removed.spells.iter()
+                                    .map(|id| id.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                self.add_system_message(&format!("Spell color deleted for spells: {}", spell_ids));
+                            }
+                        }
+
+                        // Close form
+                        self.spell_color_form = None;
+                        self.input_mode = InputMode::Normal;
+                    }
+                    SpellColorFormResult::Cancel => {
+                        // Close form without saving
+                        self.spell_color_form = None;
+                        self.input_mode = InputMode::Normal;
+                        self.add_system_message("Spell color form cancelled");
                     }
                 }
             }

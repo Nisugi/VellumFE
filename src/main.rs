@@ -61,6 +61,10 @@ async fn main() -> Result<()> {
 
     // Create and run the application
     let mut app = App::new(config)?;
+
+    // Auto-shrink layout if terminal is smaller than designed size
+    app.check_and_auto_resize()?;
+
     app.run().await?;
 
     Ok(())

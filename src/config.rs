@@ -402,6 +402,10 @@ pub struct LayoutConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layout {
     pub windows: Vec<WindowDef>,
+    #[serde(default)]
+    pub terminal_width: Option<u16>,   // Designed terminal width (for resize calculations)
+    #[serde(default)]
+    pub terminal_height: Option<u16>,  // Designed terminal height (for resize calculations)
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -1552,6 +1556,12 @@ impl Layout {
         let mut layout: Layout = toml::from_str(&contents)
             .context(format!("Failed to parse layout file: {:?}", path))?;
 
+        // Debug: Log what terminal size was loaded
+        tracing::debug!(
+            "Loaded layout from {:?}: terminal_width={:?}, terminal_height={:?}",
+            path, layout.terminal_width, layout.terminal_height
+        );
+
         // Migration: Ensure command_input exists in windows array with valid values
         if let Some(idx) = layout.windows.iter().position(|w| w.widget_type == "command_input") {
             // Command input exists but might have invalid values (cols=0, rows=0, etc)
@@ -1578,7 +1588,31 @@ impl Layout {
     }
 
     /// Save layout to file
-    pub fn save(&self, name: &str) -> Result<()> {
+    /// If force_terminal_size is true, always update terminal_width/height to terminal_size
+    pub fn save(&mut self, name: &str, terminal_size: Option<(u16, u16)>, force_terminal_size: bool) -> Result<()> {
+        // Capture terminal size for layout baseline
+        if force_terminal_size {
+            // Force update terminal size (used by .resize to match resized widgets)
+            if let Some((width, height)) = terminal_size {
+                tracing::info!("Forcing layout terminal size to {}x{} (was {:?}x{:?})",
+                    width, height, self.terminal_width, self.terminal_height);
+                self.terminal_width = Some(width);
+                self.terminal_height = Some(height);
+            }
+        } else if self.terminal_width.is_none() || self.terminal_height.is_none() {
+            // Only set if not already set
+            if let Some((width, height)) = terminal_size {
+                self.terminal_width = Some(width);
+                self.terminal_height = Some(height);
+                tracing::info!("Set layout terminal size to {}x{} (was not previously set)", width, height);
+            }
+        } else {
+            tracing::debug!(
+                "Preserving existing layout terminal size: {}x{} (not overwriting with current terminal size)",
+                self.terminal_width.unwrap(), self.terminal_height.unwrap()
+            );
+        }
+
         let layout_path = Config::layout_path(name)?;
 
         if let Some(parent) = layout_path.parent() {

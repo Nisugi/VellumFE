@@ -93,7 +93,7 @@ impl SpellColorBrowser {
     pub fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let (col, row) = (event.column, event.row);
         let (popup_col, popup_row) = self.popup_position;
-        let popup_width = 90;
+        let popup_width = 70;
         let popup_height = 20;
 
         match event.kind {
@@ -160,7 +160,7 @@ impl SpellColorBrowser {
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         let (popup_col, popup_row) = self.popup_position;
-        let popup_width = 90;
+        let popup_width = 70;
         let popup_height = 20;
 
         // Draw black background
