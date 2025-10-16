@@ -4346,8 +4346,19 @@ impl App {
             Span::raw(input_text),
         ]);
 
-        let paragraph = Paragraph::new(line)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)));
+        // Check if command_input has borders - respect that setting for search input too
+        let cmd_window = self.layout.windows.iter().find(|w| w.widget_type == "command_input");
+        let show_border = cmd_window.map_or(true, |w| {
+            w.show_border && w.border_style.as_deref() != Some("none")
+        });
+
+        let paragraph = if show_border {
+            Paragraph::new(line)
+                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow)))
+        } else {
+            // No borders - just render the text
+            Paragraph::new(line)
+        };
 
         paragraph.render(area, buf);
     }
