@@ -1594,8 +1594,18 @@ impl Layout {
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .context(format!("Failed to read layout file: {:?}", path))?;
-        let layout: Layout = toml::from_str(&contents)
+        let mut layout: Layout = toml::from_str(&contents)
             .context(format!("Failed to parse layout file: {:?}", path))?;
+
+        // Migration: Ensure command_input exists in windows array
+        if !layout.windows.iter().any(|w| w.widget_type == "command_input") {
+            // Get command_input from default_windows()
+            if let Some(cmd_input) = default_windows().into_iter().find(|w| w.widget_type == "command_input") {
+                tracing::info!("Migrating command_input to windows array");
+                layout.windows.push(cmd_input);
+            }
+        }
+
         Ok(layout)
     }
 

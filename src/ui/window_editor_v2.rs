@@ -140,6 +140,7 @@ impl WindowEditor {
                 "tabbed".to_string(),
                 "progress".to_string(),
                 "countdown".to_string(),
+                "command_input".to_string(),
                 "active_effects".to_string(),
                 "entity".to_string(),
                 "dashboard".to_string(),
