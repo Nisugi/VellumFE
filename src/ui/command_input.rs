@@ -357,12 +357,16 @@ impl CommandInput {
                         let x = area.x + col;
                         let y = area.y + row;
                         if x < buf.area().width && y < buf.area().height {
-                            buf[(x, y)].set_bg(bg_color);
+                            // Clear character and set background to prevent border artifacts
+                            buf[(x, y)].set_char(' ').set_bg(bg_color);
                         }
                     }
                 }
             }
-        } else if !self.show_border || border_is_none {
+        }
+
+        // Clear area if no background and no border to prevent artifacts
+        if self.background_color.is_none() && (!self.show_border || border_is_none) {
             // If no border and no background color, clear the area to prevent artifacts
             for row in 0..area.height {
                 for col in 0..area.width {
