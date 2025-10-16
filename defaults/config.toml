@@ -81,6 +81,9 @@ down = "next_command"
 "ctrl+page_up" = "prev_search_match"
 "ctrl+page_down" = "next_search_match"
 
+# Layout
+"shift+ctrl+r" = { macro_text = ".resize\r" }
+
 # Numpad movement
 num_1 = { macro_text = "sw\r" }
 num_2 = { macro_text = "s\r" }
@@ -631,3 +634,36 @@ category = "gray"
 name = "lightslategray"
 color = "#778899"
 category = "gray"
+
+# Layout mappings: Automatically load layouts based on terminal size
+# First matching mapping (in order) is used
+# Example: Terminal 80x24 to 101x25 loads "compact1"
+# Uncomment and customize these examples:
+
+# [[layout_mappings]]
+# min_width = 80
+# min_height = 24
+# max_width = 101
+# max_height = 25
+# layout = "compact1"
+
+# [[layout_mappings]]
+# min_width = 102
+# min_height = 25
+# max_width = 103
+# max_height = 54
+# layout = "quarter_screen"
+
+# [[layout_mappings]]
+# min_width = 104
+# min_height = 54
+# max_width = 203
+# max_height = 54
+# layout = "half_screen"
+
+# [[layout_mappings]]
+# min_width = 204
+# min_height = 54
+# max_width = 9999
+# max_height = 9999
+# layout = "full_screen"

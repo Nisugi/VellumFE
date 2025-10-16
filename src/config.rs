@@ -27,8 +27,28 @@ pub struct Config {
     pub event_patterns: HashMap<String, EventPattern>,
     #[serde(default)]
     pub color_palette: Vec<PaletteColor>,
+    #[serde(default)]
+    pub layout_mappings: Vec<LayoutMapping>,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
+}
+
+/// Terminal size range to layout mapping
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutMapping {
+    pub min_width: u16,
+    pub min_height: u16,
+    pub max_width: u16,
+    pub max_height: u16,
+    pub layout: String,  // Layout name (e.g., "compact1", "half_screen")
+}
+
+impl LayoutMapping {
+    /// Check if terminal size matches this mapping
+    pub fn matches(&self, width: u16, height: u16) -> bool {
+        width >= self.min_width && width <= self.max_width &&
+        height >= self.min_height && height <= self.max_height
+    }
 }
 
 /// Named color in the user's palette
@@ -1509,18 +1529,27 @@ fn default_windows() -> Vec<WindowDef> {
 impl Layout {
     /// Load layout from file (checks autosave, character-specific, then default)
     /// Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
+    /// Load layout with optional terminal size for auto-selection
+    /// Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
     pub fn load(character: Option<&str>) -> Result<Self> {
+        Self::load_with_terminal_size(character, None)
+    }
+
+    /// Load layout with terminal size for auto-selection
+    pub fn load_with_terminal_size(character: Option<&str>, terminal_size: Option<(u16, u16)>) -> Result<Self> {
         let layouts_dir = Config::layouts_dir()?;
 
-        // Try character-specific autosave first
+        // Try character-specific autosave first (skip auto-selection if user manually resized)
         if let Some(char_name) = character {
             let auto_char_path = layouts_dir.join(format!("auto_{}.toml", char_name));
             if auto_char_path.exists() {
+                tracing::info!("Loading auto-saved layout for {}", char_name);
                 return Self::load_from_file(&auto_char_path);
             }
 
             let char_path = layouts_dir.join(format!("{}.toml", char_name));
             if char_path.exists() {
+                tracing::info!("Loading character-specific layout for {}", char_name);
                 return Self::load_from_file(&char_path);
             }
         }
@@ -1528,12 +1557,30 @@ impl Layout {
         // Try generic autosave
         let autosave_path = layouts_dir.join("autosave.toml");
         if autosave_path.exists() {
+            tracing::info!("Loading generic autosave layout");
             return Self::load_from_file(&autosave_path);
+        }
+
+        // Check layout mappings if terminal size provided
+        if let Some((width, height)) = terminal_size {
+            // Load config to check layout mappings
+            if let Ok(config) = Config::load() {
+                if let Some(layout_name) = config.find_layout_for_size(width, height) {
+                    let mapped_path = layouts_dir.join(format!("{}.toml", layout_name));
+                    if mapped_path.exists() {
+                        tracing::info!("Loading mapped layout '{}' for terminal size {}x{}", layout_name, width, height);
+                        return Self::load_from_file(&mapped_path);
+                    } else {
+                        tracing::warn!("Mapped layout '{}' not found at {:?}, falling back to default", layout_name, mapped_path);
+                    }
+                }
+            }
         }
 
         // Try default layout
         let default_path = layouts_dir.join("default.toml");
         if default_path.exists() {
+            tracing::info!("Loading default layout");
             return Self::load_from_file(&default_path);
         }
 
@@ -1629,6 +1676,24 @@ impl Layout {
 }
 
 impl Config {
+    /// Find the appropriate layout for a given terminal size
+    /// Returns the layout name if a matching mapping is found
+    pub fn find_layout_for_size(&self, width: u16, height: u16) -> Option<String> {
+        for mapping in &self.layout_mappings {
+            if mapping.matches(width, height) {
+                tracing::info!(
+                    "Found layout mapping for {}x{}: '{}' (range: {}x{} to {}x{})",
+                    width, height, mapping.layout,
+                    mapping.min_width, mapping.min_height,
+                    mapping.max_width, mapping.max_height
+                );
+                return Some(mapping.layout.clone());
+            }
+        }
+        tracing::debug!("No layout mapping found for terminal size {}x{}", width, height);
+        None
+    }
+
     /// Resolve a color name to a hex code
     /// If the input is already a hex code, return it unchanged
     /// If it's a color name, look it up in the palette
@@ -3920,6 +3985,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             event_patterns: HashMap::new(),  // Empty by default - user adds via config
             color_palette: Vec::new(),  // Empty by default - loaded from embedded defaults
+            layout_mappings: Vec::new(),  // Empty by default - user adds via config
             character: None,  // Set at runtime via load_with_options
         }
     }

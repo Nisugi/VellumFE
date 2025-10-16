@@ -184,8 +184,11 @@ enum ResizeEdge {
 impl App {
     pub fn new(config: Config) -> Result<Self> {
         // Load layout (separate from config)
-        // Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
-        let mut layout = Layout::load(config.character.as_deref())?;
+        // Get terminal size for layout auto-selection
+        let terminal_size = crossterm::terminal::size().ok();
+
+        // Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
+        let mut layout = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
         info!("Loaded layout with {} windows", layout.windows.len());
 
         // Clone layout as baseline for resize calculations (before any modifications)
@@ -990,7 +993,19 @@ impl App {
             for window in self.layout.windows.iter_mut() {
                 if window.widget_type == "command_input" {
                     // Anchor command_input to bottom of terminal
+                    let old_row = window.row;
                     window.row = new_height.saturating_sub(window.rows);
+                    tracing::debug!(
+                        "Command input: baseline_height={}, height_delta={:+}, new_height={}, rows={}, old_row={}, new_row={}",
+                        if let Some(ref bl) = self.baseline_layout {
+                            bl.terminal_height.unwrap_or(0)
+                        } else { 0 },
+                        height_delta,
+                        new_height,
+                        window.rows,
+                        old_row,
+                        window.row
+                    );
                 } else if static_both.contains(&window.name) || static_height.contains(&window.name) {
                     window.row = (window.row as i32 + height_delta).max(0) as u16;
                 }
@@ -1048,23 +1063,54 @@ impl App {
                     tracing::debug!("  {} ({}) @ col={} width={} [{}]", name, widget_type, col, cols, is_static);
                 }
 
-                // Calculate total scalable width (include ALL scalable widgets, even already-processed ones)
-                let total_scalable_width: u16 = widgets_at_row.iter()
-                    .filter(|(name, _, _, _, _, _)| !static_both.contains(name))
-                    .map(|(_, _, _, _, _, cols)| *cols)
-                    .sum();
+                // Calculate total scalable width: only count outermost (non-embedded) widgets
+                // Embedded widgets (like countdown timers inside command_input) are completely ignored
+                let mut total_scalable_width: u16 = 0;
 
-                tracing::debug!("  Total scalable width: {}", total_scalable_width);
+                // First pass: identify all embedded widgets (widgets entirely contained within others)
+                let mut embedded_widgets = HashSet::new();
+                for (i, (name_i, _, _, col_i, _, cols_i)) in widgets_at_row.iter().enumerate() {
+                    let col_i_end = *col_i + *cols_i;
+                    for (j, (name_j, _, _, col_j, _, cols_j)) in widgets_at_row.iter().enumerate() {
+                        if i == j {
+                            continue;
+                        }
+                        let col_j_end = *col_j + *cols_j;
+                        // If widget j is entirely inside widget i's horizontal space, mark it as embedded
+                        if *col_j >= *col_i && col_j_end <= col_i_end {
+                            embedded_widgets.insert(name_j.clone());
+                            tracing::debug!("    [width calc] '{}' is embedded inside '{}', will be ignored", name_j, name_i);
+                        }
+                    }
+                }
+
+                // Second pass: sum widths of non-embedded, non-static widgets
+                for (name, _, _, col, _, cols) in widgets_at_row.iter() {
+                    if static_both.contains(name) {
+                        tracing::debug!("    [width calc] '{}' @ col={} width={} - STATIC, ignored", name, col, cols);
+                        continue;
+                    }
+                    if embedded_widgets.contains(name) {
+                        tracing::debug!("    [width calc] '{}' @ col={} width={} - EMBEDDED, ignored", name, col, cols);
+                        continue;
+                    }
+                    total_scalable_width += *cols;
+                    tracing::debug!("    [width calc] '{}' @ col={} width={} - OUTERMOST, counted (total now: {})", name, col, cols, total_scalable_width);
+                }
+
+                tracing::debug!("  Total scalable width: {} (from {} outermost widgets)", total_scalable_width, widgets_at_row.iter().filter(|(n, _, _, _, _, _)| !static_both.contains(n) && !embedded_widgets.contains(n)).count());
 
                 if total_scalable_width == 0 {
                     tracing::debug!("  No scalable widgets in this row, skipping");
                     continue;
                 }
 
-                // Distribute width delta proportionally
+                // Distribute width delta proportionally with max_cols redistribution
                 let mut adjustments: Vec<(String, i32)> = Vec::new();
                 let mut leftover = 0i32;
+                let mut redistribution_pool = 0i32;  // Unused delta from capped widgets
 
+                // First pass: calculate initial proportional shares
                 for (name, widget_type, _row, _col, _rows, cols) in &widgets_at_row {
                     if static_both.contains(name) {
                         continue; // Skip static widgets entirely
@@ -1084,20 +1130,68 @@ impl App {
                     }
                 }
 
-                // Give leftover to largest widget
+                // Second pass: check for max_cols constraints and collect unused delta
+                let mut capped_widgets = HashSet::new();
+                for (name, adjustment) in &adjustments {
+                    let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                    if let Some(max_cols) = window.max_cols {
+                        let current_cols = window.cols;
+                        let target_cols = (current_cols as i32 + adjustment).max(0) as u16;
+
+                        if target_cols > max_cols {
+                            // Widget would exceed max - calculate unused delta
+                            let actual_adjustment = (max_cols as i32 - current_cols as i32).max(0);
+                            let unused = adjustment - actual_adjustment;
+                            redistribution_pool += unused;
+                            capped_widgets.insert(name.clone());
+                            tracing::debug!("    '{}' capped at max_cols={}, returning {} to pool", name, max_cols, unused);
+                        }
+                    }
+                }
+
+                // Third pass: redistribute unused delta to uncapped widgets
+                if redistribution_pool > 0 && adjustments.len() > capped_widgets.len() {
+                    let uncapped_total: u16 = widgets_at_row.iter()
+                        .filter(|(name, _, _, _, _, _)| {
+                            !static_both.contains(name)
+                            && !width_applied.contains(name)
+                            && !capped_widgets.contains(name)
+                        })
+                        .map(|(_, _, _, _, _, cols)| *cols)
+                        .sum();
+
+                    if uncapped_total > 0 {
+                        tracing::debug!("    Redistributing {} to uncapped widgets (total width: {})", redistribution_pool, uncapped_total);
+
+                        for (name, adjustment) in adjustments.iter_mut() {
+                            if !capped_widgets.contains(name) {
+                                let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                                let proportion = window.cols as f64 / uncapped_total as f64;
+                                let extra_share = (proportion * redistribution_pool as f64).floor() as i32;
+                                *adjustment += extra_share;
+                                tracing::debug!("    '{}' receives +{} from redistribution (total: {})", name, extra_share, adjustment);
+                            }
+                        }
+                    }
+                }
+
+                // Give leftover to largest uncapped widget
                 if leftover != 0 && !adjustments.is_empty() {
                     let largest_idx = widgets_at_row.iter()
                         .enumerate()
                         .filter(|(_, (name, _, _, _, _, _))| {
-                            !static_both.contains(name) && !width_applied.contains(name)
+                            !static_both.contains(name)
+                            && !width_applied.contains(name)
+                            && !capped_widgets.contains(name)
                         })
                         .max_by_key(|(_, (_, _, _, _, _, cols))| *cols)
-                        .map(|(idx, _)| idx)
-                        .unwrap_or(0);
+                        .map(|(idx, _)| idx);
 
-                    if let Some((name, _, _, _, _, _)) = widgets_at_row.get(largest_idx) {
-                        if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) {
-                            adj.1 += leftover;
+                    if let Some(largest_idx) = largest_idx {
+                        if let Some((name, _, _, _, _, _)) = widgets_at_row.get(largest_idx) {
+                            if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) {
+                                adj.1 += leftover;
+                            }
                         }
                     }
                 }
@@ -1250,6 +1344,32 @@ impl App {
             .collect();
 
         self.window_manager.update_config(window_configs);
+    }
+
+    /// Update command input config from current layout
+    fn update_command_input_config(&mut self) {
+        // Find command_input from windows array
+        if let Some(cmd_window) = self.layout.windows.iter()
+            .find(|w| w.widget_type == "command_input") {
+
+            self.command_input.set_border_config(
+                cmd_window.show_border,
+                cmd_window.border_style.clone(),
+                cmd_window.border_color.clone(),
+            );
+
+            if let Some(ref title) = cmd_window.title {
+                self.command_input.set_title(title.clone());
+            } else {
+                self.command_input.set_title(String::new());
+            }
+
+            self.command_input.set_background_color(cmd_window.background_color.clone());
+
+            tracing::debug!("Updated command_input config from layout");
+        } else {
+            tracing::warn!("No command_input found in layout windows");
+        }
     }
 
     /// Resize a window based on mouse drag (independent - no adjacent window adjustment)
@@ -1411,6 +1531,7 @@ impl App {
                         self.baseline_layout = Some(new_layout);  // Store as new baseline
                         self.add_system_message(&format!("Layout '{}' loaded", name));
                         self.update_window_manager_config();
+                        self.update_command_input_config();
 
                         // Log if layout has terminal size info
                         if let (Some(w), Some(h)) = (self.layout.terminal_width, self.layout.terminal_height) {
@@ -3175,6 +3296,10 @@ impl App {
                 };
 
                 if let Some(rect) = cmd_input_rect {
+                    tracing::debug!(
+                        "Command input rect: x={}, y={}, width={}, height={} (terminal: {}x{})",
+                        rect.x, rect.y, rect.width, rect.height, terminal_area.width, terminal_area.height
+                    );
                     window_layouts.insert("command_input".to_string(), rect);
                 }
 
