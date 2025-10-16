@@ -212,8 +212,8 @@ pub struct WindowDef {
     #[serde(default)]
     pub max_cols: Option<u16>,  // Maximum width (enforced during resize)
     // Progress bar display options
-    #[serde(default)]
-    pub numbers_only: Option<bool>,  // For progress bars: strip words, show only numbers (e.g., "health 325/326" -> "325/326")
+    #[serde(default = "default_false")]
+    pub numbers_only: bool,  // For progress bars: strip words, show only numbers (e.g., "health 325/326" -> "325/326")
     #[serde(default)]
     pub progress_id: Option<String>,  // ID for progress bar updates (e.g., "health", "mana", "stance")
     #[serde(default)]
@@ -287,7 +287,7 @@ impl Default for WindowDef {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             progress_id: None,
             countdown_id: None,
             effect_default_color: None,
@@ -880,6 +880,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 fn default_windows() -> Vec<WindowDef> {
     // Default layout using absolute terminal cell positions
     // Assumes typical terminal: ~120 cols x 40 rows
@@ -930,7 +934,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         // First row of vitals (row 24-26): Core stats
@@ -976,7 +980,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1021,7 +1025,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1066,7 +1070,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1111,7 +1115,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1156,7 +1160,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
@@ -1202,7 +1206,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1247,7 +1251,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         // Countdown timers (row 27-29, right side)
@@ -1293,7 +1297,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1338,7 +1342,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1383,7 +1387,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         // Text windows (row 30+)
@@ -1429,7 +1433,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         WindowDef {
@@ -1474,7 +1478,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
         // Command input (bottom of screen)
@@ -1520,7 +1524,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: Some(5),  // Don't let it get too tall
             min_cols: Some(20), // Needs some width to be usable
             max_cols: None,     // Can be full width
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
         },
     ]
@@ -1774,7 +1778,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "thoughts" | "thought" => Some(WindowDef {
@@ -1819,7 +1823,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "speech" => Some(WindowDef {
@@ -1864,7 +1868,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "familiar" => Some(WindowDef {
@@ -1909,7 +1913,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "room" => Some(WindowDef {
@@ -1954,7 +1958,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "logon" | "logons" => Some(WindowDef {
@@ -1999,7 +2003,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "death" | "deaths" => Some(WindowDef {
@@ -2044,7 +2048,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "arrivals" => Some(WindowDef {
@@ -2089,7 +2093,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "ambients" => Some(WindowDef {
@@ -2134,7 +2138,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "announcements" => Some(WindowDef {
@@ -2179,7 +2183,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "loot" => Some(WindowDef {
@@ -2224,7 +2228,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "health" | "hp" => Some(WindowDef {
@@ -2269,7 +2273,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "mana" | "mp" => Some(WindowDef {
@@ -2314,7 +2318,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "stamina" | "stam" => Some(WindowDef {
@@ -2359,7 +2363,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "spirit" => Some(WindowDef {
@@ -2404,7 +2408,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "mindstate" | "mind" => Some(WindowDef {
@@ -2449,7 +2453,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
@@ -2494,7 +2498,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "stance" | "pbarstance" => Some(WindowDef {
@@ -2539,7 +2543,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
@@ -2584,7 +2588,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "roundtime" | "rt" => Some(WindowDef {
@@ -2629,7 +2633,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "casttime" | "cast" => Some(WindowDef {
@@ -2674,7 +2678,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "stun" | "stuntime" => Some(WindowDef {
@@ -2719,7 +2723,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "compass" => Some(WindowDef {
@@ -2764,7 +2768,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
@@ -2809,7 +2813,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "lefthand" => Some(WindowDef {
@@ -2854,7 +2858,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "righthand" => Some(WindowDef {
@@ -2899,7 +2903,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "spellhand" => Some(WindowDef {
@@ -2944,7 +2948,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "poisoned" => Some(WindowDef {
@@ -2989,7 +2993,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "diseased" => Some(WindowDef {
@@ -3034,7 +3038,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "bleeding" => Some(WindowDef {
@@ -3079,7 +3083,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "stunned" => Some(WindowDef {
@@ -3124,7 +3128,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "webbed" => Some(WindowDef {
@@ -3169,7 +3173,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "status_dashboard" => Some(WindowDef {
@@ -3240,7 +3244,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "buffs" => Some(WindowDef {
@@ -3285,7 +3289,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "debuffs" => Some(WindowDef {
@@ -3330,7 +3334,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "cooldowns" => Some(WindowDef {
@@ -3375,7 +3379,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "active_spells" | "spells" => Some(WindowDef {
@@ -3420,7 +3424,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "all_effects" | "effects" => Some(WindowDef {
@@ -3465,7 +3469,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "targets" => Some(WindowDef {
@@ -3510,7 +3514,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             "players" => Some(WindowDef {
@@ -3555,7 +3559,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            numbers_only: None,
+            numbers_only: false,
             ..Default::default()
             }),
             _ => None,

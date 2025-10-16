@@ -81,6 +81,7 @@ pub struct WindowEditor {
     transparent_bg: bool,
     locked: bool,
     show_title: bool,  // If false, saves title as Some("") to hide title bar
+    numbers_only: bool,  // For progress bars: show only numbers, no text
 
     // Multi-checkbox state (border sides)
     border_sides_selected: usize,  // Which checkbox is highlighted
@@ -261,6 +262,7 @@ impl WindowEditor {
             transparent_bg: false,
             locked: false,
             show_title: true,
+            numbers_only: false,
             border_sides_selected: 0,
             border_sides_states: HashMap::new(),
             status_message: String::new(),
@@ -477,6 +479,7 @@ impl WindowEditor {
         self.show_border = self.current_window.show_border;
         self.transparent_bg = self.current_window.transparent_background;
         self.locked = self.current_window.locked;
+        self.numbers_only = self.current_window.numbers_only;
 
         // Show title checkbox: false if title is explicitly Some(""), true otherwise
         self.show_title = !matches!(&self.current_window.title, Some(t) if t.is_empty());
@@ -578,6 +581,7 @@ impl WindowEditor {
         self.current_window.show_border = self.show_border;
         self.current_window.transparent_background = self.transparent_bg;
         self.current_window.locked = self.locked;
+        self.current_window.numbers_only = self.numbers_only;
 
         self.current_window.border_style = Some(BORDER_STYLES[self.border_style_index].to_string());
         self.current_window.content_align = Some(CONTENT_ALIGNS[self.content_align_index].to_string());
@@ -1476,6 +1480,11 @@ impl WindowEditor {
         // Bar Color (field 22) - only for countdown and progress widgets
         if matches!(widget_type, "countdown" | "progress") {
             order.push(22);
+        }
+
+        // Numbers Only checkbox (field 26) - only for progress widgets
+        if widget_type == "progress" {
+            order.push(26);
         }
 
         // Compass Colors (fields 24, 25) - only for compass widgets

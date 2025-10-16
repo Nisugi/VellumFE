@@ -250,7 +250,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
-                numbers_only: w.numbers_only,
+                numbers_only: Some(w.numbers_only),
                 injury_default_color: w.injury_default_color.clone(),
                 injury1_color: w.injury1_color.clone(),
                 injury2_color: w.injury2_color.clone(),
@@ -1332,7 +1332,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
-                numbers_only: w.numbers_only,
+                numbers_only: Some(w.numbers_only),
                 injury_default_color: w.injury_default_color.clone(),
                 injury1_color: w.injury1_color.clone(),
                 injury2_color: w.injury2_color.clone(),
@@ -1666,7 +1666,7 @@ impl App {
                     max_rows: None,
                     min_cols: None,
                     max_cols: None,
-                    numbers_only: None,
+                    numbers_only: false,
                     progress_id: None,
                     countdown_id: None,
                     effect_default_color: None,
@@ -1756,7 +1756,7 @@ impl App {
                     max_rows: None,
                     min_cols: None,
                     max_cols: None,
-                    numbers_only: None,
+                    numbers_only: false,
                     progress_id: None,
                     countdown_id: None,
                     effect_default_color: None,
@@ -3952,7 +3952,16 @@ impl App {
                             self.update_window_manager_config();
                         } else if let Some(orig_name) = original_name {
                             if let Some(idx) = self.layout.windows.iter().position(|w| w.name == orig_name) {
+                                tracing::debug!("Updating window '{}': numbers_only = {}", window.name, window.numbers_only);
                                 self.layout.windows[idx] = window.clone();
+
+                                // Also update baseline_layout so .resize doesn't lose the changes
+                                if let Some(ref mut baseline) = self.baseline_layout {
+                                    if let Some(baseline_idx) = baseline.windows.iter().position(|w| w.name == orig_name) {
+                                        baseline.windows[baseline_idx] = window.clone();
+                                    }
+                                }
+
                                 self.add_system_message(&format!("Updated window '{}'", window.name));
                                 self.add_system_message("Remember to .savelayout to save this configuration!");
                                 self.update_window_manager_config();

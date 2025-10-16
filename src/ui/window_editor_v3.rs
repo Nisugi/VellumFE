@@ -178,6 +178,7 @@ pub struct WindowEditor {
     border_left: bool,
     border_right: bool,
     dashboard_hide_inactive: bool,
+    numbers_only: bool,  // For progress bars: show only numbers, no text
 
     // Tab editor state
     tab_editor: TabEditorState,
@@ -262,6 +263,7 @@ impl WindowEditor {
             border_left: true,
             border_right: true,
             dashboard_hide_inactive: false,
+            numbers_only: false,
             tab_editor: TabEditorState {
                 selected_index: 0,
                 mode: TabEditMode::Browsing,
@@ -466,6 +468,7 @@ impl WindowEditor {
         self.lock_window = self.current_window.locked;
         self.transparent_bg = self.current_window.transparent_background;
         self.show_border = self.current_window.show_border;
+        self.numbers_only = self.current_window.numbers_only;
 
         // Border sides
         if let Some(ref sides) = self.current_window.border_sides {
@@ -684,6 +687,7 @@ impl WindowEditor {
         self.current_window.locked = self.lock_window;
         self.current_window.transparent_background = self.transparent_bg;
         self.current_window.show_border = self.show_border;
+        self.current_window.numbers_only = self.numbers_only;
 
         // Border sides
         let mut sides = Vec::new();
@@ -1007,7 +1011,7 @@ impl WindowEditor {
                 }
                 None
             },
-            KeyCode::Char(' ') if matches!(self.focused_field, 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 58) => {
+            KeyCode::Char(' ') if matches!(self.focused_field, 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 58 | 59) => {
                 // Toggle checkboxes
                 match self.focused_field {
                     12 => self.show_title = !self.show_title,
@@ -1019,6 +1023,7 @@ impl WindowEditor {
                     18 => self.border_left = !self.border_left,
                     19 => self.border_right = !self.border_right,
                     58 => self.dashboard_hide_inactive = !self.dashboard_hide_inactive,
+                    59 => self.numbers_only = !self.numbers_only,  // Progress bar Numbers Only
                     _ => {}
                 }
                 None
@@ -1404,6 +1409,7 @@ impl WindowEditor {
                 order.push(30); // text_color
                 order.push(31); // bar_color
                 order.push(32); // bar_bg_color
+                order.push(59); // numbers_only checkbox
             },
             "countdown" => {
                 order.push(37); // countdown_icon
@@ -1723,6 +1729,10 @@ impl WindowEditor {
                 // Color preview for bar bg color
                 let bar_bg_preview_x = left_x + 13 + 1 + 10 + 2;
                 self.render_color_preview(&self.bar_bg_color_input.lines()[0].to_string(), bar_bg_preview_x, y, buf, config);
+                y += 1;
+
+                // Numbers Only checkbox (field 59)
+                self.render_checkbox(59, "Numbers Only", self.numbers_only, left_x, y, buf);
                 y += 1;
             },
 
