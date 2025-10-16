@@ -191,6 +191,9 @@ pub struct WindowDef {
     pub min_cols: Option<u16>,  // Minimum width (enforced during resize)
     #[serde(default)]
     pub max_cols: Option<u16>,  // Maximum width (enforced during resize)
+    // Progress bar display options
+    #[serde(default)]
+    pub numbers_only: Option<bool>,  // For progress bars: strip words, show only numbers (e.g., "health 325/326" -> "325/326")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,6 +246,7 @@ impl Default for WindowDef {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         }
     }
 }
@@ -871,6 +875,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -915,6 +920,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "mana".to_string(),
@@ -958,6 +964,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -1001,6 +1008,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -1044,6 +1052,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -1087,6 +1096,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -1131,6 +1141,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -1174,6 +1185,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1218,6 +1230,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1261,6 +1274,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1304,6 +1318,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1348,6 +1363,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1391,6 +1407,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
         },
         // Command input (bottom of screen)
         WindowDef {
@@ -1435,6 +1452,7 @@ fn default_windows() -> Vec<WindowDef> {
             max_rows: Some(5),  // Don't let it get too tall
             min_cols: Some(20), // Needs some width to be usable
             max_cols: None,     // Can be full width
+            numbers_only: None,
         },
     ]
 }
@@ -1612,6 +1630,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1655,6 +1674,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1698,6 +1718,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1741,6 +1762,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1784,6 +1806,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1827,6 +1850,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1870,6 +1894,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1913,6 +1938,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1956,6 +1982,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -1999,6 +2026,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -2042,6 +2070,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -2085,6 +2114,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -2128,6 +2158,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -2171,6 +2202,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -2214,6 +2246,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -2257,6 +2290,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -2300,6 +2334,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -2343,6 +2378,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -2386,6 +2422,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -2429,6 +2466,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -2472,6 +2510,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -2515,6 +2554,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2558,6 +2598,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2601,6 +2642,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2644,6 +2686,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
+            numbers_only: None,
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2687,6 +2730,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
+            numbers_only: None,
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2730,6 +2774,7 @@ impl Config {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
+            numbers_only: None,
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2773,6 +2818,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2816,6 +2862,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2859,6 +2906,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2902,6 +2950,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2945,6 +2994,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -3014,6 +3064,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -3057,6 +3108,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -3100,6 +3152,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -3143,6 +3196,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -3186,6 +3240,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -3229,6 +3284,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
@@ -3272,6 +3328,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
@@ -3315,6 +3372,7 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
+            numbers_only: None,
             }),
             _ => None,
         }

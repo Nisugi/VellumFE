@@ -457,6 +457,7 @@ pub struct WindowConfig {
     pub tab_unread_color: Option<String>,  // Color for tabs with unread messages
     pub tab_unread_prefix: Option<String>,  // Prefix for tabs with unread (e.g., "* ")
     pub hand_icon: Option<String>,  // Icon for hand widgets (e.g., "L:", "R:", "S:")
+    pub numbers_only: Option<bool>,  // For progress bars: strip words, show only numbers
 }
 
 pub struct WindowManager {
@@ -497,6 +498,7 @@ impl WindowManager {
                     progress_bar.set_transparent_background(config.transparent_background);
                     progress_bar.set_text_color(config.text_color.clone());
                     progress_bar.set_content_align(config.content_align.clone());
+                    progress_bar.set_numbers_only(config.numbers_only.unwrap_or(false));
                     Widget::Progress(progress_bar)
                 }
                 "countdown" => {
@@ -957,6 +959,7 @@ impl WindowManager {
                         progress_bar.set_transparent_background(config.transparent_background);
                         progress_bar.set_text_color(config.text_color.clone());
                         progress_bar.set_content_align(config.content_align.clone());
+                        progress_bar.set_numbers_only(config.numbers_only.unwrap_or(false));
                         Widget::Progress(progress_bar)
                     }
                     "countdown" => {

@@ -30,6 +30,7 @@ pub struct ProgressBar {
     show_values: bool,
     text_alignment: TextAlignment,  // How to align the text (left, center, right)
     content_align: Option<String>,  // Alignment of bar within widget area (top, center, bottom, etc.)
+    numbers_only: bool,  // If true, strip words from text (e.g., "health 325/326" -> "325/326")
 }
 
 impl ProgressBar {
@@ -51,6 +52,7 @@ impl ProgressBar {
             show_values: true,
             text_alignment: TextAlignment::Center,  // Center by default (for vitals)
             content_align: None,
+            numbers_only: false,  // Default: show full text
         }
     }
 
@@ -126,6 +128,10 @@ impl ProgressBar {
 
     pub fn set_content_align(&mut self, align: Option<String>) {
         self.content_align = align;
+    }
+
+    pub fn set_numbers_only(&mut self, numbers_only: bool) {
+        self.numbers_only = numbers_only;
     }
 
     /// Parse a hex color string to ratatui Color
@@ -272,6 +278,19 @@ impl ProgressBar {
                 .find(|text| text.len() as u16 <= available_width)
                 .cloned()
                 .unwrap_or_default()
+        };
+
+        // Strip words if numbers_only is enabled (e.g., "health 325/326" -> "325/326", "blood 100" -> "100")
+        let display_text = if self.numbers_only {
+            // Find the first digit and take everything from there
+            if let Some(pos) = display_text.find(|c: char| c.is_ascii_digit()) {
+                display_text[pos..].to_string()
+            } else {
+                // No digits found, return as-is
+                display_text
+            }
+        } else {
+            display_text
         };
 
         let text_width = display_text.len() as u16;

@@ -242,6 +242,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
+                numbers_only: w.numbers_only,
             })
             .collect();
 
@@ -1101,6 +1102,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
+                numbers_only: w.numbers_only,
             })
             .collect();
 
@@ -1396,6 +1398,7 @@ impl App {
                     max_rows: None,
                     min_cols: None,
                     max_cols: None,
+                    numbers_only: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1481,6 +1484,7 @@ impl App {
                     max_rows: None,
                     min_cols: None,
                     max_cols: None,
+                    numbers_only: None,
                 };
 
                 self.layout.windows.push(window_def);
