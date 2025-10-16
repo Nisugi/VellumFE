@@ -318,7 +318,10 @@ impl CommandInput {
 
         let mut block = Block::default();
 
-        if self.show_border {
+        // Check if border_style is "none" - that should disable borders too
+        let border_is_none = self.border_style.as_ref().map_or(false, |s| s == "none");
+
+        if self.show_border && !border_is_none {
             block = block.borders(Borders::ALL);
 
             // Apply border style if specified
@@ -359,10 +362,28 @@ impl CommandInput {
                     }
                 }
             }
+        } else if !self.show_border || border_is_none {
+            // If no border and no background color, clear the area to prevent artifacts
+            for row in 0..area.height {
+                for col in 0..area.width {
+                    let x = area.x + col;
+                    let y = area.y + row;
+                    if x < buf.area().width && y < buf.area().height {
+                        buf[(x, y)].set_char(' ').reset();
+                    }
+                }
+            }
         }
 
-        let inner = block.inner(area);
-        block.render(area, buf);
+        // Only render block if it has borders (otherwise it's just empty)
+        let inner = if self.show_border && !border_is_none {
+            let inner_area = block.inner(area);
+            block.render(area, buf);
+            inner_area
+        } else {
+            // No borders - use full area for content
+            area
+        };
 
         // Calculate horizontal scroll to keep cursor visible
         let available_width = inner.width as usize;

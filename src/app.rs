@@ -276,41 +276,23 @@ impl App {
 
         debug!("Loaded {} keybindings", keybind_map.len());
 
-        // Find command_input from windows array (or fall back to old command_input field)
+        // Find command_input from windows array
         let cmd_window = layout.windows.iter()
             .find(|w| w.widget_type == "command_input")
-            .or_else(|| {
-                // Migration: if not in windows array, create from old command_input field
-                tracing::warn!("Command input not found in windows array, using legacy command_input field");
-                None
-            });
+            .expect("command_input must exist in windows array (layout migration should ensure this)");
 
         // Create command input with config from WindowDef
         let mut command_input = CommandInput::new(100);
         command_input.set_min_command_length(config.ui.min_command_length);
-
-        if let Some(window) = cmd_window {
-            command_input.set_border_config(
-                window.show_border,
-                window.border_style.clone(),
-                window.border_color.clone(),
-            );
-            if let Some(ref title) = window.title {
-                command_input.set_title(title.clone());
-            }
-            command_input.set_background_color(window.background_color.clone());
-        } else {
-            // Fall back to old command_input field for backwards compatibility
-            command_input.set_border_config(
-                layout.command_input.show_border,
-                layout.command_input.border_style.clone(),
-                layout.command_input.border_color.clone(),
-            );
-            if let Some(title) = &layout.command_input.title {
-                command_input.set_title(title.clone());
-            }
-            command_input.set_background_color(layout.command_input.background_color.clone());
+        command_input.set_border_config(
+            cmd_window.show_border,
+            cmd_window.border_style.clone(),
+            cmd_window.border_color.clone(),
+        );
+        if let Some(ref title) = cmd_window.title {
+            command_input.set_title(title.clone());
         }
+        command_input.set_background_color(cmd_window.background_color.clone());
 
         // Initialize sound player
         let sound_player = match SoundPlayer::new(
@@ -1808,17 +1790,13 @@ impl App {
             }
             "editinput" | "editcommandbox" => {
                 // Find command_input from windows array
-                if let Some(window_def) = self.layout.windows.iter().find(|w| w.widget_type == "command_input").cloned() {
-                    self.window_editor.load_window(window_def);
-                    self.input_mode = InputMode::WindowEditor;
-                    self.add_system_message("Editing command input box");
-                } else {
-                    // Fall back to old command_input field
-                    let window_def = self.layout.command_input.to_window_def();
-                    self.window_editor.load_window(window_def);
-                    self.input_mode = InputMode::WindowEditor;
-                    self.add_system_message("Editing command input box (legacy mode)");
-                }
+                let window_def = self.layout.windows.iter()
+                    .find(|w| w.widget_type == "command_input")
+                    .cloned()
+                    .expect("command_input must exist in windows array");
+                self.window_editor.load_window(window_def);
+                self.input_mode = InputMode::WindowEditor;
+                self.add_system_message("Editing command input box");
             }
             "lockwindows" | "lockall" => {
                 // Lock all windows
@@ -2937,14 +2915,11 @@ impl App {
             let terminal_size = terminal.size()?;
             let terminal_rect = ratatui::layout::Rect::new(0, 0, terminal_size.width, terminal_size.height);
 
-            // Get command_input position from windows array (or fall back to old field)
+            // Get command_input position from windows array
             let (cmd_row, cmd_col, cmd_height, cmd_width) = self.layout.windows.iter()
                 .find(|w| w.widget_type == "command_input")
                 .map(|w| (w.row, w.col, w.rows, w.cols))
-                .unwrap_or_else(|| {
-                    let cmd_cfg = &self.layout.command_input;
-                    (cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width)
-                });
+                .expect("command_input must exist in windows array");
 
             let layout = UiLayout::calculate(terminal_rect, cmd_row, cmd_col, cmd_height, cmd_width);
 
@@ -2969,14 +2944,11 @@ impl App {
             terminal.draw(|f| {
                 let ui_render_start = std::time::Instant::now();
 
-                // Get command_input position from windows array (or fall back to old field)
+                // Get command_input position from windows array
                 let (cmd_row, cmd_col, cmd_height, cmd_width) = self.layout.windows.iter()
                     .find(|w| w.widget_type == "command_input")
                     .map(|w| (w.row, w.col, w.rows, w.cols))
-                    .unwrap_or_else(|| {
-                        let cmd_cfg = &self.layout.command_input;
-                        (cmd_cfg.row, cmd_cfg.col, cmd_cfg.height, cmd_cfg.width)
-                    });
+                    .expect("command_input must exist in windows array");
 
                 let layout = UiLayout::calculate(f.area(), cmd_row, cmd_col, cmd_height, cmd_width);
                 let mut window_layouts = self.window_manager.calculate_layout(layout.main_area);
@@ -3026,16 +2998,21 @@ impl App {
                 }
 
                 // Render input based on mode
+                // Get command_input rect from window_layouts (already computed above)
+                let cmd_input_rect = window_layouts.get("command_input")
+                    .copied()
+                    .unwrap_or(layout.input_area); // Fallback to old position
+
                 match self.input_mode {
                     InputMode::Search => {
                         // Render search input with prompt
-                        self.render_search_input(layout.input_area, f.buffer_mut());
+                        self.render_search_input(cmd_input_rect, f.buffer_mut());
                     }
                     InputMode::HighlightForm | InputMode::KeybindForm | InputMode::SettingsEditor | InputMode::HighlightBrowser | InputMode::KeybindBrowser | InputMode::WindowEditor | InputMode::ColorPaletteBrowser | InputMode::ColorForm => {
                         // Hide command input when form/browser/editor is open
                     }
                     _ => {
-                        self.command_input.render(layout.input_area, f.buffer_mut());
+                        self.command_input.render(cmd_input_rect, f.buffer_mut());
                     }
                 }
 
@@ -3544,9 +3521,6 @@ impl App {
                                 // Creating new command_input
                                 self.layout.windows.push(window.clone());
                             }
-
-                            // Update the legacy command_input field for backwards compatibility
-                            self.layout.command_input.update_from_window_def(&window);
 
                             // Apply changes to the actual CommandInput widget immediately
                             self.command_input.set_border_config(

@@ -355,85 +355,7 @@ pub struct UiConfig {
     pub perf_stats_height: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandInputConfig {
-    #[serde(default = "default_command_input_row")]
-    pub row: u16,
-    #[serde(default = "default_command_input_col")]
-    pub col: u16,
-    #[serde(default = "default_command_input_height")]
-    pub height: u16,
-    #[serde(default = "default_command_input_width")]
-    pub width: u16,
-    #[serde(default = "default_true")]
-    pub show_border: bool,
-    pub border_style: Option<String>,  // "single", "double", "rounded", "thick"
-    pub border_color: Option<String>,
-    pub title: Option<String>,
-    pub background_color: Option<String>,  // Background color (transparent if not set)
-}
-
-impl CommandInputConfig {
-    /// Convert to WindowDef for editing in window editor
-    pub fn to_window_def(&self) -> WindowDef {
-        WindowDef {
-            name: "command_input".to_string(),
-            widget_type: "command_input".to_string(),
-            streams: Vec::new(),
-            row: self.row,
-            col: self.col,
-            rows: self.height,
-            cols: self.width,
-            buffer_size: 0,
-            show_border: self.show_border,
-            border_style: self.border_style.clone(),
-            border_color: self.border_color.clone(),
-            title: self.title.clone(),
-            background_color: self.background_color.clone(),
-            bar_color: None,
-            bar_background_color: None,
-            text_color: None,
-            transparent_background: self.background_color.is_none(),
-            border_sides: None,
-            content_align: None,
-            locked: false,
-            indicator_colors: None,
-            dashboard_layout: None,
-            dashboard_indicators: None,
-            dashboard_spacing: None,
-            dashboard_hide_inactive: None,
-            visible_count: None,
-            hand_icon: None,
-            countdown_icon: None,
-            tab_bar_position: None,
-            tab_active_color: None,
-            tab_inactive_color: None,
-            tab_unread_color: None,
-            tab_unread_prefix: None,
-            tabs: None,
-            effect_category: None,
-            compass_active_color: None,
-            compass_inactive_color: None,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-        }
-    }
-
-    /// Update from WindowDef after editing
-    pub fn update_from_window_def(&mut self, window: &WindowDef) {
-        self.row = window.row;
-        self.col = window.col;
-        self.height = window.rows;
-        self.width = window.cols;
-        self.show_border = window.show_border;
-        self.border_style = window.border_style.clone();
-        self.border_color = window.border_color.clone();
-        self.title = window.title.clone();
-        self.background_color = window.background_color.clone();
-    }
-}
+// CommandInputConfig removed - command_input is now a regular window in the windows array
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LayoutConfig {
@@ -441,12 +363,10 @@ pub struct LayoutConfig {
     // No global grid needed
 }
 
-/// Represents a saved layout (windows + command input position)
+/// Represents a saved layout (windows only - command_input is just another window)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layout {
     pub windows: Vec<WindowDef>,
-    #[serde(default = "default_command_input")]
-    pub command_input: CommandInputConfig,
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -895,35 +815,7 @@ fn default_perf_stats_height() -> u16 {
     23
 }
 
-fn default_command_input() -> CommandInputConfig {
-    CommandInputConfig {
-        row: 0,     // Will be calculated based on terminal height
-        col: 0,
-        height: 3,
-        width: 0,   // Will use full terminal width
-        show_border: true,
-        border_style: None,
-        border_color: None,
-        title: None,  // No title by default
-        background_color: None,  // Transparent by default
-    }
-}
-
-fn default_command_input_row() -> u16 {
-    0  // Will be calculated dynamically
-}
-
-fn default_command_input_col() -> u16 {
-    0
-}
-
-fn default_command_input_height() -> u16 {
-    3
-}
-
-fn default_command_input_width() -> u16 {
-    0  // 0 means use full terminal width
-}
+// default_command_input* functions removed - command_input is now in windows array
 
 fn default_true() -> bool {
     true
@@ -1597,9 +1489,22 @@ impl Layout {
         let mut layout: Layout = toml::from_str(&contents)
             .context(format!("Failed to parse layout file: {:?}", path))?;
 
-        // Migration: Ensure command_input exists in windows array
-        if !layout.windows.iter().any(|w| w.widget_type == "command_input") {
-            // Get command_input from default_windows()
+        // Migration: Ensure command_input exists in windows array with valid values
+        if let Some(idx) = layout.windows.iter().position(|w| w.widget_type == "command_input") {
+            // Command input exists but might have invalid values (cols=0, rows=0, etc)
+            let cmd_input = &mut layout.windows[idx];
+            if cmd_input.cols == 0 || cmd_input.rows == 0 {
+                tracing::warn!("Command input has invalid size ({}x{}), fixing with defaults", cmd_input.rows, cmd_input.cols);
+                // Get defaults from default_windows()
+                if let Some(default_cmd) = default_windows().into_iter().find(|w| w.widget_type == "command_input") {
+                    cmd_input.row = default_cmd.row;
+                    cmd_input.col = default_cmd.col;
+                    cmd_input.rows = default_cmd.rows;
+                    cmd_input.cols = default_cmd.cols;
+                }
+            }
+        } else {
+            // Command input doesn't exist - add it
             if let Some(cmd_input) = default_windows().into_iter().find(|w| w.widget_type == "command_input") {
                 tracing::info!("Migrating command_input to windows array");
                 layout.windows.push(cmd_input);
