@@ -199,3 +199,18 @@ cols = 36
 buffer_size = 1000
 show_border = true
 transparent_background = true
+
+[[windows]]
+name = "command_input"
+widget_type = "command_input"
+streams = []
+row = 40
+col = 0
+rows = 3
+cols = 120
+buffer_size = 0
+show_border = true
+transparent_background = true
+min_rows = 1
+max_rows = 5
+min_cols = 20

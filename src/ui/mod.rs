@@ -25,6 +25,8 @@ mod keybind_browser;
 mod color_picker;
 mod color_palette_browser;
 mod color_form;
+mod spell_color_browser;
+mod spell_color_form;
 
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
 pub use popup_menu::{PopupMenu, MenuItem};
@@ -61,6 +63,8 @@ pub use keybind_browser::KeybindBrowser;
 pub use color_picker::ColorPicker;
 pub use color_palette_browser::ColorPaletteBrowser;
 pub use color_form::{ColorForm, FormAction as ColorFormAction};
+pub use spell_color_browser::SpellColorBrowser;
+pub use spell_color_form::{SpellColorFormWidget, SpellColorFormResult};
 
 use ratatui::{
     layout::Rect,

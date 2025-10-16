@@ -288,15 +288,14 @@ impl ProgressBar {
         if text_width > 0 {
             // Truncate text if it's too wide for available space
             let (final_text, final_text_width) = if text_width > available_width {
-                // Text is too wide, truncate it to fit
-                let chars_that_fit = (available_width as usize).saturating_sub(1); // Reserve 1 for ellipsis
-                if chars_that_fit > 0 {
-                    let truncated: String = display_text.chars().take(chars_that_fit).collect();
-                    let truncated_with_ellipsis = format!("{}…", truncated);
-                    (truncated_with_ellipsis.clone(), truncated_with_ellipsis.chars().count() as u16)
-                } else if available_width > 0 {
-                    // Only room for ellipsis
-                    ("…".to_string(), 1)
+                // Text is too wide, truncate from left to keep numbers on right
+                // For "health 325/326" we want to keep "325/326" not "health 3"
+                // No ellipsis - just show what fits
+                if available_width > 0 {
+                    let char_count = display_text.chars().count();
+                    let skip_count = char_count.saturating_sub(available_width as usize);
+                    let truncated: String = display_text.chars().skip(skip_count).collect();
+                    (truncated.clone(), truncated.chars().count() as u16)
                 } else {
                     (String::new(), 0)
                 }

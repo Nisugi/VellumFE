@@ -564,12 +564,19 @@ impl XmlParser {
             if id == "Active Spells" || id == "Buffs" || id == "Debuffs" || id == "Cooldowns" {
                 tracing::debug!("Parser found dialogData for active effects category: {}", id);
 
+                // Normalize category name: "Active Spells" → "ActiveSpells" (remove space for consistency)
+                let category = if id == "Active Spells" {
+                    "ActiveSpells".to_string()
+                } else {
+                    id.clone()
+                };
+
                 // Check for clear='t' attribute
                 if let Some(clear) = Self::extract_attribute(tag, "clear") {
                     if clear == "t" {
-                        tracing::debug!("Clearing active effects for category: {}", id);
+                        tracing::debug!("Clearing active effects for category: {}", category);
                         elements.push(ParsedElement::ClearActiveEffects {
-                            category: id.clone()
+                            category
                         });
                         return;
                     }
@@ -591,9 +598,9 @@ impl XmlParser {
                         ) {
                             if let Ok(value) = value_str.parse::<u32>() {
                                 tracing::debug!("Parsed active effect: category={}, id={}, text='{}', value={}%, time={}",
-                                    id, effect_id, text, value, time);
+                                    category, effect_id, text, value, time);
                                 elements.push(ParsedElement::ActiveEffect {
-                                    category: id.clone(),
+                                    category: category.clone(),
                                     id: effect_id,
                                     value,
                                     text,

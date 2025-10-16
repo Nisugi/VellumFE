@@ -74,8 +74,32 @@ pub struct PromptColor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpellColorRange {
-    pub spells: Vec<u32>,  // List of spell IDs (e.g., [101, 107, 120, 140, 150])
-    pub color: String,     // Hex color (e.g., "#00ffff")
+    pub spells: Vec<u32>,           // List of spell IDs (e.g., [101, 107, 120, 140, 150])
+    #[serde(default)]
+    pub color: String,              // Legacy field: bar color (for backward compatibility)
+    #[serde(default)]
+    pub bar_color: Option<String>,  // Progress bar fill color (e.g., "#00ffff")
+    #[serde(default)]
+    pub text_color: Option<String>, // Text color on filled portion (default: white)
+    #[serde(default)]
+    pub bg_color: Option<String>,   // Background/unfilled portion color (default: black)
+}
+
+impl SpellColorRange {
+    /// Get the effective bar color (prefer bar_color, fall back to color for backward compatibility)
+    pub fn get_bar_color(&self) -> &str {
+        self.bar_color.as_deref().unwrap_or(&self.color)
+    }
+
+    /// Get the effective text color (default to white if not set)
+    pub fn get_text_color(&self) -> &str {
+        self.text_color.as_deref().unwrap_or("#ffffff")
+    }
+
+    /// Get the effective background color (default to black if not set)
+    pub fn get_bg_color(&self) -> &str {
+        self.bg_color.as_deref().unwrap_or("#000000")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +182,15 @@ pub struct WindowDef {
     pub compass_active_color: Option<String>,    // Color for available exits (default: #00ff00)
     #[serde(default)]
     pub compass_inactive_color: Option<String>,  // Color for unavailable exits (default: #333333)
+    // Layout resizing constraints
+    #[serde(default)]
+    pub min_rows: Option<u16>,  // Minimum height (enforced during resize)
+    #[serde(default)]
+    pub max_rows: Option<u16>,  // Maximum height (enforced during resize)
+    #[serde(default)]
+    pub min_cols: Option<u16>,  // Minimum width (enforced during resize)
+    #[serde(default)]
+    pub max_cols: Option<u16>,  // Maximum width (enforced during resize)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +239,10 @@ impl Default for WindowDef {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         }
     }
 }
@@ -377,6 +414,10 @@ impl CommandInputConfig {
             effect_category: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         }
     }
 
@@ -681,6 +722,7 @@ pub fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
         "enter" => KeyCode::Enter,
         "backspace" => KeyCode::Backspace,
         "delete" => KeyCode::Delete,
+        "insert" => KeyCode::Insert,
         "tab" => KeyCode::Tab,
         "esc" | "escape" => KeyCode::Esc,
         "space" => KeyCode::Char(' '),
@@ -933,6 +975,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         // First row of vitals (row 24-26): Core stats
         WindowDef {
@@ -973,6 +1019,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "mana".to_string(),
@@ -1012,6 +1062,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "stamina".to_string(),
@@ -1051,6 +1105,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "spirit".to_string(),
@@ -1090,6 +1148,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "mindstate".to_string(),
@@ -1129,6 +1191,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         // Second row of vitals (row 27-29): Stance, Encumbrance, Countdowns
         WindowDef {
@@ -1169,6 +1235,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "encumlevel".to_string(),
@@ -1208,6 +1278,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         // Countdown timers (row 27-29, right side)
         WindowDef {
@@ -1248,6 +1322,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "casttime".to_string(),
@@ -1287,6 +1365,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "stuntime".to_string(),
@@ -1326,6 +1408,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         // Text windows (row 30+)
         WindowDef {
@@ -1366,6 +1452,10 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
         },
         WindowDef {
             name: "speech".to_string(),
@@ -1405,6 +1495,54 @@ fn default_windows() -> Vec<WindowDef> {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+        },
+        // Command input (bottom of screen)
+        WindowDef {
+            name: "command_input".to_string(),
+            widget_type: "command_input".to_string(),
+            streams: vec![],
+            row: 40,     // Bottom of screen (will be calculated dynamically)
+            col: 0,
+            rows: 3,     // 3 rows tall (with border)
+            cols: 120,   // Full width (will use actual terminal width)
+            buffer_size: 0,
+            show_border: true,
+            border_style: None,
+            border_color: None,
+            border_sides: None,
+            title: None,
+            content_align: None,
+            background_color: None,
+            bar_color: None,
+            bar_background_color: None,
+            text_color: None,
+            transparent_background: true,
+            locked: false,
+            indicator_colors: None,
+            dashboard_layout: None,
+            dashboard_indicators: None,
+            dashboard_spacing: None,
+            dashboard_hide_inactive: None,
+            visible_count: None,
+            effect_category: None,
+            tabs: None,
+            tab_bar_position: None,
+            tab_active_color: None,
+            tab_inactive_color: None,
+            tab_unread_color: None,
+            tab_unread_prefix: None,
+            hand_icon: None,
+            countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
+            min_rows: Some(1),  // Command input needs at least 1 row
+            max_rows: Some(5),  // Don't let it get too tall
+            min_cols: Some(20), // Needs some width to be usable
+            max_cols: None,     // Can be full width
         },
     ]
 }
@@ -1555,6 +1693,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "thoughts" | "thought" => Some(WindowDef {
                 name: "thoughts".to_string(),
@@ -1594,6 +1736,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "speech" => Some(WindowDef {
                 name: "speech".to_string(),
@@ -1633,6 +1779,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "familiar" => Some(WindowDef {
                 name: "familiar".to_string(),
@@ -1672,6 +1822,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "room" => Some(WindowDef {
                 name: "room".to_string(),
@@ -1711,6 +1865,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "logon" | "logons" => Some(WindowDef {
                 name: "logons".to_string(),
@@ -1750,6 +1908,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "death" | "deaths" => Some(WindowDef {
                 name: "deaths".to_string(),
@@ -1789,6 +1951,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "arrivals" => Some(WindowDef {
                 name: "arrivals".to_string(),
@@ -1828,6 +1994,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "ambients" => Some(WindowDef {
                 name: "ambients".to_string(),
@@ -1867,6 +2037,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "announcements" => Some(WindowDef {
                 name: "announcements".to_string(),
@@ -1906,6 +2080,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "loot" => Some(WindowDef {
                 name: "loot".to_string(),
@@ -1945,6 +2123,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
@@ -1984,6 +2166,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "mana" | "mp" => Some(WindowDef {
                 name: "mana".to_string(),
@@ -2023,6 +2209,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "stamina" | "stam" => Some(WindowDef {
                 name: "stamina".to_string(),
@@ -2062,6 +2252,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "spirit" => Some(WindowDef {
                 name: "spirit".to_string(),
@@ -2101,6 +2295,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "mindstate" | "mind" => Some(WindowDef {
                 name: "mindState".to_string(),
@@ -2140,6 +2338,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "encumbrance" | "encum" | "encumlevel" => Some(WindowDef {
                 name: "encumlevel".to_string(),
@@ -2179,6 +2381,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "stance" | "pbarstance" => Some(WindowDef {
                 name: "pbarStance".to_string(),
@@ -2218,6 +2424,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "bloodpoints" | "blood" | "lblbps" => Some(WindowDef {
                 name: "lblBPs".to_string(),
@@ -2257,6 +2467,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "roundtime" | "rt" => Some(WindowDef {
                 name: "roundtime".to_string(),
@@ -2296,6 +2510,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "casttime" | "cast" => Some(WindowDef {
                 name: "casttime".to_string(),
@@ -2335,6 +2553,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "stun" | "stuntime" => Some(WindowDef {
                 name: "stuntime".to_string(),
@@ -2374,6 +2596,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "compass" => Some(WindowDef {
                 name: "compass".to_string(),
@@ -2413,6 +2639,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "injuries" | "injury_doll" => Some(WindowDef {
                 name: "injuries".to_string(),
@@ -2452,6 +2682,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "lefthand" => Some(WindowDef {
                 name: "lefthand".to_string(),
@@ -2491,6 +2725,10 @@ impl Config {
                 countdown_icon: None,
                 compass_active_color: None,
                 compass_inactive_color: None,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
             }),
             "righthand" => Some(WindowDef {
                 name: "righthand".to_string(),
@@ -2530,6 +2768,10 @@ impl Config {
                 countdown_icon: None,
                 compass_active_color: None,
                 compass_inactive_color: None,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
             }),
             "spellhand" => Some(WindowDef {
                 name: "spellhand".to_string(),
@@ -2569,6 +2811,10 @@ impl Config {
                 countdown_icon: None,
                 compass_active_color: None,
                 compass_inactive_color: None,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
             }),
             "poisoned" => Some(WindowDef {
                 name: "poisoned".to_string(),
@@ -2608,6 +2854,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "diseased" => Some(WindowDef {
                 name: "diseased".to_string(),
@@ -2647,6 +2897,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "bleeding" => Some(WindowDef {
                 name: "bleeding".to_string(),
@@ -2686,6 +2940,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "stunned" => Some(WindowDef {
                 name: "stunned".to_string(),
@@ -2725,6 +2983,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "webbed" => Some(WindowDef {
                 name: "webbed".to_string(),
@@ -2764,6 +3026,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "status_dashboard" => Some(WindowDef {
                 name: "status_dashboard".to_string(),
@@ -2829,6 +3095,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "buffs" => Some(WindowDef {
                 name: "buffs".to_string(),
@@ -2868,6 +3138,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "debuffs" => Some(WindowDef {
                 name: "debuffs".to_string(),
@@ -2907,6 +3181,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "cooldowns" => Some(WindowDef {
                 name: "cooldowns".to_string(),
@@ -2946,6 +3224,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "active_spells" | "spells" => Some(WindowDef {
                 name: "active_spells".to_string(),
@@ -2985,6 +3267,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "all_effects" | "effects" => Some(WindowDef {
                 name: "all_effects".to_string(),
@@ -3024,6 +3310,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
@@ -3063,6 +3353,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             "players" => Some(WindowDef {
                 name: "players".to_string(),
@@ -3102,6 +3396,10 @@ impl Config {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
             }),
             _ => None,
         }
@@ -3185,6 +3483,11 @@ impl Config {
             // If keybinds is empty, populate with defaults
             if config.keybinds.is_empty() {
                 config.keybinds = default_keybinds();
+            }
+
+            // If spell_colors is empty, populate with defaults
+            if config.spell_colors.is_empty() {
+                config.spell_colors = Config::default().spell_colors;
             }
 
             // If color_palette is empty, populate with defaults from embedded config
@@ -3444,52 +3747,82 @@ impl Default for Config {
                 // Light blue for Minor Elemental (400 series)
                 SpellColorRange {
                     spells: vec![401, 406, 414, 419, 430, 435],
-                    color: "#87ceeb".to_string()
+                    color: "#87ceeb".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Dark blue for Major Elemental (500 series)
                 SpellColorRange {
                     spells: vec![503, 506, 507, 508, 509, 513, 520, 525, 530, 540],
-                    color: "#4169e1".to_string()
+                    color: "#4169e1".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Purple for Wizard (900 series)
                 SpellColorRange {
                     spells: vec![905, 911, 913, 918, 919, 920, 925, 930, 940],
-                    color: "#9370db".to_string()
+                    color: "#9370db".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Green for Ranger (600 series)
                 SpellColorRange {
                     spells: vec![601, 602, 605, 606, 608, 613, 616, 618, 625, 630, 640],
-                    color: "#32cd32".to_string()
+                    color: "#32cd32".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Yellow for Cleric (300 series)
                 SpellColorRange {
                     spells: vec![303, 307, 310, 313, 315, 317, 318, 319, 325, 330, 335, 340],
-                    color: "#ffd700".to_string()
+                    color: "#ffd700".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Red for Sorcerer (700 series)
                 SpellColorRange {
                     spells: vec![701, 703, 705, 708, 712, 713, 715, 720, 725, 730, 735, 740],
-                    color: "#ff4500".to_string()
+                    color: "#ff4500".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Cyan for Empath (1100 series)
                 SpellColorRange {
                     spells: vec![1101, 1107, 1109, 1115, 1120, 1125, 1130, 1140, 1150],
-                    color: "#00ffff".to_string()
+                    color: "#00ffff".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Orange for Bard (1000 series)
                 SpellColorRange {
                     spells: vec![1001, 1003, 1006, 1010, 1012, 1019, 1025, 1030, 1035, 1040],
-                    color: "#ff8c00".to_string()
+                    color: "#ff8c00".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Pink for Paladin (1600 series)
                 SpellColorRange {
                     spells: vec![1601, 1602, 1605, 1610, 1615, 1617, 1618, 1625, 1630, 1635],
-                    color: "#ff69b4".to_string()
+                    color: "#ff69b4".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
                 // Sky blue for Minor Spirit (100 series)
                 SpellColorRange {
                     spells: vec![101, 107, 120, 125, 130, 140, 150, 175],
-                    color: "#00bfff".to_string()
+                    color: "#00bfff".to_string(),
+                    bar_color: None,
+                    text_color: None,
+                    bg_color: None,
                 },
             ],
             sound: SoundConfig::default(),

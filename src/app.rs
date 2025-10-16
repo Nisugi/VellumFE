@@ -27,6 +27,55 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 use rand::Rng;
 
+/// Debouncer for terminal resize events to prevent excessive layout recalculations
+struct ResizeDebouncer {
+    last_resize_time: std::time::Instant,
+    debounce_duration: std::time::Duration,
+    pending_size: Option<(u16, u16)>, // (width, height)
+}
+
+impl ResizeDebouncer {
+    fn new(debounce_ms: u64) -> Self {
+        Self {
+            last_resize_time: std::time::Instant::now(),
+            debounce_duration: std::time::Duration::from_millis(debounce_ms),
+            pending_size: None,
+        }
+    }
+
+    /// Check if a resize event should be processed or debounced
+    /// Returns Some(size) if the resize should be processed now, None if it should be debounced
+    fn check_resize(&mut self, width: u16, height: u16) -> Option<(u16, u16)> {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_resize_time);
+
+        if elapsed >= self.debounce_duration {
+            // Enough time has passed, process this resize
+            self.last_resize_time = now;
+            self.pending_size = None;
+            Some((width, height))
+        } else {
+            // Still within debounce period, store pending size
+            self.pending_size = Some((width, height));
+            None
+        }
+    }
+
+    /// Check if there's a pending resize that should be processed
+    fn check_pending(&mut self) -> Option<(u16, u16)> {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_resize_time);
+
+        if elapsed >= self.debounce_duration {
+            if let Some(size) = self.pending_size.take() {
+                self.last_resize_time = now;
+                return Some(size);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum InputMode {
     Normal,   // Normal text input to command window
@@ -40,6 +89,8 @@ enum InputMode {
     ColorPaletteBrowser,  // Color palette browser
     ColorBrowserFilter,  // Color palette browser filter input
     ColorForm,  // Color palette editor form
+    SpellColorBrowser,  // Spell color browser
+    SpellColorForm,  // Spell color editor form
     WindowEditor,  // Window configuration editor
 }
 
@@ -84,6 +135,10 @@ pub struct App {
     keybind_browser: Option<crate::ui::KeybindBrowser>,  // Keybind browser (None when not shown)
     color_palette_browser: Option<crate::ui::ColorPaletteBrowser>,  // Color palette browser (None when not shown)
     color_form: Option<crate::ui::ColorForm>,  // Color editor form (None when not shown)
+    spell_color_browser: Option<crate::ui::SpellColorBrowser>,  // Spell color browser (None when not shown)
+    spell_color_form: Option<crate::ui::SpellColorFormWidget>,  // Spell color editor form (None when not shown)
+    baseline_snapshot: Option<(u16, u16)>,  // Baseline terminal size (width, height) for proportional resizing
+    resize_debouncer: ResizeDebouncer,  // Debouncer for terminal resize events (300ms default)
 }
 
 /// Drag and drop state
@@ -315,6 +370,10 @@ impl App {
             keybind_browser: None,  // Keybind browser not shown initially
             color_palette_browser: None,  // Color palette browser not shown initially
             color_form: None,  // Color form not shown initially
+            spell_color_browser: None,  // Spell color browser not shown initially
+            spell_color_form: None,  // Spell color form not shown initially
+            baseline_snapshot: None,  // No baseline snapshot initially (will be set after layout load)
+            resize_debouncer: ResizeDebouncer::new(300),  // 300ms debounce for terminal resize
         })
     }
 
@@ -685,6 +744,315 @@ impl App {
         }
     }
 
+    /// Apply proportional resizing to layout based on delta
+    fn apply_proportional_resize(&mut self, width_delta: i32, height_delta: i32) {
+        use std::collections::{HashMap, HashSet};
+
+        tracing::debug!("=== PROPORTIONAL RESIZE ===");
+        tracing::debug!("Width delta: {:+}, Height delta: {:+}", width_delta, height_delta);
+
+        // Helper function to get hard-coded minimum size for widget type
+        let get_widget_min_size = |widget_type: &str| -> (u16, u16) {
+            match widget_type {
+                "progress" | "countdown" | "indicator" | "hands" | "hand" => (10, 1),
+                "compass" => (13, 5),
+                "injury_doll" => (20, 10),
+                "dashboard" => (15, 3),
+                "command_input" => (20, 1),
+                _ => (5, 3), // text, tabbed, etc.
+            }
+        };
+
+        // Categorize widgets by scaling behavior
+        let mut static_both = HashSet::new();
+        let mut static_height = HashSet::new();
+
+        for window in &self.layout.windows {
+            match window.widget_type.as_str() {
+                "compass" | "injury_doll" | "dashboard" | "indicator" => {
+                    static_both.insert(window.name.clone());
+                }
+                "progress" | "countdown" | "hands" | "hand" | "command_input" => {
+                    static_height.insert(window.name.clone());
+                }
+                _ => {} // Fully scalable
+            }
+        }
+
+        // HEIGHT PROCESSING: Process column-by-column (left to right)
+        if height_delta != 0 {
+            tracing::debug!("--- HEIGHT SCALING ---");
+
+            // Track which widgets have already received height adjustment
+            let mut height_applied = HashSet::new();
+
+            // Group windows by column (with small tolerance for alignment)
+            let mut columns: HashMap<u16, Vec<(String, u16, u16, u16)>> = HashMap::new();
+            for window in &self.layout.windows {
+                if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                    continue; // Skip static-height widgets for now
+                }
+
+                let col_key = window.col;
+                columns.entry(col_key).or_insert_with(Vec::new).push((
+                    window.name.clone(),
+                    window.row,
+                    window.rows,
+                    window.cols,
+                ));
+            }
+
+            // Process each column
+            for (_col, mut widgets_in_col) in columns {
+                // Sort by row (top to bottom)
+                widgets_in_col.sort_by_key(|(_, row, _, _)| *row);
+
+                // Calculate total scalable height in this column
+                let total_scalable_height: u16 = widgets_in_col.iter()
+                    .filter(|(name, _, _, _)| !height_applied.contains(name))
+                    .map(|(_, _, rows, _)| *rows)
+                    .sum();
+
+                if total_scalable_height == 0 {
+                    continue;
+                }
+
+                // Distribute height delta proportionally
+                let mut adjustments: Vec<(String, i32)> = Vec::new();
+                let mut leftover = 0i32;
+
+                for (name, _row, rows, _cols) in &widgets_in_col {
+                    if height_applied.contains(name) {
+                        continue;
+                    }
+
+                    // Calculate proportional share
+                    let proportion = *rows as f64 / total_scalable_height as f64;
+                    let share = (proportion * height_delta as f64).floor() as i32;
+                    leftover += ((proportion * height_delta as f64) - share as f64).round() as i32;
+
+                    adjustments.push((name.clone(), share));
+                }
+
+                // Give leftover to largest widget
+                if leftover != 0 && !adjustments.is_empty() {
+                    let largest_idx = widgets_in_col.iter()
+                        .enumerate()
+                        .filter(|(_, (name, _, _, _))| !height_applied.contains(name))
+                        .max_by_key(|(_, (_, _, rows, _))| *rows)
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(0);
+
+                    if let Some((name, _,  _, _)) = widgets_in_col.get(largest_idx) {
+                        if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) {
+                            adj.1 += leftover;
+                        }
+                    }
+                }
+
+                // Apply adjustments with cascade
+                let mut current_row = 0u16;
+                for (idx, (name, orig_row, orig_rows, _cols)) in widgets_in_col.iter().enumerate() {
+                    if height_applied.contains(name) {
+                        continue;
+                    }
+
+                    let adjustment = adjustments.iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, adj)| *adj)
+                        .unwrap_or(0);
+
+                    // Get min/max constraints
+                    let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                    let (_, min_rows) = get_widget_min_size(&window.widget_type);
+                    let min_constraint = window.min_rows.unwrap_or(min_rows);
+                    let max_constraint = window.max_rows;
+
+                    // Calculate new height
+                    let mut new_rows = (*orig_rows as i32 + adjustment).max(min_constraint as i32) as u16;
+                    if let Some(max) = max_constraint {
+                        new_rows = new_rows.min(max);
+                    }
+
+                    // Calculate new row position (cascade from previous widget)
+                    let new_row = if idx == 0 {
+                        *orig_row  // First widget keeps original row
+                    } else {
+                        current_row  // Cascade from previous widget
+                    };
+
+                    // Apply to layout
+                    if let Some(window) = self.layout.windows.iter_mut().find(|w| &w.name == name) {
+                        window.row = new_row;
+                        window.rows = new_rows;
+                        height_applied.insert(name.clone());
+                    }
+
+                    current_row = new_row + new_rows;
+                }
+            }
+
+            // Static-height widgets: shift row by full height_delta
+            for window in self.layout.windows.iter_mut() {
+                if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                    window.row = (window.row as i32 + height_delta).max(0) as u16;
+                }
+            }
+        }
+
+        // WIDTH PROCESSING: Process row-by-row (top to bottom)
+        if width_delta != 0 {
+            tracing::debug!("--- WIDTH SCALING ---");
+
+            // Track which widgets have already received width adjustment
+            let mut width_applied = HashSet::new();
+
+            // Find max row to iterate through
+            let max_row = self.layout.windows.iter()
+                .map(|w| w.row + w.rows)
+                .max()
+                .unwrap_or(0);
+
+            // Process each row
+            for current_row in 0..max_row {
+                // Find all widgets at this row
+                let mut widgets_at_row: Vec<(String, String, u16, u16, u16, u16)> = Vec::new();
+                for window in &self.layout.windows {
+                    let widget_row_start = window.row;
+                    let widget_row_end = window.row + window.rows;
+                    if current_row >= widget_row_start && current_row < widget_row_end {
+                        let is_static = static_both.contains(&window.name);
+                        widgets_at_row.push((
+                            window.name.clone(),
+                            window.widget_type.clone(),
+                            window.row,
+                            window.col,
+                            window.rows,
+                            window.cols,
+                        ));
+                    }
+                }
+
+                if widgets_at_row.is_empty() {
+                    continue;
+                }
+
+                // Sort by column (left to right)
+                widgets_at_row.sort_by_key(|(_, _, _, col, _, _)| *col);
+
+                // Calculate total scalable width
+                let total_scalable_width: u16 = widgets_at_row.iter()
+                    .filter(|(name, _, _, _, _, _)| {
+                        !static_both.contains(name) && !width_applied.contains(name)
+                    })
+                    .map(|(_, _, _, _, _, cols)| *cols)
+                    .sum();
+
+                if total_scalable_width == 0 {
+                    continue;
+                }
+
+                // Distribute width delta proportionally
+                let mut adjustments: Vec<(String, i32)> = Vec::new();
+                let mut leftover = 0i32;
+
+                for (name, widget_type, _row, _col, _rows, cols) in &widgets_at_row {
+                    if static_both.contains(name) || width_applied.contains(name) {
+                        continue;
+                    }
+
+                    // Calculate proportional share
+                    let proportion = *cols as f64 / total_scalable_width as f64;
+                    let share = (proportion * width_delta as f64).floor() as i32;
+                    leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
+
+                    adjustments.push((name.clone(), share));
+                }
+
+                // Give leftover to largest widget
+                if leftover != 0 && !adjustments.is_empty() {
+                    let largest_idx = widgets_at_row.iter()
+                        .enumerate()
+                        .filter(|(_, (name, _, _, _, _, _))| {
+                            !static_both.contains(name) && !width_applied.contains(name)
+                        })
+                        .max_by_key(|(_, (_, _, _, _, _, cols))| *cols)
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(0);
+
+                    if let Some((name, _, _, _, _, _)) = widgets_at_row.get(largest_idx) {
+                        if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) {
+                            adj.1 += leftover;
+                        }
+                    }
+                }
+
+                // Apply adjustments with cascade
+                let mut current_col = 0u16;
+                let mut previous_original_col = 0u16;
+                let mut previous_original_width = 0u16;
+
+                for (idx, (name, widget_type, _row, orig_col, _rows, orig_cols)) in widgets_at_row.iter().enumerate() {
+                    if width_applied.contains(name) {
+                        // Already applied - use current width from layout
+                        let current_width = self.layout.windows.iter()
+                            .find(|w| &w.name == name)
+                            .map(|w| w.cols)
+                            .unwrap_or(*orig_cols);
+                        current_col += current_width;
+                        continue;
+                    }
+
+                    let adjustment = adjustments.iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, adj)| *adj)
+                        .unwrap_or(0);
+
+                    // Get min/max constraints
+                    let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                    let (min_cols, _) = get_widget_min_size(&window.widget_type);
+                    let min_constraint = window.min_cols.unwrap_or(min_cols);
+                    let max_constraint = window.max_cols;
+
+                    // Calculate new width
+                    let mut new_cols = (*orig_cols as i32 + adjustment).max(min_constraint as i32) as u16;
+                    if let Some(max) = max_constraint {
+                        new_cols = new_cols.min(max);
+                    }
+
+                    // Check if overlapping with previous widget
+                    let overlaps_previous = if idx == 0 {
+                        false
+                    } else {
+                        *orig_col < previous_original_col + previous_original_width
+                    };
+
+                    // Calculate new column position
+                    let new_col = if idx == 0 || overlaps_previous {
+                        *orig_col  // First or overlapping widget keeps original column
+                    } else {
+                        // Cascade with gap preservation
+                        let original_gap = orig_col.saturating_sub(previous_original_col + previous_original_width);
+                        current_col + original_gap
+                    };
+
+                    // Apply to layout
+                    if let Some(window) = self.layout.windows.iter_mut().find(|w| &w.name == name) {
+                        window.col = new_col;
+                        window.cols = new_cols;
+                        width_applied.insert(name.clone());
+                    }
+
+                    previous_original_col = *orig_col;
+                    previous_original_width = *orig_cols;
+                    current_col = new_col + new_cols;
+                }
+            }
+        }
+
+        tracing::debug!("Proportional resize complete");
+    }
+
     /// Update window manager configs from current config
     fn update_window_manager_config(&mut self) {
         let countdown_icon = Some(self.config.ui.countdown_icon.clone());
@@ -890,6 +1258,12 @@ impl App {
                         self.layout = new_layout;
                         self.add_system_message(&format!("Layout '{}' loaded", name));
                         self.update_window_manager_config();
+
+                        // Auto-capture baseline after loading layout
+                        if let Ok(size) = crossterm::terminal::size() {
+                            self.baseline_snapshot = Some((size.0, size.1));
+                            tracing::info!("Auto-captured baseline after layout load: {}x{}", size.0, size.1);
+                        }
                     }
                     Err(e) => self.add_system_message(&format!("Failed to load layout: {}", e)),
                 }
@@ -1005,6 +1379,10 @@ impl App {
                     countdown_icon: None,
                     compass_active_color: None,
                     compass_inactive_color: None,
+                    min_rows: None,
+                    max_rows: None,
+                    min_cols: None,
+                    max_cols: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -1086,6 +1464,10 @@ impl App {
                     countdown_icon: None,
                     compass_active_color: None,
                     compass_inactive_color: None,
+                    min_rows: None,
+                    max_rows: None,
+                    min_cols: None,
+                    max_cols: None,
                 };
 
                 self.layout.windows.push(window_def);
@@ -2059,6 +2441,48 @@ impl App {
                     self.add_system_message("Error: Cannot send menu request (no command channel)");
                 }
             }
+            "baseline" => {
+                // Capture current terminal size as baseline for proportional resizing
+                if let Ok(size) = crossterm::terminal::size() {
+                    self.baseline_snapshot = Some((size.0, size.1));
+                    self.add_system_message(&format!("Baseline captured: {}x{}", size.0, size.1));
+                    tracing::info!("Baseline snapshot set to {}x{}", size.0, size.1);
+                } else {
+                    self.add_system_message("Failed to get terminal size");
+                }
+            }
+            "resize" => {
+                // Apply proportional resizing based on baseline snapshot
+                if self.baseline_snapshot.is_none() {
+                    self.add_system_message("No baseline snapshot - run .baseline first");
+                    return;
+                }
+
+                let baseline = self.baseline_snapshot.unwrap();
+                if let Ok(current_size) = crossterm::terminal::size() {
+                    let width_delta = current_size.0 as i32 - baseline.0 as i32;
+                    let height_delta = current_size.1 as i32 - baseline.1 as i32;
+
+                    self.add_system_message(&format!(
+                        "Resizing from {}x{} to {}x{} (delta: {:+}x{:+})",
+                        baseline.0, baseline.1,
+                        current_size.0, current_size.1,
+                        width_delta, height_delta
+                    ));
+
+                    // Apply proportional resize to layout
+                    self.apply_proportional_resize(width_delta, height_delta);
+
+                    // Update window manager with new layout
+                    self.update_window_manager_config();
+
+                    // Capture new baseline
+                    self.baseline_snapshot = Some((current_size.0, current_size.1));
+                    self.add_system_message("Resize complete - new baseline captured");
+                } else {
+                    self.add_system_message("Failed to get current terminal size");
+                }
+            }
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
             }
@@ -2438,6 +2862,10 @@ impl App {
 
         tracing::info!("Terminal size: {}x{}", size.0, size.1);
 
+        // Capture baseline for proportional resizing
+        self.baseline_snapshot = Some((size.0, size.1));
+        tracing::info!("Captured baseline terminal size: {}x{}", size.0, size.1);
+
         // Set up signal handler for Ctrl+C and terminal close
         let running = Arc::new(AtomicBool::new(true));
         let r = running.clone();
@@ -2567,7 +2995,7 @@ impl App {
                 }
 
                 // Render color form as popup (if open)
-                if let Some(ref form) = self.color_form {
+                if let Some(ref mut form) = self.color_form {
                     form.render(f.area(), f.buffer_mut());
                 }
 
@@ -2621,25 +3049,45 @@ impl App {
                         const MIN_WIDTH: u16 = 80;
                         const MIN_HEIGHT: u16 = 24;
 
-                        tracing::debug!("Terminal resized to {}x{}", width, height);
+                        // Check debouncer - only process resize if enough time has passed
+                        if let Some((w, h)) = self.resize_debouncer.check_resize(width, height) {
+                            tracing::debug!("Terminal resized to {}x{} (debounced)", w, h);
 
-                        if width < MIN_WIDTH || height < MIN_HEIGHT {
-                            tracing::warn!(
-                                "Terminal size {}x{} is below minimum {}x{}. Layout may not display correctly.",
-                                width, height, MIN_WIDTH, MIN_HEIGHT
-                            );
-                            let warning_msg = format!(
-                                "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
-                                width, height, MIN_WIDTH, MIN_HEIGHT
-                            );
-                            self.add_system_message(&warning_msg);
+                            if w < MIN_WIDTH || h < MIN_HEIGHT {
+                                tracing::warn!(
+                                    "Terminal size {}x{} is below minimum {}x{}. Layout may not display correctly.",
+                                    w, h, MIN_WIDTH, MIN_HEIGHT
+                                );
+                                let warning_msg = format!(
+                                    "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
+                                    w, h, MIN_WIDTH, MIN_HEIGHT
+                                );
+                                self.add_system_message(&warning_msg);
+                            }
+                            // Layout recalculation happens automatically on next frame
+                        } else {
+                            tracing::trace!("Resize to {}x{} debounced (waiting for resize to finish)", width, height);
                         }
-                        // Layout recalculation happens automatically on next frame
                     }
                     _ => {}
                 }
                 let event_duration = event_start.elapsed();
                 self.perf_stats.record_event_process_time(event_duration);
+            }
+
+            // Check for pending resize (if debounce period has passed)
+            if let Some((width, height)) = self.resize_debouncer.check_pending() {
+                tracing::debug!("Processing pending resize to {}x{}", width, height);
+                const MIN_WIDTH: u16 = 80;
+                const MIN_HEIGHT: u16 = 24;
+                if width < MIN_WIDTH || height < MIN_HEIGHT {
+                    let warning_msg = format!(
+                        "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
+                        width, height, MIN_WIDTH, MIN_HEIGHT
+                    );
+                    self.add_system_message(&warning_msg);
+                }
+                // Layout recalculation happens automatically on next frame
             }
 
             // Handle server messages
@@ -3099,6 +3547,8 @@ impl App {
             InputMode::KeybindBrowser => unreachable!(), // Handled above
             InputMode::ColorPaletteBrowser => unreachable!(), // Handled above
             InputMode::ColorForm => unreachable!(), // Handled above
+            InputMode::SpellColorBrowser => unreachable!(), // Handled above
+            InputMode::SpellColorForm => unreachable!(), // Handled above
             InputMode::WindowEditor => unreachable!(), // Handled above
         }
     }
@@ -3631,9 +4081,16 @@ impl App {
 
     fn handle_color_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
         use crate::ui::ColorFormAction;
+        use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
 
         if let Some(ref mut form) = self.color_form {
-            if let Some(action) = form.handle_input(key, modifiers) {
+            let key_event = KeyEvent {
+                code: key,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            };
+            if let Some(action) = form.handle_input(key_event) {
                 match action {
                     ColorFormAction::Save { color, original_name } => {
                         // Check if we're renaming (editing with name change)
@@ -3677,6 +4134,33 @@ impl App {
                         self.color_form = None;
                         self.input_mode = InputMode::Normal;
                         self.add_system_message("Color form cancelled");
+                    }
+                    ColorFormAction::Delete => {
+                        // Get the original name from the form
+                        let name = if let Some(ref form) = self.color_form {
+                            form.get_original_name().unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+
+                        // Delete the color
+                        self.config.color_palette.retain(|c| c.name != name);
+
+                        // Save config
+                        if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                            self.add_system_message(&format!("Failed to save config: {}", e));
+                        } else {
+                            // Close form
+                            self.color_form = None;
+                            self.input_mode = InputMode::Normal;
+
+                            // Refresh browser if it's open
+                            if let Some(ref mut browser) = self.color_palette_browser {
+                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                            }
+
+                            self.add_system_message(&format!("Deleted color: {}", name));
+                        }
                     }
                     ColorFormAction::Error(msg) => {
                         self.add_system_message(&format!("Error: {}", msg));
