@@ -78,7 +78,7 @@ const AVAILABLE_INDICATORS: &[(&str, &str)] = &[
 const BORDER_STYLES: &[&str] = &["none", "single", "double", "rounded", "thick"];
 const CONTENT_ALIGNS: &[&str] = &["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"];
 const TAB_BAR_POSITIONS: &[&str] = &["top", "bottom"];
-const EFFECT_CATEGORIES: &[&str] = &["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "All"];
+const EFFECT_CATEGORIES: &[&str] = &["ActiveSpells", "Buffs", "Debuffs", "Cooldowns"];
 const DASHBOARD_LAYOUTS: &[&str] = &["horizontal", "vertical", "grid_2x2", "grid_3x3"];
 
 /// Get available templates for a widget type

@@ -674,7 +674,7 @@ impl WindowManager {
                 "active_effects" => {
                     let mut active_effects = active_effects::ActiveEffects::new(
                         &title,
-                        config.effect_category.clone().unwrap_or_else(|| "All".to_string())
+                        config.effect_category.clone().unwrap_or_else(|| "ActiveSpells".to_string())
                     );
 
                     active_effects.set_border_config(

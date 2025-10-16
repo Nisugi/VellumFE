@@ -6655,8 +6655,8 @@ impl App {
                             let window_names = self.window_manager.get_window_names();
                             for window_name in window_names {
                                 if let Some(effect_category) = self.window_manager.get_window_effect_category(&window_name) {
-                                    // Window accepts this category if it matches exactly or is "All"
-                                    if effect_category == *category || effect_category == "All" {
+                                    // Window accepts this category if it matches exactly
+                                    if effect_category == *category {
                                         if let Some(window) = self.window_manager.get_window(&window_name) {
                                             window.add_or_update_effect(
                                                 id.clone(),
@@ -6677,8 +6677,8 @@ impl App {
                             for window_name in window_names {
                                 if let Some(config) = self.layout.windows.iter().find(|w| w.name == window_name) {
                                     if let Some(ref effect_category) = config.effect_category {
-                                        // Clear if window's category matches or is "All"
-                                        if *effect_category == *category || *effect_category == "All" {
+                                        // Clear if window's category matches exactly
+                                        if *effect_category == *category {
                                             if let Some(window) = self.window_manager.get_window(&window_name) {
                                                 window.clear_active_effects();
                                                 debug!("Cleared active effects in window {} for category {}", window_name, category);

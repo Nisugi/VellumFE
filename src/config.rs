@@ -175,7 +175,7 @@ pub struct WindowDef {
     #[serde(default)]
     pub visible_count: Option<usize>,  // For scrollable containers: how many items to show
     #[serde(default)]
-    pub effect_category: Option<String>,  // For active_effects: "ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "All"
+    pub effect_category: Option<String>,  // For active_effects: "ActiveSpells", "Buffs", "Debuffs", "Cooldowns"
     // Tabbed window configuration
     #[serde(default)]
     pub tabs: Option<Vec<TabConfig>>,  // If set, creates tabbed window (widget_type should be "tabbed")
@@ -3427,51 +3427,6 @@ impl Config {
             numbers_only: false,
             ..Default::default()
             }),
-            "all_effects" | "effects" => Some(WindowDef {
-                name: "all_effects".to_string(),
-                widget_type: "active_effects".to_string(),
-                streams: vec![],
-                row: default_row,
-                col: default_col,
-                rows: 12,
-                cols: 40,
-                buffer_size: 0,
-                show_border: true,
-                border_style: Some("rounded".to_string()),
-                border_color: None,
-            border_sides: None,
-                title: Some("All Active Effects".to_string()),
-            content_align: None,
-            background_color: None,
-                bar_color: Some("#808080".to_string()),
-                bar_background_color: None,
-                text_color: None,
-                transparent_background: true,
-                locked: false,
-                indicator_colors: None,
-                dashboard_layout: None,
-                dashboard_indicators: None,
-                dashboard_spacing: None,
-                dashboard_hide_inactive: None,
-                visible_count: Some(10),
-                effect_category: Some("All".to_string()),
-                tabs: None,
-                tab_bar_position: None,
-                tab_active_color: None,
-                tab_inactive_color: None,
-                tab_unread_color: None,
-                tab_unread_prefix: None,
-            hand_icon: None,
-            countdown_icon: None,
-            compass_active_color: None,
-            compass_inactive_color: None,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            numbers_only: false,
-            ..Default::default()
-            }),
             "targets" => Some(WindowDef {
                 name: "targets".to_string(),
                 widget_type: "entity".to_string(),
@@ -3607,8 +3562,6 @@ impl Config {
             "cooldowns",
             "active_spells",
             "spells",
-            "all_effects",
-            "effects",
             "targets",
             "players",
         ]

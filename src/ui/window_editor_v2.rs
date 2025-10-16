@@ -104,7 +104,7 @@ const BORDER_STYLES: &[&str] = &["none", "single", "double", "rounded", "thick",
 const CONTENT_ALIGNS: &[&str] = &["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"];
 const TAB_BAR_POSITIONS: &[&str] = &["top", "bottom"];
 const BORDER_SIDES: &[&str] = &["top", "bottom", "left", "right"];
-const EFFECT_CATEGORIES: &[&str] = &["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "All"];
+const EFFECT_CATEGORIES: &[&str] = &["ActiveSpells", "Buffs", "Debuffs", "Cooldowns"];
 
 /// Get available templates for a widget type
 fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
@@ -257,7 +257,7 @@ impl WindowEditor {
             border_style_index: 1, // "single"
             content_align_index: 0, // "top-left"
             tab_bar_position_index: 0, // "top"
-            effect_category_index: 4, // "All"
+            effect_category_index: 0, // "ActiveSpells"
             show_border: true,
             transparent_bg: false,
             locked: false,
@@ -499,7 +499,7 @@ impl WindowEditor {
 
         self.effect_category_index = EFFECT_CATEGORIES.iter()
             .position(|&s| Some(s.to_string()) == self.current_window.effect_category)
-            .unwrap_or(4); // Default to "All"
+            .unwrap_or(0); // Default to "ActiveSpells"
 
         // Border sides
         self.border_sides_states.clear();
