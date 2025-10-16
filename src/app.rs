@@ -5849,11 +5849,11 @@ impl App {
                         }
                         ParsedElement::BloodPoints { value } => {
                             // <dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100' />
-                            // Update blood points progress bar
+                            // Update blood points progress bar with simplified text
                             let blood_names = ["bloodpoints", "lblBPs", "blood"];
                             for name in &blood_names {
                                 if let Some(window) = self.window_manager.get_window(name) {
-                                    window.set_progress_with_text(value, 100, Some(format!("Blood Points: {}", value)));
+                                    window.set_progress_with_text(value, 100, Some(format!("blood {}", value)));
                                     tracing::debug!("Updated {} blood points to {}", name, value);
                                     break;
                                 }
