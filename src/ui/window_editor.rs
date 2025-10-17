@@ -347,7 +347,12 @@ impl WindowEditor {
     /// Get the name of the currently selected window (when in SelectingWindow mode)
     pub fn get_selected_window_name(&self) -> Option<String> {
         if self.mode == EditorMode::SelectingWindow && !self.available_windows.is_empty() {
-            Some(self.available_windows[self.selected_window_index].clone())
+            Some(
+                self.available_windows
+                    .get(self.selected_window_index.min(self.available_windows.len().saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_default()
+            )
         } else {
             None
         }
@@ -677,11 +682,21 @@ impl WindowEditor {
             Some(max_cols_text.parse().unwrap_or(100))
         };
 
-        // Content align
-        self.current_window.content_align = Some(CONTENT_ALIGNS[self.content_align_index].to_string());
+        // Content align (clamp index)
+        if !CONTENT_ALIGNS.is_empty() {
+            let idx = self.content_align_index.min(CONTENT_ALIGNS.len() - 1);
+            self.current_window.content_align = Some(CONTENT_ALIGNS[idx].to_string());
+        } else {
+            self.current_window.content_align = None;
+        }
 
-        // Border style
-        self.current_window.border_style = Some(BORDER_STYLES[self.border_style_index].to_string());
+        // Border style (clamp index)
+        if !BORDER_STYLES.is_empty() {
+            let idx = self.border_style_index.min(BORDER_STYLES.len() - 1);
+            self.current_window.border_style = Some(BORDER_STYLES[idx].to_string());
+        } else {
+            self.current_window.border_style = None;
+        }
 
         // Checkboxes
         self.current_window.locked = self.lock_window;
@@ -797,17 +812,41 @@ impl WindowEditor {
         let hand_icon = self.hand_icon_input.lines()[0].to_string();
         self.current_window.hand_icon = if hand_icon.is_empty() { None } else { Some(hand_icon) };
 
-        // Tabbed window fields
-        self.current_window.tab_bar_position = Some(TAB_BAR_POSITIONS[self.tab_bar_position_index].to_string());
+        // Tabbed window fields (clamp index to avoid OOB if options changed)
+        if !TAB_BAR_POSITIONS.is_empty() {
+            let idx = self
+                .tab_bar_position_index
+                .min(TAB_BAR_POSITIONS.len() - 1);
+            self.current_window.tab_bar_position =
+                Some(TAB_BAR_POSITIONS[idx].to_string());
+        } else {
+            self.current_window.tab_bar_position = None;
+        }
 
         let tab_prefix = self.tab_unread_prefix_input.lines()[0].to_string();
         self.current_window.tab_unread_prefix = if tab_prefix.is_empty() { None } else { Some(tab_prefix) };
 
-        // Active effects fields
-        self.current_window.effect_category = Some(EFFECT_CATEGORIES[self.effect_category_index].to_string());
+        // Active effects fields (clamp index to avoid OOB)
+        if !EFFECT_CATEGORIES.is_empty() {
+            let idx = self
+                .effect_category_index
+                .min(EFFECT_CATEGORIES.len() - 1);
+            self.current_window.effect_category =
+                Some(EFFECT_CATEGORIES[idx].to_string());
+        } else {
+            self.current_window.effect_category = None;
+        }
 
-        // Dashboard fields
-        self.current_window.dashboard_layout = Some(DASHBOARD_LAYOUTS[self.dashboard_layout_index].to_string());
+        // Dashboard fields (clamp index to avoid OOB)
+        if !DASHBOARD_LAYOUTS.is_empty() {
+            let idx = self
+                .dashboard_layout_index
+                .min(DASHBOARD_LAYOUTS.len() - 1);
+            self.current_window.dashboard_layout =
+                Some(DASHBOARD_LAYOUTS[idx].to_string());
+        } else {
+            self.current_window.dashboard_layout = None;
+        }
 
         let spacing_text = self.dashboard_spacing_input.lines()[0].to_string();
         self.current_window.dashboard_spacing = if spacing_text.is_empty() {
@@ -887,7 +926,11 @@ impl WindowEditor {
             },
             KeyCode::Enter => {
                 // Get selected widget type and show templates
-                let widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
+                let widget_type = self
+                    .available_widget_types
+                    .get(self.selected_widget_type_index.min(self.available_widget_types.len().saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_else(|| "text".to_string());
                 self.available_templates = get_templates_for_widget_type(&widget_type)
                     .into_iter()
                     .map(|s| s.to_string())
@@ -923,8 +966,16 @@ impl WindowEditor {
             },
             KeyCode::Enter => {
                 // Load the selected template
-                let template_name = self.available_templates[self.selected_template_index].clone();
-                let widget_type = self.available_widget_types[self.selected_widget_type_index].clone();
+                let template_name = self
+                    .available_templates
+                    .get(self.selected_template_index.min(self.available_templates.len().saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string());
+                let widget_type = self
+                    .available_widget_types
+                    .get(self.selected_widget_type_index.min(self.available_widget_types.len().saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_else(|| "text".to_string());
 
                 use crate::config::Config;
                 if let Some(template) = Config::get_window_template(&template_name) {
@@ -1171,13 +1222,14 @@ impl WindowEditor {
                     },
                     KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
                         if let Some(ref tabs) = self.current_window.tabs {
-                            if self.tab_editor.selected_index < tabs.len() {
-                                let tab = &tabs[self.tab_editor.selected_index];
+                            if !tabs.is_empty() {
+                                let idx = self.tab_editor.selected_index.min(tabs.len() - 1);
+                                let tab = &tabs[idx];
                                 self.tab_editor.tab_name_input.delete_line_by_head();
                                 self.tab_editor.tab_name_input.insert_str(&tab.name);
                                 self.tab_editor.tab_stream_input.delete_line_by_head();
                                 self.tab_editor.tab_stream_input.insert_str(&tab.stream);
-                                self.tab_editor.editing_index = Some(self.tab_editor.selected_index);
+                                self.tab_editor.editing_index = Some(idx);
                                 self.tab_editor.mode = TabEditMode::Editing;
                                 self.tab_editor.focused_input = 0;
                             }
@@ -1330,7 +1382,15 @@ impl WindowEditor {
                         None
                     },
                     KeyCode::Enter => {
-                        let (id, icon) = AVAILABLE_INDICATORS[self.indicator_editor.picker_selected_index];
+                        let (id, icon) = if AVAILABLE_INDICATORS.is_empty() {
+                            ("", "")
+                        } else {
+                            AVAILABLE_INDICATORS[
+                                self.indicator_editor
+                                    .picker_selected_index
+                                    .min(AVAILABLE_INDICATORS.len() - 1)
+                            ]
+                        };
 
                         if self.current_window.dashboard_indicators.is_none() {
                             self.current_window.dashboard_indicators = Some(Vec::new());
@@ -1658,12 +1718,14 @@ impl WindowEditor {
         y += 1;
 
         // Row 9: Content Align dropdown | Right Border checkbox
-        self.render_dropdown(10, "Content Align:", CONTENT_ALIGNS[self.content_align_index], left_x, y, buf);
+        let ca = if CONTENT_ALIGNS.is_empty() { "" } else { CONTENT_ALIGNS[self.content_align_index.min(CONTENT_ALIGNS.len() - 1)] };
+        self.render_dropdown(10, "Content Align:", ca, left_x, y, buf);
         self.render_checkbox(19, "Right Border", self.border_right, right_x, y, buf);
         y += 1;
 
         // Row 10: Border Style dropdown (2 spaces) | Border Color: + 1 space + 10 chars + 2 spaces + preview
-        self.render_dropdown_with_spacing(11, "Border Style:", BORDER_STYLES[self.border_style_index], left_x, y, 2, buf);
+        let bs = if BORDER_STYLES.is_empty() { "" } else { BORDER_STYLES[self.border_style_index.min(BORDER_STYLES.len() - 1)] };
+        self.render_dropdown_with_spacing(11, "Border Style:", bs, left_x, y, 2, buf);
         Self::render_inline_textarea_with_spacing(self.focused_field, 20, "Border Color:", &mut self.border_color_input, right_x, y, 10, 1, buf);
         let border_preview_x = right_x + 13 + 1 + 10 + 2; // "Border Color:" (13) + 1 space + 10 chars + 2 spaces
         self.render_color_preview(&self.border_color_input.lines()[0].to_string(), border_preview_x, y, buf, config);
@@ -1696,7 +1758,8 @@ impl WindowEditor {
                 // Color preview for tab inactive color
                 let inactive_preview_x = left_x + 19 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), inactive_preview_x, y, buf, config);
-                self.render_dropdown(28, "Tab Bar Pos:", TAB_BAR_POSITIONS[self.tab_bar_position_index], right_x, y, buf);
+                let tb = if TAB_BAR_POSITIONS.is_empty() { "" } else { TAB_BAR_POSITIONS[self.tab_bar_position_index.min(TAB_BAR_POSITIONS.len() - 1)] };
+                self.render_dropdown(28, "Tab Bar Pos:", tb, right_x, y, buf);
                 y += 1;
 
                 // Tab Unread Color (10 chars, left) | New Msg input (10 chars, right)
@@ -1757,7 +1820,8 @@ impl WindowEditor {
             "active_effects" => {
                 // Text Color (10 chars, left) | Effect Category dropdown (right) - SWAPPED ORDER
                 Self::render_inline_textarea_with_spacing(self.focused_field, 39, "Text Color:", &mut self.text_color_input, left_x, y, 10, 4, buf);
-                self.render_dropdown(40, "Effect Category:", EFFECT_CATEGORIES[self.effect_category_index], right_x, y, buf);
+                let ec = if EFFECT_CATEGORIES.is_empty() { "" } else { EFFECT_CATEGORIES[self.effect_category_index.min(EFFECT_CATEGORIES.len() - 1)] };
+                self.render_dropdown(40, "Effect Category:", ec, right_x, y, buf);
                 // Color preview for text color
                 let text_preview_x = left_x + 11 + 4 + 10 + 2;
                 self.render_color_preview(&self.text_color_input.lines()[0].to_string(), text_preview_x, y, buf, config);
@@ -1857,7 +1921,8 @@ impl WindowEditor {
 
             "dashboard" => {
                 // Dashboard Layout dropdown (left) | Edit Indicators button (right)
-                self.render_dropdown(55, "Layout:", DASHBOARD_LAYOUTS[self.dashboard_layout_index], left_x, y, buf);
+                let dl = if DASHBOARD_LAYOUTS.is_empty() { "" } else { DASHBOARD_LAYOUTS[self.dashboard_layout_index.min(DASHBOARD_LAYOUTS.len() - 1)] };
+                self.render_dropdown(55, "Layout:", dl, left_x, y, buf);
                 self.render_button(56, "Edit Indicators", right_x, y, buf);
                 y += 1;
 

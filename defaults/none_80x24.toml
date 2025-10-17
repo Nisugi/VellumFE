@@ -1,0 +1,33 @@
+terminal_width = 102
+terminal_height = 25
+
+[[windows]]
+name = "main"
+widget_type = "text"
+streams = ["main"]
+row = 0
+col = 0
+rows = 22
+cols = 102
+buffer_size = 10000
+show_border = true
+transparent_background = true
+locked = false
+numbers_only = false
+
+[[windows]]
+name = "command_input"
+widget_type = "command_input"
+streams = []
+row = 22
+col = 0
+rows = 3
+cols = 102
+buffer_size = 0
+show_border = true
+transparent_background = true
+locked = false
+min_rows = 1
+max_rows = 5
+min_cols = 20
+numbers_only = false

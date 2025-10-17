@@ -1,0 +1,216 @@
+# Default Window Layout for VellumFE
+# This file contains only the [[windows]] sections for easy layout editing
+
+[[windows]]
+name = "main"
+widget_type = "text"
+streams = ["main"]
+row = 0
+col = 0
+rows = 24
+cols = 120
+buffer_size = 10000
+show_border = true
+transparent_background = true
+
+[[windows]]
+name = "health"
+widget_type = "progress"
+streams = []
+row = 24
+col = 0
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Health"
+bar_color = "#6e0202"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "mana"
+widget_type = "progress"
+streams = []
+row = 24
+col = 24
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Mana"
+bar_color = "#08086d"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "stamina"
+widget_type = "progress"
+streams = []
+row = 24
+col = 48
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stamina"
+bar_color = "#bd7b00"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "spirit"
+widget_type = "progress"
+streams = []
+row = 24
+col = 72
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Spirit"
+bar_color = "#6e727c"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "mindstate"
+widget_type = "progress"
+streams = []
+row = 24
+col = 96
+rows = 3
+cols = 24
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Mind"
+bar_color = "#008b8b"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "stance"
+widget_type = "progress"
+streams = []
+row = 27
+col = 0
+rows = 3
+cols = 20
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stance"
+bar_color = "#000080"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "encumlevel"
+widget_type = "progress"
+streams = []
+row = 27
+col = 20
+rows = 3
+cols = 25
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Encumbrance"
+bar_color = "#006400"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "roundtime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 45
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "RT"
+bar_color = "#ff0000"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "casttime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 60
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Cast"
+bar_color = "#0000ff"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "stuntime"
+widget_type = "countdown"
+streams = []
+row = 27
+col = 75
+rows = 3
+cols = 15
+buffer_size = 0
+show_border = true
+border_style = "single"
+title = "Stun"
+bar_color = "#ffff00"
+bar_background_color = "#000000"
+transparent_background = false
+
+[[windows]]
+name = "thoughts"
+widget_type = "text"
+streams = ["thoughts"]
+row = 30
+col = 0
+rows = 10
+cols = 84
+buffer_size = 500
+show_border = true
+transparent_background = true
+
+[[windows]]
+name = "speech"
+widget_type = "text"
+streams = [
+    "speech",
+    "whisper",
+]
+row = 30
+col = 84
+rows = 10
+cols = 36
+buffer_size = 1000
+show_border = true
+transparent_background = true
+
+[[windows]]
+name = "command_input"
+widget_type = "command_input"
+streams = []
+row = 40
+col = 0
+rows = 3
+cols = 120
+buffer_size = 0
+show_border = true
+transparent_background = true
+min_rows = 1
+max_rows = 5
+min_cols = 20

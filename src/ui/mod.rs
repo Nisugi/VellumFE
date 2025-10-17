@@ -18,8 +18,7 @@ mod players;
 mod highlight_form;
 mod keybind_form;
 mod popup_menu;
-mod window_editor_v2;
-mod window_editor_v3;
+mod window_editor;
 mod settings_editor;
 mod highlight_browser;
 mod keybind_browser;
@@ -58,7 +57,7 @@ pub use players::Players;
 pub use highlight_form::{HighlightFormWidget, FormResult};
 pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
 // pub use window_editor_v2::{WindowEditor, WindowEditorResult};
-pub use window_editor_v3::{WindowEditor, WindowEditorResult};
+pub use window_editor::{WindowEditor, WindowEditorResult};
 pub use settings_editor::{SettingsEditor, SettingItem, SettingValue};
 pub use highlight_browser::{HighlightBrowser, HighlightEntry};
 pub use keybind_browser::KeybindBrowser;
@@ -116,3 +115,4 @@ impl UiLayout {
         }
     }
 }
+

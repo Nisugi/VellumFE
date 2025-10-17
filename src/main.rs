@@ -94,20 +94,21 @@ async fn main() -> Result<()> {
         };
 
         let results = crate::validator::validate_layout_path(std::path::Path::new(layout_path), baseline, &sizes)?;
-        let mut total_issues = 0usize;
+        let mut total_errors = 0usize;
         println!("Layout validation for {} (baseline {}x{}):", layout_path, baseline.0, baseline.1);
         for r in &results {
             if r.issues.is_empty() {
                 println!("- {}x{}: OK", r.width, r.height);
             } else {
-                println!("- {}x{}: {} issue(s)", r.width, r.height, r.issues.len());
+                println!("- {}x{}:", r.width, r.height);
                 for issue in &r.issues {
-                    println!("    [{}] {}", issue.window, issue.message);
-                    total_issues += 1;
+                    let kind = match issue.kind { crate::validator::IssueKind::Error => "ERR", crate::validator::IssueKind::Warning => "WARN" };
+                    println!("    {} [{}] {}", kind, issue.window, issue.message);
+                    if matches!(issue.kind, crate::validator::IssueKind::Error) { total_errors += 1; }
                 }
             }
         }
-        if total_issues > 0 { std::process::exit(2); } else { return Ok(()); }
+        if total_errors > 0 { std::process::exit(2); } else { return Ok(()); }
     }
 
     // Create and run the application

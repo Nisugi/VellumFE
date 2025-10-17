@@ -1457,17 +1457,81 @@ impl App {
             }
         }
 
-        // Shift static-height and anchor command_input
+        // Anchor command_input to bottom; build continuous top stack of statics (rows starting at 0, contiguous, overlapping horizontally)
         let new_height = if let Some(ref baseline) = self.baseline_layout {
             if let (Some(_bw), Some(bh)) = (baseline.terminal_width, baseline.terminal_height) { (bh as i32 + height_delta).max(0) as u16 } else { 0 }
         } else { 0 };
-        for window in self.layout.windows.iter_mut() {
+
+        // Snapshot baseline rows to avoid mixing updates while computing the stack
+        let baseline_rows: Vec<u16> = self.layout.windows.iter().map(|w| w.row).collect();
+
+        // Collect static-height windows by baseline row (exclude command_input)
+        use std::collections::BTreeMap;
+        let mut statics_by_row: BTreeMap<u16, Vec<(u16, u16, usize)>> = BTreeMap::new();
+        for (i, w) in self.layout.windows.iter().enumerate() {
+            if w.widget_type == "command_input" { continue; }
+            if static_both.contains(&w.name) || static_height.contains(&w.name) {
+                let start = w.col;
+                let end = w.col.saturating_add(w.cols);
+                statics_by_row.entry(baseline_rows[i]).or_default().push((start, end, i));
+            }
+        }
+
+        // Build the top stack: start with row 0 statics; each next row keeps only statics overlapping with previous row's stack spans; stop on gaps
+        use std::collections::HashSet as _HashSetAlias; // avoid shadowing
+        let mut stack_indices: _HashSetAlias<usize> = _HashSetAlias::new();
+        let mut prev_spans: Vec<(u16, u16, usize)> = statics_by_row.get(&0).cloned().unwrap_or_default();
+        for (_, i) in prev_spans.iter().map(|(_, _, idx)| ((), *idx)) { stack_indices.insert(i); }
+
+        if !prev_spans.is_empty() {
+            for (row, spans) in statics_by_row.iter().filter(|(r, _)| **r > 0) {
+                // Only allow contiguous rows: if this row is not exactly prev_row + 1, break the chain
+                let prev_row = prev_spans.first().map(|_| prev_spans[0]).map(|_| () );
+                // Compute expected next row as last processed row + 1 by tracking last_row separately
+            }
+        }
+
+        // Implement contiguous rows with tracking
+        let mut current_row_opt = Some(0u16);
+        let mut last_spans = prev_spans;
+        while let Some(current_row) = current_row_opt {
+            let next_row = current_row.saturating_add(1);
+            if let Some(candidates) = statics_by_row.get(&next_row) {
+                let mut next_spans: Vec<(u16, u16, usize)> = Vec::new();
+                for (s, e, idx) in candidates.iter().copied() {
+                    // overlap with any last_spans
+                    let overlaps = last_spans.iter().any(|(ps, pe, _)| s < *pe && e > *ps);
+                    if overlaps {
+                        next_spans.push((s, e, idx));
+                        stack_indices.insert(idx);
+                    }
+                }
+                if next_spans.is_empty() {
+                    break;
+                } else {
+                    last_spans = next_spans;
+                    current_row_opt = Some(next_row);
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Apply anchoring: command_input to bottom; top-stack statics remain at their baseline rows; others shift by delta
+        for (i, window) in self.layout.windows.iter_mut().enumerate() {
             if window.widget_type == "command_input" {
                 let old_row = window.row;
                 window.row = new_height.saturating_sub(window.rows);
                 tracing::debug!("Command input anchored: old_row={}, new_row={}", old_row, window.row);
-            } else if static_both.contains(&window.name) || static_height.contains(&window.name) {
-                window.row = (window.row as i32 + height_delta).max(0) as u16;
+                continue;
+            }
+            if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                let baseline_row = baseline_rows[i];
+                if stack_indices.contains(&i) {
+                    window.row = baseline_row.min(new_height.saturating_sub(window.rows));
+                } else {
+                    window.row = (baseline_row as i32 + height_delta).max(0) as u16;
+                }
             }
         }
     }
@@ -1579,6 +1643,8 @@ impl App {
                 previous_original_col = *orig_col; previous_original_width = *orig_cols; current_col = new_col + new_cols;
             }
         }
+
+        // No left/right anchoring for now (reverted per request). Width behavior unchanged.
     }
 
     /// New wrapper that delegates to extracted height/width passes
