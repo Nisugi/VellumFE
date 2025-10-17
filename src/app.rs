@@ -1343,6 +1343,243 @@ impl App {
         tracing::debug!("Proportional resize complete");
     }
 
+    // Minimum widget sizes by type (fallback when WindowDef doesn't specify min)
+    fn widget_min_size(&self, widget_type: &str) -> (u16, u16) {
+        match widget_type {
+            "progress" | "countdown" | "indicator" | "hands" | "hand" => (10, 1),
+            "compass" => (13, 5),
+            "injury_doll" => (20, 10),
+            "dashboard" => (15, 3),
+            "command_input" => (20, 1),
+            _ => (5, 3), // text, tabbed, etc.
+        }
+    }
+
+    // Height-only proportional pass extracted for readability
+    fn apply_height_resize(
+        &mut self,
+        height_delta: i32,
+        static_both: &std::collections::HashSet<String>,
+        static_height: &std::collections::HashSet<String>,
+    ) {
+        use std::collections::HashSet;
+        if height_delta == 0 { return; }
+
+        tracing::debug!("--- HEIGHT SCALING (extracted) ---");
+
+        let mut height_applied = HashSet::new();
+
+        // Build list of all scalable widgets with their column ranges
+        let mut scalable_widgets: Vec<(String, u16, u16, u16, u16)> = Vec::new();
+        for window in &self.layout.windows {
+            if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                continue;
+            }
+            scalable_widgets.push((window.name.clone(), window.row, window.rows, window.col, window.cols));
+        }
+
+        while !scalable_widgets.is_empty() {
+            let anchor = scalable_widgets.remove(0);
+            let (anchor_name, anchor_row, anchor_rows, anchor_col, anchor_cols) = anchor;
+            if height_applied.contains(&anchor_name) { continue; }
+
+            let anchor_col_end = anchor_col + anchor_cols;
+            tracing::debug!("Processing column stack anchored by '{}' (col {}-{})", anchor_name, anchor_col, anchor_col_end);
+
+            let mut widgets_in_col = vec![(anchor_name.clone(), anchor_row, anchor_rows, anchor_cols)];
+            scalable_widgets.retain(|(name, row, rows, col, cols)| {
+                let col_end = *col + *cols;
+                let overlaps = *col < anchor_col_end && col_end > anchor_col;
+                if overlaps && !height_applied.contains(name) {
+                    widgets_in_col.push((name.clone(), *row, *rows, *cols));
+                    false
+                } else { true }
+            });
+
+            // Sort by row and distribute
+            widgets_in_col.sort_by_key(|(_, row, _, _)| *row);
+            let total_scalable_height: u16 = widgets_in_col.iter().map(|(_, _, rows, _)| *rows).sum();
+            if total_scalable_height == 0 { continue; }
+
+            let mut adjustments: Vec<(String, i32)> = Vec::new();
+            let mut leftover = 0i32;
+            for (name, _row, rows, _cols) in &widgets_in_col {
+                let proportion = *rows as f64 / total_scalable_height as f64;
+                let share = (proportion * height_delta as f64).floor() as i32;
+                leftover += ((proportion * height_delta as f64) - share as f64).round() as i32;
+                if !height_applied.contains(name) { adjustments.push((name.clone(), share)); }
+            }
+            if leftover != 0 && !adjustments.is_empty() {
+                if let Some((name, _, _, _)) = widgets_in_col.iter()
+                    .enumerate()
+                    .filter(|(_, (n, _, _, _))| !height_applied.contains(n))
+                    .max_by_key(|(_, (_, _, rows, _))| *rows)
+                    .map(|(_, t)| t) {
+                    if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) { adj.1 += leftover; }
+                }
+            }
+
+            let mut current_row = 0u16;
+            for (idx, (name, orig_row, orig_rows, _cols)) in widgets_in_col.iter().enumerate() {
+                if height_applied.contains(name) { continue; }
+                let adjustment = adjustments.iter().find(|(n, _)| n == name).map(|(_, a)| *a).unwrap_or(0);
+                let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                let (_, min_rows) = self.widget_min_size(&window.widget_type);
+                let min_constraint = window.min_rows.unwrap_or(min_rows);
+                let max_constraint = window.max_rows;
+                let mut new_rows = (*orig_rows as i32 + adjustment).max(min_constraint as i32) as u16;
+                if let Some(max) = max_constraint { new_rows = new_rows.min(max); }
+                let new_row = if idx == 0 { *orig_row } else { current_row };
+                if let Some(w) = self.layout.windows.iter_mut().find(|w| &w.name == name) {
+                    w.row = new_row; w.rows = new_rows; height_applied.insert(name.clone());
+                }
+                current_row = new_row + new_rows;
+            }
+        }
+
+        // Shift static-height and anchor command_input
+        let new_height = if let Some(ref baseline) = self.baseline_layout {
+            if let (Some(_bw), Some(bh)) = (baseline.terminal_width, baseline.terminal_height) { (bh as i32 + height_delta).max(0) as u16 } else { 0 }
+        } else { 0 };
+        for window in self.layout.windows.iter_mut() {
+            if window.widget_type == "command_input" {
+                let old_row = window.row;
+                window.row = new_height.saturating_sub(window.rows);
+                tracing::debug!("Command input anchored: old_row={}, new_row={}", old_row, window.row);
+            } else if static_both.contains(&window.name) || static_height.contains(&window.name) {
+                window.row = (window.row as i32 + height_delta).max(0) as u16;
+            }
+        }
+    }
+
+    // Width-only proportional pass extracted for readability
+    fn apply_width_resize(
+        &mut self,
+        width_delta: i32,
+        static_both: &std::collections::HashSet<String>,
+    ) {
+        use std::collections::HashSet;
+        if width_delta == 0 { return; }
+
+        tracing::debug!("--- WIDTH SCALING (extracted) ---");
+
+        let mut width_applied = HashSet::new();
+        let max_row = self.layout.windows.iter().map(|w| w.row + w.rows).max().unwrap_or(0);
+        for current_row in 0..max_row {
+            let mut widgets_at_row: Vec<(String, String, u16, u16, u16, u16)> = Vec::new();
+            for window in &self.layout.windows {
+                if width_applied.contains(&window.name) { continue; }
+                if current_row >= window.row && current_row < window.row + window.rows {
+                    widgets_at_row.push((window.name.clone(), window.widget_type.clone(), window.row, window.col, window.rows, window.cols));
+                }
+            }
+            if widgets_at_row.is_empty() { continue; }
+            widgets_at_row.sort_by_key(|(_, _, _, col, _, _)| *col);
+
+            let mut total_scalable_width: u16 = 0;
+            let mut embedded_widgets = HashSet::new();
+            for (i, (name_i, _, _, col_i, _, cols_i)) in widgets_at_row.iter().enumerate() {
+                let col_i_end = *col_i + *cols_i;
+                for (j, (name_j, _, _, col_j, _, cols_j)) in widgets_at_row.iter().enumerate() {
+                    if i == j { continue; }
+                    let col_j_end = *col_j + *cols_j;
+                    if *col_j >= *col_i && col_j_end <= col_i_end { embedded_widgets.insert(name_j.clone()); }
+                }
+            }
+            for (name, _, _, _col, _, cols) in widgets_at_row.iter() {
+                if static_both.contains(name) || embedded_widgets.contains(name) { continue; }
+                total_scalable_width += *cols;
+            }
+            if total_scalable_width == 0 { continue; }
+
+            let mut adjustments: Vec<(String, i32)> = Vec::new();
+            let mut leftover = 0i32;
+            let mut redistribution_pool = 0i32;
+            for (name, _wt, _row, _col, _rows, cols) in &widgets_at_row {
+                if static_both.contains(name) { continue; }
+                let proportion = *cols as f64 / total_scalable_width as f64;
+                let share = (proportion * width_delta as f64).floor() as i32;
+                leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
+                if !width_applied.contains(name) { adjustments.push((name.clone(), share)); }
+            }
+
+            let mut capped_widgets = HashSet::new();
+            for (name, adjustment) in &adjustments {
+                let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                if let Some(max_cols) = window.max_cols {
+                    let current_cols = window.cols;
+                    let target_cols = (current_cols as i32 + adjustment).max(0) as u16;
+                    if target_cols > max_cols {
+                        let actual_adjustment = (max_cols as i32 - current_cols as i32).max(0);
+                        let unused = adjustment - actual_adjustment;
+                        redistribution_pool += unused;
+                        capped_widgets.insert(name.clone());
+                    }
+                }
+            }
+            if redistribution_pool != 0 {
+                let recipients: Vec<_> = adjustments.iter().map(|(n, _)| n.clone()).filter(|n| !capped_widgets.contains(n)).collect();
+                let recip_count = recipients.len() as i32;
+                if recip_count > 0 {
+                    let each = redistribution_pool / recip_count;
+                    let mut remainder = redistribution_pool % recip_count;
+                    for (name, adj) in &mut adjustments {
+                        if !capped_widgets.contains(name) {
+                            *adj += each;
+                            if remainder != 0 { *adj += remainder.signum(); remainder -= remainder.signum(); }
+                        }
+                    }
+                }
+            }
+
+            let mut previous_original_col = 0u16;
+            let mut previous_original_width = 0u16;
+            let mut current_col = 0u16;
+            let mut first_widget_end = 0u16;
+            for (idx, (name, _wt, _row, orig_col, _rows, orig_cols)) in widgets_at_row.iter().enumerate() {
+                if static_both.contains(name) {
+                    previous_original_col = *orig_col; previous_original_width = *orig_cols; current_col = *orig_col + *orig_cols; continue;
+                }
+                if width_applied.contains(name) {
+                    let current_width = self.layout.windows.iter().find(|w| &w.name == name).map(|w| w.cols).unwrap_or(*orig_cols);
+                    current_col += current_width; continue;
+                }
+                let adjustment = adjustments.iter().find(|(n, _)| n == name).map(|(_, a)| *a).unwrap_or(0);
+                let window = self.layout.windows.iter().find(|w| &w.name == name).unwrap();
+                let (min_cols, _) = self.widget_min_size(&window.widget_type);
+                let min_constraint = window.min_cols.unwrap_or(min_cols);
+                let max_constraint = window.max_cols;
+                let mut new_cols = (*orig_cols as i32 + adjustment).max(min_constraint as i32) as u16;
+                if let Some(max) = max_constraint { new_cols = new_cols.min(max); }
+                if idx == 0 { first_widget_end = *orig_col + *orig_cols; }
+                let overlaps_first = idx > 0 && *orig_col < first_widget_end;
+                let overlaps_previous = if idx == 0 { false } else { *orig_col < previous_original_col + previous_original_width };
+                let new_col = if idx == 0 || overlaps_previous || overlaps_first { *orig_col } else { let original_gap = orig_col.saturating_sub(previous_original_col + previous_original_width); current_col + original_gap };
+                if let Some(w) = self.layout.windows.iter_mut().find(|w| &w.name == name) { w.col = new_col; w.cols = new_cols; width_applied.insert(name.clone()); }
+                previous_original_col = *orig_col; previous_original_width = *orig_cols; current_col = new_col + new_cols;
+            }
+        }
+    }
+
+    /// New wrapper that delegates to extracted height/width passes
+    fn apply_proportional_resize2(&mut self, width_delta: i32, height_delta: i32) {
+        use std::collections::HashSet;
+        tracing::debug!("=== PROPORTIONAL RESIZE (v2) ===");
+        tracing::debug!("Width delta: {:+}, Height delta: {:+}", width_delta, height_delta);
+        let mut static_both = HashSet::new();
+        let mut static_height = HashSet::new();
+        for window in &self.layout.windows {
+            match window.widget_type.as_str() {
+                "compass" | "injury_doll" | "dashboard" | "indicator" => { static_both.insert(window.name.clone()); }
+                "progress" | "countdown" | "hands" | "hand" | "lefthand" | "righthand" | "spellhand" | "command_input" => { static_height.insert(window.name.clone()); }
+                _ => {}
+            }
+        }
+        self.apply_height_resize(height_delta, &static_both, &static_height);
+        self.apply_width_resize(width_delta, &static_both);
+        tracing::debug!("Proportional resize complete (v2)");
+    }
+
     /// Update window manager configs from current config
     fn update_window_manager_config(&mut self) {
         let countdown_icon = Some(self.config.ui.countdown_icon.clone());
@@ -2924,7 +3161,7 @@ impl App {
                     self.layout = baseline_layout;
 
                     // Apply proportional resize to layout (now working from baseline)
-                    self.apply_proportional_resize(width_delta, height_delta);
+                    self.apply_proportional_resize2(width_delta, height_delta);
 
                     // Update window manager with new layout
                     self.update_window_manager_config();
