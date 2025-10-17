@@ -1343,6 +1343,26 @@ impl App {
         tracing::debug!("Proportional resize complete");
     }
 
+    // Validation helpers (safe, no UI side effects). Used by CLI/tests.
+    pub fn set_layout_for_validation(&mut self, layout: Layout, baseline: (u16, u16)) {
+        self.layout = layout.clone();
+        self.baseline_layout = Some(layout);
+        if let Some(ref mut bl) = self.baseline_layout {
+            bl.terminal_width = Some(baseline.0);
+            bl.terminal_height = Some(baseline.1);
+        }
+    }
+
+    pub fn reset_layout_to_baseline(&mut self) {
+        if let Some(ref bl) = self.baseline_layout {
+            self.layout = bl.clone();
+        }
+    }
+
+    pub fn current_layout(&self) -> &Layout {
+        &self.layout
+    }
+
     // Minimum widget sizes by type (fallback when WindowDef doesn't specify min)
     fn widget_min_size(&self, widget_type: &str) -> (u16, u16) {
         match widget_type {
@@ -1562,7 +1582,7 @@ impl App {
     }
 
     /// New wrapper that delegates to extracted height/width passes
-    fn apply_proportional_resize2(&mut self, width_delta: i32, height_delta: i32) {
+    pub fn apply_proportional_resize2(&mut self, width_delta: i32, height_delta: i32) {
         use std::collections::HashSet;
         tracing::debug!("=== PROPORTIONAL RESIZE (v2) ===");
         tracing::debug!("Width delta: {:+}, Height delta: {:+}", width_delta, height_delta);
