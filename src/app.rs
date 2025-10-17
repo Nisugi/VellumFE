@@ -5633,9 +5633,8 @@ impl App {
 
                                     if let Some(text_window) = text_window {
                                         debug!("Mouse down on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
-                                        if let Some(word) = Self::extract_word_at_position(text_window, mouse.column, mouse.row, adjusted_rect) {
-                                            debug!("Extracted word at mouse down: '{}'", word);
-                                            if let Some(link_data) = text_window.find_link_by_word(&word) {
+                                        if let Some(link_data) = Self::link_at_position(text_window, mouse.column, mouse.row, adjusted_rect) {
+                                            debug!("Clicked link span: noun='{}' exist_id='{}'", link_data.noun, link_data.exist_id);
                                                 // Check if the required modifier key is held for drag and drop
                                                 let drag_modifier = self.config.ui.drag_modifier_key.to_lowercase();
                                                 let has_modifier = match drag_modifier.as_str() {
@@ -5647,7 +5646,7 @@ impl App {
                                                 };
 
                                                 if has_modifier {
-                                                    debug!("Found link for word '{}': exist_id={}, starting drag (modifier: {})", word, link_data.exist_id, drag_modifier);
+                                                    debug!("Starting drag for link exist_id={} (modifier: {})", link_data.exist_id, drag_modifier);
                                                     // Start drag operation
                                                     self.drag_state = Some(DragState {
                                                         link_data: link_data.clone(),
@@ -5658,7 +5657,7 @@ impl App {
                                                     // Clear selection drag start since we're dragging an object
                                                     self.selection_drag_start = None;
                                                 } else {
-                                                    debug!("Found link for word '{}': exist_id={}, opening menu (no {} modifier held)", word, link_data.exist_id, drag_modifier);
+                                                    debug!("Opening menu for link exist_id={} (no {} modifier held)", link_data.exist_id, drag_modifier);
                                                     // No modifier held - immediately request menu
                                                     if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
                                                         self.add_system_message(&format!("Failed to request menu: {}", e));
@@ -5669,11 +5668,8 @@ impl App {
                                                     // Clear selection drag start since we're opening a menu
                                                     self.selection_drag_start = None;
                                                 }
-                                            } else {
-                                                debug!("No link found for word '{}'", word);
-                                            }
                                         } else {
-                                            debug!("Could not extract word at mouse down position");
+                                            debug!("No link at click position");
                                         }
                                     }
                                 }
@@ -5829,18 +5825,16 @@ impl App {
                                     if let Some(widget) = self.window_manager.get_window(&name) {
                                         if let Widget::Text(text_window) = widget {
                                             // Check if we dropped on a link
-                                            if let Some(word) = Self::extract_word_at_position(
-                                                text_window,
-                                                drag_state.current_pos.0,
-                                                drag_state.current_pos.1,
-                                                *rect
-                                            ) {
-                                                if let Some(target_link) = text_window.find_link_by_word(&word) {
+                                                if let Some(target_link) = Self::link_at_position(
+                                                    text_window,
+                                                    drag_state.current_pos.0,
+                                                    drag_state.current_pos.1,
+                                                    *rect,
+                                                ) {
                                                     drop_target = Some(target_link.noun.clone());
                                                     debug!("Dropped {} onto link target: {}", drag_state.link_data.noun, target_link.noun);
                                                     break;
                                                 }
-                                            }
                                         }
                                     }
                                 }
@@ -6194,6 +6188,51 @@ impl App {
         let word: String = chars[start..end].iter().collect();
         tracing::debug!("Found word: '{}'", word);
         Some(word)
+    }
+
+    /// Find a link (by precise span) at a given mouse position in a text window
+    fn link_at_position(
+        text_window: &crate::ui::TextWindow,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: ratatui::layout::Rect,
+    ) -> Option<crate::ui::LinkData> {
+        let border_offset = if text_window.has_border() { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            return None;
+        }
+
+        let visible_height = (window_rect.height.saturating_sub(2 * border_offset)) as usize;
+        let (_start_idx, visible_lines) = text_window.get_visible_lines_info(visible_height);
+
+        let line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        if line_idx >= visible_lines.len() {
+            return None;
+        }
+
+        let line = &visible_lines[line_idx];
+        let mut col = 0usize;
+        for seg in &line.segments {
+            let seg_len = seg.text.chars().count();
+            if col_offset >= col && col_offset < col + seg_len {
+                // Inside this segment
+                if let Some(link) = &seg.link_data {
+                    return Some(link.clone());
+                }
+                return None;
+            }
+            col += seg_len;
+        }
+
+        None
     }
 
     fn handle_server_message(&mut self, msg: ServerMessage) {

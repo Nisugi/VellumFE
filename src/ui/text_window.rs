@@ -48,13 +48,13 @@ pub struct StyledText {
 // One display line (post-wrapping) with multiple styled spans
 #[derive(Clone)]
 struct WrappedLine {
-    spans: Vec<(String, Style, SpanType)>,
+    spans: Vec<(String, Style, SpanType, Option<LinkData>)>,
 }
 
 // One logical line (before wrapping) - stores original styled content
 #[derive(Clone)]
 struct LogicalLine {
-    spans: Vec<(String, Style, SpanType)>,
+    spans: Vec<(String, Style, SpanType, Option<LinkData>)>,
 }
 
 // Match location: (line_index, start_char, end_char)
@@ -77,7 +77,7 @@ pub struct TextWindow {
     // Cached wrapped lines (invalidated when width changes)
     wrapped_lines: VecDeque<WrappedLine>,
     // Accumulate styled chunks for current logical line
-    current_line_spans: Vec<(String, Style, SpanType)>,
+    current_line_spans: Vec<(String, Style, SpanType, Option<LinkData>)>,
     max_lines: usize,
     scroll_offset: usize,  // Lines back from end when at bottom (0 = live view)
     scroll_position: Option<usize>,  // Absolute line position when scrolled back (None = following live)
@@ -257,8 +257,8 @@ impl TextWindow {
             }
         }
 
-        // Add this styled chunk to current line with semantic type
-        self.current_line_spans.push((styled.content, style, styled.span_type));
+        // Add this styled chunk to current line with semantic type and link metadata
+        self.current_line_spans.push((styled.content, style, styled.span_type, styled.link_data.clone()));
     }
 
     pub fn finish_line(&mut self, _width: u16) {
@@ -305,7 +305,7 @@ impl TextWindow {
 
         // STEP 1: Build character-by-character style map from current spans
         let mut char_styles: Vec<CharStyle> = Vec::new();
-        for (content, style, span_type) in &self.current_line_spans {
+        for (content, style, span_type, _link) in &self.current_line_spans {
             for _ in content.chars() {
                 char_styles.push(CharStyle {
                     fg: style.fg,
@@ -323,7 +323,7 @@ impl TextWindow {
         // STEP 2: Build full text for pattern matching
         let full_text: String = self.current_line_spans
             .iter()
-            .map(|(content, _, _)| content.as_str())
+            .map(|(content, _, _, _)| content.as_str())
             .collect();
 
         // STEP 3: Find all highlight matches (both Aho-Corasick and regex)
@@ -380,7 +380,7 @@ impl TextWindow {
                     // Actually, re-apply original colors for links/monsterbold
                     let original_idx = i;
                     let mut char_idx = 0;
-                    for (content, style, span_type) in &self.current_line_spans {
+                    for (content, style, span_type, _link) in &self.current_line_spans {
                         for _ch in content.chars() {
                             if char_idx == original_idx {
                                 if *span_type == SpanType::Link || *span_type == SpanType::Monsterbold {
@@ -415,12 +415,21 @@ impl TextWindow {
         }
 
         // STEP 5: Reconstruct spans from char_styles with proper splitting
-        let mut new_spans: Vec<(String, Style, SpanType)> = Vec::new();
+        // Track link data per character to reconstruct precise link spans
+        let mut char_links: Vec<Option<LinkData>> = Vec::new();
+        for (content, _style, _span_type, link) in &self.current_line_spans {
+            for _ in content.chars() {
+                char_links.push(link.clone());
+            }
+        }
+
+        let mut new_spans: Vec<(String, Style, SpanType, Option<LinkData>)> = Vec::new();
         let full_text_chars: Vec<char> = full_text.chars().collect();
 
         let mut i = 0;
         while i < char_styles.len() {
             let current_style = char_styles[i];
+            let current_link = char_links.get(i).cloned().unwrap_or(None);
             let mut content = String::new();
             content.push(full_text_chars[i]);
 
@@ -428,10 +437,12 @@ impl TextWindow {
             i += 1;
             while i < char_styles.len() {
                 let next_style = char_styles[i];
+                let next_link = char_links.get(i).cloned().unwrap_or(None);
                 if next_style.fg == current_style.fg
                     && next_style.bg == current_style.bg
                     && next_style.bold == current_style.bold
                     && next_style.span_type == current_style.span_type
+                    && next_link == current_link
                 {
                     content.push(full_text_chars[i]);
                     i += 1;
@@ -452,7 +463,7 @@ impl TextWindow {
                 style = style.add_modifier(Modifier::BOLD);
             }
 
-            new_spans.push((content, style, current_style.span_type));
+            new_spans.push((content, style, current_style.span_type, current_link));
         }
 
         // Replace current_line_spans with new layered spans
@@ -460,21 +471,21 @@ impl TextWindow {
     }
 
     // Wrap a series of styled spans into multiple display lines
-    fn wrap_styled_spans(&self, spans: &[(String, Style, SpanType)], width: usize) -> Vec<WrappedLine> {
+    fn wrap_styled_spans(&self, spans: &[(String, Style, SpanType, Option<LinkData>)], width: usize) -> Vec<WrappedLine> {
         if width == 0 {
             return vec![];
         }
 
         let mut result = Vec::new();
-        let mut current_line_spans: Vec<(String, Style, SpanType)> = Vec::new();
+        let mut current_line_spans: Vec<(String, Style, SpanType, Option<LinkData>)> = Vec::new();
         let mut current_line_len = 0;
 
         // Track word buffer for smart wrapping
-        let mut word_buffer: Vec<(String, Style, SpanType)> = Vec::new();
+        let mut word_buffer: Vec<(String, Style, SpanType, Option<LinkData>)> = Vec::new();
         let mut word_buffer_len = 0;
         let mut in_word = false;
 
-        for (text, style, span_type) in spans {
+        for (text, style, span_type, link) in spans {
             for ch in text.chars() {
                 let is_whitespace = ch.is_whitespace();
 
@@ -484,8 +495,8 @@ impl TextWindow {
                         // Check if word fits on current line
                         if current_line_len + word_buffer_len <= width {
                             // Word fits - add it to current line
-                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
-                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                            for (word_text, word_style, word_type, word_link) in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type, word_link);
                             }
                             current_line_len += word_buffer_len;
                         } else if word_buffer_len <= width {
@@ -498,13 +509,13 @@ impl TextWindow {
                                 current_line_len = 0;
                             }
                             // Add word to new line
-                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
-                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                            for (word_text, word_style, word_type, word_link) in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type, word_link);
                             }
                             current_line_len += word_buffer_len;
                         } else {
                             // Word is longer than width - must break it mid-word
-                            for (word_text, word_style, word_type) in word_buffer.drain(..) {
+                            for (word_text, word_style, word_type, word_link) in word_buffer.drain(..) {
                                 for word_ch in word_text.chars() {
                                     if current_line_len >= width {
                                         result.push(WrappedLine {
@@ -513,7 +524,7 @@ impl TextWindow {
                                         current_line_spans.clear();
                                         current_line_len = 0;
                                     }
-                                    Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type);
+                                    Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type, word_link.clone());
                                     current_line_len += 1;
                                 }
                             }
@@ -533,12 +544,12 @@ impl TextWindow {
                         // Don't add whitespace at start of new line
                         continue;
                     }
-                    Self::append_to_line(&mut current_line_spans, ch.to_string(), *style, *span_type);
+                    Self::append_to_line(&mut current_line_spans, ch.to_string(), *style, *span_type, link.clone());
                     current_line_len += 1;
                 } else {
                     // Non-whitespace character - add to word buffer
                     in_word = true;
-                    Self::append_to_buffer(&mut word_buffer, ch.to_string(), *style, *span_type);
+                    Self::append_to_buffer(&mut word_buffer, ch.to_string(), *style, *span_type, link.clone());
                     word_buffer_len += 1;
                 }
             }
@@ -548,8 +559,8 @@ impl TextWindow {
         if !word_buffer.is_empty() {
             if current_line_len + word_buffer_len <= width {
                 // Word fits on current line
-                for (word_text, word_style, word_type) in word_buffer {
-                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                for (word_text, word_style, word_type, word_link) in word_buffer {
+                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type, word_link);
                 }
             } else if word_buffer_len <= width {
                 // Word needs new line
@@ -559,12 +570,12 @@ impl TextWindow {
                     });
                     current_line_spans.clear();
                 }
-                for (word_text, word_style, word_type) in word_buffer {
-                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type);
+                for (word_text, word_style, word_type, word_link) in word_buffer {
+                    Self::append_to_line(&mut current_line_spans, word_text, word_style, word_type, word_link);
                 }
             } else {
                 // Word is too long - must break it
-                for (word_text, word_style, word_type) in word_buffer {
+                for (word_text, word_style, word_type, word_link) in word_buffer {
                     for word_ch in word_text.chars() {
                         if current_line_len >= width {
                             result.push(WrappedLine {
@@ -573,7 +584,7 @@ impl TextWindow {
                             current_line_spans.clear();
                             current_line_len = 0;
                         }
-                        Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type);
+                        Self::append_to_line(&mut current_line_spans, word_ch.to_string(), word_style, word_type, word_link.clone());
                         current_line_len += 1;
                     }
                 }
@@ -596,28 +607,40 @@ impl TextWindow {
     }
 
     // Helper to append text to a span list, merging with last span if style matches
-    fn append_to_line(spans: &mut Vec<(String, Style, SpanType)>, text: String, style: Style, span_type: SpanType) {
-        if let Some((last_text, last_style, last_type)) = spans.last_mut() {
-            if last_style == &style && last_type == &span_type {
+    fn append_to_line(
+        spans: &mut Vec<(String, Style, SpanType, Option<LinkData>)>,
+        text: String,
+        style: Style,
+        span_type: SpanType,
+        link: Option<LinkData>,
+    ) {
+        if let Some((last_text, last_style, last_type, last_link)) = spans.last_mut() {
+            if *last_style == style && *last_type == span_type && *last_link == link {
                 last_text.push_str(&text);
             } else {
-                spans.push((text, style, span_type));
+                spans.push((text, style, span_type, link));
             }
         } else {
-            spans.push((text, style, span_type));
+            spans.push((text, style, span_type, link));
         }
     }
 
     // Helper to append text to buffer, merging with last entry if style matches
-    fn append_to_buffer(buffer: &mut Vec<(String, Style, SpanType)>, text: String, style: Style, span_type: SpanType) {
-        if let Some((last_text, last_style, last_type)) = buffer.last_mut() {
-            if last_style == &style && last_type == &span_type {
+    fn append_to_buffer(
+        buffer: &mut Vec<(String, Style, SpanType, Option<LinkData>)>,
+        text: String,
+        style: Style,
+        span_type: SpanType,
+        link: Option<LinkData>,
+    ) {
+        if let Some((last_text, last_style, last_type, last_link)) = buffer.last_mut() {
+            if *last_style == style && *last_type == span_type && *last_link == link {
                 last_text.push_str(&text);
             } else {
-                buffer.push((text, style, span_type));
+                buffer.push((text, style, span_type, link));
             }
         } else {
-            buffer.push((text, style, span_type));
+            buffer.push((text, style, span_type, link));
         }
     }
 
@@ -685,7 +708,7 @@ impl TextWindow {
         for (line_idx, wrapped_line) in self.wrapped_lines.iter().enumerate() {
             // Combine all spans into a single text string for searching
             let line_text: String = wrapped_line.spans.iter()
-                .map(|(text, _, _)| text.as_str())
+                .map(|(text, _, _, _)| text.as_str())
                 .collect();
 
             // Find all matches in this line
@@ -803,7 +826,7 @@ impl TextWindow {
     ) -> Vec<Span> {
         // Build the full line text to know character positions
         let _full_text: String = wrapped.spans.iter()
-            .map(|(text, _, _)| text.as_str())
+            .map(|(text, _, _, _)| text.as_str())
             .collect();
 
         // Collect all character positions that should be highlighted
@@ -824,7 +847,7 @@ impl TextWindow {
         let mut char_pos = 0;
         let mut highlight_idx = 0;
 
-        for (text, style, _span_type) in &wrapped.spans {
+        for (text, style, _span_type, _link) in &wrapped.spans {
             let text_len = text.len();
             let span_start = char_pos;
             let span_end = char_pos + text_len;
@@ -904,7 +927,7 @@ impl TextWindow {
             (Some(sel), Some(bg)) if sel.active => (sel, bg),
             _ => {
                 return wrapped.spans.iter()
-                    .map(|(text, style, _span_type)| Span::styled(text.clone(), *style))
+                    .map(|(text, style, _span_type, _link)| Span::styled(text.clone(), *style))
                     .collect();
             }
         };
@@ -915,7 +938,7 @@ impl TextWindow {
         let mut result_spans = Vec::new();
         let mut char_pos = 0;
 
-        for (text, style, _span_type) in &wrapped.spans {
+        for (text, style, _span_type, _link) in &wrapped.spans {
             let text_chars: Vec<char> = text.chars().collect();
             let text_len = text_chars.len();  // Character count, not byte count
             let span_start = char_pos;
@@ -1010,12 +1033,13 @@ impl TextWindow {
         self.wrapped_lines
             .iter()
             .map(|line| LineSegments {
-                segments: line.spans.iter().map(|(text, style, span_type)| TextSegment {
+                segments: line.spans.iter().map(|(text, style, span_type, link)| TextSegment {
                     text: text.clone(),
                     fg: style.fg,
                     bg: style.bg,
                     bold: style.add_modifier.contains(Modifier::BOLD),
                     span_type: *span_type,
+                    link_data: link.clone(),
                 }).collect(),
             })
             .collect()
@@ -1076,12 +1100,13 @@ impl TextWindow {
         let visible_lines: Vec<LineSegments> = (start_line..end_line)
             .filter_map(|idx| {
                 self.wrapped_lines.get(idx).map(|line| LineSegments {
-                    segments: line.spans.iter().map(|(text, style, span_type)| TextSegment {
+                    segments: line.spans.iter().map(|(text, style, span_type, link)| TextSegment {
                         text: text.clone(),
                         fg: style.fg,
                         bg: style.bg,
                         bold: style.add_modifier.contains(Modifier::BOLD),
                         span_type: *span_type,
+                        link_data: link.clone(),
                     }).collect(),
                 })
             })
@@ -1103,6 +1128,7 @@ pub struct TextSegment {
     pub bg: Option<Color>,
     pub bold: bool,
     pub span_type: SpanType,
+    pub link_data: Option<LinkData>,
 }
 
 impl TextWindow {
