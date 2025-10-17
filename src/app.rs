@@ -1448,55 +1448,116 @@ impl App {
                 match edge {
                     ResizeEdge::Top => {
                         // Moving top edge: adjust position and height
-                        let new_row = (window_def.row as i16 + delta_rows).max(0) as u16;
+                        let mut new_row = (window_def.row as i16 + delta_rows).max(0) as u16;
                         let row_change = new_row as i16 - window_def.row as i16;
-                        let new_rows = (window_def.rows as i16 - row_change).max(1) as u16;
+                        let new_rows_raw = (window_def.rows as i16 - row_change).max(1) as u16;
 
-                        // Ensure window doesn't exceed terminal bounds
-                        let max_rows = term_height.saturating_sub(new_row);
-                        let bounded_rows = new_rows.min(max_rows);
+                        // Terminal-bound max rows given new_row
+                        let term_max_rows = term_height.saturating_sub(new_row);
 
-                        debug!("Resizing {} top: row {} -> {}, rows {} -> {} (max: {})",
-                            window_name, window_def.row, new_row, window_def.rows, bounded_rows, max_rows);
+                        // Apply WindowDef min/max constraints (fall back to terminal bounds)
+                        let min_rows = window_def.min_rows.unwrap_or(1);
+                        let max_rows_cfg = window_def.max_rows.unwrap_or(u16::MAX);
+                        let max_rows_allowed = term_max_rows.min(max_rows_cfg);
+
+                        // Clamp rows within [min_rows, max_rows_allowed], but if min_rows > max_allowed, cap at max_allowed
+                        let mut clamped_rows = new_rows_raw;
+                        if max_rows_allowed >= min_rows {
+                            clamped_rows = clamped_rows.clamp(min_rows, max_rows_allowed);
+                        } else {
+                            clamped_rows = max_rows_allowed;
+                        }
+
+                        // Keep bottom edge fixed when clamping size
+                        let bottom = window_def.row.saturating_add(window_def.rows);
+                        let adjusted_row = bottom.saturating_sub(clamped_rows);
+                        // Ensure adjusted_row is within screen
+                        new_row = adjusted_row.min(term_height.saturating_sub(1));
+
+                        debug!(
+                            "Resizing {} top: row {} -> {}, rows {} -> {} (term_max: {}, cfg_min: {:?}, cfg_max: {:?})",
+                            window_name, window_def.row, new_row, window_def.rows, clamped_rows, term_max_rows, window_def.min_rows, window_def.max_rows
+                        );
                         window_def.row = new_row;
-                        window_def.rows = bounded_rows;
+                        window_def.rows = clamped_rows;
                     }
                     ResizeEdge::Bottom => {
-                        let new_rows = (window_def.rows as i16 + delta_rows).max(1) as u16;
+                        let new_rows_raw = (window_def.rows as i16 + delta_rows).max(1) as u16;
 
-                        // Ensure window doesn't exceed terminal bounds
-                        let max_rows = term_height.saturating_sub(window_def.row);
-                        let bounded_rows = new_rows.min(max_rows);
+                        // Terminal-bound max rows at current row
+                        let term_max_rows = term_height.saturating_sub(window_def.row);
 
-                        debug!("Resizing {} bottom: {} -> {} rows (max: {})",
-                            window_name, window_def.rows, bounded_rows, max_rows);
-                        window_def.rows = bounded_rows;
+                        // Apply WindowDef min/max constraints
+                        let min_rows = window_def.min_rows.unwrap_or(1);
+                        let max_rows_cfg = window_def.max_rows.unwrap_or(u16::MAX);
+                        let max_rows_allowed = term_max_rows.min(max_rows_cfg);
+
+                        let clamped_rows = if max_rows_allowed >= min_rows {
+                            new_rows_raw.clamp(min_rows, max_rows_allowed)
+                        } else {
+                            max_rows_allowed
+                        };
+
+                        debug!(
+                            "Resizing {} bottom: {} -> {} rows (term_max: {}, cfg_min: {:?}, cfg_max: {:?})",
+                            window_name, window_def.rows, clamped_rows, term_max_rows, window_def.min_rows, window_def.max_rows
+                        );
+                        window_def.rows = clamped_rows;
                     }
                     ResizeEdge::Left => {
                         // Moving left edge: adjust position and width
-                        let new_col = (window_def.col as i16 + delta_cols).max(0) as u16;
+                        let mut new_col = (window_def.col as i16 + delta_cols).max(0) as u16;
                         let col_change = new_col as i16 - window_def.col as i16;
-                        let new_cols = (window_def.cols as i16 - col_change).max(1) as u16;
+                        let new_cols_raw = (window_def.cols as i16 - col_change).max(1) as u16;
 
-                        // Ensure window doesn't exceed terminal bounds
-                        let max_cols = term_width.saturating_sub(new_col);
-                        let bounded_cols = new_cols.min(max_cols);
+                        // Terminal-bound max cols given new_col
+                        let term_max_cols = term_width.saturating_sub(new_col);
 
-                        debug!("Resizing {} left: col {} -> {}, cols {} -> {} (max: {})",
-                            window_name, window_def.col, new_col, window_def.cols, bounded_cols, max_cols);
+                        // Apply WindowDef min/max constraints
+                        let min_cols = window_def.min_cols.unwrap_or(1);
+                        let max_cols_cfg = window_def.max_cols.unwrap_or(u16::MAX);
+                        let max_cols_allowed = term_max_cols.min(max_cols_cfg);
+
+                        let mut clamped_cols = if max_cols_allowed >= min_cols {
+                            new_cols_raw.clamp(min_cols, max_cols_allowed)
+                        } else {
+                            max_cols_allowed
+                        };
+
+                        // Keep right edge fixed when clamping size
+                        let right = window_def.col.saturating_add(window_def.cols);
+                        let adjusted_col = right.saturating_sub(clamped_cols);
+                        new_col = adjusted_col.min(term_width.saturating_sub(1));
+
+                        debug!(
+                            "Resizing {} left: col {} -> {}, cols {} -> {} (term_max: {}, cfg_min: {:?}, cfg_max: {:?})",
+                            window_name, window_def.col, new_col, window_def.cols, clamped_cols, term_max_cols, window_def.min_cols, window_def.max_cols
+                        );
                         window_def.col = new_col;
-                        window_def.cols = bounded_cols;
+                        window_def.cols = clamped_cols;
                     }
                     ResizeEdge::Right => {
-                        let new_cols = (window_def.cols as i16 + delta_cols).max(1) as u16;
+                        let new_cols_raw = (window_def.cols as i16 + delta_cols).max(1) as u16;
 
-                        // Ensure window doesn't exceed terminal bounds
-                        let max_cols = term_width.saturating_sub(window_def.col);
-                        let bounded_cols = new_cols.min(max_cols);
+                        // Terminal-bound max cols at current col
+                        let term_max_cols = term_width.saturating_sub(window_def.col);
 
-                        debug!("Resizing {} right: {} -> {} cols (max: {})",
-                            window_name, window_def.cols, bounded_cols, max_cols);
-                        window_def.cols = bounded_cols;
+                        // Apply WindowDef min/max constraints
+                        let min_cols = window_def.min_cols.unwrap_or(1);
+                        let max_cols_cfg = window_def.max_cols.unwrap_or(u16::MAX);
+                        let max_cols_allowed = term_max_cols.min(max_cols_cfg);
+
+                        let clamped_cols = if max_cols_allowed >= min_cols {
+                            new_cols_raw.clamp(min_cols, max_cols_allowed)
+                        } else {
+                            max_cols_allowed
+                        };
+
+                        debug!(
+                            "Resizing {} right: {} -> {} cols (term_max: {}, cfg_min: {:?}, cfg_max: {:?})",
+                            window_name, window_def.cols, clamped_cols, term_max_cols, window_def.min_cols, window_def.max_cols
+                        );
+                        window_def.cols = clamped_cols;
                     }
                 }
                 break;
