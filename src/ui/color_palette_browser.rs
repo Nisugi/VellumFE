@@ -123,7 +123,7 @@ impl ColorPaletteBrowser {
             total_display_rows += 1;
         }
 
-        let visible_rows = 20;
+        let visible_rows = 15;
 
         // Adjust scroll to keep selected item in view
         if selected_display_row < self.scroll_offset {
@@ -228,22 +228,27 @@ impl ColorPaletteBrowser {
                 }
                 if let Some(cell) = buf.cell_mut((x, popup_area.y)) {
                     cell.set_char(ch);
-                    cell.set_fg(Color::Yellow);
+                    cell.set_fg(Color::Rgb(100, 149, 237));
                     cell.set_bg(Color::Black);
                 }
             }
         }
 
         // Draw help text
-        let help = " ↑/↓:Navigate  Enter:Edit  Del:Remove  F:Favorite  /:Filter  Esc:Close ";
+        // Draw help text with selection count (index/total)
+        let total = self.filtered_colors().len();
+        let current = if total == 0 { 0 } else { (self.selected_index + 1).min(total) };
+        let help = format!(" ↑/↓:Nav  Enter:Edit  Del:Del  F:Fav  /:Filter  Esc:Close  ({}/{}) ", current, total);
         let help_x = popup_area.x + popup_area.width.saturating_sub(help.len() as u16 + 1);
-        if help_x > popup_area.x {
+        let start_x = if help_x > popup_area.x + 1 { help_x } else { popup_area.x + 1 };
+        let help_y = popup_area.y + popup_area.height.saturating_sub(2);
+        if start_x < popup_area.x + popup_area.width && help_y < popup_area.y + popup_area.height {
             for (i, ch) in help.chars().enumerate() {
-                let x = help_x + i as u16;
-                if x >= popup_area.x + popup_area.width {
+                let x = start_x + i as u16;
+                if x >= popup_area.x + popup_area.width - 1 {
                     break;
                 }
-                if let Some(cell) = buf.cell_mut((x, popup_area.y + popup_area.height - 1)) {
+                if let Some(cell) = buf.cell_mut((x, help_y)) {
                     cell.set_char(ch);
                     cell.set_fg(Color::Gray);
                     cell.set_bg(Color::Black);
@@ -254,7 +259,7 @@ impl ColorPaletteBrowser {
         // Draw colors list
         let list_area = Rect {
             x: popup_area.x + 2,
-            y: popup_area.y + 2,
+            y: popup_area.y + 1,
             width: popup_area.width.saturating_sub(4),
             height: popup_area.height.saturating_sub(4),
         };
@@ -359,21 +364,17 @@ impl ColorPaletteBrowser {
 
             let is_selected = abs_idx == self.selected_index;
 
-            // Format: "[preview] name (category) #HEXCODE ★"
-            let preview = "███";
-            let fav_marker = if color.favorite { " ★" } else { "" };
-            let line = format!("{} {:<18} {}{}", preview, color.name, color.color, fav_marker);
-
+            // Format: preview(3) + 3 spaces + fav + 3 spaces + name + color code
+            let preview = "███"; // 3-character preview swatch (full blocks)
+            let fav_char = if color.favorite { '*' } else { ' ' };
+            let content = format!("   {}   {:<18} {}", fav_char, color.name, color.color);
             // Parse the color for preview
             let preview_color = Self::parse_hex_color(&color.color).unwrap_or(Color::White);
 
             let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White).bg(Color::Black)
+                Style::default().fg(Color::Rgb(100, 149, 237)).bg(Color::Black)
             };
 
             // Render color preview with actual color
@@ -382,18 +383,14 @@ impl ColorPaletteBrowser {
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_char(ch);
                     cell.set_fg(preview_color);
-                    if is_selected {
-                        cell.set_bg(Color::Cyan);
-                    } else {
-                        cell.set_bg(Color::Black);
-                    }
+                    cell.set_bg(Color::Black);
                 }
             }
 
-            // Render rest of line
-            let text_start = preview.len();
-            for (i, ch) in line[text_start..].chars().enumerate() {
-                let x = list_area.x + text_start as u16 + i as u16;
+            // Render rest of line (after preview). Use character count, not byte length, for proper alignment.
+            let preview_cols = preview.chars().count() as u16;
+            for (i, ch) in content.chars().enumerate() {
+                let x = list_area.x + preview_cols + i as u16;
                 if x >= list_area.x + list_area.width {
                     break;
                 }
@@ -404,14 +401,7 @@ impl ColorPaletteBrowser {
             }
 
             // Fill rest of line with background
-            if is_selected {
-                for x in (list_area.x + line.len() as u16)..(list_area.x + list_area.width) {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_char(' ');
-                        cell.set_bg(Color::Cyan);
-                    }
-                }
-            }
+            // No row background fill; focus indicated by yellow fg
 
             display_row += 1;
             render_row += 1;
@@ -476,3 +466,7 @@ impl ColorPaletteBrowser {
         }
     }
 }
+
+
+
+

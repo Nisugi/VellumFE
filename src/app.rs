@@ -127,6 +127,7 @@ pub struct App {
     nested_submenu: Option<crate::ui::PopupMenu>,  // Active nested submenu (third level)
     last_link_click_pos: Option<(u16, u16)>,  // Position of last link click (for menu positioning)
     menu_categories: HashMap<String, Vec<crate::ui::MenuItem>>,  // Cached categories for submenus
+    mouse_menus_enabled: bool,  // Disable mouse-driven menus to avoid freezes
     drag_state: Option<DragState>,  // Active drag operation (None when not dragging)
     window_editor: crate::ui::WindowEditor,  // Window configuration editor
     settings_editor: Option<crate::ui::SettingsEditor>,  // Settings editor (None when not shown)
@@ -381,6 +382,7 @@ impl App {
             nested_submenu: None,  // No nested submenu initially
             last_link_click_pos: None,  // No last click position initially
             menu_categories: HashMap::new(),  // No cached categories initially
+            mouse_menus_enabled: false,  // Keyboard-only menus by default
             drag_state: None,  // No drag operation initially
             window_editor: crate::ui::WindowEditor::new(),  // Initialize window editor
             settings_editor: None,  // Settings editor not shown initially
@@ -1923,6 +1925,9 @@ impl App {
         }
 
         match parts[0] {
+            "menu" => {
+                self.open_main_menu();
+            }
             "quit" | "q" => {
                 self.running = false;
             }
@@ -3137,7 +3142,7 @@ impl App {
                 let form = crate::ui::SpellColorFormWidget::new();
                 self.spell_color_form = Some(form);
                 self.input_mode = InputMode::SpellColorForm;
-                self.add_system_message("Opening spell color form (Tab to navigate, Esc to cancel)");
+                self.add_system_message("Opening spell color form (Tab to navigate, Ctrl+S to save, Esc to cancel)");
             }
             "spellcolors" => {
                 // Open spell color browser
@@ -3255,6 +3260,70 @@ impl App {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
             }
         }
+    }
+
+    /// Open the main popup menu centered on the terminal
+    fn open_main_menu(&mut self) {
+        // Build main menu items (only top-level entries and settings)
+        let mut items: Vec<crate::ui::MenuItem> = Vec::new();
+
+        items.push(crate::ui::MenuItem { text: "Colors >".to_string(), command: "__SUBMENU__colors".to_string() });
+        items.push(crate::ui::MenuItem { text: "Highlights >".to_string(), command: "__SUBMENU__highlights".to_string() });
+        items.push(crate::ui::MenuItem { text: "Keybinds >".to_string(), command: "__SUBMENU__keybinds".to_string() });
+        items.push(crate::ui::MenuItem { text: "Settings".to_string(), command: ".settings".to_string() });
+        items.push(crate::ui::MenuItem { text: "Windows >".to_string(), command: "__SUBMENU__windows".to_string() });
+
+        // Define submenu contents
+        self.menu_categories.insert(
+            "colors".to_string(),
+            vec![
+                crate::ui::MenuItem { text: "Add color".to_string(), command: ".addcolor".to_string() },
+                crate::ui::MenuItem { text: "Browse colors".to_string(), command: ".colors".to_string() },
+                crate::ui::MenuItem { text: "Add spellcolor".to_string(), command: ".addspellcolor".to_string() },
+                crate::ui::MenuItem { text: "Browse spellcolors".to_string(), command: ".spellcolors".to_string() },
+            ]
+        );
+
+        self.menu_categories.insert(
+            "highlights".to_string(),
+            vec![
+                crate::ui::MenuItem { text: "Add highlight".to_string(), command: ".addhighlight".to_string() },
+                crate::ui::MenuItem { text: "Browse highlights".to_string(), command: ".highlights".to_string() },
+            ]
+        );
+
+        self.menu_categories.insert(
+            "keybinds".to_string(),
+            vec![
+                crate::ui::MenuItem { text: "Add keybind".to_string(), command: ".addkeybind".to_string() },
+                crate::ui::MenuItem { text: "Browse keybinds".to_string(), command: ".keybinds".to_string() },
+            ]
+        );
+
+        self.menu_categories.insert(
+            "windows".to_string(),
+            vec![
+                crate::ui::MenuItem { text: "Add window".to_string(), command: ".addwindow".to_string() },
+                crate::ui::MenuItem { text: "Browse windows".to_string(), command: ".editwindow".to_string() },
+            ]
+        );
+
+        // Calculate centered position based on terminal size and menu size
+        let (term_w, term_h) = match crossterm::terminal::size() {
+            Ok(sz) => (sz.0, sz.1),
+            Err(_) => (80, 24),
+        };
+
+        let max_width = items.iter().map(|i| i.text.len()).max().unwrap_or(20).min(60) as u16;
+        let menu_width = max_width + 4; // padding + borders
+        let menu_height = (items.len() as u16) + 2; // items + borders
+
+        let pos_x = term_w.saturating_sub(menu_width) / 2;
+        let pos_y = term_h.saturating_sub(menu_height) / 2;
+
+        self.popup_menu = Some(crate::ui::PopupMenu::new(items, (pos_x, pos_y)));
+        self.submenu = None;
+        self.nested_submenu = None;
     }
 
     /// Request a context menu for a game object
@@ -3865,6 +3934,8 @@ impl App {
                     form.render(f.area(), f.buffer_mut());
                 }
 
+                // UI color editor removed
+
                 // Render window editor as popup (if open)
                 if self.input_mode == InputMode::WindowEditor {
                     self.window_editor.render(f.area(), f.buffer_mut(), &self.config);
@@ -4037,7 +4108,11 @@ impl App {
                     if let Some(ref menu) = self.nested_submenu {
                         if let Some(command) = menu.get_selected_command() {
                             debug!("Nested submenu item selected via Enter: {}", command);
-                            command_tx.send(command)?;
+                            if command.starts_with('.') {
+                                self.handle_dot_command(&command, Some(command_tx));
+                            } else {
+                                command_tx.send(command)?;
+                            }
                             self.popup_menu = None;
                             self.submenu = None;
                             self.nested_submenu = None;
@@ -4088,7 +4163,11 @@ impl App {
                             }
 
                             debug!("Submenu item selected via Enter: {}", command);
-                            command_tx.send(command)?;
+                            if command.starts_with('.') {
+                                self.handle_dot_command(&command, Some(command_tx));
+                            } else {
+                                command_tx.send(command)?;
+                            }
                             self.popup_menu = None;
                             self.submenu = None;
                         }
@@ -4141,7 +4220,11 @@ impl App {
                             }
 
                             debug!("Menu item selected via Enter: {}", command);
-                            command_tx.send(command)?;
+                            if command.starts_with('.') {
+                                self.handle_dot_command(&command, Some(command_tx));
+                            } else {
+                                command_tx.send(command)?;
+                            }
                             self.popup_menu = None;
                         }
                     }
@@ -4257,6 +4340,7 @@ impl App {
             return self.handle_spell_color_form_input(key, modifiers);
         }
 
+
         // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
         if self.input_mode == InputMode::WindowEditor {
             // Allow Ctrl+C to quit
@@ -4324,18 +4408,36 @@ impl App {
             if let Some(result) = self.window_editor.handle_key(key_event) {
                 match result {
                     WindowEditorResult::Save { mut window, is_new, original_name } => {
-                        // Resolve color names to hex codes
-                        if let Some(ref border_color) = window.border_color {
-                            window.border_color = self.config.resolve_color(border_color);
-                        }
-                        if let Some(ref bg_color) = window.background_color {
-                            window.background_color = self.config.resolve_color(bg_color);
-                        }
-                        if let Some(ref bar_color) = window.bar_color {
-                            window.bar_color = self.config.resolve_color(bar_color);
-                        }
-                        if let Some(ref bar_bg_color) = window.bar_background_color {
-                            window.bar_background_color = self.config.resolve_color(bar_bg_color);
+                        // Resolve color names to hex codes for all color fields
+                        let mut resolve_opt = |v: &mut Option<String>| {
+                            if let Some(ref s) = v.clone() {
+                                if let Some(resolved) = self.config.resolve_color(s) { *v = Some(resolved); }
+                            }
+                        };
+
+                        resolve_opt(&mut window.border_color);
+                        resolve_opt(&mut window.background_color);
+                        resolve_opt(&mut window.bar_color);
+                        resolve_opt(&mut window.bar_background_color);
+                        resolve_opt(&mut window.text_color);
+                        resolve_opt(&mut window.tab_active_color);
+                        resolve_opt(&mut window.tab_inactive_color);
+                        resolve_opt(&mut window.tab_unread_color);
+                        resolve_opt(&mut window.compass_active_color);
+                        resolve_opt(&mut window.compass_inactive_color);
+                        resolve_opt(&mut window.effect_default_color);
+                        resolve_opt(&mut window.injury_default_color);
+                        resolve_opt(&mut window.injury1_color);
+                        resolve_opt(&mut window.injury2_color);
+                        resolve_opt(&mut window.injury3_color);
+                        resolve_opt(&mut window.scar1_color);
+                        resolve_opt(&mut window.scar2_color);
+                        resolve_opt(&mut window.scar3_color);
+
+                        if let Some(ref mut vec_colors) = window.indicator_colors {
+                            for c in vec_colors.iter_mut() {
+                                if let Some(resolved) = self.config.resolve_color(c) { *c = resolved; }
+                            }
                         }
 
                         // Special handling for command_input
@@ -4508,7 +4610,20 @@ impl App {
             if let Some(result) = form.handle_key(key_event) {
                 use crate::ui::FormResult;
                 match result {
-                    FormResult::Save { name, pattern } => {
+                    FormResult::Save { name, mut pattern } => {
+                        // Resolve color names to hex for fg/bg before saving
+                        let is_hex = |s: &str| -> bool { s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit()) };
+                        if let Some(ref fg) = pattern.fg.clone() {
+                            if let Some(resolved) = self.config.resolve_color(fg) {
+                                if is_hex(&resolved) { pattern.fg = Some(resolved); }
+                            }
+                        }
+                        if let Some(ref bg) = pattern.bg.clone() {
+                            if let Some(resolved) = self.config.resolve_color(bg) {
+                                if is_hex(&resolved) { pattern.bg = Some(resolved); }
+                            }
+                        }
+
                         // Save to config
                         self.config.highlights.insert(name.clone(), pattern);
                         if let Err(e) = self.config.save(None) {
@@ -5163,6 +5278,102 @@ impl App {
 
     fn handle_spell_color_form_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
         if let Some(ref mut form) = self.spell_color_form {
+            // Intercept Ctrl+S at app level to match other editors' behavior
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                if let KeyCode::Char(c) = key {
+                    if c == 's' || c == 'S' {
+                        if let Some(result) = form.try_save() {
+                            use crate::ui::SpellColorFormResult;
+                            match result {
+                                SpellColorFormResult::Save(spell_color) => {
+                                    // Resolve color names to hex and validate
+                                    let mut sc = spell_color.clone();
+
+                                    let is_hex = |s: &str| -> bool {
+                                        s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+                                    };
+
+                                    // Resolve bar color (primary) from either bar_color or legacy color
+                                    let input_bar = sc.bar_color.clone().or_else(|| if sc.color.is_empty() { None } else { Some(sc.color.clone()) });
+                                    if let Some(input) = input_bar {
+                                        if let Some(resolved) = self.config.resolve_color(&input) {
+                                            if is_hex(&resolved) {
+                                                sc.bar_color = Some(resolved.clone());
+                                                sc.color = resolved; // keep legacy in sync
+                                            } else {
+                                                self.add_system_message(&format!("Invalid bar color '{}'. Use #RRGGBB or a palette name.", input));
+                                                return Ok(());
+                                            }
+                                        } else {
+                                            self.add_system_message(&format!("Invalid bar color '{}'. Use #RRGGBB or a palette name.", input));
+                                            return Ok(());
+                                        }
+                                    } else {
+                                        sc.bar_color = None;
+                                        sc.color.clear();
+                                    }
+
+                                    // Resolve text color
+                                    if let Some(input) = sc.text_color.clone() {
+                                        if input.is_empty() {
+                                            sc.text_color = None;
+                                        } else if let Some(resolved) = self.config.resolve_color(&input) {
+                                            if is_hex(&resolved) {
+                                                sc.text_color = Some(resolved);
+                                            } else {
+                                                self.add_system_message(&format!("Invalid text color '{}'. Use #RRGGBB or a palette name.", input));
+                                                return Ok(());
+                                            }
+                                        }
+                                    }
+
+                                    // Resolve background color
+                                    if let Some(input) = sc.bg_color.clone() {
+                                        if input.is_empty() {
+                                            sc.bg_color = None;
+                                        } else if let Some(resolved) = self.config.resolve_color(&input) {
+                                            if is_hex(&resolved) {
+                                                sc.bg_color = Some(resolved);
+                                            } else {
+                                                self.add_system_message(&format!("Invalid background color '{}'. Use #RRGGBB or a palette name.", input));
+                                                return Ok(());
+                                            }
+                                        }
+                                    }
+
+                                    // Add or update spell color in config (same logic as below)
+                                    let mut replaced_index = None;
+                                    for spell_id in &spell_color.spells {
+                                        if let Some(idx) = self.config.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
+                                            replaced_index = Some(idx);
+                                            break;
+                                        }
+                                    }
+                                    if let Some(idx) = replaced_index {
+                                        self.config.spell_colors[idx] = sc.clone();
+                                    } else {
+                                        self.config.spell_colors.push(sc.clone());
+                                    }
+                                    if let Err(e) = self.config.save(self.config.character.as_deref()) {
+                                        self.add_system_message(&format!("Failed to save spell color: {}", e));
+                                    } else {
+                                        let spell_ids = sc.spells.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+                                        self.add_system_message(&format!("Spell color saved for spells: {}", spell_ids));
+                                    }
+                                    self.spell_color_form = None;
+                                    self.input_mode = InputMode::Normal;
+                                }
+                                SpellColorFormResult::Delete(_) => { /* not used on Ctrl+S */ }
+                                SpellColorFormResult::Cancel => { /* ignore */ }
+                            }
+                        } else {
+                            // Provide feedback when validation fails (previously silent)
+                            self.add_system_message("Spell color form: enter spell IDs like 905,509 and colors as #RRGGBB or palette names");
+                        }
+                        return Ok(());
+                    }
+                }
+            }
             // Create crossterm KeyEvent directly (form expects crossterm::event::KeyEvent)
             use crossterm::event as ct_event;
 
@@ -5178,6 +5389,60 @@ impl App {
 
                 match result {
                     SpellColorFormResult::Save(spell_color) => {
+                        // Resolve color names to hex and validate
+                        let mut sc = spell_color.clone();
+
+                        let is_hex = |s: &str| -> bool {
+                            s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+                        };
+
+                        // Resolve bar color (primary)
+                        let input_bar = sc.bar_color.clone().or_else(|| if sc.color.is_empty() { None } else { Some(sc.color.clone()) });
+                        if let Some(input) = input_bar {
+                            if let Some(resolved) = self.config.resolve_color(&input) {
+                                if is_hex(&resolved) {
+                                    sc.bar_color = Some(resolved.clone());
+                                    sc.color = resolved;
+                                } else {
+                                    self.add_system_message(&format!("Invalid bar color '{}'. Use #RRGGBB or a palette name.", input));
+                                    return Ok(());
+                                }
+                            } else {
+                                self.add_system_message(&format!("Invalid bar color '{}'. Use #RRGGBB or a palette name.", input));
+                                return Ok(());
+                            }
+                        } else {
+                            sc.bar_color = None;
+                            sc.color.clear();
+                        }
+
+                        // Resolve text color
+                        if let Some(input) = sc.text_color.clone() {
+                            if input.is_empty() {
+                                sc.text_color = None;
+                            } else if let Some(resolved) = self.config.resolve_color(&input) {
+                                if is_hex(&resolved) {
+                                    sc.text_color = Some(resolved);
+                                } else {
+                                    self.add_system_message(&format!("Invalid text color '{}'. Use #RRGGBB or a palette name.", input));
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        // Resolve background color
+                        if let Some(input) = sc.bg_color.clone() {
+                            if input.is_empty() {
+                                sc.bg_color = None;
+                            } else if let Some(resolved) = self.config.resolve_color(&input) {
+                                if is_hex(&resolved) {
+                                    sc.bg_color = Some(resolved);
+                                } else {
+                                    self.add_system_message(&format!("Invalid background color '{}'. Use #RRGGBB or a palette name.", input));
+                                    return Ok(());
+                                }
+                            }
+                        }
                         // Add or update spell color in config
                         // First check if any of these spell IDs already exist
                         let mut replaced_index = None;
@@ -5190,15 +5455,15 @@ impl App {
 
                         // If we found an existing entry, replace it; otherwise add new
                         if let Some(idx) = replaced_index {
-                            self.config.spell_colors[idx] = spell_color.clone();
+                            self.config.spell_colors[idx] = sc.clone();
                         } else {
-                            self.config.spell_colors.push(spell_color.clone());
+                            self.config.spell_colors.push(sc.clone());
                         }
 
                         if let Err(e) = self.config.save(self.config.character.as_deref()) {
                             self.add_system_message(&format!("Failed to save spell color: {}", e));
                         } else {
-                            let spell_ids = spell_color.spells.iter()
+                            let spell_ids = sc.spells.iter()
                                 .map(|id| id.to_string())
                                 .collect::<Vec<_>>()
                                 .join(", ");
@@ -7321,6 +7586,33 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
+            key: "default_border_color".to_string(),
+            display_name: "Default Border Color".to_string(),
+            value: SettingValue::Color(self.config.ui.default_border_color.clone()),
+            description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "focused_border_color".to_string(),
+            display_name: "Focused Border Color".to_string(),
+            value: SettingValue::Color(self.config.ui.focused_border_color.clone()),
+            description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "default_text_color".to_string(),
+            display_name: "Default Text Color".to_string(),
+            value: SettingValue::Color(self.config.ui.default_text_color.clone()),
+            description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
             key: "countdown_icon".to_string(),
             display_name: "Countdown Icon".to_string(),
             value: SettingValue::String(self.config.ui.countdown_icon.clone()),
@@ -7343,6 +7635,15 @@ impl App {
             display_name: "Selection Enabled".to_string(),
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
             description: Some("Enable text selection with mouse".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "selection_bg_color".to_string(),
+            display_name: "Selection Highlight Color".to_string(),
+            value: SettingValue::Color(self.config.ui.selection_bg_color.clone()),
+            description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -7481,6 +7782,33 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
+            key: "default_border_color".to_string(),
+            display_name: "Default Border Color".to_string(),
+            value: SettingValue::Color(self.config.ui.default_border_color.clone()),
+            description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "focused_border_color".to_string(),
+            display_name: "Focused Border Color".to_string(),
+            value: SettingValue::Color(self.config.ui.focused_border_color.clone()),
+            description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "default_text_color".to_string(),
+            display_name: "Default Text Color".to_string(),
+            value: SettingValue::Color(self.config.ui.default_text_color.clone()),
+            description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
             key: "countdown_icon".to_string(),
             display_name: "Countdown Icon".to_string(),
             value: SettingValue::String(self.config.ui.countdown_icon.clone()),
@@ -7503,6 +7831,15 @@ impl App {
             display_name: "Selection Enabled".to_string(),
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
             description: Some("Enable text selection with mouse".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "selection_bg_color".to_string(),
+            display_name: "Selection Highlight Color".to_string(),
+            value: SettingValue::Color(self.config.ui.selection_bg_color.clone()),
+            description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -7635,7 +7972,7 @@ impl App {
         let form = ColorForm::new_create();
         self.color_form = Some(form);
         self.input_mode = InputMode::ColorForm;
-        self.add_system_message("Add new color (Tab to navigate fields, Enter to save, Esc to cancel)");
+        self.add_system_message("Add new color (Tab to navigate fields, Ctrl+S to save, Esc to cancel)");
     }
 
     fn open_color_form_edit(&mut self, color: crate::config::PaletteColor) {
@@ -7644,7 +7981,7 @@ impl App {
         let form = ColorForm::new_edit(&color);
         self.color_form = Some(form);
         self.input_mode = InputMode::ColorForm;
-        self.add_system_message("Edit color (Tab to navigate fields, Enter to save, Esc to cancel)");
+        self.add_system_message("Edit color (Tab to navigate fields, Ctrl+S to save, Esc to cancel)");
     }
 
     /// Validate a setting value
@@ -7683,42 +8020,43 @@ impl App {
                     Err("Volume must be a valid number".to_string())
                 }
             }
-            // Preset and prompt colors (special "fg bg" format validation)
+            // Preset and prompt colors (special "fg bg" format validation). Accept #hex, palette names, or '-'.
             key if key.starts_with("preset_") || key.starts_with("prompt_") => {
                 let parts: Vec<&str> = value.split_whitespace().collect();
                 if parts.len() != 2 {
                     return Err("Format must be: #RRGGBB #RRGGBB (fg bg) or - for no color".to_string());
                 }
                 for (i, part) in parts.iter().enumerate() {
-                    if *part == "-" {
-                        continue; // "-" is valid for no color
-                    }
-                    if !part.starts_with('#') {
-                        return Err(format!("{} color must start with # or be -", if i == 0 { "Foreground" } else { "Background" }));
-                    }
-                    let hex = &part[1..];
-                    if hex.len() != 6 && hex.len() != 8 {
-                        return Err(format!("{} color must be #RRGGBB or #RRGGBBAA", if i == 0 { "Foreground" } else { "Background" }));
-                    }
-                    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-                        return Err(format!("{} color must contain only hex digits", if i == 0 { "Foreground" } else { "Background" }));
+                    if *part == "-" { continue; }
+                    let is_hex = part.starts_with('#')
+                        && (part.len() == 7 || part.len() == 9)
+                        && part[1..].chars().all(|c| c.is_ascii_hexdigit());
+                    if is_hex { continue; }
+                    // Allow palette names that resolve to #RRGGBB
+                    if let Some(resolved) = self.config.resolve_color(part) {
+                        let r = resolved.as_str();
+                        if !(r.starts_with('#') && r.len() == 7 && r[1..].chars().all(|c| c.is_ascii_hexdigit())) {
+                            return Err(format!("{} color must be #RRGGBB, #RRGGBBAA, palette name, or '-'", if i == 0 { "Foreground" } else { "Background" }));
+                        }
+                    } else {
+                        return Err(format!("{} color must be #RRGGBB, #RRGGBBAA, palette name, or '-'", if i == 0 { "Foreground" } else { "Background" }));
                     }
                 }
                 Ok(())
             }
-            // Color validation (hex colors for single colors)
+            // Color validation (single colors) – accept #hex or palette name
             key if key.contains("color") || key.starts_with("spell_color_") || key.starts_with("prompt_") => {
-                if !value.starts_with('#') {
-                    return Err("Color must start with #".to_string());
+                let is_hex = value.starts_with('#')
+                    && (value.len() == 7 || value.len() == 9)
+                    && value[1..].chars().all(|c| c.is_ascii_hexdigit());
+                if is_hex { return Ok(()); }
+                if let Some(resolved) = self.config.resolve_color(value) {
+                    let r = resolved.as_str();
+                    if r.starts_with('#') && r.len() == 7 && r[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+                        return Ok(());
+                    }
                 }
-                let hex = &value[1..];
-                if hex.len() != 6 && hex.len() != 8 {
-                    return Err("Color must be #RRGGBB or #RRGGBBAA format".to_string());
-                }
-                if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-                    return Err("Color must contain only hex digits (0-9, A-F)".to_string());
-                }
-                Ok(())
+                Err("Color must be #RRGGBB or palette name".to_string())
             }
             _ => Ok(()),
         }
@@ -7748,7 +8086,28 @@ impl App {
             }
             // UI settings
             "command_echo_color" => {
-                self.config.ui.command_echo_color = value.to_string();
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.ui.command_echo_color = resolved;
+                true
+            }
+            "default_border_color" => {
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.ui.default_border_color = resolved;
+                true
+            }
+            "focused_border_color" => {
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.ui.focused_border_color = resolved;
+                true
+            }
+            "default_text_color" => {
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.ui.default_text_color = resolved;
+                true
+            }
+            "selection_bg_color" => {
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.ui.selection_bg_color = resolved;
                 true
             }
             "countdown_icon" => {
@@ -7800,8 +8159,9 @@ impl App {
             key if key.starts_with("spell_color_") => {
                 if let Some(idx_str) = key.strip_prefix("spell_color_") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
+                        let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
                         if let Some(spell_range) = self.config.spell_colors.get_mut(idx) {
-                            spell_range.color = value.to_string();
+                            spell_range.color = resolved;
                             true
                         } else {
                             false
@@ -7819,9 +8179,11 @@ impl App {
                     // Parse "fg bg" format
                     let parts: Vec<&str> = value.split_whitespace().collect();
                     if parts.len() == 2 {
+                        let fg_resolved = if parts[0] == "-" { None } else { self.config.resolve_color(parts[0]) };
+                        let bg_resolved = if parts[1] == "-" { None } else { self.config.resolve_color(parts[1]) };
                         if let Some(prompt) = self.config.ui.prompt_colors.iter_mut().find(|p| p.character == character) {
-                            prompt.fg = if parts[0] == "-" { None } else { Some(parts[0].to_string()) };
-                            prompt.bg = if parts[1] == "-" { None } else { Some(parts[1].to_string()) };
+                            prompt.fg = fg_resolved;
+                            prompt.bg = bg_resolved;
                             prompt.color = None; // Clear legacy field
                             true
                         } else {
@@ -7841,9 +8203,11 @@ impl App {
                     // Parse "fg bg" format
                     let parts: Vec<&str> = value.split_whitespace().collect();
                     if parts.len() == 2 {
+                        let fg_resolved = if parts[0] == "-" { None } else { self.config.resolve_color(parts[0]) };
+                        let bg_resolved = if parts[1] == "-" { None } else { self.config.resolve_color(parts[1]) };
                         if let Some(preset) = self.config.presets.get_mut(preset_name) {
-                            preset.fg = if parts[0] == "-" { None } else { Some(parts[0].to_string()) };
-                            preset.bg = if parts[1] == "-" { None } else { Some(parts[1].to_string()) };
+                            preset.fg = fg_resolved;
+                            preset.bg = bg_resolved;
                             true
                         } else {
                             false
@@ -7870,3 +8234,8 @@ impl App {
         result
     }
 }
+
+
+
+
+

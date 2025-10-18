@@ -380,6 +380,13 @@ pub struct UiConfig {
     pub layout: LayoutConfig,
     #[serde(default = "default_command_echo_color")]
     pub command_echo_color: String,
+    // Global UI color defaults
+    #[serde(default = "default_border_color_default")]
+    pub default_border_color: String,  // Fallback border color when a window doesn't specify one
+    #[serde(default = "default_focused_border_color")]
+    pub focused_border_color: String,  // Border color to use when focused/active
+    #[serde(default = "default_text_color_default")]
+    pub default_text_color: String,    // Default text color when unspecified
     #[serde(default)]
     pub prompt_colors: Vec<PromptColor>,
     #[serde(default = "default_countdown_icon")]
@@ -771,6 +778,18 @@ fn default_buffer_size() -> usize {
 
 fn default_command_echo_color() -> String {
     "#ffffff".to_string()
+}
+
+fn default_border_color_default() -> String {
+    "#00ffff".to_string() // cyan
+}
+
+fn default_focused_border_color() -> String {
+    "#ffff00".to_string() // yellow
+}
+
+fn default_text_color_default() -> String {
+    "#ffffff".to_string() // white
 }
 
 /// Get default keybindings (based on ProfanityFE defaults)
@@ -3774,6 +3793,9 @@ impl Default for Config {
                 show_timestamps: false,
                 layout: LayoutConfig::default(),
                 command_echo_color: default_command_echo_color(),
+                default_border_color: default_border_color_default(),
+                focused_border_color: default_focused_border_color(),
+                default_text_color: default_text_color_default(),
                 prompt_colors: vec![
                     PromptColor { character: "R".to_string(), fg: Some("#ff0000".to_string()), bg: None, color: None }, // Red for Roundtime
                     PromptColor { character: "S".to_string(), fg: Some("#ffff00".to_string()), bg: None, color: None }, // Yellow for Stunned

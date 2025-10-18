@@ -42,14 +42,14 @@ impl SpellColorFormWidget {
         spell_ids.set_placeholder_text("e.g., 905, 509, 1720");
 
         let mut bar_color = TextArea::default();
-        bar_color.set_placeholder_text("e.g., #ff0000");
+        bar_color.set_placeholder_text("e.g., #ff0000 or palette name");
 
         let mut text_color = TextArea::default();
-        text_color.set_placeholder_text("e.g., #ffffff");
+        text_color.set_placeholder_text("e.g., #ffffff or name");
         text_color.insert_str("#ffffff");
 
         let mut bg_color = TextArea::default();
-        bg_color.set_placeholder_text("e.g., #000000");
+        bg_color.set_placeholder_text("e.g., #000000 or name");
         bg_color.insert_str("#000000");
 
         Self {
@@ -100,13 +100,14 @@ impl SpellColorFormWidget {
     }
 
     pub fn input(&mut self, key: KeyEvent) -> Option<SpellColorFormResult> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            return None;
-        }
-
         match key.code {
             KeyCode::Esc => {
                 return Some(SpellColorFormResult::Cancel);
+            }
+            KeyCode::Char('c') => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return self.save();
+                }
             }
             KeyCode::BackTab => {
                 self.previous_field();
@@ -117,17 +118,9 @@ impl SpellColorFormWidget {
                 return None;
             }
             KeyCode::Enter => {
-                // Save button is field 4, Delete is 5, Cancel is 6
-                if self.focused_field == 4 {
-                    return self.save();
-                } else if self.focused_field == 5 {
-                    if let FormMode::Edit(index) = self.mode {
-                        return Some(SpellColorFormResult::Delete(index));
-                    }
-                } else if self.focused_field == 6 {
-                    return Some(SpellColorFormResult::Cancel);
-                }
-                // If Enter is pressed on a text field, pass it through to TextArea
+                // Move to next field
+                self.next_field();
+                return None;
             }
             _ => {
                 // Convert crossterm KeyEvent to ratatui KeyEvent for TextArea
@@ -244,16 +237,8 @@ impl SpellColorFormWidget {
             return None; // Invalid input
         }
 
-        // Validate colors (optional hex colors)
-        if !bar_color_str.is_empty() && !self.is_valid_hex_color(&bar_color_str) {
-            return None;
-        }
-        if !text_color_str.is_empty() && !self.is_valid_hex_color(&text_color_str) {
-            return None;
-        }
-        if !bg_color_str.is_empty() && !self.is_valid_hex_color(&bg_color_str) {
-            return None;
-        }
+        // Allow color names or hex; final resolution to hex occurs at app level
+        // (App will resolve palette names to hex and validate before saving.)
 
         let spell_color = SpellColorRange {
             spells: spell_ids,
@@ -264,6 +249,11 @@ impl SpellColorFormWidget {
         };
 
         Some(SpellColorFormResult::Save(spell_color))
+    }
+
+    // Expose a safe save attempt for external handlers (e.g., app-level Ctrl+S interception)
+    pub fn try_save(&self) -> Option<SpellColorFormResult> {
+        self.save()
     }
 
     fn is_valid_hex_color(&self, color: &str) -> bool {
@@ -280,8 +270,8 @@ impl SpellColorFormWidget {
     pub fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let (col, row) = (event.column, event.row);
         let (popup_col, popup_row) = self.popup_position;
-        let popup_width = 70;
-        let popup_height = 20;
+        let popup_width = 53;
+        let popup_height = 9;
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -361,8 +351,8 @@ impl SpellColorFormWidget {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let (popup_col, popup_row) = self.popup_position;
-        let popup_width = 70;
-        let popup_height = 20;
+        let popup_width = 52;
+        let popup_height = 9;
 
         // Draw black background
         for row in popup_row..popup_row + popup_height {
@@ -409,32 +399,22 @@ impl SpellColorFormWidget {
 
         // Spell IDs field (height 3)
         Self::render_text_field(focused, 0, "Spell IDs:", &mut self.spell_ids, popup_col + 2, y, popup_width - 4, buf);
-        y += 3;
+        y += 1;
 
-        // Bar Color field (height 3)
-        Self::render_text_field(focused, 1, "Bar Color:", &mut self.bar_color, popup_col + 2, y, popup_width - 12, buf);
-        // Color preview
-        self.render_color_preview(&bar_color_val, popup_col + popup_width - 8, y + 1, buf);
-        y += 3;
+        // Bar Color field (10 chars) + preview
+        Self::render_color_field(focused, 1, "Bar Color:", &mut self.bar_color, &bar_color_val, popup_col + 2, y, buf);
+        y += 1;
 
-        // Text Color field (height 3)
-        Self::render_text_field(focused, 2, "Text Color:", &mut self.text_color, popup_col + 2, y, popup_width - 12, buf);
-        // Color preview
-        self.render_color_preview(&text_color_val, popup_col + popup_width - 8, y + 1, buf);
-        y += 3;
+        // Text Color field (10 chars) + preview
+        Self::render_color_field(focused, 2, "Text Color:", &mut self.text_color, &text_color_val, popup_col + 2, y, buf);
+        y += 1;
 
-        // Background Color field (height 3)
-        Self::render_text_field(focused, 3, "Background:", &mut self.bg_color, popup_col + 2, y, popup_width - 12, buf);
-        // Color preview
-        self.render_color_preview(&bg_color_val, popup_col + popup_width - 8, y + 1, buf);
-        y += 4;
-
-        // Buttons
-        self.render_buttons(popup_col + 2, y, buf);
+        // Background Color field (10 chars) + preview
+        Self::render_color_field(focused, 3, "Background:", &mut self.bg_color, &bg_color_val, popup_col + 2, y, buf);
         y += 2;
 
         // Status bar
-        let status = "Tab/Shift+Tab: Navigate | Enter: Select | Esc: Cancel";
+        let status = "Tab:Next  Shift+Tab:Prev  Ctrl+S:Save  Esc:Close";
         buf.set_string(popup_col + 2, y, status, Style::default().fg(Color::Gray));
     }
 
@@ -448,43 +428,87 @@ impl SpellColorFormWidget {
         width: u16,
         buf: &mut Buffer,
     ) {
-        // Label
-        let label_span = Span::styled(label, Style::default().fg(Color::White));
+        // Label with focus color (yellow when focused, darker cyan otherwise)
+        let is_focused = focused_field == field_id;
+        let label_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Rgb(100, 149, 237))
+        };
+        let label_span = Span::styled(label, label_style);
         let label_area = Rect { x, y, width: 14, height: 1 };
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        // Set style based on focus
-        let border_style = if focused_field == field_id {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        // Set text style without any modifiers - must be plain with no underline
-        textarea.set_style(Style::default().fg(Color::White));
-        textarea.set_cursor_style(Style::default().bg(Color::Yellow));
+        // Input style: cyan text on maroon; focused -> gold background
+        let base_style = Style::default().fg(Color::Cyan).bg(Color::Rgb(53, 5, 5));
+        textarea.set_style(base_style);
+        textarea.set_cursor_style(Style::default().bg(Color::White).fg(Color::Black));
         textarea.set_cursor_line_style(Style::default());
 
         // Set placeholder style to match (no underline)
-        textarea.set_placeholder_style(Style::default().fg(Color::DarkGray));
+        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(Color::Rgb(53, 5, 5)));
 
-        // Input area - TextArea needs height 3 minimum (border + text + cursor)
+        // Input area - single line
         let input_area = Rect {
-            x: x + 14,
+            x: x + 12,
             y,
-            width: width.saturating_sub(14),
-            height: 3,
+            width: width.saturating_sub(12),
+            height: 1,
         };
 
-        // Set border and style
-        textarea.set_block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-        );
+        // No border for inputs
+        textarea.set_block(Block::default().borders(Borders::NONE).style(base_style));
 
         RatatuiWidget::render(&*textarea, input_area, buf);
+    }
+
+    fn render_color_field(
+        focused_field: usize,
+        field_id: usize,
+        label: &str,
+        textarea: &mut TextArea,
+        color_val: &str,
+        x: u16,
+        y: u16,
+        buf: &mut Buffer,
+    ) {
+        // Label with focus color (yellow when focused, darker cyan otherwise)
+        let is_focused = focused_field == field_id;
+        let label_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Rgb(100, 149, 237))
+        };
+        let label_span = Span::styled(label, label_style);
+        let label_area = Rect { x, y, width: 14, height: 1 };
+        let label_para = Paragraph::new(Line::from(label_span));
+        RatatuiWidget::render(label_para, label_area, buf);
+
+        // Styles
+        let base_style = Style::default().fg(Color::Cyan).bg(Color::Rgb(53, 5, 5));
+        textarea.set_style(base_style);
+        textarea.set_cursor_style(Style::default().bg(Color::White).fg(Color::Black));
+        textarea.set_cursor_line_style(Style::default());
+        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(Color::Rgb(53, 5, 5)));
+
+        // Fixed 10 char input
+        let input_area = Rect { x: x + 12, y, width: 10, height: 1 };
+        textarea.set_block(Block::default().borders(Borders::NONE).style(base_style));
+        RatatuiWidget::render(&*textarea, input_area, buf);
+
+        // Space then preview swatch
+        let preview_x = input_area.x + input_area.width + 1;
+        if color_val.starts_with('#') && color_val.len() == 7 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                u8::from_str_radix(&color_val[1..3], 16),
+                u8::from_str_radix(&color_val[3..5], 16),
+                u8::from_str_radix(&color_val[5..7], 16),
+            ) {
+                let style = Style::default().bg(Color::Rgb(r, g, b));
+                buf.set_string(preview_x, y, "    ", style);
+            }
+        }
     }
 
     fn render_color_preview(&self, color_str: &str, x: u16, y: u16, buf: &mut Buffer) {

@@ -163,9 +163,14 @@ impl InjuryDoll {
             return;
         }
 
+        // Determine background color to reuse for filler and glyph cells
+        let bg_color = self
+            .background_color
+            .as_ref()
+            .map(|color_hex| Self::parse_color(color_hex));
+
         // Fill background if explicitly set
-        if let Some(ref color_hex) = self.background_color {
-            let bg_color = Self::parse_color(color_hex);
+        if let Some(bg_color) = bg_color {
             for row in 0..inner_area.height {
                 for col in 0..inner_area.width {
                     let x = inner_area.x + col;
@@ -231,7 +236,9 @@ impl InjuryDoll {
                 let color = self.get_injury_color(body_part);
                 buf[(x, y)].set_char(*ch);
                 buf[(x, y)].set_fg(color);
-                buf[(x, y)].set_bg(bg_color); 
+                if let Some(bg) = bg_color {
+                    buf[(x, y)].set_bg(bg);
+                }
             }
         }
 
@@ -253,7 +260,9 @@ impl InjuryDoll {
                 if x < buf.area().width && y < buf.area().height {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(color);
-                    buf[(x, y)].set_bg(bg_color);
+                    if let Some(bg) = bg_color {
+                        buf[(x, y)].set_bg(bg);
+                    }
                 }
             }
         }

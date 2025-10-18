@@ -115,12 +115,9 @@ impl PopupMenu {
         // Build menu lines
         let lines: Vec<Line> = self.items.iter().enumerate().map(|(idx, item)| {
             let style = if idx == self.selected_index {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(Color::Black).bg(Color::Rgb(255, 215, 0)).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White).bg(Color::Black)
+                Style::default().fg(Color::Cyan).bg(Color::Black)
             };
 
             // Pad the text to fill the entire width
@@ -143,9 +140,9 @@ impl PopupMenu {
         let paragraph = Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title("Context Menu")
+                    .title("Menu")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(Color::Cyan))
                     .style(Style::default().bg(Color::Black))
             );
 

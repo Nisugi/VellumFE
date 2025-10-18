@@ -210,60 +210,40 @@ impl SpellColorBrowser {
         }
 
         // Status bar
-        let status = format!(
-            "↑/↓: Navigate | Enter: Edit | Del: Delete | Esc: Close  ({}/{})",
-            self.selected_index + 1,
-            self.entries.len()
-        );
+        let total = self.entries.len();
+        let current = if total == 0 { 0 } else { (self.selected_index + 1).min(total) };
+        let spacer = "                 "; // 17 spaces to align with color browser
+        let status = format!(" ↑/↓:Nav  Enter:Edit  Del:Del  {} Esc:Close  ({}/{}) ", spacer, current, total);
         buf.set_string(popup_col + 2, popup_row + popup_height - 2, &status, Style::default().fg(Color::Gray));
     }
 
     fn render_entry(&self, entry: &SpellColorEntry, x: u16, y: u16, width: u16, is_selected: bool, buf: &mut Buffer) {
         let base_style = if is_selected {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
+            Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(Color::Rgb(100, 149, 237)).bg(Color::Black)
         };
 
-        // Format: [bar_preview] [bg_preview] [spell, ids, here...]
-
-        // Bar color preview (4 chars + 2 brackets = 6 total)
-        let _bar_preview = if !entry.bar_color.is_empty() {
-            if self.parse_color(&entry.bar_color).is_some() {
-                format!("[{}]", "    ")
-            } else {
-                "[    ]".to_string()
-            }
+        // Format: bar(3) + 2 spaces + bg(3) + 2 spaces + details
+        let mut col = x;
+        // Bar color preview: 3 full blocks or " - " if empty/invalid
+        if let Some(color) = if !entry.bar_color.is_empty() { self.parse_color(&entry.bar_color) } else { None } {
+            buf.set_string(col, y, "███", Style::default().fg(color).bg(Color::Black));
         } else {
-            "[  - ]".to_string()
-        };
-
-        // Draw bar preview with background color
-        buf.set_string(x, y, "[", base_style);
-        if !entry.bar_color.is_empty() {
-            if let Some(color) = self.parse_color(&entry.bar_color) {
-                buf.set_string(x + 1, y, "    ", Style::default().bg(color));
-            } else {
-                buf.set_string(x + 1, y, "    ", base_style);
-            }
-        } else {
-            buf.set_string(x + 1, y, "  - ", base_style);
+            buf.set_string(col, y, " - ", base_style);
         }
-        buf.set_string(x + 5, y, "]", base_style);
-
-        // Background color preview (4 chars + 2 brackets = 6 total, +1 space before)
-        buf.set_string(x + 6, y, " ", base_style);
-        buf.set_string(x + 7, y, "[", base_style);
-        if !entry.bg_color.is_empty() {
-            if let Some(color) = self.parse_color(&entry.bg_color) {
-                buf.set_string(x + 8, y, "    ", Style::default().bg(color));
-            } else {
-                buf.set_string(x + 8, y, "    ", base_style);
-            }
+        col += 3;
+        buf.set_string(col, y, "  ", base_style); // 2 spaces between previews
+        col += 2;
+        // Background color preview: 3 full blocks or " - " if empty/invalid
+        if let Some(color) = if !entry.bg_color.is_empty() { self.parse_color(&entry.bg_color) } else { None } {
+            buf.set_string(col, y, "███", Style::default().fg(color).bg(Color::Black));
         } else {
-            buf.set_string(x + 8, y, "  - ", base_style);
+            buf.set_string(col, y, " - ", base_style);
         }
-        buf.set_string(x + 12, y, "]", base_style);
+        col += 3;
+        buf.set_string(col, y, "  ", base_style); // 2 spaces before details
+        col += 2;
 
         // Spell IDs (rest of the line)
         let spells_str = entry.spells.iter()
@@ -272,14 +252,15 @@ impl SpellColorBrowser {
             .join(", ");
 
         let spells_display = format!(" [{}]", spells_str);
-        let available_width = width.saturating_sub(14); // 14 chars used by previews
+        let used_cols = 3 + 2 + 3 + 2; // previews + spaces = 10
+        let available_width = width.saturating_sub(used_cols as u16) as usize;
         let truncated = if spells_display.len() > available_width as usize {
             format!("{}...", &spells_display[..available_width.saturating_sub(3) as usize])
         } else {
             spells_display
         };
 
-        buf.set_string(x + 14, y, &truncated, base_style);
+        buf.set_string(col, y, &truncated, base_style);
     }
 
     fn parse_color(&self, hex: &str) -> Option<Color> {
@@ -292,3 +273,5 @@ impl SpellColorBrowser {
         Some(Color::Rgb(r, g, b))
     }
 }
+
+
