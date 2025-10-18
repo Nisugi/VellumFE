@@ -505,7 +505,7 @@ impl TabbedTextWindow {
             for y in inner.y..inner.y + inner.height {
                 for x in inner.x..inner.x + inner.width {
                     if x < buf.area.width && y < buf.area.height {
-                        buf.get_mut(x, y).set_char(' ').set_bg(bg_color);
+                        buf[(x, y)].set_char(' ').set_bg(bg_color);
                     }
                 }
             }

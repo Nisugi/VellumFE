@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use std::collections::HashMap;
-use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players};
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
@@ -19,6 +19,7 @@ pub enum Widget {
     ActiveEffects(active_effects::ActiveEffects),
     Targets(Targets),
     Players(Players),
+    Spacer(Spacer),
 }
 
 impl Widget {
@@ -49,6 +50,9 @@ impl Widget {
                 w.render(area, buf);
             }
             Widget::Players(w) => {
+                w.render(area, buf);
+            }
+            Widget::Spacer(w) => {
                 w.render(area, buf);
             }
         }
@@ -88,6 +92,7 @@ impl Widget {
                     w.scroll_up();
                 }
             }
+            Widget::Spacer(_) => {}
             _ => {}
         }
     }
@@ -112,6 +117,7 @@ impl Widget {
                     w.scroll_down();
                 }
             }
+            Widget::Spacer(_) => {}
             _ => {}
         }
     }
@@ -121,6 +127,7 @@ impl Widget {
         match self {
             Widget::Text(w) => w.set_width(width),
             Widget::Tabbed(w) => w.update_inner_width(width),
+            Widget::Spacer(_) => {},
             _ => {}
         }
     }
@@ -141,6 +148,7 @@ impl Widget {
             Widget::ActiveEffects(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Targets(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Players(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::Spacer(w) => w.set_border_config(show_border, border_style, border_color),
         }
     }
 
@@ -198,6 +206,7 @@ impl Widget {
             Widget::ActiveEffects(w) => w.set_border_sides(border_sides),
             Widget::Targets(_) => {},
             Widget::Players(_) => {},
+            Widget::Spacer(_) => {},
         }
     }
 
@@ -217,6 +226,7 @@ impl Widget {
             Widget::ActiveEffects(w) => w.set_title(title),
             Widget::Targets(w) => w.set_title(title),
             Widget::Players(w) => w.set_title(title),
+            Widget::Spacer(_) => {},
         }
     }
 
@@ -249,6 +259,7 @@ impl Widget {
             Widget::Progress(w) => w.set_transparent_background(transparent),
             Widget::Countdown(w) => w.set_transparent_background(transparent),
             Widget::ActiveEffects(w) => w.set_transparent_background(transparent),
+            Widget::Spacer(w) => w.set_transparent_background(transparent),
             _ => {}
         }
     }
@@ -273,6 +284,7 @@ impl Widget {
             Widget::Hand(w) => w.set_background_color(color),
             Widget::Compass(w) => w.set_background_color(color),
             Widget::InjuryDoll(w) => w.set_background_color(color),
+            Widget::Spacer(w) => w.set_background_color(color),
             _ => {}
         }
     }
@@ -491,6 +503,11 @@ impl WindowManager {
 
             // Create the appropriate widget type
             let widget = match config.widget_type.as_str() {
+                "spacer" => {
+                    let mut spacer = Spacer::new(config.background_color.clone(), config.transparent_background);
+                    spacer.set_border_config(config.show_border, config.border_style.clone(), config.border_color.clone());
+                    Widget::Spacer(spacer)
+                }
                 "progress" => {
                     let mut progress_bar = ProgressBar::new(&title)
                         .with_border_config(
@@ -983,6 +1000,11 @@ impl WindowManager {
                 let title = config.title.clone().unwrap_or_else(|| config.name.clone());
 
                 let widget = match config.widget_type.as_str() {
+                    "spacer" => {
+                        let mut spacer = Spacer::new(config.background_color.clone(), config.transparent_background);
+                        spacer.set_border_config(config.show_border, config.border_style.clone(), config.border_color.clone());
+                        Widget::Spacer(spacer)
+                    }
                     "progress" => {
                         let mut progress_bar = ProgressBar::new(&title)
                             .with_border_config(
@@ -1412,6 +1434,10 @@ impl WindowManager {
                             // Update highlights
                             let highlights_vec: Vec<_> = self.highlights.values().cloned().collect();
                             text_window.set_highlights(highlights_vec);
+                        }
+                        Widget::Spacer(spacer) => {
+                            spacer.set_background_color(config.background_color.clone());
+                            spacer.set_transparent_background(config.transparent_background);
                         }
                         Widget::Hand(hand) => {
                             if let Some(ref icon) = config.hand_icon {

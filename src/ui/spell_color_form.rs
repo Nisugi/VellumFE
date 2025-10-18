@@ -30,7 +30,9 @@ pub struct SpellColorFormWidget {
     text_color: TextArea<'static>,
     bg_color: TextArea<'static>,
     popup_position: (u16, u16), // (col, row)
+    #[allow(unused)]
     pub is_dragging: bool,
+    #[allow(unused)]
     drag_offset: (i16, i16),
 }
 
@@ -274,6 +276,7 @@ impl SpellColorFormWidget {
         color[1..].chars().all(|c| c.is_ascii_hexdigit())
     }
 
+    #[allow(dead_code)]
     pub fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let (col, row) = (event.column, event.row);
         let (popup_col, popup_row) = self.popup_position;
@@ -481,7 +484,7 @@ impl SpellColorFormWidget {
                 .border_style(border_style)
         );
 
-        RatatuiWidget::render(textarea.widget(), input_area, buf);
+        RatatuiWidget::render(&*textarea, input_area, buf);
     }
 
     fn render_color_preview(&self, color_str: &str, x: u16, y: u16, buf: &mut Buffer) {

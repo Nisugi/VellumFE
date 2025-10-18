@@ -442,7 +442,7 @@ impl ColorForm {
                 .border_style(border_style)
         );
 
-        RatatuiWidget::render(textarea.widget(), input_area, buf);
+        RatatuiWidget::render(&*textarea, input_area, buf);
     }
 
     fn render_checkbox(&self, field_id: usize, label: &str, checked: bool, x: u16, y: u16, buf: &mut Buffer) {

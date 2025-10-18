@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -10,6 +10,7 @@ pub struct SpellColorEntry {
     pub index: usize,        // Index in config.spell_colors
     pub spells: Vec<u32>,
     pub bar_color: String,
+    #[allow(unused)]
     pub text_color: String,
     pub bg_color: String,
 }
@@ -19,7 +20,9 @@ pub struct SpellColorBrowser {
     selected_index: usize,
     scroll_offset: usize,
     popup_position: (u16, u16),
+    #[allow(unused)]
     pub is_dragging: bool,
+    #[allow(unused)]
     drag_offset: (i16, i16),
 }
 
@@ -90,6 +93,7 @@ impl SpellColorBrowser {
         }
     }
 
+    #[allow(dead_code)]
     pub fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let (col, row) = (event.column, event.row);
         let (popup_col, popup_row) = self.popup_position;
@@ -224,8 +228,8 @@ impl SpellColorBrowser {
         // Format: [bar_preview] [bg_preview] [spell, ids, here...]
 
         // Bar color preview (4 chars + 2 brackets = 6 total)
-        let bar_preview = if !entry.bar_color.is_empty() {
-            if let Some(color) = self.parse_color(&entry.bar_color) {
+        let _bar_preview = if !entry.bar_color.is_empty() {
+            if self.parse_color(&entry.bar_color).is_some() {
                 format!("[{}]", "    ")
             } else {
                 "[    ]".to_string()

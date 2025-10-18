@@ -3,11 +3,10 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
 };
 use tui_textarea::TextArea;
-use std::collections::HashMap;
+// use std::collections::HashMap; // unused
 
 use crate::config::{DashboardIndicatorDef, TabConfig, WindowDef};
 
@@ -215,6 +214,7 @@ impl WindowEditor {
                 "injury_doll".to_string(),
                 "hands".to_string(),
                 "command_input".to_string(),
+                "spacer".to_string(),
             ],
             selected_widget_type_index: 0,
             available_templates: Vec::new(),
@@ -281,7 +281,7 @@ impl WindowEditor {
         }
     }
 
-    fn create_textarea(max_width: usize) -> TextArea<'static> {
+    fn create_textarea(_max_width: usize) -> TextArea<'static> {
         let mut ta = TextArea::default();
         ta.set_cursor_line_style(Style::default());
         ta.set_max_histories(0);
@@ -1536,7 +1536,8 @@ impl WindowEditor {
         for y in popup_area.y..popup_area.y + popup_area.height {
             for x in popup_area.x..popup_area.x + popup_area.width {
                 if x < area.width && y < area.height {
-                    buf.get_mut(x, y).set_char(' ').set_bg(Color::Black);
+                    let cell = &mut buf[(x, y)];
+                    cell.set_char(' ').set_bg(Color::Black);
                 }
             }
         }
@@ -1692,43 +1693,47 @@ impl WindowEditor {
         Self::render_inline_textarea_with_spacing(self.focused_field, 3, "Col:", &mut self.col_input, left_x + 16, y, 8, 2, buf);
         y += 1;
 
-        // Row 5: Rows: + 1 space + 8 chars, 2 spaces, Cols: + 1 space + 8 chars | Show Border checkbox
+        // Row 5: Rows: + 1 space + 8 chars, 2 spaces, Cols: + 1 space + 8 chars | Show Border checkbox (not for spacer)
         Self::render_inline_textarea_with_hint(self.focused_field, 4, "Rows:", &mut self.rows_input, left_x, y, 8, 1, Some("height"), buf);
         // Cols starts at: "Rows:" (5) + 1 space + 8 chars + 2 spaces = 16
         Self::render_inline_textarea_with_hint(self.focused_field, 5, "Cols:", &mut self.cols_input, left_x + 16, y, 8, 1, Some("width"), buf);
-        self.render_checkbox(15, "Show Border", self.show_border, right_x, y, buf);
+        if widget_type != "spacer" { self.render_checkbox(15, "Show Border", self.show_border, right_x, y, buf); }
         y += 1;
 
-        // Row 6: Min: + 2 spaces + 8 chars, 2 spaces, Min: + 2 spaces + 8 chars | Top Border checkbox
+        // Row 6: Min: + 2 spaces + 8 chars, 2 spaces, Min: + 2 spaces + 8 chars | Top Border checkbox (not for spacer)
         Self::render_inline_textarea_with_hint(self.focused_field, 6, "Min:", &mut self.min_rows_input, left_x, y, 8, 2, Some("height"), buf);
         // Second Min starts at: "Min:" (4) + 2 spaces + 8 chars + 2 spaces = 16
         Self::render_inline_textarea_with_hint(self.focused_field, 7, "Min:", &mut self.min_cols_input, left_x + 16, y, 8, 2, Some("width"), buf);
-        self.render_checkbox(16, "Top Border", self.border_top, right_x, y, buf);
+        if widget_type != "spacer" { self.render_checkbox(16, "Top Border", self.border_top, right_x, y, buf); }
         y += 1;
 
-        // Row 7: Max: + 2 spaces + 8 chars, 2 spaces, Max: + 2 spaces + 8 chars | Bottom Border checkbox
+        // Row 7: Max: + 2 spaces + 8 chars, 2 spaces, Max: + 2 spaces + 8 chars | Bottom Border checkbox (not for spacer)
         Self::render_inline_textarea_with_hint(self.focused_field, 8, "Max:", &mut self.max_rows_input, left_x, y, 8, 2, Some("height"), buf);
         // Second Max starts at: "Max:" (4) + 2 spaces + 8 chars + 2 spaces = 16
         Self::render_inline_textarea_with_hint(self.focused_field, 9, "Max:", &mut self.max_cols_input, left_x + 16, y, 8, 2, Some("width"), buf);
-        self.render_checkbox(17, "Bottom Border", self.border_bottom, right_x, y, buf);
+        if widget_type != "spacer" { self.render_checkbox(17, "Bottom Border", self.border_bottom, right_x, y, buf); }
         y += 1;
 
-        // Row 8: blank on left | Left Border checkbox
-        self.render_checkbox(18, "Left Border", self.border_left, right_x, y, buf);
+        // Row 8: blank on left | Left Border checkbox (not for spacer)
+        if widget_type != "spacer" { self.render_checkbox(18, "Left Border", self.border_left, right_x, y, buf); }
         y += 1;
 
-        // Row 9: Content Align dropdown | Right Border checkbox
-        let ca = if CONTENT_ALIGNS.is_empty() { "" } else { CONTENT_ALIGNS[self.content_align_index.min(CONTENT_ALIGNS.len() - 1)] };
-        self.render_dropdown(10, "Content Align:", ca, left_x, y, buf);
-        self.render_checkbox(19, "Right Border", self.border_right, right_x, y, buf);
+        // Row 9: Content Align dropdown | Right Border checkbox (not for spacer)
+        if widget_type != "spacer" {
+            let ca = if CONTENT_ALIGNS.is_empty() { "" } else { CONTENT_ALIGNS[self.content_align_index.min(CONTENT_ALIGNS.len() - 1)] };
+            self.render_dropdown(10, "Content Align:", ca, left_x, y, buf);
+            self.render_checkbox(19, "Right Border", self.border_right, right_x, y, buf);
+        }
         y += 1;
 
-        // Row 10: Border Style dropdown (2 spaces) | Border Color: + 1 space + 10 chars + 2 spaces + preview
-        let bs = if BORDER_STYLES.is_empty() { "" } else { BORDER_STYLES[self.border_style_index.min(BORDER_STYLES.len() - 1)] };
-        self.render_dropdown_with_spacing(11, "Border Style:", bs, left_x, y, 2, buf);
-        Self::render_inline_textarea_with_spacing(self.focused_field, 20, "Border Color:", &mut self.border_color_input, right_x, y, 10, 1, buf);
-        let border_preview_x = right_x + 13 + 1 + 10 + 2; // "Border Color:" (13) + 1 space + 10 chars + 2 spaces
-        self.render_color_preview(&self.border_color_input.lines()[0].to_string(), border_preview_x, y, buf, config);
+        // Row 10: Border Style dropdown (2 spaces) | Border Color (not for spacer)
+        if widget_type != "spacer" {
+            let bs = if BORDER_STYLES.is_empty() { "" } else { BORDER_STYLES[self.border_style_index.min(BORDER_STYLES.len() - 1)] };
+            self.render_dropdown_with_spacing(11, "Border Style:", bs, left_x, y, 2, buf);
+            Self::render_inline_textarea_with_spacing(self.focused_field, 20, "Border Color:", &mut self.border_color_input, right_x, y, 10, 1, buf);
+            let border_preview_x = right_x + 13 + 1 + 10 + 2; // "Border Color:" (13) + 1 space + 10 chars + 2 spaces
+            self.render_color_preview(&self.border_color_input.lines()[0].to_string(), border_preview_x, y, buf, config);
+        }
         y += 1;
 
         // Row 11: blank

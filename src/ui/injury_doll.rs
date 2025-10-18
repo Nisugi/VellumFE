@@ -9,11 +9,11 @@ use std::collections::HashMap;
 /// Injury doll widget showing body part injuries/scars
 /// Layout:
 ///  👁   👁
-///      0      ns
-///     /|\
-///    o | o   nk
-///     / \
-///    o   o   bk
+///     0    ns
+///    /|\
+///   o | o  nk
+///    / \
+///   o   o  bk
 pub struct InjuryDoll {
     label: String,
     // Map body part name to injury level (0=none, 1-3=injury, 4-6=scar)
@@ -192,11 +192,11 @@ impl InjuryDoll {
 
         // Layout with fixed character positions (shifted left to align with eyes):
         // 👁   👁
-        //     0      nk
-        //    /|\
-        //   o | o   bk
-        //    / \
-        //   o   o   ns
+        //    0    nk
+        //   /|\
+        //  o | o  bk
+        //   / \
+        //  o   o  ns
 
         // Define all body part positions (col, row, char, body_part_name)
         let positions = [
@@ -231,7 +231,7 @@ impl InjuryDoll {
                 let color = self.get_injury_color(body_part);
                 buf[(x, y)].set_char(*ch);
                 buf[(x, y)].set_fg(color);
-                buf[(x, y)].set_bg(Color::Black);
+                buf[(x, y)].set_bg(bg_color); 
             }
         }
 
@@ -253,7 +253,7 @@ impl InjuryDoll {
                 if x < buf.area().width && y < buf.area().height {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(color);
-                    buf[(x, y)].set_bg(Color::Black);
+                    buf[(x, y)].set_bg(bg_color);
                 }
             }
         }

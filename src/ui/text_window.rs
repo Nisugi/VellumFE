@@ -823,7 +823,7 @@ impl TextWindow {
         wrapped: &WrappedLine,
         line_matches: &[&SearchMatch],
         current_match: Option<&SearchMatch>,
-    ) -> Vec<Span> {
+    ) -> Vec<Span<'_>> {
         // Build the full line text to know character positions
         let _full_text: String = wrapped.spans.iter()
             .map(|(text, _, _, _)| text.as_str())
@@ -921,7 +921,7 @@ impl TextWindow {
         selection_state: Option<&crate::selection::SelectionState>,
         selection_bg: Option<Color>,
         window_index: usize,
-    ) -> Vec<Span> {
+    ) -> Vec<Span<'_>> {
         // If no selection or no background color, render normally
         let selection = match (selection_state, selection_bg) {
             (Some(sel), Some(bg)) if sel.active => (sel, bg),

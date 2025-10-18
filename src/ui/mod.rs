@@ -27,7 +27,9 @@ mod color_palette_browser;
 mod color_form;
 mod spell_color_browser;
 mod spell_color_form;
+mod spacer;
 
+#[allow(unused_imports)]
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
 pub use popup_menu::{PopupMenu, MenuItem};
 pub use tabbed_text_window::{TabbedTextWindow, TabBarPosition};
@@ -59,13 +61,16 @@ pub use keybind_form::{KeybindFormWidget, KeybindFormResult, KeybindActionType};
 // pub use window_editor_v2::{WindowEditor, WindowEditorResult};
 pub use window_editor::{WindowEditor, WindowEditorResult};
 pub use settings_editor::{SettingsEditor, SettingItem, SettingValue};
+#[allow(unused_imports)]
 pub use highlight_browser::{HighlightBrowser, HighlightEntry};
 pub use keybind_browser::KeybindBrowser;
+#[allow(unused_imports)]
 pub use color_picker::ColorPicker;
 pub use color_palette_browser::ColorPaletteBrowser;
 pub use color_form::{ColorForm, FormAction as ColorFormAction};
 pub use spell_color_browser::SpellColorBrowser;
 pub use spell_color_form::{SpellColorFormWidget, SpellColorFormResult};
+pub use spacer::Spacer;
 
 use ratatui::{
     layout::Rect,

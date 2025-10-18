@@ -600,7 +600,7 @@ impl HighlightFormWidget {
             height: 3,
         };
 
-        RatatuiWidget::render(textarea.widget(), input_area, buf);
+        RatatuiWidget::render(&*textarea, input_area, buf);
 
         // Draw color preview
         let color_text = textarea.lines()[0].to_string();

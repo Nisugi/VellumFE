@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier},
 };
 
 #[derive(Debug, Clone)]
@@ -263,7 +263,7 @@ impl SettingsEditor {
     /// Returns true if the mouse event was handled
     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> bool {
         let popup_width = 70.min(area.width);
-        let popup_height = 25.min(area.height);
+        let _popup_height = 25.min(area.height);
 
         // Check if mouse is on title bar (top border, excluding corners)
         let on_title_bar = mouse_row == self.popup_y

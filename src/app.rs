@@ -79,7 +79,6 @@ impl ResizeDebouncer {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum InputMode {
     Normal,   // Normal text input to command window
-    Command,  // Command input mode (typing a command)
     Search,   // Search mode (typing search query)
     HighlightForm,  // Highlight management form
     KeybindForm,  // Keybind management form
@@ -149,7 +148,6 @@ struct DragState {
     link_data: crate::ui::LinkData,  // What we're dragging
     start_pos: (u16, u16),           // Where drag started (col, row)
     current_pos: (u16, u16),         // Current mouse position (col, row)
-    source_window: String,           // Window where drag started
 }
 
 /// Pending menu request information
@@ -170,7 +168,6 @@ struct ResizeState {
 struct MoveState {
     window_index: usize,
     start_mouse_pos: (u16, u16), // (col, row) where drag started
-    start_window_pos: (u16, u16), // (col, row) original window position
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -188,7 +185,7 @@ impl App {
         let terminal_size = crossterm::terminal::size().ok();
 
         // Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
-        let mut layout = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
+        let layout = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
         info!("Loaded layout with {} windows", layout.windows.len());
 
         // Clone layout as baseline for resize calculations (before any modifications)
@@ -430,23 +427,7 @@ impl App {
         Ok(())
     }
 
-    /// Get the window for the current stream, falling back to main window
-    fn get_current_window(&mut self) -> &mut Widget {
-        // First, determine which window name to use
-        let window_name = {
-            let stream = &self.current_stream;
-            self.window_manager
-                .stream_map
-                .get(stream)
-                .cloned()
-                .unwrap_or_else(|| "main".to_string())
-        };
-
-        // Then get the window
-        self.window_manager
-            .get_window(&window_name)
-            .expect("Window must exist")
-    }
+    
 
     /// Check if text matches any highlight patterns with sounds and play them
     fn check_sound_triggers(&mut self, text: &str) {
@@ -746,7 +727,7 @@ impl App {
     }
 
     /// Copy the currently selected text to clipboard
-    fn copy_selection_to_clipboard(&mut self, window_layouts: &HashMap<String, ratatui::layout::Rect>) {
+    fn copy_selection_to_clipboard(&mut self, _window_layouts: &HashMap<String, ratatui::layout::Rect>) {
         let selection = match &self.selection_state {
             Some(s) if s.active => s,
             _ => return,
@@ -851,8 +832,8 @@ impl App {
         }
     }
 
-    /// Apply proportional resizing to layout based on delta
-    fn apply_proportional_resize(&mut self, width_delta: i32, height_delta: i32) {
+    // [removed] legacy proportional resizing (v1)
+    /* fn apply_proportional_resize(&mut self, width_delta: i32, height_delta: i32) {
         use std::collections::HashSet;
 
         tracing::debug!("=== PROPORTIONAL RESIZE ===");
@@ -1341,7 +1322,7 @@ impl App {
         }
 
         tracing::debug!("Proportional resize complete");
-    }
+    } */
 
     // Validation helpers (safe, no UI side effects). Used by CLI/tests.
     pub fn set_layout_for_validation(&mut self, layout: Layout, baseline: (u16, u16)) {
@@ -1480,13 +1461,13 @@ impl App {
         // Build the top stack: start with row 0 statics; each next row keeps only statics overlapping with previous row's stack spans; stop on gaps
         use std::collections::HashSet as _HashSetAlias; // avoid shadowing
         let mut stack_indices: _HashSetAlias<usize> = _HashSetAlias::new();
-        let mut prev_spans: Vec<(u16, u16, usize)> = statics_by_row.get(&0).cloned().unwrap_or_default();
+        let prev_spans: Vec<(u16, u16, usize)> = statics_by_row.get(&0).cloned().unwrap_or_default();
         for (_, i) in prev_spans.iter().map(|(_, _, idx)| ((), *idx)) { stack_indices.insert(i); }
 
         if !prev_spans.is_empty() {
-            for (row, spans) in statics_by_row.iter().filter(|(r, _)| **r > 0) {
+            for (_row, _spans) in statics_by_row.iter().filter(|(r, _)| **r > 0) {
                 // Only allow contiguous rows: if this row is not exactly prev_row + 1, break the chain
-                let prev_row = prev_spans.first().map(|_| prev_spans[0]).map(|_| () );
+                let _prev_row = prev_spans.first().map(|_| prev_spans[0]).map(|_| () );
                 // Compute expected next row as last processed row + 1 by tracking last_row separately
             }
         }
@@ -1562,7 +1543,7 @@ impl App {
 
             let mut total_scalable_width: u16 = 0;
             let mut embedded_widgets = HashSet::new();
-            for (i, (name_i, _, _, col_i, _, cols_i)) in widgets_at_row.iter().enumerate() {
+            for (i, (_name_i, _, _, col_i, _, cols_i)) in widgets_at_row.iter().enumerate() {
                 let col_i_end = *col_i + *cols_i;
                 for (j, (name_j, _, _, col_j, _, cols_j)) in widgets_at_row.iter().enumerate() {
                     if i == j { continue; }
@@ -1577,13 +1558,13 @@ impl App {
             if total_scalable_width == 0 { continue; }
 
             let mut adjustments: Vec<(String, i32)> = Vec::new();
-            let mut leftover = 0i32;
+            let mut _leftover = 0i32;
             let mut redistribution_pool = 0i32;
             for (name, _wt, _row, _col, _rows, cols) in &widgets_at_row {
                 if static_both.contains(name) { continue; }
                 let proportion = *cols as f64 / total_scalable_width as f64;
                 let share = (proportion * width_delta as f64).floor() as i32;
-                leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
+                _leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
                 if !width_applied.contains(name) { adjustments.push((name.clone(), share)); }
             }
 
@@ -1841,7 +1822,7 @@ impl App {
                         let max_cols_cfg = window_def.max_cols.unwrap_or(u16::MAX);
                         let max_cols_allowed = term_max_cols.min(max_cols_cfg);
 
-                        let mut clamped_cols = if max_cols_allowed >= min_cols {
+                        let clamped_cols = if max_cols_allowed >= min_cols {
                             new_cols_raw.clamp(min_cols, max_cols_allowed)
                         } else {
                             max_cols_allowed
@@ -4463,7 +4444,7 @@ impl App {
         match self.input_mode {
             InputMode::Search => self.handle_search_input(key, modifiers),
             InputMode::ColorBrowserFilter => self.handle_color_browser_filter_input(key, modifiers),
-            InputMode::Normal | InputMode::Command => self.handle_normal_input(key, modifiers, command_tx),
+            InputMode::Normal => self.handle_normal_input(key, modifiers, command_tx),
             InputMode::HighlightForm => unreachable!(), // Handled above
             InputMode::KeybindForm => unreachable!(), // Handled above
             InputMode::SettingsEditor => unreachable!(), // Handled above
@@ -4696,7 +4677,7 @@ impl App {
                             if let Some(item) = editor.get_item(idx) {
                                 let key = item.key.clone();
                                 let display_name = item.display_name.clone();
-                                drop(editor); // Drop borrow before calling update
+                                let _ = editor; // Drop borrow before calling update
                                 if self.update_setting(&key, &new_value) {
                                     message_to_send = Some(format!("Setting '{}' updated to: {}", display_name, new_value));
                                     // Refresh the settings editor to show new values
@@ -4712,7 +4693,7 @@ impl App {
                             if let Some(item) = editor.get_item(idx) {
                                 let key = item.key.clone();
                                 let display_name = item.display_name.clone();
-                                drop(editor); // Drop borrow before calling update
+                                let _ = editor; // Drop borrow before calling update
                                 if self.update_setting(&key, &new_bool.to_string()) {
                                     message_to_send = Some(format!("Setting '{}' toggled to: {}", display_name, new_bool));
                                     // Refresh the settings editor to show new values
@@ -5922,7 +5903,6 @@ impl App {
                                 self.move_state = Some(MoveState {
                                     window_index: window_idx,
                                     start_mouse_pos: (mouse.column, mouse.row),
-                                    start_window_pos: (rect.x, rect.y),
                                 });
                                 debug!("Started move on window {} at {:?}", window_idx, (rect.x, rect.y));
                             }
@@ -6036,7 +6016,6 @@ impl App {
                                                         link_data: link_data.clone(),
                                                         start_pos: (mouse.column, mouse.row),
                                                         current_pos: (mouse.column, mouse.row),
-                                                        source_window: name.clone(),
                                                     });
                                                     // Clear selection drag start since we're dragging an object
                                                     self.selection_drag_start = None;
@@ -6187,9 +6166,13 @@ impl App {
                 if let Some(drag_state) = self.drag_state.take() {
                     debug!("Mouse up with active drag state for {}", drag_state.link_data.noun);
 
+                    // Compute using actual release position (MouseUp), not only tracked drag updates
+                    let release_col = mouse.column;
+                    let release_row = mouse.row;
+
                     // Check if this was a drag or just a click
-                    let dx = (drag_state.current_pos.0 as i16 - drag_state.start_pos.0 as i16).abs();
-                    let dy = (drag_state.current_pos.1 as i16 - drag_state.start_pos.1 as i16).abs();
+                    let dx = (release_col as i16 - drag_state.start_pos.0 as i16).abs();
+                    let dy = (release_row as i16 - drag_state.start_pos.1 as i16).abs();
                     let drag_threshold = 2; // Minimum pixels to count as a drag
 
                     if dx > drag_threshold || dy > drag_threshold {
@@ -6197,26 +6180,31 @@ impl App {
                         debug!("Detected drag movement: dx={}, dy={} for {}", dx, dy, drag_state.link_data.noun);
 
                         // Find what window/link is at the drop position
-                        let mut drop_target: Option<String> = None;
+                        let mut drop_target_id: Option<String> = None;
 
                         for name in self.window_manager.get_window_names() {
                             if let Some(rect) = window_layouts.get(&name) {
-                                if drag_state.current_pos.0 >= rect.x
-                                    && drag_state.current_pos.0 < rect.x + rect.width
-                                    && drag_state.current_pos.1 >= rect.y
-                                    && drag_state.current_pos.1 < rect.y + rect.height
+                                if release_col >= rect.x
+                                    && release_col < rect.x + rect.width
+                                    && release_row >= rect.y
+                                    && release_row < rect.y + rect.height
                                 {
                                     if let Some(widget) = self.window_manager.get_window(&name) {
                                         if let Widget::Text(text_window) = widget {
                                             // Check if we dropped on a link
                                                 if let Some(target_link) = Self::link_at_position(
                                                     text_window,
-                                                    drag_state.current_pos.0,
-                                                    drag_state.current_pos.1,
+                                                    release_col,
+                                                    release_row,
                                                     *rect,
                                                 ) {
-                                                    drop_target = Some(target_link.noun.clone());
-                                                    debug!("Dropped {} onto link target: {}", drag_state.link_data.noun, target_link.noun);
+                                                    drop_target_id = Some(target_link.exist_id.clone());
+                                                    debug!(
+                                                        "Dropped {} onto link target id={} (noun={})",
+                                                        drag_state.link_data.noun,
+                                                        target_link.exist_id,
+                                                        target_link.noun
+                                                    );
                                                     break;
                                                 }
                                         }
@@ -6225,13 +6213,12 @@ impl App {
                             }
                         }
 
-                        // Generate command based on drop target
-                        let command = if let Some(target_noun) = drop_target {
-                            // Dropped on another object - try "put X in/on Y"
-                            format!("put my {} in my {}", drag_state.link_data.noun, target_noun)
+                        // Generate command using exist ids
+                        let source_id = drag_state.link_data.exist_id;
+                        let command = if let Some(target_id) = drop_target_id {
+                            format!("_drag #{} #{}", source_id, target_id)
                         } else {
-                            // Dropped in empty space - just "drop X"
-                            format!("drop my {}", drag_state.link_data.noun)
+                            format!("_drag #{} drop", source_id)
                         };
 
                         debug!("Sending drag-drop command: {}", command);
@@ -6498,8 +6485,8 @@ impl App {
         Ok(())
     }
 
-    /// Extract the word at a given mouse position in a text window
-    fn extract_word_at_position(
+    // [removed] unused helper
+    /* fn extract_word_at_position(
         text_window: &crate::ui::TextWindow,
         mouse_col: u16,
         mouse_row: u16,
@@ -6573,7 +6560,7 @@ impl App {
         tracing::debug!("Found word: '{}'", word);
         Some(word)
     }
-
+    */
     /// Find a link (by precise span) at a given mouse position in a text window
     fn link_at_position(
         text_window: &crate::ui::TextWindow,

@@ -201,7 +201,7 @@ impl ColorPicker {
 
             // Format: "[color_preview] name"
             let preview = "███";
-            let line = format!("{} {}", preview, color.name);
+            let _line = format!("{} {}", preview, color.name);
 
             // Parse the color for preview
             let preview_color = Self::parse_hex_color(&color.color).unwrap_or(Color::White);
