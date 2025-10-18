@@ -6382,7 +6382,7 @@ impl App {
                 // Color form drag release (fourth priority)
                 if self.input_mode == InputMode::ColorForm {
                     if let Some(ref mut form) = self.color_form {
-                        if form.is_dragging {
+                        if form.is_dragging() {
                             let terminal_area = Rect {
                                 x: 0,
                                 y: 0,
@@ -6597,7 +6597,7 @@ impl App {
                 // Color form dragging (fourth priority)
                 if self.input_mode == InputMode::ColorForm {
                     if let Some(ref mut form) = self.color_form {
-                        if form.is_dragging {
+                        if form.is_dragging() {
                             let terminal_area = Rect {
                                 x: 0,
                                 y: 0,

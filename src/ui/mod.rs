@@ -1,3 +1,5 @@
+pub mod popup;
+pub mod theme;
 mod text_window;
 mod tabbed_text_window;
 mod command_input;
