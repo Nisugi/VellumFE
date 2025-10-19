@@ -33,6 +33,7 @@ pub struct LinkData {
     pub exist_id: String,  // Unique ID for this game object
     pub noun: String,      // The noun/name of the object
     pub text: String,      // The actual displayed text (e.g., "nacreous pearl bangle")
+    pub coord: Option<String>,  // Optional coord for direct commands (e.g., "2524,1864" for movement)
 }
 
 #[derive(Clone)]

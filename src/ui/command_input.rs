@@ -534,20 +534,9 @@ impl CommandInput {
 
     /// Get the history file path (~/.vellum-fe/history/<character>.txt or default.txt)
     fn get_history_path(character: Option<&str>) -> Result<PathBuf, std::io::Error> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "Could not find home directory")
-        })?;
-
-        let history_dir = home.join(".vellum-fe").join("history");
-        fs::create_dir_all(&history_dir)?;
-
-        let filename = if let Some(char_name) = character {
-            format!("{}.txt", char_name)
-        } else {
-            "default.txt".to_string()
-        };
-
-        Ok(history_dir.join(filename))
+        // Use the new profile structure: ~/.vellum-fe/{character}/history.txt
+        crate::config::Config::history_path(character)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 
     /// Load command history from disk

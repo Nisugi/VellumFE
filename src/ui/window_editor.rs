@@ -116,6 +116,9 @@ pub struct WindowEditor {
     available_windows: Vec<String>,
     selected_window_index: usize,
 
+    // Existing window names (for conflict detection when creating new windows)
+    existing_window_names: Vec<String>,
+
     // Widget type selection (for new window mode)
     available_widget_types: Vec<String>,
     selected_widget_type_index: usize,
@@ -201,6 +204,7 @@ impl WindowEditor {
             drag_offset_y: 0,
             available_windows: Vec::new(),
             selected_window_index: 0,
+            existing_window_names: Vec::new(),
             available_widget_types: vec![
                 "text".to_string(),
                 "tabbed".to_string(),
@@ -289,9 +293,10 @@ impl WindowEditor {
     }
 
     /// Open editor for creating a new window
-    pub fn open_for_new_window(&mut self) {
+    pub fn open_for_new_window(&mut self, existing_window_names: Vec<String>) {
         self.mode = EditorMode::SelectingWidgetType;
         self.selected_widget_type_index = 0;
+        self.existing_window_names = existing_window_names;
         self.active = true;
         self.is_new_window = true;
         self.status_message = "↑/↓: Navigate | Enter: Select widget type | Esc: Cancel".to_string();
@@ -980,11 +985,20 @@ impl WindowEditor {
                 use crate::config::Config;
                 if let Some(template) = Config::get_window_template(&template_name) {
                     self.current_window = template;
-                    self.current_window.name = if template_name == "custom" {
-                        "new_window".to_string()
+
+                    // Determine the window name
+                    if template_name == "custom" {
+                        self.current_window.name = "new_window".to_string();
                     } else {
-                        format!("{}_new", template_name)
-                    };
+                        // Check if template name conflicts with existing window
+                        if self.existing_window_names.contains(&template_name) {
+                            // Conflict: add _new suffix
+                            self.current_window.name = format!("{}_new", template_name);
+                        } else {
+                            // No conflict: use template name as-is
+                            self.current_window.name = template_name.clone();
+                        }
+                    }
                 } else {
                     // Template not found - create a default window with the correct widget_type
                     self.current_window = WindowDef::default();
@@ -1663,7 +1677,7 @@ impl WindowEditor {
 
         // Row 0: Name: + 2 spaces + 23 chars | Show Title checkbox
         if widget_type != "command_input" {
-            Self::render_inline_textarea_with_spacing(self.focused_field, 0, "Name:", &mut self.name_input, left_x, y, 23, 2, buf);
+            Self::render_inline_textarea_with_spacing(self.focused_field, 0, "Name:", &mut self.name_input, left_x, y, 23, 2, buf, config);
             self.render_checkbox(12, "Show Title", self.show_title, right_x, y, buf);
             y += 1;
         } else {
@@ -1677,40 +1691,40 @@ impl WindowEditor {
         y += 1;
 
         // Row 2: Title: + 1 space + 23 chars | Transparent BG checkbox
-        Self::render_inline_textarea_with_hint(self.focused_field, 1, "Title:", &mut self.title_input, left_x, y, 23, 1, Some("display name"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 1, "Title:", &mut self.title_input, left_x, y, 23, 1, Some("display name"), buf, config);
         self.render_checkbox(14, "Transparent BG", self.transparent_bg, right_x, y, buf);
         y += 1;
 
         // Row 3: blank | BG Color: + 5 spaces + 10 chars + 2 spaces + preview
-        Self::render_inline_textarea_with_spacing(self.focused_field, 21, "BG Color:", &mut self.bg_color_input, right_x, y, 10, 5, buf);
+        Self::render_inline_textarea_with_spacing(self.focused_field, 21, "BG Color:", &mut self.bg_color_input, right_x, y, 10, 5, buf, config);
         let preview_x = right_x + 9 + 5 + 10 + 2; // "BG Color:" (9) + 5 spaces + 10 chars + 2 spaces
         self.render_color_preview(&self.bg_color_input.lines()[0].to_string(), preview_x, y, buf, config);
         y += 1;
 
         // Row 4: Row: + 2 spaces + 8 chars, 2 spaces, Col: + 2 spaces + 8 chars
-        Self::render_inline_textarea_with_spacing(self.focused_field, 2, "Row:", &mut self.row_input, left_x, y, 8, 2, buf);
+        Self::render_inline_textarea_with_spacing(self.focused_field, 2, "Row:", &mut self.row_input, left_x, y, 8, 2, buf, config);
         // Col starts at: "Row:" (4) + 2 spaces + 8 chars + 2 spaces = 16
-        Self::render_inline_textarea_with_spacing(self.focused_field, 3, "Col:", &mut self.col_input, left_x + 16, y, 8, 2, buf);
+        Self::render_inline_textarea_with_spacing(self.focused_field, 3, "Col:", &mut self.col_input, left_x + 16, y, 8, 2, buf, config);
         y += 1;
 
         // Row 5: Rows: + 1 space + 8 chars, 2 spaces, Cols: + 1 space + 8 chars | Show Border checkbox (not for spacer)
-        Self::render_inline_textarea_with_hint(self.focused_field, 4, "Rows:", &mut self.rows_input, left_x, y, 8, 1, Some("height"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 4, "Rows:", &mut self.rows_input, left_x, y, 8, 1, Some("height"), buf, config);
         // Cols starts at: "Rows:" (5) + 1 space + 8 chars + 2 spaces = 16
-        Self::render_inline_textarea_with_hint(self.focused_field, 5, "Cols:", &mut self.cols_input, left_x + 16, y, 8, 1, Some("width"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 5, "Cols:", &mut self.cols_input, left_x + 16, y, 8, 1, Some("width"), buf, config);
         if widget_type != "spacer" { self.render_checkbox(15, "Show Border", self.show_border, right_x, y, buf); }
         y += 1;
 
         // Row 6: Min: + 2 spaces + 8 chars, 2 spaces, Min: + 2 spaces + 8 chars | Top Border checkbox (not for spacer)
-        Self::render_inline_textarea_with_hint(self.focused_field, 6, "Min:", &mut self.min_rows_input, left_x, y, 8, 2, Some("height"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 6, "Min:", &mut self.min_rows_input, left_x, y, 8, 2, Some("height"), buf, config);
         // Second Min starts at: "Min:" (4) + 2 spaces + 8 chars + 2 spaces = 16
-        Self::render_inline_textarea_with_hint(self.focused_field, 7, "Min:", &mut self.min_cols_input, left_x + 16, y, 8, 2, Some("width"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 7, "Min:", &mut self.min_cols_input, left_x + 16, y, 8, 2, Some("width"), buf, config);
         if widget_type != "spacer" { self.render_checkbox(16, "Top Border", self.border_top, right_x, y, buf); }
         y += 1;
 
         // Row 7: Max: + 2 spaces + 8 chars, 2 spaces, Max: + 2 spaces + 8 chars | Bottom Border checkbox (not for spacer)
-        Self::render_inline_textarea_with_hint(self.focused_field, 8, "Max:", &mut self.max_rows_input, left_x, y, 8, 2, Some("height"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 8, "Max:", &mut self.max_rows_input, left_x, y, 8, 2, Some("height"), buf, config);
         // Second Max starts at: "Max:" (4) + 2 spaces + 8 chars + 2 spaces = 16
-        Self::render_inline_textarea_with_hint(self.focused_field, 9, "Max:", &mut self.max_cols_input, left_x + 16, y, 8, 2, Some("width"), buf);
+        Self::render_inline_textarea_with_hint(self.focused_field, 9, "Max:", &mut self.max_cols_input, left_x + 16, y, 8, 2, Some("width"), buf, config);
         if widget_type != "spacer" { self.render_checkbox(17, "Bottom Border", self.border_bottom, right_x, y, buf); }
         y += 1;
 
@@ -1730,7 +1744,7 @@ impl WindowEditor {
         if widget_type != "spacer" {
             let bs = if BORDER_STYLES.is_empty() { "" } else { BORDER_STYLES[self.border_style_index.min(BORDER_STYLES.len() - 1)] };
             self.render_dropdown_with_spacing(11, "Border Style:", bs, left_x, y, 2, buf);
-            Self::render_inline_textarea_with_spacing(self.focused_field, 20, "Border Color:", &mut self.border_color_input, right_x, y, 10, 1, buf);
+            Self::render_inline_textarea_with_spacing(self.focused_field, 20, "Border Color:", &mut self.border_color_input, right_x, y, 10, 1, buf, config);
             let border_preview_x = right_x + 13 + 1 + 10 + 2; // "Border Color:" (13) + 1 space + 10 chars + 2 spaces
             self.render_color_preview(&self.border_color_input.lines()[0].to_string(), border_preview_x, y, buf, config);
         }
@@ -1744,14 +1758,14 @@ impl WindowEditor {
         match widget_type {
             "text" => {
                 // Buffer Size input (8 chars, left) | Streams input (21 chars, right)
-                Self::render_inline_textarea(self.focused_field, 22, "Buffer Size:", &mut self.buffer_size_input, left_x, y, 8, buf);
-                Self::render_inline_textarea(self.focused_field, 23, "Streams:", &mut self.streams_input, right_x, y, 21, buf);
+                Self::render_inline_textarea(self.focused_field, 22, "Buffer Size:", &mut self.buffer_size_input, left_x, y, 8, buf, config);
+                Self::render_inline_textarea(self.focused_field, 23, "Streams:", &mut self.streams_input, right_x, y, 21, buf, config);
                 y += 1;
             },
 
             "tabbed" => {
                 // Tab Active Color (10 chars, left) | Edit Tabs button (right)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 24, "Tab Active Color:", &mut self.text_color_input, left_x, y, 10, 3, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 24, "Tab Active Color:", &mut self.text_color_input, left_x, y, 10, 3, buf, config);
                 // Color preview for tab active color
                 let active_preview_x = left_x + 17 + 3 + 10 + 1;
                 self.render_color_preview(&self.text_color_input.lines()[0].to_string(), active_preview_x, y, buf, config);
@@ -1759,7 +1773,7 @@ impl WindowEditor {
                 y += 1;
 
                 // Tab Inactive Color (10 chars, left) | Tab Bar Position dropdown (right)
-                Self::render_inline_textarea(self.focused_field, 25, "Tab Inactive Color:", &mut self.bar_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 25, "Tab Inactive Color:", &mut self.bar_color_input, left_x, y, 10, buf, config);
                 // Color preview for tab inactive color
                 let inactive_preview_x = left_x + 19 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), inactive_preview_x, y, buf, config);
@@ -1768,32 +1782,32 @@ impl WindowEditor {
                 y += 1;
 
                 // Tab Unread Color (10 chars, left) | New Msg input (10 chars, right)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 27, "Tab Unread Color:", &mut self.bar_bg_color_input, left_x, y, 10, 3, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 27, "Tab Unread Color:", &mut self.bar_bg_color_input, left_x, y, 10, 3, buf, config);
                 // Color preview for tab unread color
                 let unread_preview_x = left_x + 17 + 3 + 10 + 1;
                 self.render_color_preview(&self.bar_bg_color_input.lines()[0].to_string(), unread_preview_x, y, buf, config);
-                Self::render_inline_textarea_with_spacing(self.focused_field, 29, "New Msg:", &mut self.tab_unread_prefix_input, right_x, y, 10, 1, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 29, "New Msg:", &mut self.tab_unread_prefix_input, right_x, y, 10, 1, buf, config);
                 y += 1;
             },
 
             "progress" => {
                 // Text Color (10 chars, left) | Progress ID (17 chars, right)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 30, "Text Color:", &mut self.text_color_input, left_x, y, 10, 3, buf);
-                Self::render_inline_textarea_with_spacing(self.focused_field, 33, "Progress ID:", &mut self.progress_id_input, right_x, y, 17, 1, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 30, "Text Color:", &mut self.text_color_input, left_x, y, 10, 3, buf, config);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 33, "Progress ID:", &mut self.progress_id_input, right_x, y, 17, 1, buf, config);
                 // Color preview for text color
                 let text_preview_x = left_x + 11 + 3 + 10 + 2;
                 self.render_color_preview(&self.text_color_input.lines()[0].to_string(), text_preview_x, y, buf, config);
                 y += 1;
 
                 // Bar Color (10 chars, left)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 31, "Bar Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 31, "Bar Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf, config);
                 // Color preview for bar color
                 let bar_preview_x = left_x + 10 + 4 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), bar_preview_x, y, buf, config);
                 y += 1;
 
                 // Bar BG Color (10 chars, left)
-                Self::render_inline_textarea(self.focused_field, 32, "Bar BG Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 32, "Bar BG Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf, config);
                 // Color preview for bar bg color
                 let bar_bg_preview_x = left_x + 13 + 1 + 10 + 2;
                 self.render_color_preview(&self.bar_bg_color_input.lines()[0].to_string(), bar_bg_preview_x, y, buf, config);
@@ -1806,16 +1820,16 @@ impl WindowEditor {
 
             "countdown" => {
                 // Bar Color (10 chars, left) | Icon (17 chars, right) - SWAPPED ORDER
-                Self::render_inline_textarea_with_spacing(self.focused_field, 34, "Bar Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf);
-                Self::render_inline_textarea_with_spacing(self.focused_field, 37, "Icon:", &mut self.countdown_icon_input, right_x, y, 17, 9, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 34, "Bar Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf, config);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 37, "Icon:", &mut self.countdown_icon_input, right_x, y, 17, 9, buf, config);
                 // Color preview for bar color
                 let bar_preview_x = left_x + 10 + 4 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), bar_preview_x, y, buf, config);
                 y += 1;
 
                 // Bar BG Color (10 chars, left) | Countdown ID (17 chars, right) - SWAPPED ORDER
-                Self::render_inline_textarea(self.focused_field, 35, "Bar BG Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf);
-                Self::render_inline_textarea_with_spacing(self.focused_field, 36, "Countdown ID:", &mut self.countdown_id_input, right_x, y, 17, 1, buf);
+                Self::render_inline_textarea(self.focused_field, 35, "Bar BG Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf, config);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 36, "Countdown ID:", &mut self.countdown_id_input, right_x, y, 17, 1, buf, config);
                 // Color preview for bar bg color
                 let bar_bg_preview_x = left_x + 13 + 1 + 10 + 2;
                 self.render_color_preview(&self.bar_bg_color_input.lines()[0].to_string(), bar_bg_preview_x, y, buf, config);
@@ -1824,7 +1838,7 @@ impl WindowEditor {
 
             "active_effects" => {
                 // Text Color (10 chars, left) | Effect Category dropdown (right) - SWAPPED ORDER
-                Self::render_inline_textarea_with_spacing(self.focused_field, 39, "Text Color:", &mut self.text_color_input, left_x, y, 10, 4, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 39, "Text Color:", &mut self.text_color_input, left_x, y, 10, 4, buf, config);
                 let ec = if EFFECT_CATEGORIES.is_empty() { "" } else { EFFECT_CATEGORIES[self.effect_category_index.min(EFFECT_CATEGORIES.len() - 1)] };
                 self.render_dropdown(40, "Effect Category:", ec, right_x, y, buf);
                 // Color preview for text color
@@ -1833,7 +1847,7 @@ impl WindowEditor {
                 y += 1;
 
                 // Default Color (10 chars, left) - SWAPPED ORDER
-                Self::render_inline_textarea(self.focused_field, 38, "Default Color:", &mut self.effect_default_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 38, "Default Color:", &mut self.effect_default_color_input, left_x, y, 10, buf, config);
                 // Color preview for default color
                 let default_preview_x = left_x + 14 + 1 + 10 + 2;
                 self.render_color_preview(&self.effect_default_color_input.lines()[0].to_string(), default_preview_x, y, buf, config);
@@ -1842,20 +1856,20 @@ impl WindowEditor {
 
             "entity" => {
                 // Streams input (21 chars, right)
-                Self::render_inline_textarea(self.focused_field, 23, "Streams:", &mut self.streams_input, right_x, y, 21, buf);
+                Self::render_inline_textarea(self.focused_field, 23, "Streams:", &mut self.streams_input, right_x, y, 21, buf, config);
                 y += 1;
             },
 
             "compass" => {
                 // Compass Active Color (10 chars, left)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 41, "Active Color:", &mut self.compass_active_color_input, left_x, y, 10, 3, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 41, "Active Color:", &mut self.compass_active_color_input, left_x, y, 10, 3, buf, config);
                 // Color preview
                 let active_preview_x = left_x + 13 + 3 + 10 + 2;
                 self.render_color_preview(&self.compass_active_color_input.lines()[0].to_string(), active_preview_x, y, buf, config);
                 y += 1;
 
                 // Compass Inactive Color (10 chars, left)
-                Self::render_inline_textarea(self.focused_field, 42, "Inactive Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 42, "Inactive Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf, config);
                 // Color preview
                 let inactive_preview_x = left_x + 15 + 1 + 10 + 2;
                 self.render_color_preview(&self.compass_inactive_color_input.lines()[0].to_string(), inactive_preview_x, y, buf, config);
@@ -1864,8 +1878,8 @@ impl WindowEditor {
 
             "hands" | "lefthand" | "righthand" | "spellhand" => {
                 // Text Color (10 chars, left) | Hand Icon (10 chars, right)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 43, "Text Color:", &mut self.text_color_input, left_x, y, 10, 1, buf);
-                Self::render_inline_textarea_with_spacing(self.focused_field, 44, "Hand Icon:", &mut self.hand_icon_input, right_x, y, 10, 1, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 43, "Text Color:", &mut self.text_color_input, left_x, y, 10, 1, buf, config);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 44, "Hand Icon:", &mut self.hand_icon_input, right_x, y, 10, 1, buf, config);
                 // Color preview for text color
                 let text_preview_x = left_x + 11 + 1 + 10 + 2;
                 self.render_color_preview(&self.text_color_input.lines()[0].to_string(), text_preview_x, y, buf, config);
@@ -1874,15 +1888,15 @@ impl WindowEditor {
 
             "indicator" => {
                 // Indicator Active Color (10 chars, left) | Indicator Icon (10 chars, right)
-                Self::render_inline_textarea_with_spacing(self.focused_field, 45, "Active Color:", &mut self.compass_active_color_input, left_x, y, 10, 3, buf);
-                Self::render_inline_textarea(self.focused_field, 47, "Indicator Icon:", &mut self.hand_icon_input, right_x, y, 10, buf);
+                Self::render_inline_textarea_with_spacing(self.focused_field, 45, "Active Color:", &mut self.compass_active_color_input, left_x, y, 10, 3, buf, config);
+                Self::render_inline_textarea(self.focused_field, 47, "Indicator Icon:", &mut self.hand_icon_input, right_x, y, 10, buf, config);
                 // Color preview for active color
                 let active_preview_x = left_x + 13 + 3 + 10 + 2;
                 self.render_color_preview(&self.compass_active_color_input.lines()[0].to_string(), active_preview_x, y, buf, config);
                 y += 1;
 
                 // Indicator Inactive Color (10 chars, left)
-                Self::render_inline_textarea(self.focused_field, 46, "Inactive Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 46, "Inactive Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf, config);
                 // Color preview for inactive color
                 let inactive_preview_x = left_x + 15 + 1 + 10 + 2;
                 self.render_color_preview(&self.compass_inactive_color_input.lines()[0].to_string(), inactive_preview_x, y, buf, config);
@@ -1891,34 +1905,34 @@ impl WindowEditor {
 
             "injury_doll" => {
                 // Injury1 Color (10 chars, left) | Scar1 Color (10 chars, right)
-                Self::render_inline_textarea(self.focused_field, 48, "Injury1 Color:", &mut self.text_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 48, "Injury1 Color:", &mut self.text_color_input, left_x, y, 10, buf, config);
                 let injury1_preview_x = left_x + 14 + 10 + 2;
                 self.render_color_preview(&self.text_color_input.lines()[0].to_string(), injury1_preview_x, y, buf, config);
-                Self::render_inline_textarea(self.focused_field, 51, "Scar1 Color:", &mut self.bar_color_input, right_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 51, "Scar1 Color:", &mut self.bar_color_input, right_x, y, 10, buf, config);
                 let scar1_preview_x = right_x + 12 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), scar1_preview_x, y, buf, config);
                 y += 1;
 
                 // Injury2 Color (10 chars, left) | Scar2 Color (10 chars, right)
-                Self::render_inline_textarea(self.focused_field, 49, "Injury2 Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 49, "Injury2 Color:", &mut self.bar_bg_color_input, left_x, y, 10, buf, config);
                 let injury2_preview_x = left_x + 14 + 10 + 2;
                 self.render_color_preview(&self.bar_bg_color_input.lines()[0].to_string(), injury2_preview_x, y, buf, config);
-                Self::render_inline_textarea(self.focused_field, 52, "Scar2 Color:", &mut self.compass_active_color_input, right_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 52, "Scar2 Color:", &mut self.compass_active_color_input, right_x, y, 10, buf, config);
                 let scar2_preview_x = right_x + 12 + 10 + 2;
                 self.render_color_preview(&self.compass_active_color_input.lines()[0].to_string(), scar2_preview_x, y, buf, config);
                 y += 1;
 
                 // Injury3 Color (10 chars, left) | Scar3 Color (10 chars, right)
-                Self::render_inline_textarea(self.focused_field, 50, "Injury3 Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 50, "Injury3 Color:", &mut self.compass_inactive_color_input, left_x, y, 10, buf, config);
                 let injury3_preview_x = left_x + 14 + 10 + 2;
                 self.render_color_preview(&self.compass_inactive_color_input.lines()[0].to_string(), injury3_preview_x, y, buf, config);
-                Self::render_inline_textarea(self.focused_field, 53, "Scar3 Color:", &mut self.effect_default_color_input, right_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 53, "Scar3 Color:", &mut self.effect_default_color_input, right_x, y, 10, buf, config);
                 let scar3_preview_x = right_x + 12 + 10 + 2;
                 self.render_color_preview(&self.effect_default_color_input.lines()[0].to_string(), scar3_preview_x, y, buf, config);
                 y += 1;
 
                 // Default Color (10 chars, left)
-                Self::render_inline_textarea(self.focused_field, 54, "Default Color:", &mut self.progress_id_input, left_x, y, 10, buf);
+                Self::render_inline_textarea(self.focused_field, 54, "Default Color:", &mut self.progress_id_input, left_x, y, 10, buf, config);
                 let default_preview_x = left_x + 14 + 10 + 2;
                 self.render_color_preview(&self.progress_id_input.lines()[0].to_string(), default_preview_x, y, buf, config);
                 y += 1;
@@ -1932,7 +1946,7 @@ impl WindowEditor {
                 y += 1;
 
                 // Dashboard Spacing (8 chars, left) | Hide Inactive checkbox (right)
-                Self::render_inline_textarea(self.focused_field, 57, "Spacing:", &mut self.dashboard_spacing_input, left_x, y, 8, buf);
+                Self::render_inline_textarea(self.focused_field, 57, "Spacing:", &mut self.dashboard_spacing_input, left_x, y, 8, buf, config);
                 self.render_checkbox(58, "Hide Inactive", self.dashboard_hide_inactive, right_x, y, buf);
                 y += 1;
             },
@@ -2042,11 +2056,11 @@ impl WindowEditor {
         }
     }
 
-    fn render_inline_textarea_with_spacing(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, spaces_after_label: usize, buf: &mut Buffer) {
-        Self::render_inline_textarea_with_hint(focused_field, field_id, label, textarea, x, y, width, spaces_after_label, None, buf);
+    fn render_inline_textarea_with_spacing(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, spaces_after_label: usize, buf: &mut Buffer, config: &crate::config::Config) {
+        Self::render_inline_textarea_with_hint(focused_field, field_id, label, textarea, x, y, width, spaces_after_label, None, buf, config);
     }
 
-    fn render_inline_textarea_with_hint(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, spaces_after_label: usize, hint: Option<&str>, buf: &mut Buffer) {
+    fn render_inline_textarea_with_hint(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, spaces_after_label: usize, hint: Option<&str>, buf: &mut Buffer, config: &crate::config::Config) {
         // Render label with darker cyan, highlight when focused
         let is_focused = focused_field == field_id;
         let label_style = if is_focused {
@@ -2065,7 +2079,23 @@ impl WindowEditor {
         // Calculate input position based on label and specified spacing
         let input_x = x + label.len() as u16 + spaces_after_label as u16;
 
-        let bg_color = Color::Rgb(53, 5, 5); // Dark red/maroon #350505
+        // Parse textarea background color from config
+        let bg_color = {
+            let hex = &config.colors.ui.textarea_background;
+            if hex.starts_with('#') && hex.len() == 7 {
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u8::from_str_radix(&hex[1..3], 16),
+                    u8::from_str_radix(&hex[3..5], 16),
+                    u8::from_str_radix(&hex[5..7], 16),
+                ) {
+                    Color::Rgb(r, g, b)
+                } else {
+                    Color::Rgb(53, 5, 5) // Fallback to dark maroon
+                }
+            } else {
+                Color::Rgb(53, 5, 5) // Fallback to dark maroon
+            }
+        };
         let content = textarea.lines()[0].to_string();
 
         for i in 0..width {
@@ -2091,13 +2121,13 @@ impl WindowEditor {
         }
     }
 
-    fn render_inline_textarea(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, buf: &mut Buffer) {
-        Self::render_inline_textarea_with_spacing(focused_field, field_id, label, textarea, x, y, width, 1, buf);
+    fn render_inline_textarea(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, x: u16, y: u16, width: usize, buf: &mut Buffer, config: &crate::config::Config) {
+        Self::render_inline_textarea_with_spacing(focused_field, field_id, label, textarea, x, y, width, 1, buf, config);
     }
 
     fn render_checkbox(&self, field_id: usize, label: &str, checked: bool, x: u16, y: u16, buf: &mut Buffer) {
         let is_focused = self.focused_field == field_id;
-        let checkbox = if checked { "[x]" } else { "[ ]" };
+        let checkbox = if checked { "[✓]" } else { "[ ]" };
 
         // Label in darker cyan on left
         let label_style = Style::default().fg(Color::Rgb(100, 149, 237));

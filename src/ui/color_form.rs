@@ -280,9 +280,16 @@ impl ColorForm {
         false
     }
 
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         let popup_width = 52;
         let popup_height = 9;
+
+        // Parse textarea background color from config
+        let textarea_bg = if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+            color
+        } else {
+            Color::Rgb(53, 5, 5) // Fallback to maroon
+        };
 
         // Draw black background
         for row in self.popup_y..self.popup_y + popup_height {
@@ -322,20 +329,20 @@ impl ColorForm {
         let focused = self.focused_field;
 
         // Name
-        Self::render_text_field(focused, 0, "Name:", &mut self.name, self.popup_x + 2, y, popup_width, buf);
+        Self::render_text_field(focused, 0, "Name:", &mut self.name, self.popup_x + 2, y, popup_width, buf, textarea_bg);
         y += 1;
 
         // Category
-        Self::render_text_field(focused, 1, "Category:", &mut self.category, self.popup_x + 2, y, popup_width, buf);
+        Self::render_text_field(focused, 1, "Category:", &mut self.category, self.popup_x + 2, y, popup_width, buf, textarea_bg);
         y += 1;
 
         // Color (10 chars) + preview
         let color_val = self.color.lines()[0].to_string();
-        Self::render_color_field(focused, 2, "Color:", &mut self.color, &color_val, self.popup_x + 2, y, buf);
+        Self::render_color_field(focused, 2, "Color:", &mut self.color, &color_val, self.popup_x + 2, y, buf, textarea_bg);
         y += 1;
 
         // Favorite row
-        Self::render_favorite_row(focused, 3, "Favorite:", self.favorite, self.popup_x + 2, y, popup_width, buf);
+        Self::render_favorite_row(focused, 3, "Favorite:", self.favorite, self.popup_x + 2, y, popup_width, buf, textarea_bg);
         y += 2;
 
         // Status bar
@@ -352,6 +359,7 @@ impl ColorForm {
         y: u16,
         width: u16,
         buf: &mut Buffer,
+        textarea_bg: Color,
     ) {
         // Label with focus color (yellow when focused, darker cyan otherwise)
         let is_focused = focused_field == field_id;
@@ -366,14 +374,14 @@ impl ColorForm {
         RatatuiWidget::render(label_para, label_area, buf);
 
         // Input style: maroon background, cyan text; focused -> gold/yellow
-        let base_style = Style::default().fg(Color::Cyan).bg(Color::Rgb(53, 5, 5));
+        let base_style = Style::default().fg(Color::Cyan).bg(textarea_bg);
         let focused_style = Style::default().fg(Color::Black).bg(Color::Rgb(255, 215, 0)).add_modifier(Modifier::BOLD);
         textarea.set_style(if focused_field == field_id { focused_style } else { base_style });
         textarea.set_cursor_style(Style::default().bg(Color::White).fg(Color::Black));
         textarea.set_cursor_line_style(Style::default());
 
         // Set placeholder style to match (no underline)
-        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(Color::Rgb(53, 5, 5)));
+        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(textarea_bg));
 
         // Input area
         let input_area = Rect {
@@ -398,6 +406,7 @@ impl ColorForm {
         x: u16,
         y: u16,
         buf: &mut Buffer,
+        textarea_bg: Color,
     ) {
         // Label with focus color (yellow when focused, darker cyan otherwise)
         let is_focused = focused_field == field_id;
@@ -412,12 +421,12 @@ impl ColorForm {
         RatatuiWidget::render(label_para, label_area, buf);
 
         // Styles
-        let base_style = Style::default().fg(Color::Cyan).bg(Color::Rgb(53, 5, 5));
+        let base_style = Style::default().fg(Color::Cyan).bg(textarea_bg);
         let focused_style = Style::default().fg(Color::Black).bg(Color::Rgb(255, 215, 0)).add_modifier(Modifier::BOLD);
         textarea.set_style(if focused_field == field_id { focused_style } else { base_style });
         textarea.set_cursor_style(Style::default().bg(Color::White).fg(Color::Black));
         textarea.set_cursor_line_style(Style::default());
-        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(Color::Rgb(53, 5, 5)));
+        textarea.set_placeholder_style(Style::default().fg(Color::Gray).bg(textarea_bg));
 
         // Fixed 10 char input
         let input_area = Rect { x: x + 10, y, width: 10, height: 1 };
@@ -447,6 +456,7 @@ impl ColorForm {
         y: u16,
         _width: u16,
         buf: &mut Buffer,
+        textarea_bg: Color,
     ) {
         // Label with focus color (yellow when focused, darker cyan otherwise)
         let is_focused = focused_field == field_id;
@@ -460,10 +470,10 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(Color::Cyan).bg(Color::Rgb(53, 5, 5));
+        let base_style = Style::default().fg(Color::Cyan).bg(textarea_bg);
         let style = base_style;
 
-        let val_text = if value { "[X]" } else { "[ ]" };
+        let val_text = if value { "[✓]" } else { "[ ]" };
         buf.set_string(x + 10, y, val_text, style);
     }
 
@@ -500,6 +510,18 @@ impl ColorForm {
                 Some(original_name.iter().take(original_len).collect())
             }
             FormMode::Create => None,
+        }
+    }
+
+    /// Parse hex color string to ratatui Color
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        if hex.starts_with('#') && hex.len() == 7 {
+            let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
+            Some(Color::Rgb(r, g, b))
+        } else {
+            None
         }
     }
 }

@@ -139,6 +139,11 @@ impl TabbedTextWindow {
         self.show_border
     }
 
+    /// Check if tabs are positioned at the bottom
+    pub fn has_bottom_tabs(&self) -> bool {
+        matches!(self.tab_bar_position, TabBarPosition::Bottom)
+    }
+
     pub fn set_border_config(
         &mut self,
         show_border: bool,

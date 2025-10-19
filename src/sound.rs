@@ -112,18 +112,22 @@ impl SoundPlayer {
         Ok(())
     }
 
-    /// Play a sound from the sounds directory
+    /// Play a sound from the shared sounds directory
     ///
     /// # Arguments
     /// * `filename` - Filename in ~/.vellum-fe/sounds/
     /// * `volume_override` - Optional volume override
     pub fn play_from_sounds_dir(&self, filename: &str, volume_override: Option<f32>) -> Result<()> {
-        let sounds_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
-            .join(".vellum-fe")
-            .join("sounds");
+        let sounds_dir = crate::config::Config::sounds_dir()
+            .map_err(|e| anyhow::anyhow!("Failed to get sounds directory: {}", e))?;
 
         let path = sounds_dir.join(filename);
+
+        if !path.exists() {
+            warn!("Sound file not found: {:?}", path);
+            return Ok(()); // Don't error, just skip
+        }
+
         self.play(&path, volume_override, filename)
     }
 }
@@ -141,12 +145,10 @@ const DEFAULT_SOUNDS: &[(&str, &[u8])] = &[
     // ("death.ogg", include_bytes!("../defaults/sounds/death.ogg")),
 ];
 
-/// Create sounds directory if it doesn't exist and extract default sounds
+/// Create shared sounds directory if it doesn't exist and extract default sounds
 pub fn ensure_sounds_directory() -> Result<PathBuf> {
-    let sounds_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
-        .join(".vellum-fe")
-        .join("sounds");
+    let sounds_dir = crate::config::Config::sounds_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to get sounds directory: {}", e))?;
 
     if !sounds_dir.exists() {
         std::fs::create_dir_all(&sounds_dir)?;

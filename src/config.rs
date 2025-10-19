@@ -144,6 +144,8 @@ pub struct UiColors {
     pub background_color: String,  // Default background color for all widgets
     #[serde(default = "default_selection_bg_color")]
     pub selection_bg_color: String,  // Text selection background color
+    #[serde(default = "default_textarea_background")]
+    pub textarea_background: String,  // Background color for input textareas in forms/browsers
 }
 
 /// Color configuration - separate file (colors.toml)
@@ -169,6 +171,7 @@ impl Default for UiColors {
             text_color: default_text_color_default(),
             background_color: default_background_color(),
             selection_bg_color: default_selection_bg_color(),
+            textarea_background: default_textarea_background(),
         }
     }
 }
@@ -1001,6 +1004,10 @@ fn default_selection_respect_window_boundaries() -> bool {
 
 fn default_selection_bg_color() -> String {
     "#4a4a4a".to_string()
+}
+
+fn default_textarea_background() -> String {
+    "#400000".to_string() // dark maroon
 }
 
 fn default_drag_modifier_key() -> String {

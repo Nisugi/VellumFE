@@ -3939,7 +3939,7 @@ impl App {
 
                 // Render keybind form as popup (if open)
                 if let Some(ref mut form) = self.keybind_form {
-                    form.render(f.area(), f.buffer_mut());
+                    form.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render settings editor as popup (if open)
@@ -3964,7 +3964,7 @@ impl App {
 
                 // Render color form as popup (if open)
                 if let Some(ref mut form) = self.color_form {
-                    form.render(f.area(), f.buffer_mut());
+                    form.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render spell color browser as popup (if open)
@@ -3974,7 +3974,7 @@ impl App {
 
                 // Render spell color form as popup (if open)
                 if let Some(ref mut form) = self.spell_color_form {
-                    form.render(f.area(), f.buffer_mut());
+                    form.render(f.area(), f.buffer_mut(), &self.config);
                 }
 
                 // Render UI colors browser as popup (if open)
@@ -4860,10 +4860,47 @@ impl App {
                     message_to_send = Some("Settings editor closed".to_string());
                 }
                 (KeyCode::Up, _) => {
-                    editor.previous();
+                    // If current item is an enum, cycle it up; otherwise navigate up
+                    if editor.is_selected_enum() {
+                        if let Some((idx, new_value)) = editor.cycle_enum_prev() {
+                            if let Some(item) = editor.get_item(idx) {
+                                let key = item.key.clone();
+                                let display_name = item.display_name.clone();
+                                let _ = editor; // Drop borrow before calling update
+                                if self.update_setting(&key, &new_value) {
+                                    message_to_send = Some(format!("Setting '{}' changed to: {}", display_name, new_value));
+                                    self.refresh_settings_editor();
+                                }
+                            }
+                        }
+                    } else {
+                        editor.previous();
+                    }
                 }
                 (KeyCode::Down, _) => {
+                    // If current item is an enum, cycle it down; otherwise navigate down
+                    if editor.is_selected_enum() {
+                        if let Some((idx, new_value)) = editor.cycle_enum_next() {
+                            if let Some(item) = editor.get_item(idx) {
+                                let key = item.key.clone();
+                                let display_name = item.display_name.clone();
+                                let _ = editor; // Drop borrow before calling update
+                                if self.update_setting(&key, &new_value) {
+                                    message_to_send = Some(format!("Setting '{}' changed to: {}", display_name, new_value));
+                                    self.refresh_settings_editor();
+                                }
+                            }
+                        }
+                    } else {
+                        editor.next();
+                    }
+                }
+                (KeyCode::Tab, _) => {
+                    // Tab always navigates forward (backup navigation)
                     editor.next();
+                }
+                (KeyCode::BackTab, _) => {
+                    editor.previous();
                 }
                 (KeyCode::PageUp, _) => {
                     editor.page_up();
@@ -4873,7 +4910,7 @@ impl App {
                 }
                 (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => {
                     if editor.is_editing() {
-                        // Finish editing and save value
+                        // Finish editing and save value (Ctrl+S is primary save)
                         if let Some((idx, new_value)) = editor.finish_edit() {
                             if let Some(item) = editor.get_item(idx) {
                                 let key = item.key.clone();
@@ -4881,7 +4918,6 @@ impl App {
                                 let _ = editor; // Drop borrow before calling update
                                 if self.update_setting(&key, &new_value) {
                                     message_to_send = Some(format!("Setting '{}' updated to: {}", display_name, new_value));
-                                    // Refresh the settings editor to show new values
                                     self.refresh_settings_editor();
                                 } else {
                                     message_to_send = Some(format!("Failed to update setting '{}'", display_name));
@@ -4889,23 +4925,54 @@ impl App {
                             }
                         }
                     } else {
+                        // Check if it's an enum - if so, cycle it
+                        if editor.is_selected_enum() {
+                            if let Some((idx, new_value)) = editor.cycle_enum_next() {
+                                if let Some(item) = editor.get_item(idx) {
+                                    let key = item.key.clone();
+                                    let display_name = item.display_name.clone();
+                                    let _ = editor; // Drop borrow before calling update
+                                    if self.update_setting(&key, &new_value) {
+                                        message_to_send = Some(format!("Setting '{}' changed to: {}", display_name, new_value));
+                                        self.refresh_settings_editor();
+                                    }
+                                }
+                            }
+                        }
                         // Check if it's a boolean - if so, toggle it
-                        if let Some((idx, new_bool)) = editor.toggle_boolean() {
+                        else if let Some((idx, new_bool)) = editor.toggle_boolean() {
                             if let Some(item) = editor.get_item(idx) {
                                 let key = item.key.clone();
                                 let display_name = item.display_name.clone();
                                 let _ = editor; // Drop borrow before calling update
                                 if self.update_setting(&key, &new_bool.to_string()) {
                                     message_to_send = Some(format!("Setting '{}' toggled to: {}", display_name, new_bool));
-                                    // Refresh the settings editor to show new values
                                     self.refresh_settings_editor();
                                 } else {
                                     message_to_send = Some(format!("Failed to toggle setting '{}'", display_name));
                                 }
                             }
                         } else {
-                            // Not a boolean, start editing current item
+                            // Not an enum or boolean, start editing current item
                             editor.start_edit();
+                        }
+                    }
+                }
+                (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
+                    if editor.is_editing() {
+                        // Ctrl+S: Save edited value
+                        if let Some((idx, new_value)) = editor.finish_edit() {
+                            if let Some(item) = editor.get_item(idx) {
+                                let key = item.key.clone();
+                                let display_name = item.display_name.clone();
+                                let _ = editor; // Drop borrow before calling update
+                                if self.update_setting(&key, &new_value) {
+                                    message_to_send = Some(format!("Setting '{}' saved: {}", display_name, new_value));
+                                    self.refresh_settings_editor();
+                                } else {
+                                    message_to_send = Some(format!("Failed to save setting '{}'", display_name));
+                                }
+                            }
                         }
                     }
                 }
@@ -5654,6 +5721,7 @@ impl App {
                                             "Focused Border" => self.config.colors.ui.focused_border_color = fg_opt.clone().unwrap_or_default(),
                                             "Text" => self.config.colors.ui.text_color = fg_opt.clone().unwrap_or_default(),
                                             "Text Selection" => self.config.colors.ui.selection_bg_color = fg_opt.clone().unwrap_or_default(),
+                                            "Textarea Background" => self.config.colors.ui.textarea_background = fg_opt.clone().unwrap_or_default(),
                                             _ => {}
                                         }
                                     }
@@ -7925,60 +7993,65 @@ impl App {
         });
 
         // UI settings
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "command_echo_color".to_string(),
-            display_name: "Command Echo Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
-            description: Some("Color for echoed commands (hex color code)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "border_color".to_string(),
-            display_name: "Border Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
-            description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "focused_border_color".to_string(),
-            display_name: "Focused Border Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
-            description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "text_color".to_string(),
-            display_name: "Text Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
-            description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: UI colors moved to UI Colors browser (.uicolors command)
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "command_echo_color".to_string(),
+        //     display_name: "Command Echo Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
+        //     description: Some("Color for echoed commands (hex color code)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "border_color".to_string(),
+        //     display_name: "Border Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
+        //     description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "focused_border_color".to_string(),
+        //     display_name: "Focused Border Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
+        //     description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "text_color".to_string(),
+        //     display_name: "Text Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
+        //     description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
         items.push(SettingItem {
             category: "UI".to_string(),
             key: "border_style".to_string(),
             display_name: "Border Style".to_string(),
-            value: SettingValue::String(self.config.ui.border_style.clone()),
-            description: Some("Global default border style: single, double, rounded, thick, none".to_string()),
+            value: SettingValue::Enum(
+                self.config.ui.border_style.clone(),
+                vec!["single".to_string(), "double".to_string(), "rounded".to_string(), "thick".to_string(), "none".to_string()]
+            ),
+            description: Some("Global default border style".to_string()),
             editable: true,
             name_width: None,
         });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "background_color".to_string(),
-            display_name: "Background Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
-            description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: Background color moved to UI Colors browser
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "background_color".to_string(),
+        //     display_name: "Background Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
+        //     description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
         items.push(SettingItem {
             category: "UI".to_string(),
             key: "countdown_icon".to_string(),
@@ -8015,15 +8088,16 @@ impl App {
             editable: true,
             name_width: None,
         });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "selection_bg_color".to_string(),
-            display_name: "Selection Highlight Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
-            description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: Selection highlight color moved to UI Colors browser
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "selection_bg_color".to_string(),
+        //     display_name: "Selection Highlight Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
+        //     description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
 
         // Sound settings
         items.push(SettingItem {
@@ -8054,59 +8128,59 @@ impl App {
             name_width: None,
         });
 
-        // Preset colors (sorted alphabetically) - show as "fg bg" format
-        let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
-        preset_names.sort();
-        for preset_name in preset_names {
-            if let Some(preset) = self.config.colors.presets.get(&preset_name) {
-                let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-                let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-                let display = format!("{} {}", fg, bg);
-                items.push(SettingItem {
-                    category: "Presets".to_string(),
-                    key: format!("preset_{}", preset_name),
-                    display_name: preset_name.clone(),
-                    value: SettingValue::String(display),
-                    description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
-                    editable: true,
-            name_width: None,
-                });
-            }
-        }
+        // NOTE: Preset colors moved to Color Palette browser (.colors command)
+        // let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
+        // preset_names.sort();
+        // for preset_name in preset_names {
+        //     if let Some(preset) = self.config.colors.presets.get(&preset_name) {
+        //         let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //         let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //         let display = format!("{} {}", fg, bg);
+        //         items.push(SettingItem {
+        //             category: "Presets".to_string(),
+        //             key: format!("preset_{}", preset_name),
+        //             display_name: preset_name.clone(),
+        //             value: SettingValue::String(display),
+        //             description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+        //             editable: true,
+        //     name_width: None,
+        //         });
+        //     }
+        // }
 
-        // Spell colors
-        for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
-            let spell_ids = spell_range.spells.iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            items.push(SettingItem {
-                category: "Spells".to_string(),
-                key: format!("spell_color_{}", idx),
-                display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
-                value: SettingValue::Color(spell_range.color.clone()),
-                description: Some(format!("Color for spells: {}", spell_ids)),
-                editable: true,
-            name_width: None,
-            });
-        }
+        // NOTE: Spell colors moved to Spell Colors browser (.spellcolors command)
+        // for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
+        //     let spell_ids = spell_range.spells.iter()
+        //         .map(|id| id.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ");
+        //     items.push(SettingItem {
+        //         category: "Spells".to_string(),
+        //         key: format!("spell_color_{}", idx),
+        //         display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
+        //         value: SettingValue::Color(spell_range.color.clone()),
+        //         description: Some(format!("Color for spells: {}", spell_ids)),
+        //         editable: true,
+        //     name_width: None,
+        //     });
+        // }
 
-        // Prompt colors
-        for prompt_color in &self.config.colors.prompt_colors {
-            // Migrate legacy color field to fg if needed
-            let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
-            let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-            let display = format!("{} {}", fg, bg);
-            items.push(SettingItem {
-                category: "Prompts".to_string(),
-                key: format!("prompt_{}", prompt_color.character),
-                display_name: format!("Prompt '{}'", prompt_color.character),
-                value: SettingValue::String(display),
-                description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
-                editable: true,
-            name_width: None,
-            });
-        }
+        // NOTE: Prompt colors moved to UI Colors browser (.uicolors command)
+        // for prompt_color in &self.config.colors.prompt_colors {
+        //     // Migrate legacy color field to fg if needed
+        //     let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
+        //     let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //     let display = format!("{} {}", fg, bg);
+        //     items.push(SettingItem {
+        //         category: "Prompts".to_string(),
+        //         key: format!("prompt_{}", prompt_color.character),
+        //         display_name: format!("Prompt '{}'", prompt_color.character),
+        //         value: SettingValue::String(display),
+        //         description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+        //         editable: true,
+        //     name_width: None,
+        //     });
+        // }
 
         let editor = SettingsEditor::with_items(items);
         self.settings_editor = Some(editor);
@@ -8148,60 +8222,65 @@ impl App {
         });
 
         // UI settings
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "command_echo_color".to_string(),
-            display_name: "Command Echo Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
-            description: Some("Color for echoed commands (hex color code)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "border_color".to_string(),
-            display_name: "Border Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
-            description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "focused_border_color".to_string(),
-            display_name: "Focused Border Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
-            description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "text_color".to_string(),
-            display_name: "Text Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
-            description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: UI colors moved to UI Colors browser (.uicolors command)
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "command_echo_color".to_string(),
+        //     display_name: "Command Echo Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
+        //     description: Some("Color for echoed commands (hex color code)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "border_color".to_string(),
+        //     display_name: "Border Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
+        //     description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "focused_border_color".to_string(),
+        //     display_name: "Focused Border Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
+        //     description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "text_color".to_string(),
+        //     display_name: "Text Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
+        //     description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
         items.push(SettingItem {
             category: "UI".to_string(),
             key: "border_style".to_string(),
             display_name: "Border Style".to_string(),
-            value: SettingValue::String(self.config.ui.border_style.clone()),
-            description: Some("Global default border style: single, double, rounded, thick, none".to_string()),
+            value: SettingValue::Enum(
+                self.config.ui.border_style.clone(),
+                vec!["single".to_string(), "double".to_string(), "rounded".to_string(), "thick".to_string(), "none".to_string()]
+            ),
+            description: Some("Global default border style".to_string()),
             editable: true,
             name_width: None,
         });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "background_color".to_string(),
-            display_name: "Background Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
-            description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: Background color moved to UI Colors browser
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "background_color".to_string(),
+        //     display_name: "Background Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
+        //     description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
         items.push(SettingItem {
             category: "UI".to_string(),
             key: "countdown_icon".to_string(),
@@ -8238,15 +8317,16 @@ impl App {
             editable: true,
             name_width: None,
         });
-        items.push(SettingItem {
-            category: "UI".to_string(),
-            key: "selection_bg_color".to_string(),
-            display_name: "Selection Highlight Color".to_string(),
-            value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
-            description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
-            editable: true,
-            name_width: None,
-        });
+        // NOTE: Selection highlight color moved to UI Colors browser
+        // items.push(SettingItem {
+        //     category: "UI".to_string(),
+        //     key: "selection_bg_color".to_string(),
+        //     display_name: "Selection Highlight Color".to_string(),
+        //     value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
+        //     description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
+        //     editable: true,
+        //     name_width: None,
+        // });
 
         // Sound settings
         items.push(SettingItem {
@@ -8277,59 +8357,59 @@ impl App {
             name_width: None,
         });
 
-        // Preset colors (sorted alphabetically) - show as "fg bg" format
-        let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
-        preset_names.sort();
-        for preset_name in preset_names {
-            if let Some(preset) = self.config.colors.presets.get(&preset_name) {
-                let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-                let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-                let display = format!("{} {}", fg, bg);
-                items.push(SettingItem {
-                    category: "Presets".to_string(),
-                    key: format!("preset_{}", preset_name),
-                    display_name: preset_name.clone(),
-                    value: SettingValue::String(display),
-                    description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
-                    editable: true,
-            name_width: None,
-                });
-            }
-        }
+        // NOTE: Preset colors moved to Color Palette browser (.colors command)
+        // let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
+        // preset_names.sort();
+        // for preset_name in preset_names {
+        //     if let Some(preset) = self.config.colors.presets.get(&preset_name) {
+        //         let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //         let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //         let display = format!("{} {}", fg, bg);
+        //         items.push(SettingItem {
+        //             category: "Presets".to_string(),
+        //             key: format!("preset_{}", preset_name),
+        //             display_name: preset_name.clone(),
+        //             value: SettingValue::String(display),
+        //             description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+        //             editable: true,
+        //     name_width: None,
+        //         });
+        //     }
+        // }
 
-        // Spell colors
-        for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
-            let spell_ids = spell_range.spells.iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            items.push(SettingItem {
-                category: "Spells".to_string(),
-                key: format!("spell_color_{}", idx),
-                display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
-                value: SettingValue::Color(spell_range.color.clone()),
-                description: Some(format!("Color for spells: {}", spell_ids)),
-                editable: true,
-            name_width: None,
-            });
-        }
+        // NOTE: Spell colors moved to Spell Colors browser (.spellcolors command)
+        // for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
+        //     let spell_ids = spell_range.spells.iter()
+        //         .map(|id| id.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ");
+        //     items.push(SettingItem {
+        //         category: "Spells".to_string(),
+        //         key: format!("spell_color_{}", idx),
+        //         display_name: format!("Spells: {}", if spell_ids.len() > 40 { format!("{}...", &spell_ids[..40]) } else { spell_ids.clone() }),
+        //         value: SettingValue::Color(spell_range.color.clone()),
+        //         description: Some(format!("Color for spells: {}", spell_ids)),
+        //         editable: true,
+        //     name_width: None,
+        //     });
+        // }
 
-        // Prompt colors
-        for prompt_color in &self.config.colors.prompt_colors {
-            // Migrate legacy color field to fg if needed
-            let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
-            let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
-            let display = format!("{} {}", fg, bg);
-            items.push(SettingItem {
-                category: "Prompts".to_string(),
-                key: format!("prompt_{}", prompt_color.character),
-                display_name: format!("Prompt '{}'", prompt_color.character),
-                value: SettingValue::String(display),
-                description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
-                editable: true,
-            name_width: None,
-            });
-        }
+        // NOTE: Prompt colors moved to UI Colors browser (.uicolors command)
+        // for prompt_color in &self.config.colors.prompt_colors {
+        //     // Migrate legacy color field to fg if needed
+        //     let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
+        //     let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
+        //     let display = format!("{} {}", fg, bg);
+        //     items.push(SettingItem {
+        //         category: "Prompts".to_string(),
+        //         key: format!("prompt_{}", prompt_color.character),
+        //         display_name: format!("Prompt '{}'", prompt_color.character),
+        //         value: SettingValue::String(display),
+        //         description: Some("Format: #RRGGBB #RRGGBB (fg bg), use - for no color".to_string()),
+        //         editable: true,
+        //     name_width: None,
+        //     });
+        // }
 
         // Create new editor with updated values but preserve position
         let mut editor = SettingsEditor::with_items(items);

@@ -1,13 +1,12 @@
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
+    layout::Rect,
+    style::{Color, Style},
+    widgets::{Clear, Widget},
 };
 use tui_textarea::TextArea;
 use regex::Regex;
-use crate::config::HighlightPattern;
+use crate::config::{Config, HighlightPattern};
 
 /// Form mode - Create new or Edit existing
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +45,10 @@ pub struct HighlightFormWidget {
     pattern_error: Option<String>,
     mode: FormMode,
 
+    // Sound dropdown
+    sound_files: Vec<String>,      // Available sound files (index 0 = "none", then actual files)
+    sound_file_index: usize,       // Selected index in sound_files
+
     // Popup position (for dragging)
     pub popup_x: u16,
     pub popup_y: u16,
@@ -55,6 +58,35 @@ pub struct HighlightFormWidget {
 }
 
 impl HighlightFormWidget {
+    /// Scan ~/.vellum-fe/sounds/ for available sound files
+    /// Returns: ["none", "file1.wav", "file2.wav", ...]
+    fn load_sound_files() -> Vec<String> {
+        let mut files = vec!["none".to_string()];
+
+        if let Ok(sounds_dir) = Config::sounds_dir() {
+            if let Ok(entries) = std::fs::read_dir(&sounds_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                // Skip README and other non-audio files
+                                if !name.eq_ignore_ascii_case("README.md") && !name.eq_ignore_ascii_case(".gitkeep") {
+                                    files.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort the actual files (skip index 0 which is "none")
+        if files.len() > 1 {
+            files[1..].sort();
+        }
+        files
+    }
+
     /// Create a new highlight form (Create mode)
     pub fn new() -> Self {
         let mut name = TextArea::default();
@@ -100,6 +132,8 @@ impl HighlightFormWidget {
             status_message: "Ready".to_string(),
             pattern_error: None,
             mode: FormMode::Create,
+            sound_files: Self::load_sound_files(),
+            sound_file_index: 0, // Default to "none"
             popup_x: 10,
             popup_y: 2,
             is_dragging: false,
@@ -138,6 +172,11 @@ impl HighlightFormWidget {
         if let Some(ref sound_file) = pattern.sound {
             form.sound = TextArea::from([sound_file.clone()]);
             form.sound.set_cursor_line_style(Style::default());
+
+            // Find the index of this sound file in the dropdown
+            if let Some(idx) = form.sound_files.iter().position(|s| s == sound_file) {
+                form.sound_file_index = idx;
+            }
         }
 
         if let Some(volume) = pattern.sound_volume {
@@ -172,6 +211,25 @@ impl HighlightFormWidget {
         };
     }
 
+    /// Update sound field from current sound_file_index
+    fn update_sound_from_index(&mut self) {
+        if self.sound_files.is_empty() {
+            return;
+        }
+
+        let selected = &self.sound_files[self.sound_file_index];
+        if selected == "none" {
+            // Clear the sound field
+            self.sound = TextArea::default();
+            self.sound.set_cursor_line_style(Style::default());
+            self.sound.set_placeholder_text("sword_swing.wav");
+        } else {
+            // Set to selected file
+            self.sound = TextArea::from([selected.clone()]);
+            self.sound.set_cursor_line_style(Style::default());
+        }
+    }
+
     /// Handle key input for current focused field
     pub fn handle_key(&mut self, key: ratatui::crossterm::event::KeyEvent) -> Option<FormResult> {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
@@ -185,6 +243,22 @@ impl HighlightFormWidget {
                 }
                 None
             }
+            KeyCode::Up if self.focused_field == 5 => {
+                // Cycle sound dropdown up
+                if self.sound_file_index > 0 {
+                    self.sound_file_index -= 1;
+                    self.update_sound_from_index();
+                }
+                None
+            }
+            KeyCode::Down if self.focused_field == 5 => {
+                // Cycle sound dropdown down
+                if !self.sound_files.is_empty() && self.sound_file_index + 1 < self.sound_files.len() {
+                    self.sound_file_index += 1;
+                    self.update_sound_from_index();
+                }
+                None
+            }
             KeyCode::Up => {
                 self.focus_prev();
                 None
@@ -193,7 +267,9 @@ impl HighlightFormWidget {
                 self.focus_next();
                 None
             }
-            KeyCode::Esc => Some(FormResult::Cancel),
+            KeyCode::Esc => {
+                Some(FormResult::Cancel)
+            }
             KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Ctrl+S to save
                 self.try_save()
@@ -372,11 +448,20 @@ impl HighlightFormWidget {
         let x = self.popup_x;
         let y = self.popup_y;
 
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        Clear.render(popup_area, buf);
+
         // Draw black background
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_char(' ').set_bg(Color::Black);
+                    buf[(x + col, y + row)].set_bg(Color::Black);
                 }
             }
         }
@@ -436,34 +521,40 @@ impl HighlightFormWidget {
         let mut current_y = y + 2; // Start below title bar
         let label_width = 16; // Enough for "Background:"
         let input_start = x + 2 + label_width;
-        let maroon = Color::Rgb(64, 0, 0);
+
+        // Parse textarea background color from config
+        let maroon = if let Ok(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+            color
+        } else {
+            Color::Rgb(64, 0, 0) // Fallback to dark maroon
+        };
 
         // Field 0: Name
-        self.render_text_row(0, "Name:", &self.name, x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(0, "Name:", &self.name, "monster_kill", x + 2, current_y, input_start, 30, maroon, buf);
         current_y += 1;
 
         // Field 1: Pattern
-        self.render_text_row(1, "Pattern:", &self.pattern, x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(1, "Pattern:", &self.pattern, "You swing.*at", x + 2, current_y, input_start, 30, maroon, buf);
         current_y += 1;
 
         // Field 2: Category
-        self.render_text_row(2, "Category:", &self.category, x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(2, "Category:", &self.category, "Combat", x + 2, current_y, input_start, 30, maroon, buf);
         current_y += 1;
 
         // Field 3: Foreground (10 char + 1 space + 2 char preview)
-        self.render_color_row(3, "Foreground:", &self.fg_color, x + 2, current_y, input_start, maroon, buf, config);
+        self.render_color_row(3, "Foreground:", &self.fg_color, "#ff0000", x + 2, current_y, input_start, maroon, buf, config);
         current_y += 1;
 
         // Field 4: Background (10 char + 1 space + 2 char preview)
-        self.render_color_row(4, "Background:", &self.bg_color, x + 2, current_y, input_start, maroon, buf, config);
+        self.render_color_row(4, "Background:", &self.bg_color, "optional", x + 2, current_y, input_start, maroon, buf, config);
         current_y += 1;
 
-        // Field 5: Sound
-        self.render_text_row(5, "Sound:", &self.sound, x + 2, current_y, input_start, 30, maroon, buf);
+        // Field 5: Sound (dropdown)
+        self.render_sound_dropdown(x + 2, current_y, input_start, maroon, buf);
         current_y += 1;
 
         // Field 6: Volume
-        self.render_text_row(6, "Volume:", &self.sound_volume, x + 2, current_y, input_start, 10, maroon, buf);
+        self.render_text_row(6, "Volume:", &self.sound_volume, "0.8", x + 2, current_y, input_start, 10, maroon, buf);
         current_y += 2;
 
         // Checkboxes (Fields 7-9)
@@ -497,7 +588,7 @@ impl HighlightFormWidget {
         }
     }
 
-    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
+    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
         let focused = self.focused_field == field_id;
         let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
@@ -511,14 +602,22 @@ impl HighlightFormWidget {
             buf[(input_x + i, y)].set_bg(bg);
         }
 
-        // Render text content
+        // Render text content or hint
         let text = &textarea.lines()[0];
-        for (i, ch) in text.chars().enumerate().take(input_width as usize) {
-            buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+        if text.is_empty() {
+            // Show hint in dark gray
+            for (i, ch) in hint.chars().enumerate().take(input_width as usize) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
+            }
+        } else {
+            // Show actual text
+            for (i, ch) in text.chars().enumerate().take(input_width as usize) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+            }
         }
     }
 
-    fn render_color_row(&self, field_id: usize, label: &str, textarea: &TextArea, x: u16, y: u16, input_x: u16, bg: Color, buf: &mut Buffer, config: &crate::config::Config) {
+    fn render_color_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, bg: Color, buf: &mut Buffer, config: &crate::config::Config) {
         let focused = self.focused_field == field_id;
         let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
@@ -532,19 +631,53 @@ impl HighlightFormWidget {
             buf[(input_x + i, y)].set_bg(bg);
         }
 
-        // Render text content (max 10 chars)
+        // Render text content or hint (max 10 chars)
         let text = &textarea.lines()[0];
-        for (i, ch) in text.chars().enumerate().take(10) {
-            buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+        if text.is_empty() {
+            // Show hint in dark gray
+            for (i, ch) in hint.chars().enumerate().take(10) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
+            }
+        } else {
+            // Show actual text
+            for (i, ch) in text.chars().enumerate().take(10) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+            }
         }
 
         // 1 space gap
         buf[(input_x + 10, y)].set_char(' ').set_bg(Color::Black);
 
         // 2-char color preview (no brackets)
-        if let Some(color) = self.parse_and_resolve_color(text, config) {
-            buf[(input_x + 11, y)].set_char(' ').set_bg(color);
-            buf[(input_x + 12, y)].set_char(' ').set_bg(color);
+        if !text.is_empty() {
+            if let Some(color) = self.parse_and_resolve_color(text, config) {
+                buf[(input_x + 11, y)].set_char(' ').set_bg(color);
+                buf[(input_x + 12, y)].set_char(' ').set_bg(color);
+            }
+        }
+    }
+
+    fn render_sound_dropdown(&self, x: u16, y: u16, input_x: u16, _bg: Color, buf: &mut Buffer) {
+        let focused = self.focused_field == 5;
+        let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+
+        // Render label
+        let label = "Sound:";
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
+        }
+
+        // Get current value from dropdown index
+        let current_value = if !self.sound_files.is_empty() && self.sound_file_index < self.sound_files.len() {
+            &self.sound_files[self.sound_file_index]
+        } else {
+            "none"
+        };
+
+        // Render current value (highlight if focused, no background)
+        let value_color = if focused { Color::Rgb(255, 215, 0) } else { Color::DarkGray };
+        for (i, ch) in current_value.chars().enumerate().take(30) {
+            buf[(input_x + i as u16, y)].set_char(ch).set_fg(value_color).set_bg(Color::Black);
         }
     }
 

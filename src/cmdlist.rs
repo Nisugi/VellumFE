@@ -3,7 +3,6 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 
 /// A single command list entry from cmdlist1.xml
 #[derive(Debug, Clone)]
@@ -20,13 +19,13 @@ pub struct CmdList {
 }
 
 impl CmdList {
-    /// Load cmdlist1.xml from ~/.vellum-fe/cmdlist1.xml
+    /// Load cmdlist1.xml from ~/.vellum-fe/cmdlist1.xml (single source of truth)
     pub fn load() -> Result<Self> {
-        let path = Self::get_cmdlist_path()?;
+        let path = crate::config::Config::cmdlist_path()?;
 
         if !path.exists() {
             return Err(anyhow::anyhow!(
-                "cmdlist1.xml not found at {}. Please copy it to this location.",
+                "cmdlist1.xml not found at {}. This should have been extracted on first run!",
                 path.display()
             ));
         }
@@ -35,14 +34,6 @@ impl CmdList {
             .with_context(|| format!("Failed to read cmdlist1.xml from {}", path.display()))?;
 
         Self::parse(&content)
-    }
-
-    /// Get the path to cmdlist1.xml (~/.vellum-fe/cmdlist1.xml)
-    fn get_cmdlist_path() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-
-        Ok(home.join(".vellum-fe").join("cmdlist1.xml"))
     }
 
     /// Parse cmdlist1.xml content

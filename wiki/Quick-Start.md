@@ -9,7 +9,8 @@ vellum-fe connects to Lich via its detached client mode. You **must** start Lich
 ### Windows (PowerShell)
 
 ```powershell
-C:\Ruby4Lich5\3.4.5\bin\rubyw.exe C:\Ruby4Lich5\Lich5\lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
+# Note: Replace 3.4.x with your actual Ruby version (e.g., 3.4.2, 3.4.5, etc.)
+C:\Ruby4Lich5\3.4.x\bin\rubyw.exe C:\Ruby4Lich5\Lich5\lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
 ```
 
 ### Linux/Mac

@@ -1,8 +1,8 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
+    style::{Color, Style},
+    widgets::{Clear, Widget},
 };
 use tui_textarea::TextArea;
 
@@ -27,7 +27,7 @@ pub struct KeybindFormWidget {
     action_dropdown_index: usize,  // Index in AVAILABLE_ACTIONS
     macro_text: TextArea<'static>,
 
-    focused_field: usize,  // 0=key_combo, 1=action_type_action, 2=action_type_macro, 3=action/macro field, 4=save, 5=cancel, 6=delete
+    focused_field: usize,  // 0=action_type_action, 1=action_type_macro, 2=key_combo, 3=action/macro field
     status_message: String,
     key_combo_error: Option<String>,
     mode: FormMode,
@@ -125,8 +125,8 @@ impl KeybindFormWidget {
 
         match key.code {
             KeyCode::Tab => {
-                // Tab through fields (with wraparound)
-                let max_field = if matches!(self.mode, FormMode::Edit { .. }) { 6 } else { 5 };
+                // Tab through fields: 0=Action, 1=Macro, 2=Key Combo, 3=Action/Macro field
+                let max_field = 3;
 
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                     // Shift+Tab: go backwards with wraparound
@@ -147,7 +147,7 @@ impl KeybindFormWidget {
             }
             KeyCode::BackTab => {
                 // Shift+Tab sent as BackTab by some terminals
-                let max_field = if matches!(self.mode, FormMode::Edit { .. }) { 6 } else { 5 };
+                let max_field = 3;
                 if self.focused_field == 0 {
                     self.focused_field = max_field;
                 } else {
@@ -156,13 +156,13 @@ impl KeybindFormWidget {
                 None
             }
             KeyCode::Esc => Some(KeybindFormResult::Cancel),
-            KeyCode::Char(' ') if self.focused_field == 1 => {
-                // Toggle to Action type
+            KeyCode::Char(' ') if self.focused_field == 0 => {
+                // Toggle to Action type (Field 0)
                 self.action_type = KeybindActionType::Action;
                 None
             }
-            KeyCode::Char(' ') if self.focused_field == 2 => {
-                // Toggle to Macro type
+            KeyCode::Char(' ') if self.focused_field == 1 => {
+                // Toggle to Macro type (Field 1)
                 self.action_type = KeybindActionType::Macro;
                 None
             }
@@ -176,17 +176,17 @@ impl KeybindFormWidget {
                 self.action_dropdown_index = (self.action_dropdown_index + 1).min(AVAILABLE_ACTIONS.len() - 1);
                 None
             }
-            KeyCode::Enter if self.focused_field == 4 => {
-                // Save button
+            KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+S to save
                 self.try_save()
             }
-            KeyCode::Enter if self.focused_field == 5 => {
-                // Cancel button
-                Some(KeybindFormResult::Cancel)
-            }
-            KeyCode::Enter if self.focused_field == 6 => {
-                // Delete button
-                self.try_delete()
+            KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+D to delete (only in edit mode)
+                if matches!(self.mode, FormMode::Edit { .. }) {
+                    self.try_delete()
+                } else {
+                    None
+                }
             }
             _ => {
                 // Pass to text inputs
@@ -194,12 +194,14 @@ impl KeybindFormWidget {
                 let input: Input = key.into();
 
                 let _handled = match self.focused_field {
-                    0 => {
+                    2 => {
+                        // Field 2: Key Combo
                         let result = self.key_combo.input(input.clone());
                         self.validate_key_combo();
                         result
                     }
                     3 if self.action_type == KeybindActionType::Macro => {
+                        // Field 3: Macro text (only when macro type is selected)
                         self.macro_text.input(input.clone())
                     }
                     _ => false,
@@ -293,216 +295,192 @@ impl KeybindFormWidget {
         }
     }
 
-    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let popup_width = 80;
-        let popup_height = 25;
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
+        let width = 52;
+        let height = 9;
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width.min(area.width.saturating_sub(self.popup_x)),
-            height: popup_height.min(area.height.saturating_sub(self.popup_y)),
-        };
+        let x = self.popup_x;
+        let y = self.popup_y;
 
-        // Draw solid black background
-        for y in popup_area.y..popup_area.y + popup_area.height {
-            for x in popup_area.x..popup_area.x + popup_area.width {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char(' ');
-                    cell.set_bg(Color::Black);
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect { x, y, width, height };
+        Clear.render(popup_area, buf);
+
+        // Draw black background
+        for row in 0..height {
+            for col in 0..width {
+                if x + col < area.width && y + row < area.height {
+                    buf[(x + col, y + row)].set_bg(Color::Black);
                 }
             }
         }
 
-        // Draw popup border
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(match self.mode {
-                FormMode::Create => " Add Keybind ",
-                FormMode::Edit { .. } => " Edit Keybind ",
-            });
-        block.render(popup_area, buf);
+        // Draw cyan border
+        self.draw_border(x, y, width, height, buf);
 
-        // Content area (inside borders)
-        let content = Rect {
-            x: popup_area.x + 2,
-            y: popup_area.y + 2,
-            width: popup_area.width.saturating_sub(4),
-            height: popup_area.height.saturating_sub(4),
-        };
-
-        let mut y = content.y;
-
-        // Title
+        // Title (left-aligned on top border)
         let title = match self.mode {
-            FormMode::Create => "Create a new keybind",
-            FormMode::Edit { .. } => "Edit keybind",
+            FormMode::Create => " Add Keybind ",
+            FormMode::Edit { .. } => " Edit Keybind ",
         };
-        let title_para = Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD));
-        title_para.render(Rect { x: content.x, y, width: content.width, height: 1 }, buf);
-        y += 2;
-
-        // Key combo field
-        Self::render_text_field(0, self.focused_field, "Key Combo:", &mut self.key_combo, content.x, y, content.width, buf);
-        y += 3;
-
-        // Show error if any
-        if let Some(ref error) = self.key_combo_error {
-            let error_para = Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red));
-            error_para.render(Rect { x: content.x + 12, y, width: content.width.saturating_sub(12), height: 1 }, buf);
-            y += 1;
+        for (i, ch) in title.chars().enumerate() {
+            if (x + 1 + i as u16) < (x + width) {
+                buf[(x + 1 + i as u16, y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
+            }
         }
-        y += 1;
 
-        // Action type radio buttons
-        let action_label = Paragraph::new("Type:");
-        action_label.render(Rect { x: content.x, y, width: 12, height: 1 }, buf);
+        // Render fields
+        self.render_fields(x, y, width, buf, config);
 
-        let action_radio = if self.action_type == KeybindActionType::Action { "[•] Action" } else { "[ ] Action" };
-        let action_style = if self.focused_field == 1 {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        // Footer (centered at row 7)
+        let footer = "Ctrl+S:Save Ctrl+D:Delete Esc:Cancel";
+        let footer_y = y + 7;
+        let footer_x = x + (width.saturating_sub(footer.len() as u16)) / 2;
+        for (i, ch) in footer.chars().enumerate() {
+            if (footer_x + i as u16) < (x + width) {
+                buf[(footer_x + i as u16, footer_y)].set_char(ch).set_fg(Color::White).set_bg(Color::Black);
+            }
+        }
+    }
+
+    fn draw_border(&self, x: u16, y: u16, width: u16, height: u16, buf: &mut Buffer) {
+        let border_style = Style::default().fg(Color::Cyan);
+
+        // Top border
+        buf[(x, y)].set_char('┌').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y)].set_char('┐').set_style(border_style);
+
+        // Side borders
+        for row in 1..height - 1 {
+            buf[(x, y + row)].set_char('│').set_style(border_style);
+            buf[(x + width - 1, y + row)].set_char('│').set_style(border_style);
+        }
+
+        // Bottom border
+        buf[(x, y + height - 1)].set_char('└').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y + height - 1)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y + height - 1)].set_char('┘').set_style(border_style);
+    }
+
+    fn render_fields(&mut self, x: u16, y: u16, width: u16, buf: &mut Buffer, config: &crate::config::Config) {
+        let mut current_y = y + 2;
+
+        // Parse textarea background color from config
+        let maroon = if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+            color
         } else {
-            Style::default()
+            Color::Rgb(64, 0, 0) // Fallback to dark maroon
         };
-        let action_para = Paragraph::new(action_radio).style(action_style);
-        action_para.render(Rect { x: content.x + 12, y, width: 15, height: 1 }, buf);
 
-        let macro_radio = if self.action_type == KeybindActionType::Macro { "[•] Macro" } else { "[ ] Macro" };
-        let macro_style = if self.focused_field == 2 {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        // Row 2: Type (radio buttons) - Fields 0 and 1
+        let type_label_color = if self.focused_field == 0 || self.focused_field == 1 {
+            Color::Rgb(255, 215, 0)
         } else {
-            Style::default()
+            Color::Cyan
         };
-        let macro_para = Paragraph::new(macro_radio).style(macro_style);
-        macro_para.render(Rect { x: content.x + 28, y, width: 15, height: 1 }, buf);
-        y += 2;
+        let type_label = "Type:";
+        for (i, ch) in type_label.chars().enumerate() {
+            buf[(x + 2 + i as u16, current_y)].set_char(ch).set_fg(type_label_color).set_bg(Color::Black);
+        }
 
-        // Action dropdown or macro text field
+        // Action radio button (Field 0)
+        let action_selected = self.action_type == KeybindActionType::Action;
+        let action_color = if self.focused_field == 0 { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+        let action_text = if action_selected { "[X] Action" } else { "[ ] Action" };
+        for (i, ch) in action_text.chars().enumerate() {
+            buf[(x + 8 + i as u16, current_y)].set_char(ch).set_fg(action_color).set_bg(Color::Black);
+        }
+
+        // Macro radio button (Field 1)
+        let macro_selected = self.action_type == KeybindActionType::Macro;
+        let macro_color = if self.focused_field == 1 { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+        let macro_text = if macro_selected { "[X] Macro" } else { "[ ] Macro" };
+        for (i, ch) in macro_text.chars().enumerate() {
+            buf[(x + 23 + i as u16, current_y)].set_char(ch).set_fg(macro_color).set_bg(Color::Black);
+        }
+        current_y += 1;
+
+        // Row 3: Key Combo (Field 2) - 1 col spacing, 37 col width
+        let key_input_start = x + 2 + 10 + 1; // "Key Combo:" (10) + 1 space
+        self.render_text_row(2, "Key Combo:", &self.key_combo, "ctrl+e, f5, alt+shift+a", x + 2, current_y, key_input_start, 37, maroon, buf);
+        current_y += 2;
+
+        // Row 5: Action dropdown or Macro text (4 col spacing, 37 col width)
         match self.action_type {
             KeybindActionType::Action => {
-                let label = Paragraph::new("Action:");
-                label.render(Rect { x: content.x, y, width: 12, height: 1 }, buf);
-
-                // Show current action and scroll info
-                let current_action = AVAILABLE_ACTIONS[self.action_dropdown_index];
-                let action_text = format!("{} ({}/{})", current_action, self.action_dropdown_index + 1, AVAILABLE_ACTIONS.len());
-                let action_style = if self.focused_field == 3 {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                let action_para = Paragraph::new(action_text).style(action_style);
-                action_para.render(Rect { x: content.x + 12, y, width: content.width.saturating_sub(12), height: 1 }, buf);
-                y += 1;
-
-                if self.focused_field == 3 {
-                    let help = Paragraph::new("↑↓ to scroll through actions").style(Style::default().fg(Color::DarkGray));
-                    help.render(Rect { x: content.x + 12, y, width: content.width.saturating_sub(12), height: 1 }, buf);
-                }
-                y += 2;
+                let action_input_start = x + 2 + 7 + 4; // "Action:" (7) + 4 spaces
+                self.render_action_dropdown(x + 2, current_y, action_input_start, 37, maroon, buf);
             }
             KeybindActionType::Macro => {
-                Self::render_text_field(3, self.focused_field, "Macro Text:", &mut self.macro_text, content.x, y, content.width, buf);
-                y += 3;
-
-                let help = Paragraph::new("Use \\r for Enter (e.g., \"run left\\r\")").style(Style::default().fg(Color::DarkGray));
-                help.render(Rect { x: content.x + 12, y, width: content.width.saturating_sub(12), height: 1 }, buf);
-                y += 2;
+                let macro_input_start = x + 2 + 11 + 4; // "Macro Text:" (11) + 4 spaces
+                self.render_text_row(3, "Macro Text:", &self.macro_text, "run left\\r", x + 2, current_y, macro_input_start, 37, maroon, buf);
             }
         }
+    }
 
-        // Status message
-        if !self.status_message.is_empty() {
-            let status_para = Paragraph::new(self.status_message.as_str()).style(Style::default().fg(Color::Yellow));
-            status_para.render(Rect { x: content.x, y, width: content.width, height: 1 }, buf);
-            y += 2;
+    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
+        let focused = self.focused_field == field_id;
+        let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+
+        // Render label
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
         }
 
-        // Buttons
-        self.render_buttons(content.x, y, buf);
+        // Render input background
+        for i in 0..input_width {
+            buf[(input_x + i, y)].set_bg(bg);
+        }
+
+        // Render text content or hint
+        let text = &textarea.lines()[0];
+        if text.is_empty() {
+            // Show hint in dark gray
+            for (i, ch) in hint.chars().enumerate().take(input_width as usize) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
+            }
+        } else {
+            // Show actual text
+            for (i, ch) in text.chars().enumerate().take(input_width as usize) {
+                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+            }
+        }
     }
 
-    fn render_text_field(
-        field_id: usize,
-        focused_field: usize,
-        label: &str,
-        textarea: &mut TextArea,
-        x: u16,
-        y: u16,
-        width: u16,
-        buf: &mut Buffer,
-    ) {
-        // Label
-        let label_para = Paragraph::new(label);
-        label_para.render(Rect { x, y, width: 12, height: 1 }, buf);
+    fn render_action_dropdown(&self, x: u16, y: u16, input_x: u16, input_width: u16, _bg: Color, buf: &mut Buffer) {
+        let focused = self.focused_field == 3;
+        let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
-        // Input area - TextArea needs height 3 minimum (border + text + cursor)
-        let input_area = Rect {
-            x: x + 12,
-            y,
-            width: width.saturating_sub(12),
-            height: 3,
-        };
+        // Render label
+        let label = "Action:";
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
+        }
 
-        let border_style = if focused_field == field_id {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        textarea.set_block(Block::default().borders(Borders::ALL).border_style(border_style));
+        // Get current value from dropdown index
+        let current_value = AVAILABLE_ACTIONS[self.action_dropdown_index];
 
-        RatatuiWidget::render(&*textarea, input_area, buf);
-    }
-
-    fn render_buttons(&self, x: u16, y: u16, buf: &mut Buffer) {
-        let (save_text, save_style) = if self.focused_field == 4 {
-            ("[ SAVE ]", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
-        } else {
-            ("[ Save ]", Style::default().fg(Color::Green))
-        };
-
-        let (cancel_text, cancel_style) = if self.focused_field == 5 {
-            ("[ CANCEL ]", Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD))
-        } else {
-            ("[ Cancel ]", Style::default().fg(Color::Red))
-        };
-
-        let save_para = Paragraph::new(save_text).style(save_style);
-        save_para.render(Rect { x, y, width: 10, height: 1 }, buf);
-
-        let cancel_para = Paragraph::new(cancel_text).style(cancel_style);
-        cancel_para.render(Rect { x: x + 11, y, width: 12, height: 1 }, buf);
-
-        // Delete button only in edit mode
-        if matches!(self.mode, FormMode::Edit { .. }) {
-            let (delete_text, delete_style) = if self.focused_field == 6 {
-                ("[ DELETE ]", Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD))
-            } else {
-                ("[ Delete ]", Style::default().fg(Color::Magenta))
-            };
-
-            let delete_para = Paragraph::new(delete_text).style(delete_style);
-            delete_para.render(Rect { x: x + 24, y, width: 12, height: 1 }, buf);
+        // Render current value (highlight if focused, no background)
+        let value_color = if focused { Color::Rgb(255, 215, 0) } else { Color::DarkGray };
+        for (i, ch) in current_value.chars().enumerate().take(input_width as usize) {
+            buf[(input_x + i as u16, y)].set_char(ch).set_fg(value_color).set_bg(Color::Black);
         }
     }
 
     /// Handle mouse events for dragging
     pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
-        let popup_width = 80;
-        let popup_height = 25;
-
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width.min(terminal_area.width.saturating_sub(self.popup_x)),
-            height: popup_height.min(terminal_area.height.saturating_sub(self.popup_y)),
-        };
+        let popup_width = 52;
+        let popup_height = 9;
 
         // Check if click is on title bar (top border, excluding corners)
-        let on_title_bar = row == popup_area.y
-            && col > popup_area.x
-            && col < popup_area.x + popup_area.width - 1;
+        let on_title_bar = row == self.popup_y
+            && col > self.popup_x
+            && col < self.popup_x + popup_width - 1;
 
         if pressed {
             if on_title_bar && !self.is_dragging {
@@ -530,5 +508,17 @@ impl KeybindFormWidget {
         }
 
         false
+    }
+
+    /// Parse hex color string to ratatui Color
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        if hex.starts_with('#') && hex.len() == 7 {
+            let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
+            Some(Color::Rgb(r, g, b))
+        } else {
+            None
+        }
     }
 }

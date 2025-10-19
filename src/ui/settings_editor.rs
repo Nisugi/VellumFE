@@ -1,7 +1,8 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier},
+    style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 
 #[derive(Debug, Clone)]
@@ -142,7 +143,7 @@ impl SettingsEditor {
 
     pub fn page_up(&mut self) {
         if !self.is_editing() {
-            let visible_height: usize = 15; // Approximate
+            let visible_height: usize = 16; // 70x20 window: 20 - 4 (borders + footer) = 16
             let jump = visible_height.saturating_sub(1).max(1);
             self.selected_index = self.selected_index.saturating_sub(jump);
             self.adjust_scroll();
@@ -152,7 +153,7 @@ impl SettingsEditor {
     pub fn page_down(&mut self) {
         if !self.is_editing() {
             let filtered = self.filtered_items();
-            let visible_height: usize = 15; // Approximate
+            let visible_height: usize = 16; // 70x20 window: 20 - 4 (borders + footer) = 16
             let jump = visible_height.saturating_sub(1).max(1);
             self.selected_index = (self.selected_index + jump).min(filtered.len().saturating_sub(1));
             self.adjust_scroll();
@@ -160,12 +161,34 @@ impl SettingsEditor {
     }
 
     fn adjust_scroll(&mut self) {
-        let visible_height: usize = 15; // Approximate
-        // Ensure selected item is visible
-        if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        } else if self.selected_index >= self.scroll_offset + visible_height {
-            self.scroll_offset = self.selected_index.saturating_sub(visible_height - 1);
+        // Calculate total display rows including category headers
+        let filtered = self.filtered_items();
+        let mut total_display_rows = 0;
+        let mut last_category: Option<&str> = None;
+        let mut selected_display_row = 0;
+
+        for (idx, (_original_idx, item)) in filtered.iter().enumerate() {
+            // Add category header row if category changes
+            if last_category.as_deref() != Some(&item.category) {
+                total_display_rows += 1;
+                last_category = Some(&item.category);
+            }
+
+            // Track which display row the selected item is on
+            if idx == self.selected_index {
+                selected_display_row = total_display_rows;
+            }
+
+            total_display_rows += 1;
+        }
+
+        let visible_rows = 16; // 70x20 window: 20 - 4 (borders + footer) = 16
+
+        // Adjust scroll to keep selected item in view
+        if selected_display_row < self.scroll_offset {
+            self.scroll_offset = selected_display_row;
+        } else if selected_display_row >= self.scroll_offset + visible_rows {
+            self.scroll_offset = selected_display_row.saturating_sub(visible_rows - 1);
         }
     }
 
@@ -206,6 +229,60 @@ impl SettingsEditor {
             }
         }
         None
+    }
+
+    /// Cycle enum to next value (updates the value and returns the index and new value)
+    pub fn cycle_enum_next(&mut self) -> Option<(usize, String)> {
+        let filtered = self.filtered_items();
+        if let Some((original_idx, _item)) = filtered.get(self.selected_index) {
+            let idx = *original_idx;
+            if let Some(item) = self.items.get_mut(idx) {
+                if item.editable {
+                    if let SettingValue::Enum(current, options) = &item.value {
+                        if let Some(current_idx) = options.iter().position(|o| o == current) {
+                            // Don't wrap around - stop at last option
+                            let next_idx = (current_idx + 1).min(options.len() - 1);
+                            let new_value = options[next_idx].clone();
+                            item.value = SettingValue::Enum(new_value.clone(), options.clone());
+                            return Some((idx, new_value));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Cycle enum to previous value (updates the value and returns the index and new value)
+    pub fn cycle_enum_prev(&mut self) -> Option<(usize, String)> {
+        let filtered = self.filtered_items();
+        if let Some((original_idx, _item)) = filtered.get(self.selected_index) {
+            let idx = *original_idx;
+            if let Some(item) = self.items.get_mut(idx) {
+                if item.editable {
+                    if let SettingValue::Enum(current, options) = &item.value {
+                        if let Some(current_idx) = options.iter().position(|o| o == current) {
+                            // Don't wrap around - stop at first option (use saturating_sub)
+                            let prev_idx = current_idx.saturating_sub(1);
+                            let new_value = options[prev_idx].clone();
+                            item.value = SettingValue::Enum(new_value.clone(), options.clone());
+                            return Some((idx, new_value));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if the currently selected item is an Enum
+    pub fn is_selected_enum(&self) -> bool {
+        let filtered = self.filtered_items();
+        if let Some((_original_idx, item)) = filtered.get(self.selected_index) {
+            matches!(item.value, SettingValue::Enum(_, _))
+        } else {
+            false
+        }
     }
 
     pub fn cancel_edit(&mut self) {
@@ -295,104 +372,125 @@ impl SettingsEditor {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
-        // Calculate popup size
-        let popup_width = 70.min(area.width);
-        let popup_height = 25.min(area.height);
+        let width = 70;
+        let height = 20;
 
-        // Center popup initially if not yet positioned
+        // Center on first render
         if self.popup_x == 0 && self.popup_y == 0 {
-            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
-            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+            self.popup_x = (area.width.saturating_sub(width)) / 2;
+            self.popup_y = (area.height.saturating_sub(height)) / 2;
         }
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width,
-            height: popup_height,
-        };
+        let x = self.popup_x;
+        let y = self.popup_y;
 
-        // Fill background with solid black
-        for y in popup_area.y..popup_area.y + popup_area.height {
-            for x in popup_area.x..popup_area.x + popup_area.width {
-                if x < area.width && y < area.height {
-                    buf[(x, y)].set_char(' ').set_bg(Color::Black);
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect { x, y, width, height };
+        Clear.render(popup_area, buf);
+
+        // Draw black background
+        for row in 0..height {
+            for col in 0..width {
+                if x + col < area.width && y + row < area.height {
+                    buf[(x + col, y + row)].set_bg(Color::Black);
                 }
             }
         }
 
-        // Draw border
-        let border_color = Color::Cyan;
-        self.draw_border(&popup_area, buf, border_color);
+        // Draw cyan border
+        self.draw_border(x, y, width, height, buf);
 
-        // Draw title
+        // Title (left-aligned on top border)
         let title = " Settings Editor ";
-        let title_x = popup_area.x + (popup_area.width.saturating_sub(title.len() as u16)) / 2;
         for (i, ch) in title.chars().enumerate() {
-            if let Some(x) = title_x.checked_add(i as u16) {
-                if x < popup_area.x + popup_area.width {
-                    buf[(x, popup_area.y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
-                }
+            if (x + 1 + i as u16) < (x + width) {
+                buf[(x + 1 + i as u16, y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
             }
         }
 
-        // Draw instructions at bottom
+        // Footer (off border at row 18)
         let instructions = if self.is_editing() {
-            "Type to edit | Enter: Save | Esc: Cancel"
+            "Ctrl+S:Save Esc:Cancel"
         } else {
-            "↑/↓: Navigate | Enter: Edit/Toggle | PgUp/PgDn: Scroll | Esc: Close"
+            "↑/↓:Nav/Cycle Tab:Nav Enter:Edit/Toggle Esc:Close"
         };
-        let instr_y = popup_area.y + popup_area.height - 1;
-        let instr_x = popup_area.x + 2;
+        let footer_y = y + 18;
+        let footer_x = x + 2;
         for (i, ch) in instructions.chars().enumerate() {
-            if let Some(x) = instr_x.checked_add(i as u16) {
-                if x < popup_area.x + popup_area.width - 1 {
-                    buf[(x, instr_y)].set_char(ch).set_fg(Color::DarkGray).set_bg(Color::Black);
-                }
+            if (footer_x + i as u16) < (x + width - 2) {
+                buf[(footer_x + i as u16, footer_y)].set_char(ch).set_fg(Color::White).set_bg(Color::Black);
             }
         }
 
-        // Inner content area
-        let content_x = popup_area.x + 1;
-        let content_y = popup_area.y + 1;
-        let content_width = popup_area.width.saturating_sub(2);
-        let content_height = popup_area.height.saturating_sub(3); // Subtract top/bottom borders and instructions
+        // List area
+        let list_y = y + 1;
+        let list_height = 16; // height 20 - 4 (borders + footer)
+        let list_x = x + 1;
+        let list_width = width - 2;
 
-        // Render settings list
+        // Render settings list with sticky category headers
         let filtered = self.filtered_items();
-        let mut current_category = String::new();
-        let mut y = content_y;
-        let visible_count = content_height as usize;
+        let mut last_category: Option<&str> = None;
+        let mut last_rendered_category: Option<&str> = None;
+        let mut display_row = 0;
+        let mut render_row = 0;
+        let visible_start = self.scroll_offset;
+        let visible_end = visible_start + list_height as usize;
 
-        for (display_idx, (original_idx, item)) in filtered.iter().enumerate().skip(self.scroll_offset) {
-            if y >= content_y + content_height {
+        for (abs_idx, (original_idx, item)) in filtered.iter().enumerate() {
+            let item_category = &item.category;
+
+            // Check if we need a category header
+            if last_category.as_deref() != Some(item_category) {
+                // Always increment display_row for the header
+                if display_row >= visible_start {
+                    // Render header if in visible range AND we have room
+                    if display_row < visible_end && render_row < list_height as usize {
+                        let current_y = list_y + render_row as u16;
+                        let header = format!(" ═══ {} ═══", item_category.to_uppercase());
+                        let header_style = Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::BOLD);
+                        for (i, ch) in header.chars().enumerate() {
+                            if (list_x + i as u16) < (list_x + list_width) {
+                                buf[(list_x + i as u16, current_y)].set_char(ch).set_style(header_style);
+                            }
+                        }
+                        render_row += 1;
+                        last_rendered_category = Some(item_category);
+                    }
+                }
+                display_row += 1;
+                last_category = Some(item_category);
+            }
+
+            // Skip if before visible range
+            if display_row < visible_start {
+                display_row += 1;
+                continue;
+            }
+
+            // If this is a new category in the visible area and we haven't rendered its header yet (sticky header)
+            if last_rendered_category.as_deref() != Some(item_category) && render_row < list_height as usize {
+                let current_y = list_y + render_row as u16;
+                let header = format!(" ═══ {} ═══", item_category.to_uppercase());
+                let header_style = Style::default().fg(Color::Yellow).bg(Color::Black).add_modifier(Modifier::BOLD);
+                for (i, ch) in header.chars().enumerate() {
+                    if (list_x + i as u16) < (list_x + list_width) {
+                        buf[(list_x + i as u16, current_y)].set_char(ch).set_style(header_style);
+                    }
+                }
+                render_row += 1;
+                last_rendered_category = Some(item_category);
+            }
+
+            // Stop if past visible range OR no room for entry
+            if display_row >= visible_end || render_row >= list_height as usize {
                 break;
             }
 
-            // Render category header if changed
-            if item.category != current_category {
-                current_category = item.category.clone();
-
-                // Render category header
-                let header = format!("[{}]", item.category);
-                for (i, ch) in header.chars().enumerate() {
-                    if let Some(x) = content_x.checked_add(i as u16) {
-                        if x < content_x + content_width {
-                            let mut cell = buf[(x, y)].clone();
-                            cell.set_char(ch).set_fg(Color::Yellow).set_bg(Color::Black);
-                            cell.modifier.insert(Modifier::BOLD);
-                            buf[(x, y)] = cell;
-                        }
-                    }
-                }
-                y += 1;
-                if y >= content_y + content_height {
-                    break;
-                }
-            }
+            let current_y = list_y + render_row as u16;
 
             // Determine if this item is selected or being edited
-            let is_selected = display_idx == self.selected_index;
+            let is_selected = abs_idx == self.selected_index;
             let is_being_edited = self.editing_index == Some(*original_idx);
 
             // Determine name column width based on category or item setting
@@ -408,226 +506,93 @@ impl SettingsEditor {
                 }
             };
 
-            // Build display name and value
-            let (display_name, display_value) = if is_being_edited {
-                (item.display_name.clone(), format!("[{}]", self.edit_buffer))
-            } else {
-                let value_str = match &item.value {
-                    SettingValue::Boolean(b) => {
-                        if *b { "[✓]" } else { "[ ]" }
-                    }
-                    SettingValue::String(s) if item.category == "Presets" || item.category == "Prompts" => {
-                        // Format as "7chars 7chars" for presets/prompts
-                        let parts: Vec<&str> = s.split_whitespace().collect();
-                        let fg = parts.get(0).unwrap_or(&"-");
-                        let bg = parts.get(1).unwrap_or(&"-");
-                        &format!("{:<7} {:<7}", fg, bg)
-                    }
-                    _ => &item.value.to_display_string()
-                };
-                (item.display_name.clone(), value_str.to_string())
-            };
+            // Style guide format: "  Label:              [value in textarea_background]"
+            let textarea_bg = Self::parse_hex_color(&config.colors.ui.textarea_background).unwrap_or(Color::Rgb(64, 0, 0));
+            let label_color = if is_selected { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
-            // Format line with padding: "  NAME:<spaces> VALUE"
-            let indent = "  ";
-            let name_part = if display_name.len() > name_width as usize {
-                format!("{}...", &display_name[..name_width.saturating_sub(3) as usize])
-            } else {
-                format!("{:<width$}", display_name, width = name_width as usize)
-            };
-
-            // Style based on state
-            let (fg, bg, bold) = if is_being_edited {
-                (Color::Green, Color::Black, true)
-            } else if is_selected {
-                (Color::Black, Color::Cyan, true)
-            } else if !item.editable {
-                (Color::DarkGray, Color::Black, false)
-            } else {
-                (Color::White, Color::Black, false)
-            };
-
-            // Render indent
-            let mut x_pos = content_x;
-            for ch in indent.chars() {
-                if x_pos < content_x + content_width {
-                    let mut cell = buf[(x_pos, y)].clone();
-                    cell.set_char(ch).set_fg(fg).set_bg(bg);
-                    if bold {
-                        cell.modifier.insert(Modifier::BOLD);
-                    }
-                    buf[(x_pos, y)] = cell;
+            // Render label with indent (2 spaces)
+            let label = format!("  {}:", item.display_name);
+            let mut x_pos = list_x;
+            for ch in label.chars() {
+                if x_pos < list_x + list_width {
+                    buf[(x_pos, current_y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
                     x_pos += 1;
                 }
             }
 
-            // Render name part
-            for ch in name_part.chars() {
-                if x_pos < content_x + content_width {
-                    let mut cell = buf[(x_pos, y)].clone();
-                    cell.set_char(ch).set_fg(fg).set_bg(bg);
-                    if bold {
-                        cell.modifier.insert(Modifier::BOLD);
-                    }
-                    buf[(x_pos, y)] = cell;
-                    x_pos += 1;
-                }
-            }
+            // Calculate input field position (aligned at column 22 from list_x)
+            let input_x = list_x + 22;
+            let input_width = 44; // Fits in 70-width popup with margins
 
-            // Render colon separator
-            if x_pos < content_x + content_width {
-                let mut cell = buf[(x_pos, y)].clone();
-                cell.set_char(':').set_fg(fg).set_bg(bg);
-                if bold {
-                    cell.modifier.insert(Modifier::BOLD);
-                }
-                buf[(x_pos, y)] = cell;
-                x_pos += 1;
-            }
-
-            // Render space after colon
-            if x_pos < content_x + content_width {
-                let mut cell = buf[(x_pos, y)].clone();
-                cell.set_char(' ').set_fg(fg).set_bg(bg);
-                if bold {
-                    cell.modifier.insert(Modifier::BOLD);
-                }
-                buf[(x_pos, y)] = cell;
-                x_pos += 1;
-            }
-
-            // Render value (up to available space, leaving room for color blocks)
-            let value_max_width = content_width.saturating_sub((x_pos - content_x) + 10);
-            for (i, ch) in display_value.chars().enumerate() {
-                if i >= value_max_width as usize {
-                    break;
-                }
-                if x_pos < content_x + content_width {
-                    let mut cell = buf[(x_pos, y)].clone();
-                    cell.set_char(ch).set_fg(fg).set_bg(bg);
-                    if bold {
-                        cell.modifier.insert(Modifier::BOLD);
-                    }
-                    buf[(x_pos, y)] = cell;
-                    x_pos += 1;
-                }
-            }
-
-            let x_offset = x_pos - content_x;
-
-            // Render color preview blocks for Color and String settings that contain colors
-            // (Color settings, Presets, Prompts)
-            let should_render_colors = matches!(&item.value, SettingValue::Color(_) | SettingValue::String(_))
-                && (item.category == "UI" || item.category == "Presets" || item.category == "Prompts" || item.category == "Spells")
-                && !is_being_edited;
-
-            if should_render_colors {
-                let value_str = item.value.to_display_string();
-                let parts: Vec<&str> = value_str.split_whitespace().collect();
-
-                // For Presets/Prompts: value is "7chars 7chars", so previews start at fixed offset
-                let preview_x = if item.category == "Presets" || item.category == "Prompts" {
-                    content_x + x_offset + 1  // Right after the formatted value
-                } else {
-                    content_x + x_offset + 1  // Right after other values
-                };
-
-                // Foreground color preview (always render if we have a color)
-                if !parts.is_empty() && parts[0] != "-" {
-                    let resolved = config.resolve_color(parts[0]);
-                    if let Some(hex) = resolved {
-                        if let Some(color) = Self::parse_hex_color(&hex) {
-                            for i in 0..3 {
-                                if let Some(x) = preview_x.checked_add(i) {
-                                    if x < content_x + content_width {
-                                        buf[(x, y)].set_char('█').set_fg(color).set_bg(bg);
-                                    }
-                                }
-                            }
+            // Render based on value type
+            match &item.value {
+                SettingValue::Boolean(value) => {
+                    // Render checkbox at input position
+                    let checkbox = if *value { "[✓]" } else { "[ ]" };
+                    for (i, ch) in checkbox.chars().enumerate() {
+                        if (input_x + i as u16) < (list_x + list_width) {
+                            buf[(input_x + i as u16, current_y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
                         }
                     }
                 }
+                _ => {
+                    // Render textarea with textarea_background color
+                    let display_value = if is_being_edited {
+                        &self.edit_buffer
+                    } else {
+                        match &item.value {
+                            SettingValue::Enum(current, _) => current,
+                            _ => &item.value.to_display_string()
+                        }
+                    };
 
-                // Background color preview (always render space for alignment, even if no bg)
-                let bg_preview_x = preview_x + 4;  // 3 blocks + 1 space
-                if parts.len() > 1 && parts[1] != "-" {
-                    let resolved = config.resolve_color(parts[1]);
-                    if let Some(hex) = resolved {
-                        if let Some(color) = Self::parse_hex_color(&hex) {
-                            for i in 0..3 {
-                                if let Some(x) = bg_preview_x.checked_add(i) {
-                                    if x < content_x + content_width {
-                                        buf[(x, y)].set_char('█').set_fg(color).set_bg(bg);
-                                    }
-                                }
-                            }
+                    // Fill background with textarea_background
+                    for i in 0..input_width {
+                        if input_x + i < list_x + list_width {
+                            buf[(input_x + i, current_y)].set_bg(textarea_bg);
+                        }
+                    }
+
+                    // Render text value
+                    let text_color = if is_being_edited { Color::Green } else { Color::White };
+                    for (i, ch) in display_value.chars().enumerate() {
+                        if i >= input_width as usize {
+                            break;
+                        }
+                        if (input_x + i as u16) < (list_x + list_width) {
+                            buf[(input_x + i as u16, current_y)].set_char(ch).set_fg(text_color).set_bg(textarea_bg);
                         }
                     }
                 }
             }
 
-            y += 1;
-        }
-
-        // Show scroll indicator if needed
-        if filtered.len() > visible_count {
-            let scroll_info = format!("{}/{}", self.selected_index + 1, filtered.len());
-            let scroll_x = popup_area.x + popup_area.width.saturating_sub(scroll_info.len() as u16 + 2);
-            let scroll_y = popup_area.y;
-            for (i, ch) in scroll_info.chars().enumerate() {
-                if let Some(x) = scroll_x.checked_add(i as u16) {
-                    if x < popup_area.x + popup_area.width - 1 {
-                        buf[(x, scroll_y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
-                    }
-                }
-            }
+            display_row += 1;
+            render_row += 1;
         }
     }
 
-    fn draw_border(&self, area: &Rect, buf: &mut Buffer, color: Color) {
-        // Top and bottom borders
-        for x in area.x..area.x + area.width {
-            if x < buf.area.width {
-                if area.y < buf.area.height {
-                    buf[(x, area.y)].set_char('─').set_fg(color).set_bg(Color::Black);
-                }
-                let bottom_y = area.y + area.height - 1;
-                if bottom_y < buf.area.height {
-                    buf[(x, bottom_y)].set_char('─').set_fg(color).set_bg(Color::Black);
-                }
-            }
+    fn draw_border(&self, x: u16, y: u16, width: u16, height: u16, buf: &mut Buffer) {
+        let border_style = Style::default().fg(Color::Cyan);
+
+        // Top border
+        buf[(x, y)].set_char('┌').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y)].set_char('┐').set_style(border_style);
+
+        // Side borders
+        for row in 1..height - 1 {
+            buf[(x, y + row)].set_char('│').set_style(border_style);
+            buf[(x + width - 1, y + row)].set_char('│').set_style(border_style);
         }
 
-        // Left and right borders
-        for y in area.y..area.y + area.height {
-            if y < buf.area.height {
-                if area.x < buf.area.width {
-                    buf[(area.x, y)].set_char('│').set_fg(color).set_bg(Color::Black);
-                }
-                let right_x = area.x + area.width - 1;
-                if right_x < buf.area.width {
-                    buf[(right_x, y)].set_char('│').set_fg(color).set_bg(Color::Black);
-                }
-            }
+        // Bottom border
+        buf[(x, y + height - 1)].set_char('└').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y + height - 1)].set_char('─').set_style(border_style);
         }
-
-        // Corners
-        if area.x < buf.area.width && area.y < buf.area.height {
-            buf[(area.x, area.y)].set_char('┌').set_fg(color).set_bg(Color::Black);
-        }
-        let top_right_x = area.x + area.width - 1;
-        if top_right_x < buf.area.width && area.y < buf.area.height {
-            buf[(top_right_x, area.y)].set_char('┐').set_fg(color).set_bg(Color::Black);
-        }
-        let bottom_left_y = area.y + area.height - 1;
-        if area.x < buf.area.width && bottom_left_y < buf.area.height {
-            buf[(area.x, bottom_left_y)].set_char('└').set_fg(color).set_bg(Color::Black);
-        }
-        let bottom_right_x = area.x + area.width - 1;
-        let bottom_right_y = area.y + area.height - 1;
-        if bottom_right_x < buf.area.width && bottom_right_y < buf.area.height {
-            buf[(bottom_right_x, bottom_right_y)].set_char('┘').set_fg(color).set_bg(Color::Black);
-        }
+        buf[(x + width - 1, y + height - 1)].set_char('┘').set_style(border_style);
     }
 
     fn parse_hex_color(hex: &str) -> Option<Color> {

@@ -364,6 +364,13 @@ impl UIColorsBrowser {
             bg_color: None,
             entry_type: UIColorEntryType::UIColor,
         });
+        entries.push(UIColorEntry {
+            name: "Textarea Background".to_string(),
+            category: "UI".to_string(),
+            fg_color: Some(colors.ui.textarea_background.clone()),
+            bg_color: None,
+            entry_type: UIColorEntryType::UIColor,
+        });
 
         // Add presets (sorted by name)
         let mut preset_names: Vec<_> = colors.presets.keys().cloned().collect();

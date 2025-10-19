@@ -2,6 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 use std::collections::HashMap;
 
@@ -115,15 +116,33 @@ impl KeybindBrowser {
     }
 
     fn adjust_scroll(&mut self) {
-        // Account for section headers in visible rows
-        // Each section header takes 1 line, so available lines = 20 - num_sections
-        let list_height: usize = 20;
-        let available_rows = list_height.saturating_sub(self.num_sections);
+        // Track display rows (including section headers)
+        let mut total_display_rows = 0;
+        let mut last_section: Option<&str> = None;
+        let mut selected_display_row = 0;
 
-        if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        } else if available_rows > 0 && self.selected_index >= self.scroll_offset + available_rows {
-            self.scroll_offset = self.selected_index.saturating_sub(available_rows - 1);
+        for (idx, entry) in self.entries.iter().enumerate() {
+            let entry_section = &entry.action_type;
+
+            // Add section header if needed
+            if last_section.as_deref() != Some(entry_section) {
+                total_display_rows += 1;
+                last_section = Some(entry_section);
+            }
+
+            if idx == self.selected_index {
+                selected_display_row = total_display_rows;
+            }
+
+            total_display_rows += 1;
+        }
+
+        let visible_rows = 15; // One less than list_height for sticky headers
+
+        if selected_display_row < self.scroll_offset {
+            self.scroll_offset = selected_display_row;
+        } else if selected_display_row >= self.scroll_offset + visible_rows {
+            self.scroll_offset = selected_display_row.saturating_sub(visible_rows - 1);
         }
     }
 
@@ -133,7 +152,7 @@ impl KeybindBrowser {
 
     /// Handle mouse events for dragging the popup
     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> bool {
-        let popup_width = 80.min(area.width);
+        let popup_width = 70;
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -165,258 +184,171 @@ impl KeybindBrowser {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let popup_width = 80;
-        let popup_height = 25;
+        let width = 70;
+        let height = 20;
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width.min(area.width.saturating_sub(self.popup_x)),
-            height: popup_height.min(area.height.saturating_sub(self.popup_y)),
-        };
+        let x = self.popup_x;
+        let y = self.popup_y;
 
-        // Draw solid black background
-        for y in popup_area.y..popup_area.y + popup_area.height {
-            for x in popup_area.x..popup_area.x + popup_area.width {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char(' ');
-                    cell.set_bg(Color::Black);
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect { x, y, width, height };
+        Clear.render(popup_area, buf);
+
+        // Draw black background
+        for row in 0..height {
+            for col in 0..width {
+                if x + col < area.width && y + row < area.height {
+                    buf[(x + col, y + row)].set_bg(Color::Black);
                 }
             }
         }
 
         // Draw border
-        let border_style = Style::default().fg(Color::Cyan);
-        self.draw_border(popup_area, buf, border_style);
+        self.draw_border(x, y, width, height, buf);
 
-        // Draw title
+        // Title (left-aligned on top border)
         let title = format!(" Keybinds ({}) ", self.entries.len());
-        let title_x = popup_area.x + 2;
-        if title_x < popup_area.x + popup_area.width {
-            for (i, ch) in title.chars().enumerate() {
-                let x = title_x + i as u16;
-                if x >= popup_area.x + popup_area.width {
-                    break;
-                }
-                if let Some(cell) = buf.cell_mut((x, popup_area.y)) {
-                    cell.set_char(ch);
-                    cell.set_fg(Color::Yellow);
-                    cell.set_bg(Color::Black);
-                }
+        for (i, ch) in title.chars().enumerate() {
+            if (x + 1 + i as u16) < (x + width) {
+                buf[(x + 1 + i as u16, y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
             }
         }
 
-        // Draw help text
-        let help = " ↑/↓:Navigate  Enter:Edit  Del:Remove  Esc:Close ";
-        let help_x = popup_area.x + popup_area.width.saturating_sub(help.len() as u16 + 1);
-        if help_x > popup_area.x {
-            for (i, ch) in help.chars().enumerate() {
-                let x = help_x + i as u16;
-                if x >= popup_area.x + popup_area.width {
-                    break;
-                }
-                if let Some(cell) = buf.cell_mut((x, popup_area.y + popup_area.height - 1)) {
-                    cell.set_char(ch);
-                    cell.set_fg(Color::Gray);
-                    cell.set_bg(Color::Black);
-                }
+        // Footer (off border at row 18)
+        let footer = "↑/↓:Nav PgUp/PgDn:Page Enter:Edit Del:Remove Esc:Close";
+        let footer_y = y + 18;
+        let footer_x = x + 2;
+        for (i, ch) in footer.chars().enumerate() {
+            if (footer_x + i as u16) < (x + width - 2) {
+                buf[(footer_x + i as u16, footer_y)].set_char(ch).set_fg(Color::White).set_bg(Color::Black);
             }
         }
 
-        // Draw keybinds list
-        let list_area = Rect {
-            x: popup_area.x + 2,
-            y: popup_area.y + 2,
-            width: popup_area.width.saturating_sub(4),
-            height: popup_area.height.saturating_sub(4),
-        };
-
+        // Render entries with sticky headers
         if self.entries.is_empty() {
-            // Show "No keybinds" message
             let msg = "No keybinds configured";
-            let x = list_area.x + (list_area.width.saturating_sub(msg.len() as u16)) / 2;
-            let y = list_area.y + list_area.height / 2;
+            let msg_x = x + (width.saturating_sub(msg.len() as u16)) / 2;
+            let msg_y = y + 10;
             for (i, ch) in msg.chars().enumerate() {
-                if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
-                    cell.set_char(ch);
-                    cell.set_fg(Color::Gray);
-                    cell.set_bg(Color::Black);
-                }
+                buf[(msg_x + i as u16, msg_y)].set_char(ch).set_fg(Color::DarkGray).set_bg(Color::Black);
             }
             return;
         }
 
-        // Column widths
-        let key_col_width = 18;
-        let type_col_width = 8;
-        let value_col_start = key_col_width + type_col_width;
+        let list_y = y + 1;
+        let list_height = 16; // height 20 - 4 (borders + footer)
+        let mut last_section: Option<&str> = None;
+        let mut last_rendered_section: Option<&str> = None;
+        let mut display_row = 0;
+        let mut render_row = 0;
+        let visible_start = self.scroll_offset;
+        let visible_end = visible_start + list_height;
 
-        // Track current display position
-        let mut display_index = 0;
-        let mut current_y = list_area.y;
-        let mut last_type: Option<&str> = None;
+        for (idx, entry) in self.entries.iter().enumerate() {
+            let entry_section = &entry.action_type;
 
-        // Iterate through entries and render with section headers
-        for (abs_idx, entry) in self.entries.iter().enumerate() {
             // Check if we need a section header
-            if last_type.is_none() || last_type != Some(entry.action_type.as_str()) {
-                // Skip section header if we're still scrolled past it
-                if display_index >= self.scroll_offset {
-                    if current_y >= list_area.y + list_area.height {
-                        break;
-                    }
-
-                    // Draw section header
-                    let header = if entry.action_type == "Action" {
-                        "═══ ACTIONS ═══"
-                    } else {
-                        "═══ MACROS ═══"
-                    };
-
-                    let header_style = Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-
-                    for (i, ch) in header.chars().enumerate() {
-                        let x = list_area.x + i as u16;
-                        if x >= list_area.x + list_area.width {
-                            break;
+            if last_section.as_deref() != Some(entry_section) {
+                // Always increment display_row for the header
+                if display_row >= visible_start {
+                    // Render header if in visible range AND we have room
+                    if display_row < visible_end && render_row < list_height {
+                        let current_y = list_y + render_row as u16;
+                        let header_text = if entry_section == "Action" {
+                            " ═══ ACTIONS ═══"
+                        } else {
+                            " ═══ MACROS ═══"
+                        };
+                        let header_style = Style::default().fg(Color::Rgb(255, 215, 0)).bg(Color::Black).add_modifier(Modifier::BOLD);
+                        for (i, ch) in header_text.chars().enumerate() {
+                            if (x + 1 + i as u16) < (x + width - 1) {
+                                buf[(x + 1 + i as u16, current_y)].set_char(ch).set_style(header_style);
+                            }
                         }
-                        if let Some(cell) = buf.cell_mut((x, current_y)) {
-                            cell.set_char(ch);
-                            cell.set_style(header_style);
-                        }
+                        render_row += 1;
+                        last_rendered_section = Some(entry_section);
                     }
-                    current_y += 1;
                 }
-                display_index += 1;
-                last_type = Some(&entry.action_type);
+                display_row += 1;
+                last_section = Some(entry_section);
             }
 
-            // Check if this entry should be displayed
-            if display_index < self.scroll_offset {
-                display_index += 1;
+            // Skip if before visible range
+            if display_row < visible_start {
+                display_row += 1;
                 continue;
             }
 
-            if current_y >= list_area.y + list_area.height {
+            // If this is a new section in the visible area and we haven't rendered its header yet (sticky header)
+            if last_rendered_section.as_deref() != Some(entry_section) && render_row < list_height {
+                let current_y = list_y + render_row as u16;
+                let header_text = if entry_section == "Action" {
+                    " ═══ ACTIONS ═══"
+                } else {
+                    " ═══ MACROS ═══"
+                };
+                let header_style = Style::default().fg(Color::Rgb(255, 215, 0)).bg(Color::Black).add_modifier(Modifier::BOLD);
+                for (i, ch) in header_text.chars().enumerate() {
+                    if (x + 1 + i as u16) < (x + width - 1) {
+                        buf[(x + 1 + i as u16, current_y)].set_char(ch).set_style(header_style);
+                    }
+                }
+                render_row += 1;
+                last_rendered_section = Some(entry_section);
+            }
+
+            // Stop if past visible range OR no room for entry
+            if display_row >= visible_end || render_row >= list_height {
                 break;
             }
 
-            let is_selected = abs_idx == self.selected_index;
+            let is_selected = idx == self.selected_index;
+            let current_y = list_y + render_row as u16;
 
-            // Format with columns: [key_combo] type  value
-            let key_part = format!("[{}]", entry.key_combo);
-            let key_padded = format!("{:<width$}", key_part, width = key_col_width);
-
-            let type_padded = format!("{:<width$}", entry.action_type, width = type_col_width);
-
-            // Calculate available space for value
-            let available_value_width = list_area.width.saturating_sub(value_col_start as u16) as usize;
-            let value_truncated = if entry.action_value.len() > available_value_width {
-                format!("{}...", &entry.action_value[..available_value_width.saturating_sub(3)])
+            // Format: [key_combo] type: value
+            let entry_text = format!("[{}] {}: {}", entry.key_combo, entry.action_type, entry.action_value);
+            let available_width = (width - 2) as usize; // Account for padding
+            let display_text = if entry_text.len() > available_width {
+                format!("{}...", &entry_text[..available_width.saturating_sub(3)])
             } else {
-                entry.action_value.clone()
+                entry_text
             };
 
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White).bg(Color::Black)
-            };
+            let entry_color = if is_selected { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
-            // Render key column
-            for (i, ch) in key_padded.chars().take(key_col_width).enumerate() {
-                let x = list_area.x + i as u16;
-                if let Some(cell) = buf.cell_mut((x, current_y)) {
-                    cell.set_char(ch);
-                    cell.set_style(style);
+            // Render entry text
+            for (i, ch) in display_text.chars().enumerate() {
+                if (x + 1 + i as u16) < (x + width - 1) {
+                    buf[(x + 1 + i as u16, current_y)].set_char(ch).set_fg(entry_color).set_bg(Color::Black);
                 }
             }
 
-            // Render type column
-            for (i, ch) in type_padded.chars().take(type_col_width).enumerate() {
-                let x = list_area.x + key_col_width as u16 + i as u16;
-                if let Some(cell) = buf.cell_mut((x, current_y)) {
-                    cell.set_char(ch);
-                    cell.set_style(style);
-                }
-            }
-
-            // Render value column
-            for (i, ch) in value_truncated.chars().enumerate() {
-                let x = list_area.x + value_col_start as u16 + i as u16;
-                if x >= list_area.x + list_area.width {
-                    break;
-                }
-                if let Some(cell) = buf.cell_mut((x, current_y)) {
-                    cell.set_char(ch);
-                    cell.set_style(style);
-                }
-            }
-
-            // Fill rest of line with background if selected
-            if is_selected {
-                for x in (list_area.x + value_col_start as u16 + value_truncated.len() as u16)..(list_area.x + list_area.width) {
-                    if let Some(cell) = buf.cell_mut((x, current_y)) {
-                        cell.set_char(' ');
-                        cell.set_bg(Color::Cyan);
-                    }
-                }
-            }
-
-            current_y += 1;
-            display_index += 1;
+            display_row += 1;
+            render_row += 1;
         }
     }
 
-    fn draw_border(&self, area: Rect, buf: &mut Buffer, style: Style) {
+    fn draw_border(&self, x: u16, y: u16, width: u16, height: u16, buf: &mut Buffer) {
+        let border_style = Style::default().fg(Color::Cyan);
+
         // Top border
-        for x in area.x..area.x + area.width {
-            if let Some(cell) = buf.cell_mut((x, area.y)) {
-                if x == area.x {
-                    cell.set_char('┌');
-                } else if x == area.x + area.width - 1 {
-                    cell.set_char('┐');
-                } else {
-                    cell.set_char('─');
-                }
-                cell.set_style(style);
-            }
+        buf[(x, y)].set_char('┌').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y)].set_char('┐').set_style(border_style);
+
+        // Side borders
+        for row in 1..height - 1 {
+            buf[(x, y + row)].set_char('│').set_style(border_style);
+            buf[(x + width - 1, y + row)].set_char('│').set_style(border_style);
         }
 
         // Bottom border
-        for x in area.x..area.x + area.width {
-            if let Some(cell) = buf.cell_mut((x, area.y + area.height - 1)) {
-                if x == area.x {
-                    cell.set_char('└');
-                } else if x == area.x + area.width - 1 {
-                    cell.set_char('┘');
-                } else {
-                    cell.set_char('─');
-                }
-                cell.set_style(style);
-            }
+        buf[(x, y + height - 1)].set_char('└').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y + height - 1)].set_char('─').set_style(border_style);
         }
-
-        // Left border
-        for y in area.y + 1..area.y + area.height - 1 {
-            if let Some(cell) = buf.cell_mut((area.x, y)) {
-                cell.set_char('│');
-                cell.set_style(style);
-            }
-        }
-
-        // Right border
-        for y in area.y + 1..area.y + area.height - 1 {
-            if let Some(cell) = buf.cell_mut((area.x + area.width - 1, y)) {
-                cell.set_char('│');
-                cell.set_style(style);
-            }
-        }
+        buf[(x + width - 1, y + height - 1)].set_char('┘').set_style(border_style);
     }
 }

@@ -351,15 +351,10 @@ impl XmlParser {
         } else if tag.starts_with("<image ") {
             self.handle_injury_image(tag, elements);
         } else if tag.starts_with("<dialogData ") {
-            // Log all dialogData tags to help debug
-            if let Some(id) = Self::extract_attribute(tag, "id") {
-                tracing::debug!("Parser received dialogData id='{}'", id);
-            }
             // Call both handlers to cover all dialogData processing
             self.handle_dialog_data(tag, elements);
             self.handle_dialogdata(tag, elements);
         } else if tag.starts_with("<progressBar ") {
-            tracing::debug!("Parser received progressBar tag: {}", tag);
             self.handle_progressbar(tag, elements);
         } else if tag.starts_with("<label ") {
             self.handle_label(tag, elements);
@@ -597,8 +592,6 @@ impl XmlParser {
                             Self::extract_attribute(pb_tag, "time"),
                         ) {
                             if let Ok(value) = value_str.parse::<u32>() {
-                                tracing::debug!("Parsed active effect: category={}, id={}, text='{}', value={}%, time={}",
-                                    category, effect_id, text, value, time);
                                 elements.push(ParsedElement::ActiveEffect {
                                     category: category.clone(),
                                     id: effect_id,
@@ -754,21 +747,63 @@ impl XmlParser {
     }
 
     fn handle_d_tag(&mut self, tag: &str) {
-        // <d cmd='look' fg='#FFFFFF'>
-        // Treat like a color tag - extract color attributes if present
+        // <d cmd='look' fg='#FFFFFF'>LOOK</d> - direct command tag
+        // <d>SKILLS BASE</d> - direct command (uses text content as command)
+
+        // Track link depth for semantic type (treat <d> like <a> for clickability)
+        self.link_depth += 1;
+
+        // Extract optional cmd attribute
+        let cmd = Self::extract_attribute(tag, "cmd");
+
+        // Create link data for this direct command
+        // For <d>, we use a special exist_id to indicate it's a direct command
+        self.current_link_data = Some(LinkData {
+            exist_id: String::from("_direct_"),  // Special marker for direct commands
+            noun: cmd.clone().unwrap_or_default(),  // Store cmd in noun field temporarily
+            text: String::new(),  // Will be populated as text is rendered
+            coord: None,  // <d> tags don't use coords
+        });
+
+        // Don't apply color if we're inside monsterbold (bold has priority)
+        if !self.bold_stack.is_empty() {
+            return;
+        }
+
+        // Check if tag has explicit color attributes first
         let fg = Self::extract_attribute(tag, "fg");
         let bg = Self::extract_attribute(tag, "bg");
 
         if fg.is_some() || bg.is_some() {
+            // Explicit colors
             self.color_stack.push(ColorStyle {
                 fg,
                 bg,
                 bold: false,
             });
+        } else {
+            // Use commands preset (like links preset for <a> tags)
+            if let Some((preset_fg, preset_bg)) = self.presets.get("commands") {
+                self.color_stack.push(ColorStyle {
+                    fg: preset_fg.clone(),
+                    bg: preset_bg.clone(),
+                    bold: false,
+                });
+            }
         }
     }
 
     fn handle_d_close(&mut self) {
+        // Decrease link depth
+        if self.link_depth > 0 {
+            self.link_depth -= 1;
+        }
+
+        // Clear link data when closing d tag
+        if self.link_depth == 0 {
+            self.current_link_data = None;
+        }
+
         // Pop color if we added one
         if !self.color_stack.is_empty() {
             self.color_stack.pop();
@@ -776,19 +811,21 @@ impl XmlParser {
     }
 
     fn handle_link_open(&mut self, tag: &str) {
-        // <a exist="..." noun="..."> - apply links preset color and extract metadata
+        // <a exist="..." noun="..." coord="..."> - apply links preset color and extract metadata
         // Track link depth for semantic type
         self.link_depth += 1;
 
-        // Extract link metadata (exist_id and noun)
+        // Extract link metadata (exist_id, noun, and optional coord)
         let exist_id = Self::extract_attribute(tag, "exist");
         let noun = Self::extract_attribute(tag, "noun");
+        let coord = Self::extract_attribute(tag, "coord");
 
         if let (Some(exist), Some(n)) = (exist_id, noun) {
             self.current_link_data = Some(LinkData {
                 exist_id: exist,
                 noun: n,
                 text: String::new(),  // Will be populated as text is rendered
+                coord,  // Optional coord for direct commands
             });
         }
 

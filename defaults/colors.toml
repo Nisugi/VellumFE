@@ -1,0 +1,49 @@
+# VellumFE Color Configuration
+# This file contains all color settings for the frontend
+# Editable via .uicolors command
+
+# UI Colors - Global defaults for all widgets
+[ui]
+command_echo_color = "#ffffff"
+border_color = "#00ffff"          # Cyan - default border color
+focused_border_color = "#ffff00"  # Yellow - focused window borders
+text_color = "#ffffff"            # White - default text color
+background_color = "#000000"      # Black - default background
+selection_bg_color = "#4a4a4a"    # Text selection background
+
+# Preset Colors - Named colors for game text styling
+[presets]
+whisper = { fg = "#60b4bf" }
+links = { fg = "#477ab3" }
+commands = { fg = "#00ffff" }  # Direct commands (<d cmd='...'>) - cyan for visibility
+speech = { fg = "#53a684" }
+roomName = { fg = "#9BA2B2", bg = "#395573" }
+monsterbold = { fg = "#a29900" }
+familiar = { fg = "#767339" }
+thought = { fg = "#FF8080" }
+
+# Prompt Colors - Character-specific prompt coloring
+[[prompt_colors]]
+character = "R"  # Roundtime indicator
+color = "#ff0000"
+
+[[prompt_colors]]
+character = "S"  # Stunned indicator
+color = "#ffff00"
+
+[[prompt_colors]]
+character = "H"  # Hidden indicator
+color = "#9370db"
+
+[[prompt_colors]]
+character = ">"  # Default prompt
+color = "#a9a9a9"
+
+# Spell Colors - Managed by .addspellcolor/.spellcolors commands
+# These are stored here but edited via separate browser
+[[spell_colors]]
+spells = [101, 107, 120, 140, 150]
+color = "#ff0000"
+bar_color = "#ff0000"
+text_color = "#ffffff"
+bg_color = "#000000"

@@ -1,7 +1,8 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier},
+    style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 use std::collections::HashMap;
 
@@ -203,11 +204,20 @@ impl HighlightBrowser {
         let x = self.popup_x;
         let y = self.popup_y;
 
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        Clear.render(popup_area, buf);
+
         // Draw black background
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_char(' ').set_bg(Color::Black);
+                    buf[(x + col, y + row)].set_bg(Color::Black);
                 }
             }
         }
