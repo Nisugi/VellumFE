@@ -4,23 +4,28 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyModifiers};
+use include_dir::{include_dir, Dir};
 
 // Embed default configuration files at compile time
 const DEFAULT_CONFIG: &str = include_str!("../defaults/config.toml");
-const DEFAULT_LAYOUT: &str = include_str!("../defaults/layout.toml");
+const DEFAULT_COLORS: &str = include_str!("../defaults/colors.toml");
+const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
+
+// Embed entire directories - automatically includes all files
+static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/layouts");
+static SOUNDS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/sounds");
+
+// Keep embedded default layout for fallback
+const LAYOUT_DEFAULT: &str = include_str!("../defaults/layouts/layout.toml");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub connection: ConnectionConfig,
     pub ui: UiConfig,
     #[serde(default)]
-    pub presets: HashMap<String, PresetColor>,
-    #[serde(default)]
     pub highlights: HashMap<String, HighlightPattern>,
     #[serde(default)]
     pub keybinds: HashMap<String, KeyBindAction>,
-    #[serde(default)]
-    pub spell_colors: Vec<SpellColorRange>,
     #[serde(default)]
     pub sound: SoundConfig,
     #[serde(default)]
@@ -31,6 +36,8 @@ pub struct Config {
     pub layout_mappings: Vec<LayoutMapping>,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
+    #[serde(skip)]  // Loaded from separate colors.toml file
+    pub colors: ColorConfig,  // All color configuration (presets, prompt_colors, ui colors, spell colors)
 }
 
 /// Terminal size range to layout mapping
@@ -119,6 +126,93 @@ impl SpellColorRange {
     /// Get the effective background color (default to black if not set)
     pub fn get_bg_color(&self) -> &str {
         self.bg_color.as_deref().unwrap_or("#000000")
+    }
+}
+
+/// UI color configuration - global defaults for all widgets
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiColors {
+    #[serde(default = "default_command_echo_color")]
+    pub command_echo_color: String,
+    #[serde(default = "default_border_color_default")]
+    pub border_color: String,  // Default border color for all widgets
+    #[serde(default = "default_focused_border_color")]
+    pub focused_border_color: String,  // Border color for focused/active windows
+    #[serde(default = "default_text_color_default")]
+    pub text_color: String,    // Default text color for all widgets
+    #[serde(default = "default_background_color")]
+    pub background_color: String,  // Default background color for all widgets
+    #[serde(default = "default_selection_bg_color")]
+    pub selection_bg_color: String,  // Text selection background color
+}
+
+/// Color configuration - separate file (colors.toml)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorConfig {
+    #[serde(default)]
+    pub presets: HashMap<String, PresetColor>,
+    #[serde(default)]
+    pub prompt_colors: Vec<PromptColor>,
+    #[serde(default)]
+    pub ui: UiColors,
+    // Spell colors are managed by .addspellcolor/.spellcolors but stored here
+    #[serde(default)]
+    pub spell_colors: Vec<SpellColorRange>,
+}
+
+impl Default for UiColors {
+    fn default() -> Self {
+        Self {
+            command_echo_color: default_command_echo_color(),
+            border_color: default_border_color_default(),
+            focused_border_color: default_focused_border_color(),
+            text_color: default_text_color_default(),
+            background_color: default_background_color(),
+            selection_bg_color: default_selection_bg_color(),
+        }
+    }
+}
+
+impl Default for ColorConfig {
+    fn default() -> Self {
+        // Parse from embedded default colors.toml
+        toml::from_str(DEFAULT_COLORS).unwrap_or_else(|e| {
+            eprintln!("Failed to parse embedded colors.toml: {}", e);
+            Self {
+                presets: HashMap::new(),
+                prompt_colors: Vec::new(),
+                ui: UiColors::default(),
+                spell_colors: Vec::new(),
+            }
+        })
+    }
+}
+
+impl ColorConfig {
+    /// Load colors from colors.toml for a character
+    pub fn load(character: Option<&str>) -> Result<Self> {
+        let colors_path = Config::colors_path(character)?;
+
+        if colors_path.exists() {
+            let contents = fs::read_to_string(&colors_path)
+                .context("Failed to read colors.toml")?;
+            let colors: ColorConfig = toml::from_str(&contents)
+                .context("Failed to parse colors.toml")?;
+            Ok(colors)
+        } else {
+            // Return default if file doesn't exist (will be created by extract_defaults)
+            Ok(Self::default())
+        }
+    }
+
+    /// Save colors to colors.toml for a character
+    pub fn save(&self, character: Option<&str>) -> Result<()> {
+        let colors_path = Config::colors_path(character)?;
+        let contents = toml::to_string_pretty(self)
+            .context("Failed to serialize colors")?;
+        fs::write(&colors_path, contents)
+            .context("Failed to write colors.toml")?;
+        Ok(())
     }
 }
 
@@ -302,6 +396,40 @@ impl Default for WindowDef {
     }
 }
 
+impl WindowDef {
+    /// Resolve an optional string field with three-state logic:
+    /// - None = use provided default
+    /// - Some("-") = explicitly empty (return None)
+    /// - Some(value) = use value
+    pub fn resolve_optional_string(field: &Option<String>, default: &str) -> Option<String> {
+        match field {
+            None => Some(default.to_string()),  // Use default
+            Some(s) if s == "-" => None,        // Explicitly empty
+            Some(s) => Some(s.clone()),         // Use value
+        }
+    }
+
+    /// Get the effective border color (with global default fallback)
+    pub fn get_border_color(&self, colors: &ColorConfig) -> Option<String> {
+        Self::resolve_optional_string(&self.border_color, &colors.ui.border_color)
+    }
+
+    /// Get the effective text color (with global default fallback)
+    pub fn get_text_color(&self, colors: &ColorConfig) -> Option<String> {
+        Self::resolve_optional_string(&self.text_color, &colors.ui.text_color)
+    }
+
+    /// Get the effective border style (with global default fallback)
+    pub fn get_border_style(&self, ui_config: &UiConfig) -> Option<String> {
+        Self::resolve_optional_string(&self.border_style, &ui_config.border_style)
+    }
+
+    /// Get the effective background color (with global default fallback)
+    pub fn get_background_color(&self, colors: &ColorConfig) -> Option<String> {
+        Self::resolve_optional_string(&self.background_color, &colors.ui.background_color)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardIndicatorDef {
     pub id: String,              // e.g., "poisoned", "diseased"
@@ -378,28 +506,20 @@ pub struct UiConfig {
     pub show_timestamps: bool,
     #[serde(default)]
     pub layout: LayoutConfig,
-    #[serde(default = "default_command_echo_color")]
-    pub command_echo_color: String,
-    // Global UI color defaults
-    #[serde(default = "default_border_color_default")]
-    pub default_border_color: String,  // Fallback border color when a window doesn't specify one
-    #[serde(default = "default_focused_border_color")]
-    pub focused_border_color: String,  // Border color to use when focused/active
-    #[serde(default = "default_text_color_default")]
-    pub default_text_color: String,    // Default text color when unspecified
-    #[serde(default)]
-    pub prompt_colors: Vec<PromptColor>,
+    #[serde(default = "default_border_style")]
+    pub border_style: String,  // Default border style: "single", "double", "rounded", "thick", "none"
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
     #[serde(default = "default_poll_timeout_ms")]
     pub poll_timeout_ms: u64,  // Event poll timeout in milliseconds (lower = higher FPS, higher CPU)
+    // Easter egg: Wizard frontend nostalgia
+    #[serde(default = "default_wizard_music")]
+    pub wizard_music: bool,  // Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)
     // Text selection settings
     #[serde(default = "default_selection_enabled")]
     pub selection_enabled: bool,
     #[serde(default = "default_selection_respect_window_boundaries")]
     pub selection_respect_window_boundaries: bool,
-    #[serde(default = "default_selection_bg_color")]
-    pub selection_bg_color: String,
     // Drag and drop settings
     #[serde(default = "default_drag_modifier_key")]
     pub drag_modifier_key: String,  // Modifier key required for drag and drop (e.g., "ctrl", "alt", "shift")
@@ -792,6 +912,18 @@ fn default_focused_border_color() -> String {
 
 fn default_text_color_default() -> String {
     "#ffffff".to_string() // white
+}
+
+fn default_border_style() -> String {
+    "single".to_string()
+}
+
+fn default_background_color() -> String {
+    "#000000".to_string() // black
+}
+
+fn default_wizard_music() -> bool {
+    true  // Enable by default - nostalgic easter egg
 }
 
 /// Get default keybindings (based on ProfanityFE defaults)
@@ -1552,10 +1684,8 @@ fn default_windows() -> Vec<WindowDef> {
 }
 
 impl Layout {
-    /// Load layout from file (checks autosave, character-specific, then default)
-    /// Priority: auto_<character>.toml → <character>.toml → default.toml → embedded default
-    /// Load layout with optional terminal size for auto-selection
-    /// Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
+    /// Load layout from file using new profile-based structure
+    /// Priority: ~/.vellum-fe/{character}/layout.toml → ~/.vellum-fe/layouts/layout.toml → embedded
     pub fn load(character: Option<&str>) -> Result<Self> {
         let (layout, _base_name) = Self::load_with_terminal_size(character, None)?;
         Ok(layout)
@@ -1563,168 +1693,66 @@ impl Layout {
 
     /// Load layout with terminal size for auto-selection
     /// Returns (layout, base_layout_name) where base_layout_name is the source layout file name (without .toml)
+    ///
+    /// New structure:
+    /// 1. ~/.vellum-fe/{character}/layout.toml (auto-save from exit)
+    /// 2. ~/.vellum-fe/default/layouts/default.toml (shared default)
+    /// 3. Embedded default
     pub fn load_with_terminal_size(character: Option<&str>, terminal_size: Option<(u16, u16)>) -> Result<(Self, Option<String>)> {
-        let layouts_dir = Config::layouts_dir()?;
+        let profile_dir = Config::profile_dir(character)?;
+        let shared_layouts_dir = Config::layouts_dir()?;  // ~/.vellum-fe/default/layouts/
 
-        // Try character-specific autosave first (skip auto-selection if user manually resized)
-        if let Some(char_name) = character {
-            let auto_char_path = layouts_dir.join(format!("auto_{}.toml", char_name));
-            if auto_char_path.exists() {
-                tracing::info!("Loading auto-saved layout for {}", char_name);
-                let mut layout = Self::load_from_file(&auto_char_path)?;
-                let mut base_name = layout.base_layout.clone(); // Track the base layout name from auto file
+        // 1. Try character auto-save layout: ~/.vellum-fe/{character}/layout.toml
+        let auto_layout_path = profile_dir.join("layout.toml");
+        if auto_layout_path.exists() {
+            tracing::info!("Loading auto-save layout from {:?}", auto_layout_path);
+            let mut layout = Self::load_from_file(&auto_layout_path)?;
+            let base_name = layout.base_layout.clone().unwrap_or_else(|| "default".to_string());
 
-                // If auto layout doesn't have base_layout set (old format), try to find the base layout
-                if base_name.is_none() {
-                    tracing::warn!("Auto layout has no base_layout field, attempting to find base layout");
+            // Check if we need to scale from base layout
+            if let Some((curr_width, curr_height)) = terminal_size {
+                if let (Some(layout_width), Some(layout_height)) = (layout.terminal_width, layout.terminal_height) {
+                    if curr_width != layout_width || curr_height != layout_height {
+                        tracing::info!("Terminal size changed from {}x{} to {}x{}, scaling from base layout",
+                            layout_width, layout_height, curr_width, curr_height);
 
-                    // Try exact match first
-                    let char_path = layouts_dir.join(format!("{}.toml", char_name));
-                    if char_path.exists() {
-                        base_name = Some(char_name.to_string());
-                        tracing::info!("Found base layout: {}", char_name);
-                    } else {
-                        // Try to find character-specific layout with terminal size suffix
-                        if let Ok(entries) = fs::read_dir(&layouts_dir) {
-                            let char_name_lower = char_name.to_lowercase();
-                            for entry in entries.flatten() {
-                                if let Some(filename) = entry.file_name().to_str() {
-                                    if filename.to_lowercase().starts_with(&format!("{}_", char_name_lower))
-                                        && filename.ends_with(".toml")
-                                        && !filename.starts_with("auto_") {
-                                        let layout_name = filename.trim_end_matches(".toml");
-                                        base_name = Some(layout_name.to_string());
-                                        tracing::info!("Found base layout with suffix: {}", layout_name);
-                                        break;
-                                    }
+                        // Try to load base layout for accurate scaling
+                        let base_path = shared_layouts_dir.join(format!("{}.toml", base_name));
+                        if base_path.exists() {
+                            match Self::load_from_file(&base_path) {
+                                Ok(base_layout) => {
+                                    tracing::info!("Scaling from base layout '{}'", base_name);
+                                    layout = base_layout;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to load base layout '{}': {}, using auto layout as base", base_name, e);
                                 }
                             }
                         }
 
-                        // If still no base layout found, default to "default"
-                        if base_name.is_none() {
-                            base_name = Some("default".to_string());
-                            tracing::info!("No character-specific base layout found, using 'default'");
-                        }
-                    }
-                }
-
-                // Check if we need to scale from base layout
-                if let Some((curr_width, curr_height)) = terminal_size {
-                    if let Some(layout_width) = layout.terminal_width {
-                        if let Some(layout_height) = layout.terminal_height {
-                            if curr_width != layout_width || curr_height != layout_height {
-                                tracing::info!("Terminal size changed from {}x{} to {}x{}, scaling from base layout",
-                                    layout_width, layout_height, curr_width, curr_height);
-
-                                // Try to load base layout for accurate scaling
-                                if let Some(ref base_layout_name) = base_name {
-                                    let base_path = layouts_dir.join(format!("{}.toml", base_layout_name));
-                                    if base_path.exists() {
-                                        match Self::load_from_file(&base_path) {
-                                            Ok(base_layout) => {
-                                                tracing::info!("Scaling from base layout '{}'", base_layout_name);
-                                                layout = base_layout;
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!("Failed to load base layout '{}': {}, using auto layout as base",
-                                                    base_layout_name, e);
-                                            }
-                                        }
-                                    } else {
-                                        tracing::warn!("Base layout '{}' not found, using auto layout as base", base_layout_name);
-                                    }
-                                }
-
-                                // Scale to current terminal size
-                                layout.scale_to_terminal_size(curr_width, curr_height);
-                            }
-                        }
-                    }
-                }
-
-                return Ok((layout, base_name));
-            }
-
-            // Try to find character-specific layout files by scanning directory
-            // This ensures we get the correct case from the filesystem
-            if let Ok(entries) = fs::read_dir(&layouts_dir) {
-                let char_name_lower = char_name.to_lowercase();
-
-                for entry in entries.flatten() {
-                    if let Some(filename) = entry.file_name().to_str() {
-                        let filename_lower = filename.to_lowercase();
-
-                        // Skip auto_ files
-                        if filename.starts_with("auto_") {
-                            continue;
-                        }
-
-                        // Check for exact match: <character>.toml (case-insensitive)
-                        if filename_lower == format!("{}.toml", char_name_lower) {
-                            let layout_name = filename.trim_end_matches(".toml");
-                            tracing::info!("Loading character-specific layout: {}", layout_name);
-                            let layout = Self::load_from_file(&entry.path())?;
-                            return Ok((layout, Some(layout_name.to_string())));
-                        }
-
-                        // Check for suffix match: <character>_*.toml (e.g., nisugi_102x54.toml)
-                        if filename_lower.starts_with(&format!("{}_", char_name_lower))
-                            && filename.ends_with(".toml") {
-                            let layout_name = filename.trim_end_matches(".toml");
-                            tracing::info!("Loading character-specific layout with suffix: {}", layout_name);
-                            let layout = Self::load_from_file(&entry.path())?;
-                            return Ok((layout, Some(layout_name.to_string())));
-                        }
+                        // Scale to current terminal size
+                        layout.scale_to_terminal_size(curr_width, curr_height);
                     }
                 }
             }
+
+            return Ok((layout, Some(base_name)));
         }
 
-        // Try generic autosave
-        let autosave_path = layouts_dir.join("autosave.toml");
-        if autosave_path.exists() {
-            tracing::info!("Loading generic autosave layout");
-            let layout = Self::load_from_file(&autosave_path)?;
-            return Ok((layout, Some("autosave".to_string())));
-        }
-
-        // Check layout mappings if terminal size provided
-        if let Some((width, height)) = terminal_size {
-            // Load config to check layout mappings
-            if let Ok(config) = Config::load() {
-                if let Some(layout_name) = config.find_layout_for_size(width, height) {
-                    let mapped_path = layouts_dir.join(format!("{}.toml", layout_name));
-                    if mapped_path.exists() {
-                        tracing::info!("Loading mapped layout '{}' for terminal size {}x{}", layout_name, width, height);
-                        let layout = Self::load_from_file(&mapped_path)?;
-                        return Ok((layout, Some(layout_name)));
-                    } else {
-                        tracing::warn!("Mapped layout '{}' not found at {:?}, falling back to default", layout_name, mapped_path);
-                    }
-                }
-            }
-        }
-
-        // Try default layout
-        let default_path = layouts_dir.join("default.toml");
+        // 2. Try shared default layout: ~/.vellum-fe/layouts/layout.toml
+        let default_path = shared_layouts_dir.join("layout.toml");
         if default_path.exists() {
-            tracing::info!("Loading default layout");
+            tracing::info!("Loading shared default layout from {:?}", default_path);
             let layout = Self::load_from_file(&default_path)?;
-            return Ok((layout, Some("default".to_string())));
+            return Ok((layout, Some("layout".to_string())));
         }
 
-        // Fall back to embedded default
-        tracing::info!("No layout found, using embedded default");
-        let layout: Layout = toml::from_str(DEFAULT_LAYOUT)
+        // 3. Fall back to embedded default (should have been extracted by extract_defaults())
+        tracing::warn!("No layout found, using embedded default (this should have been extracted!)");
+        let layout: Layout = toml::from_str(LAYOUT_DEFAULT)
             .context("Failed to parse embedded default layout")?;
 
-        // Save it as default for next time
-        fs::create_dir_all(&layouts_dir)?;
-        fs::write(&default_path, DEFAULT_LAYOUT)
-            .context("Failed to write default layout")?;
-
-        Ok((layout, Some("default".to_string())))
+        Ok((layout, Some("layout".to_string())))
     }
 
     /// Scale all windows proportionally to fit new terminal size
@@ -1830,6 +1858,8 @@ impl Layout {
 
     /// Save layout to file
     /// If force_terminal_size is true, always update terminal_width/height to terminal_size
+    /// Save layout to shared layouts directory (.savelayout command)
+    /// Saves to: ~/.vellum-fe/default/layouts/{name}.toml
     pub fn save(&mut self, name: &str, terminal_size: Option<(u16, u16)>, force_terminal_size: bool) -> Result<()> {
         // Capture terminal size for layout baseline
         if force_terminal_size {
@@ -1854,21 +1884,22 @@ impl Layout {
             );
         }
 
-        let layout_path = Config::layout_path(name)?;
+        // Save to shared layouts directory: ~/.vellum-fe/default/layouts/{name}.toml
+        let layouts_dir = Config::layouts_dir()?;
+        fs::create_dir_all(&layouts_dir)?;
 
-        if let Some(parent) = layout_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
+        let layout_path = layouts_dir.join(format!("{}.toml", name));
         let toml_string = toml::to_string_pretty(&self)
             .context("Failed to serialize layout")?;
         fs::write(&layout_path, toml_string)
             .context("Failed to write layout file")?;
 
+        tracing::info!("Saved layout '{}' to {:?}", name, layout_path);
         Ok(())
     }
 
-    /// Save as auto layout with base_layout reference
+    /// Save as character auto-save layout (on exit/resize)
+    /// Saves to: ~/.vellum-fe/{character}/layout.toml
     pub fn save_auto(&mut self, character: &str, base_layout_name: &str, terminal_size: Option<(u16, u16)>) -> Result<()> {
         // Set base_layout reference
         self.base_layout = Some(base_layout_name.to_string());
@@ -1879,20 +1910,18 @@ impl Layout {
             self.terminal_height = Some(height);
         }
 
-        let auto_name = format!("auto_{}", character);
-        let layout_path = Config::layout_path(&auto_name)?;
+        // Save to character profile: ~/.vellum-fe/{character}/layout.toml
+        let profile_dir = Config::profile_dir(Some(character))?;
+        fs::create_dir_all(&profile_dir)?;
 
-        if let Some(parent) = layout_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
+        let layout_path = profile_dir.join("layout.toml");
         let toml_string = toml::to_string_pretty(&self)
             .context("Failed to serialize auto layout")?;
         fs::write(&layout_path, toml_string)
             .context("Failed to write auto layout file")?;
 
-        tracing::info!("Saved auto layout for {} (base: {}, terminal: {:?}x{:?})",
-            character, base_layout_name, self.terminal_width, self.terminal_height);
+        tracing::info!("Saved auto layout for {} to {:?} (base: {}, terminal: {:?}x{:?})",
+            character, layout_path, base_layout_name, self.terminal_width, self.terminal_height);
 
         Ok(())
     }
@@ -3796,81 +3825,132 @@ impl Config {
     /// 2. ./config/default.toml
     /// 3. ~/.vellum-fe/<character>.toml (if character specified)
     /// 4. ~/.vellum-fe/config.toml (fallback)
+    /// Extract default files on first run
+    /// Creates shared directories and profile-specific files
+    ///
+    /// Shared:
+    /// - ~/.vellum-fe/layouts/layout.toml
+    /// - ~/.vellum-fe/layouts/none.toml
+    /// - ~/.vellum-fe/layouts/sidebar.toml
+    /// - ~/.vellum-fe/sounds/wizard_music.mp3
+    /// - ~/.vellum-fe/sounds/README.md
+    /// - ~/.vellum-fe/cmdlist1.xml
+    ///
+    /// Profile-specific (default or character):
+    /// - ~/.vellum-fe/{profile}/config.toml
+    /// - ~/.vellum-fe/{profile}/history.txt (empty)
+    fn extract_defaults(character: Option<&str>) -> Result<()> {
+        // Create shared layouts directory and extract all embedded layouts
+        let layouts_dir = Self::layouts_dir()?;
+        fs::create_dir_all(&layouts_dir)?;
+
+        // Automatically extract all files from embedded layouts directory
+        for file in LAYOUTS_DIR.files() {
+            let filename = file.path().file_name()
+                .and_then(|n| n.to_str())
+                .context("Invalid layout filename")?;
+            let layout_path = layouts_dir.join(filename);
+
+            if !layout_path.exists() {
+                let content = file.contents_utf8()
+                    .context(format!("Failed to read embedded layout {}", filename))?;
+                fs::write(&layout_path, content)
+                    .context(format!("Failed to write layouts/{}", filename))?;
+                tracing::info!("Extracted layout {} to {:?}", filename, layout_path);
+            }
+        }
+
+        // Create shared sounds directory and extract all embedded sounds
+        let sounds_dir = Self::sounds_dir()?;
+        fs::create_dir_all(&sounds_dir)?;
+
+        // Automatically extract all files from embedded sounds directory
+        for file in SOUNDS_DIR.files() {
+            let filename = file.path().file_name()
+                .and_then(|n| n.to_str())
+                .context("Invalid sound filename")?;
+            let sound_path = sounds_dir.join(filename);
+
+            if !sound_path.exists() {
+                let content = file.contents();
+                fs::write(&sound_path, content)
+                    .context(format!("Failed to write sounds/{}", filename))?;
+                tracing::info!("Extracted sound file {} to {:?}", filename, sound_path);
+            }
+        }
+
+        // Extract cmdlist1.xml to shared location (only once)
+        let cmdlist_path = Self::cmdlist_path()?;
+        if !cmdlist_path.exists() {
+            fs::write(&cmdlist_path, DEFAULT_CMDLIST)
+                .context("Failed to write cmdlist1.xml")?;
+            tracing::info!("Extracted cmdlist1.xml to {:?}", cmdlist_path);
+        }
+
+        // Create profile directory
+        let profile = Self::profile_dir(character)?;
+        fs::create_dir_all(&profile)?;
+        tracing::info!("Created profile directory: {:?}", profile);
+
+        // Extract config.toml to profile (if it doesn't exist)
+        let config_path = profile.join("config.toml");
+        if !config_path.exists() {
+            fs::write(&config_path, DEFAULT_CONFIG)
+                .context("Failed to write config.toml")?;
+            tracing::info!("Extracted config.toml to {:?}", config_path);
+        }
+
+        // Extract colors.toml to profile (if it doesn't exist)
+        let colors_path = profile.join("colors.toml");
+        if !colors_path.exists() {
+            fs::write(&colors_path, DEFAULT_COLORS)
+                .context("Failed to write colors.toml")?;
+            tracing::info!("Extracted colors.toml to {:?}", colors_path);
+        }
+
+        // Create empty history.txt in profile (if it doesn't exist)
+        let history_path = profile.join("history.txt");
+        if !history_path.exists() {
+            fs::write(&history_path, "")
+                .context("Failed to create history.txt")?;
+            tracing::info!("Created empty history.txt at {:?}", history_path);
+        }
+
+        Ok(())
+    }
+
     pub fn load_with_options(character: Option<&str>, port_override: u16) -> Result<Self> {
+        // Extract defaults on first run (idempotent - only creates missing files)
+        Self::extract_defaults(character)?;
+
         // Build character-specific config path
         let config_path = Self::config_path(character)?;
 
-        // Try to load from ~/.vellum-fe/configs/<character>.toml or default.toml
-        if config_path.exists() {
-            let contents = fs::read_to_string(&config_path)
-                .context(format!("Failed to read config file: {:?}", config_path))?;
-            let mut config: Config = toml::from_str(&contents)
-                .context(format!("Failed to parse config file: {:?}", config_path))?;
+        // Load config from profile
+        let contents = fs::read_to_string(&config_path)
+            .context(format!("Failed to read config file: {:?}", config_path))?;
+        let mut config: Config = toml::from_str(&contents)
+            .context(format!("Failed to parse config file: {:?}", config_path))?;
 
-            // Override port from command line
-            config.connection.port = port_override;
-
-            // Store character name for later saves
-            config.character = character.map(|s| s.to_string());
-
-            // If keybinds is empty, populate with defaults
-            if config.keybinds.is_empty() {
-                config.keybinds = default_keybinds();
-            }
-
-            // If spell_colors is empty, populate with defaults
-            if config.spell_colors.is_empty() {
-                config.spell_colors = Config::default().spell_colors;
-            }
-
-            // If color_palette is empty, populate with defaults from embedded config
-            if config.color_palette.is_empty() {
-                if let Ok(default_config) = toml::from_str::<Config>(DEFAULT_CONFIG) {
-                    config.color_palette = default_config.color_palette;
-                }
-            }
-
-            return Ok(config);
-        }
-
-        // No config found - create from embedded defaults
-        tracing::info!("No config found, creating from embedded defaults");
-
-        // Parse embedded default config
-        let mut config: Config = toml::from_str(DEFAULT_CONFIG)
-            .context("Failed to parse embedded default config")?;
-
+        // Override port from command line
         config.connection.port = port_override;
+
+        // Store character name for later saves
         config.character = character.map(|s| s.to_string());
 
-        // Create directories if needed
-        let configs_dir = Self::configs_dir()?;
-        let layouts_dir = Self::layouts_dir()?;
-        fs::create_dir_all(&configs_dir)?;
-        fs::create_dir_all(&layouts_dir)?;
+        // Load colors from separate colors.toml file
+        config.colors = ColorConfig::load(character)?;
 
-        // Write default config to ~/.vellum-fe/configs/default.toml (if it doesn't exist)
-        let default_config_path = configs_dir.join("default.toml");
-        if !default_config_path.exists() {
-            fs::write(&default_config_path, DEFAULT_CONFIG)
-                .context("Failed to write default config")?;
-            tracing::info!("Created default config at {:?}", default_config_path);
+        // If keybinds is empty, populate with defaults
+        if config.keybinds.is_empty() {
+            config.keybinds = default_keybinds();
         }
 
-        // If character was specified, also create character-specific config
-        if let Some(char_name) = character {
-            let char_config_path = configs_dir.join(format!("{}.toml", char_name));
-            fs::write(&char_config_path, DEFAULT_CONFIG)
-                .context("Failed to write character-specific config")?;
-            tracing::info!("Created character-specific config at {:?}", char_config_path);
-        }
-
-        // Write default layout to ~/.vellum-fe/layouts/default.toml (if it doesn't exist)
-        let default_layout_path = layouts_dir.join("default.toml");
-        if !default_layout_path.exists() {
-            fs::write(&default_layout_path, DEFAULT_LAYOUT)
-                .context("Failed to write default layout")?;
-            tracing::info!("Created default layout at {:?}", default_layout_path);
+        // If color_palette is empty, populate with defaults from embedded config
+        if config.color_palette.is_empty() {
+            if let Ok(default_config) = toml::from_str::<Config>(DEFAULT_CONFIG) {
+                config.color_palette = default_config.color_palette;
+            }
         }
 
         Ok(config)
@@ -3894,50 +3974,68 @@ impl Config {
         Ok(())
     }
 
-    fn config_path(character: Option<&str>) -> Result<PathBuf> {
+    /// Get the profile directory for a character (or "default" if none)
+    /// Returns: ~/.vellum-fe/{character}/ or ~/.vellum-fe/default/
+    fn profile_dir(character: Option<&str>) -> Result<PathBuf> {
         let home = dirs::home_dir()
             .context("Could not find home directory")?;
-        let config_dir = home.join(".vellum-fe").join("configs");
-
-        let filename = if let Some(char_name) = character {
-            format!("{}.toml", char_name)
-        } else {
-            "default.toml".to_string()
-        };
-
-        Ok(config_dir.join(filename))
+        let profile_name = character.unwrap_or("default");
+        Ok(home.join(".vellum-fe").join(profile_name))
     }
 
+    /// Get the base vellum-fe directory (~/.vellum-fe/)
     fn config_dir() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .context("Could not find home directory")?;
         Ok(home.join(".vellum-fe"))
     }
 
-    fn configs_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Could not find home directory")?;
-        Ok(home.join(".vellum-fe").join("configs"))
+    /// Get path to config.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/config.toml or ~/.vellum-fe/default/config.toml
+    fn config_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("config.toml"))
     }
 
+    /// Get path to colors.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/colors.toml
+    pub fn colors_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("colors.toml"))
+    }
+
+    /// Get the shared layouts directory (where .savelayout saves to)
+    /// Returns: ~/.vellum-fe/layouts/
     fn layouts_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Could not find home directory")?;
-        Ok(home.join(".vellum-fe").join("layouts"))
+        Ok(Self::config_dir()?.join("layouts"))
     }
 
+    /// Get the shared sounds directory
+    /// Returns: ~/.vellum-fe/sounds/
+    pub fn sounds_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("sounds"))
+    }
+
+    /// Get path to debug log for a character
+    /// Returns: ~/.vellum-fe/{character}/debug.log
     pub fn get_log_path(character: Option<&str>) -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Could not find home directory")?;
-        let log_dir = home.join(".vellum-fe");
+        Ok(Self::profile_dir(character)?.join("debug.log"))
+    }
 
-        let filename = if let Some(char_name) = character {
-            format!("debug_{}.log", char_name)
-        } else {
-            "debug.log".to_string()
-        };
+    /// Get path to command history for a character
+    /// Returns: ~/.vellum-fe/{character}/history.txt
+    pub fn history_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("history.txt"))
+    }
 
-        Ok(log_dir.join(filename))
+    /// Get path to cmdlist1.xml (single source of truth)
+    /// Returns: ~/.vellum-fe/cmdlist1.xml
+    pub fn cmdlist_path() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("cmdlist1.xml"))
+    }
+
+    /// Get path to highlights.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/highlights.toml
+    pub fn highlights_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("highlights.toml"))
     }
 
     /// List all saved layouts
@@ -3971,7 +4069,7 @@ impl Config {
     /// Resolve a spell ID to a color based on configured spell lists
     /// Example: spells = [101, 107, 120, 140, 150]
     pub fn get_spell_color(&self, spell_id: u32) -> Option<String> {
-        for spell_config in &self.spell_colors {
+        for spell_config in &self.colors.spell_colors {
             if spell_config.spells.contains(&spell_id) {
                 return Some(spell_config.color.clone());
             }
@@ -3992,38 +4090,18 @@ impl Default for Config {
                 buffer_size: default_buffer_size(),
                 show_timestamps: false,
                 layout: LayoutConfig::default(),
-                command_echo_color: default_command_echo_color(),
-                default_border_color: default_border_color_default(),
-                focused_border_color: default_focused_border_color(),
-                default_text_color: default_text_color_default(),
-                prompt_colors: vec![
-                    PromptColor { character: "R".to_string(), fg: Some("#ff0000".to_string()), bg: None, color: None }, // Red for Roundtime
-                    PromptColor { character: "S".to_string(), fg: Some("#ffff00".to_string()), bg: None, color: None }, // Yellow for Stunned
-                    PromptColor { character: "H".to_string(), fg: Some("#9370db".to_string()), bg: None, color: None }, // Purple for Hidden
-                    PromptColor { character: ">".to_string(), fg: Some("#a9a9a9".to_string()), bg: None, color: None }, // DarkGray default
-                ],
+                border_style: default_border_style(),
                 countdown_icon: default_countdown_icon(),
                 poll_timeout_ms: default_poll_timeout_ms(),
+                wizard_music: default_wizard_music(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
-                selection_bg_color: default_selection_bg_color(),
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
                 perf_stats_x: default_perf_stats_x(),
                 perf_stats_y: default_perf_stats_y(),
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
-            },
-            presets: {
-                let mut map = HashMap::new();
-                map.insert("whisper".to_string(), PresetColor { fg: Some("#60b4bf".to_string()), bg: None });
-                map.insert("links".to_string(), PresetColor { fg: Some("#477ab3".to_string()), bg: None });
-                map.insert("speech".to_string(), PresetColor { fg: Some("#53a684".to_string()), bg: None });
-                map.insert("roomName".to_string(), PresetColor { fg: Some("#9BA2B2".to_string()), bg: Some("#395573".to_string()) });
-                map.insert("monsterbold".to_string(), PresetColor { fg: Some("#a29900".to_string()), bg: None });
-                map.insert("familiar".to_string(), PresetColor { fg: Some("#767339".to_string()), bg: None });
-                map.insert("thought".to_string(), PresetColor { fg: Some("#FF8080".to_string()), bg: None });
-                map
             },
             highlights: {
                 let mut map = HashMap::new();
@@ -4078,89 +4156,7 @@ impl Default for Config {
                 map
             },
             keybinds: default_keybinds(),
-            spell_colors: vec![
-                // Example spell colors - list commonly used spells from each circle
-                // Light blue for Minor Elemental (400 series)
-                SpellColorRange {
-                    spells: vec![401, 406, 414, 419, 430, 435],
-                    color: "#87ceeb".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Dark blue for Major Elemental (500 series)
-                SpellColorRange {
-                    spells: vec![503, 506, 507, 508, 509, 513, 520, 525, 530, 540],
-                    color: "#4169e1".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Purple for Wizard (900 series)
-                SpellColorRange {
-                    spells: vec![905, 911, 913, 918, 919, 920, 925, 930, 940],
-                    color: "#9370db".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Green for Ranger (600 series)
-                SpellColorRange {
-                    spells: vec![601, 602, 605, 606, 608, 613, 616, 618, 625, 630, 640],
-                    color: "#32cd32".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Yellow for Cleric (300 series)
-                SpellColorRange {
-                    spells: vec![303, 307, 310, 313, 315, 317, 318, 319, 325, 330, 335, 340],
-                    color: "#ffd700".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Red for Sorcerer (700 series)
-                SpellColorRange {
-                    spells: vec![701, 703, 705, 708, 712, 713, 715, 720, 725, 730, 735, 740],
-                    color: "#ff4500".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Cyan for Empath (1100 series)
-                SpellColorRange {
-                    spells: vec![1101, 1107, 1109, 1115, 1120, 1125, 1130, 1140, 1150],
-                    color: "#00ffff".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Orange for Bard (1000 series)
-                SpellColorRange {
-                    spells: vec![1001, 1003, 1006, 1010, 1012, 1019, 1025, 1030, 1035, 1040],
-                    color: "#ff8c00".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Pink for Paladin (1600 series)
-                SpellColorRange {
-                    spells: vec![1601, 1602, 1605, 1610, 1615, 1617, 1618, 1625, 1630, 1635],
-                    color: "#ff69b4".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-                // Sky blue for Minor Spirit (100 series)
-                SpellColorRange {
-                    spells: vec![101, 107, 120, 125, 130, 140, 150, 175],
-                    color: "#00bfff".to_string(),
-                    bar_color: None,
-                    text_color: None,
-                    bg_color: None,
-                },
-            ],
+            colors: ColorConfig::default(),
             sound: SoundConfig::default(),
             event_patterns: HashMap::new(),  // Empty by default - user adds via config
             color_palette: Vec::new(),  // Empty by default - loaded from embedded defaults

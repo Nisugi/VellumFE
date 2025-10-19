@@ -91,6 +91,7 @@ enum InputMode {
     SpellColorBrowser,  // Spell color browser
     SpellColorForm,  // Spell color editor form
     WindowEditor,  // Window configuration editor
+    UIColorsBrowser,  // UI colors browser
 }
 
 pub struct App {
@@ -137,6 +138,7 @@ pub struct App {
     color_form: Option<crate::ui::ColorForm>,  // Color editor form (None when not shown)
     spell_color_browser: Option<crate::ui::SpellColorBrowser>,  // Spell color browser (None when not shown)
     spell_color_form: Option<crate::ui::SpellColorFormWidget>,  // Spell color editor form (None when not shown)
+    uicolors_browser: Option<crate::ui::UIColorsBrowser>,  // UI colors browser (None when not shown)
     baseline_snapshot: Option<(u16, u16)>,  // Baseline terminal size (width, height) for proportional resizing
     baseline_layout: Option<Layout>,  // Baseline layout (original widget positions/sizes) for proportional resizing
     resize_debouncer: ResizeDebouncer,  // Debouncer for terminal resize events (300ms default)
@@ -195,13 +197,13 @@ impl App {
 
         // Convert config presets to parser format
         let presets: Vec<(String, Option<String>, Option<String>)> = config
-            .presets
+            .colors.presets
             .iter()
             .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
             .collect();
 
-        debug!("Loaded {} prompt color mappings:", config.ui.prompt_colors.len());
-        for pc in &config.ui.prompt_colors {
+        debug!("Loaded {} prompt color mappings:", config.colors.prompt_colors.len());
+        for pc in &config.colors.prompt_colors {
             let fg = pc.fg.as_ref().or(pc.color.as_ref()).map(|s| s.as_str()).unwrap_or("none");
             let bg = pc.bg.as_ref().map(|s| s.as_str()).unwrap_or("none");
             debug!("  '{}' -> fg: {}, bg: {}", pc.character, fg, bg);
@@ -393,6 +395,7 @@ impl App {
             color_form: None,  // Color form not shown initially
             spell_color_browser: None,  // Spell color browser not shown initially
             spell_color_form: None,  // Spell color form not shown initially
+            uicolors_browser: None,  // UI colors browser not shown initially
             baseline_snapshot: None,  // No baseline snapshot initially (will be set after layout load)
             baseline_layout: Some(baseline_layout),  // Store baseline layout for resize calculations
             resize_debouncer: ResizeDebouncer::new(300),  // 300ms debounce for terminal resize
@@ -564,11 +567,26 @@ impl App {
                 }
 
                 // Check if mouse is on bottom border (last row of window)
+                // BUT: Skip if this is a tabbed window with tabs at the bottom (tab bar takes priority)
                 if mouse_row == rect.y + rect.height.saturating_sub(1)
                     && mouse_col >= rect.x
                     && mouse_col < rect.x + rect.width
                 {
-                    return Some((idx, ResizeEdge::Bottom));
+                    // Check if this is a tabbed window with bottom tabs
+                    let is_bottom_tabbed = if let Some(widget) = self.window_manager.get_window_const(name) {
+                        if let Widget::Tabbed(tabbed) = widget {
+                            tabbed.has_bottom_tabs()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    // Only allow resize if NOT a tabbed window with bottom tabs
+                    if !is_bottom_tabbed {
+                        return Some((idx, ResizeEdge::Bottom));
+                    }
                 }
 
                 // Check if mouse is on left border (but not top/bottom corners to avoid conflict)
@@ -1702,6 +1720,8 @@ impl App {
     /// Update window manager configs from current config
     fn update_window_manager_config(&mut self) {
         let countdown_icon = Some(self.config.ui.countdown_icon.clone());
+        let ui_config = &self.config.ui;
+
         let window_configs: Vec<WindowConfig> = self.layout
             .windows
             .iter()
@@ -1715,15 +1735,15 @@ impl App {
                 cols: w.cols,
                 buffer_size: w.buffer_size,
                 show_border: w.show_border,
-                border_style: w.border_style.clone(),
-                border_color: w.border_color.clone(),
+                border_style: w.get_border_style(ui_config),
+                border_color: w.get_border_color(&self.config.colors),
                 border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
                 content_align: w.content_align.clone(),
-                background_color: w.background_color.clone(),
+                background_color: w.get_background_color(&self.config.colors),
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
-                text_color: w.text_color.clone(),
+                text_color: w.get_text_color(&self.config.colors),
                 transparent_background: w.transparent_background,
                 countdown_icon: countdown_icon.clone(),
                 indicator_colors: w.indicator_colors.clone(),
@@ -1762,10 +1782,12 @@ impl App {
         if let Some(cmd_window) = self.layout.windows.iter()
             .find(|w| w.widget_type == "command_input") {
 
+            let ui_config = &self.config.ui;
+
             self.command_input.set_border_config(
                 cmd_window.show_border,
-                cmd_window.border_style.clone(),
-                cmd_window.border_color.clone(),
+                cmd_window.get_border_style(ui_config),
+                cmd_window.get_border_color(&self.config.colors),
             );
 
             if let Some(ref title) = cmd_window.title {
@@ -1774,7 +1796,7 @@ impl App {
                 self.command_input.set_title(String::new());
             }
 
-            self.command_input.set_background_color(cmd_window.background_color.clone());
+            self.command_input.set_background_color(cmd_window.get_background_color(&self.config.colors));
 
             tracing::debug!("Updated command_input config from layout");
         } else {
@@ -2028,48 +2050,6 @@ impl App {
                         }
                     }
                     Err(e) => self.add_system_message(&format!("Failed to list layouts: {}", e)),
-                }
-            }
-            "createwindow" | "createwin" => {
-                if parts.len() < 2 {
-                    let templates = Config::available_window_templates();
-                    self.add_system_message(&format!("Usage: .createwindow <name>"));
-                    self.add_system_message(&format!("Available: {}", templates.join(", ")));
-                    return;
-                }
-
-                let window_name = parts[1];
-
-                // Check if window already exists
-                if self.layout.windows.iter().any(|w| w.name == window_name) {
-                    self.add_system_message(&format!("Window '{}' already exists", window_name));
-                    return;
-                }
-
-                // Get template
-                if let Some(window_def) = Config::get_window_template(window_name) {
-                    // Prevent creating duplicate command_input
-                    if window_def.widget_type == "command_input" {
-                        if self.layout.windows.iter().any(|w| w.widget_type == "command_input") {
-                            self.add_system_message("Cannot create duplicate command_input - one already exists");
-                            return;
-                        }
-                    }
-
-                    let actual_name = window_def.name.clone();
-                    self.layout.windows.push(window_def);
-                    self.update_window_manager_config();
-
-                    // If template name differs from actual window name, inform user
-                    if actual_name != window_name {
-                        self.add_system_message(&format!("Created window '{}' (use name '{}' for commands)", window_name, actual_name));
-                    } else {
-                        self.add_system_message(&format!("Created window '{}' - use mouse to move/resize", window_name));
-                    }
-                } else {
-                    let templates = Config::available_window_templates();
-                    self.add_system_message(&format!("Unknown window type: {}", window_name));
-                    self.add_system_message(&format!("Available: {}", templates.join(", ")));
                 }
             }
             "customwindow" | "customwin" => {
@@ -2539,7 +2519,8 @@ impl App {
             }
             "addwindow" | "newwindow" => {
                 // Open window editor for new window
-                self.window_editor.open_for_new_window();
+                let existing_names: Vec<String> = self.layout.windows.iter().map(|w| w.name.clone()).collect();
+                self.window_editor.open_for_new_window(existing_names);
                 self.input_mode = InputMode::WindowEditor;
                 self.add_system_message("Window editor opened - select widget type");
             }
@@ -3197,10 +3178,17 @@ impl App {
             }
             "spellcolors" => {
                 // Open spell color browser
-                let browser = crate::ui::SpellColorBrowser::new(&self.config.spell_colors);
+                let browser = crate::ui::SpellColorBrowser::new(&self.config.colors.spell_colors);
                 self.spell_color_browser = Some(browser);
                 self.input_mode = InputMode::SpellColorBrowser;
                 self.add_system_message("Opening spell color browser (↑/↓ to navigate, Enter to edit, Del to delete)");
+            }
+            "uicolors" => {
+                // Open UI colors browser
+                let browser = crate::ui::UIColorsBrowser::new(&self.config.colors);
+                self.uicolors_browser = Some(browser);
+                self.input_mode = InputMode::UIColorsBrowser;
+                self.add_system_message("Opening UI colors browser (↑/↓ to navigate, Enter/Space to edit, Ctrl+S to save)");
             }
             "testmenu" => {
                 // Test command: .testmenu <exist_id> [noun]
@@ -3335,6 +3323,7 @@ impl App {
                 crate::ui::MenuItem { text: "Browse colors".to_string(), command: ".colors".to_string() },
                 crate::ui::MenuItem { text: "Add spellcolor".to_string(), command: ".addspellcolor".to_string() },
                 crate::ui::MenuItem { text: "Browse spellcolors".to_string(), command: ".spellcolors".to_string() },
+                crate::ui::MenuItem { text: "Browse UI colors".to_string(), command: ".uicolors".to_string() },
             ]
         );
 
@@ -3889,7 +3878,7 @@ impl App {
                                 focused,
                                 self.server_time_offset,
                                 self.selection_state.as_ref(),
-                                &self.config.ui.selection_bg_color,
+                                &self.config.colors.ui.selection_bg_color,
                                 idx,
                             );
                         }
@@ -3988,7 +3977,15 @@ impl App {
                     form.render(f.area(), f.buffer_mut());
                 }
 
-                // UI color editor removed
+                // Render UI colors browser as popup (if open)
+                if let Some(ref mut browser) = self.uicolors_browser {
+                    browser.render(f.area(), f.buffer_mut());
+
+                    // Render color editor popup on top if open
+                    if let Some(ref mut editor) = browser.editor {
+                        editor.render(f.area(), f.buffer_mut());
+                    }
+                }
 
                 // Render window editor as popup (if open)
                 if self.input_mode == InputMode::WindowEditor {
@@ -4418,6 +4415,16 @@ impl App {
             return self.handle_spell_color_form_input(key, modifiers);
         }
 
+        if self.input_mode == InputMode::UIColorsBrowser {
+            // Allow Ctrl+C to quit
+            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                self.running = false;
+                return Ok(());
+            }
+            // Everything else goes to the UI colors browser
+            return self.handle_uicolors_browser_input(key, modifiers);
+        }
+
 
         // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
         if self.input_mode == InputMode::WindowEditor {
@@ -4634,6 +4641,7 @@ impl App {
             InputMode::ColorForm => unreachable!(), // Handled above
             InputMode::SpellColorBrowser => unreachable!(), // Handled above
             InputMode::SpellColorForm => unreachable!(), // Handled above
+            InputMode::UIColorsBrowser => unreachable!(), // Handled above
             InputMode::WindowEditor => unreachable!(), // Handled above
         }
     }
@@ -5313,7 +5321,7 @@ impl App {
 
         // Handle edit action (after browser borrow is dropped)
         if let Some(index) = selected_index {
-            if let Some(spell_color) = self.config.spell_colors.get(index).cloned() {
+            if let Some(spell_color) = self.config.colors.spell_colors.get(index).cloned() {
                 // Close browser and open spell color form in edit mode
                 self.spell_color_browser = None;
 
@@ -5327,15 +5335,15 @@ impl App {
 
         // Handle delete action (after browser borrow is dropped)
         if let Some(index) = delete_index {
-            if index < self.config.spell_colors.len() {
-                let removed = self.config.spell_colors.remove(index);
+            if index < self.config.colors.spell_colors.len() {
+                let removed = self.config.colors.spell_colors.remove(index);
                 // Save config
                 if let Err(e) = self.config.save(self.config.character.as_deref()) {
                     message_to_send = Some(format!("Failed to save config: {}", e));
                 } else {
                     // Refresh the browser with updated list
                     if let Some(ref mut browser) = self.spell_color_browser {
-                        *browser = crate::ui::SpellColorBrowser::new(&self.config.spell_colors);
+                        *browser = crate::ui::SpellColorBrowser::new(&self.config.colors.spell_colors);
                     }
 
                     let spell_ids = removed.spells.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
@@ -5422,15 +5430,15 @@ impl App {
                                     // Add or update spell color in config (same logic as below)
                                     let mut replaced_index = None;
                                     for spell_id in &spell_color.spells {
-                                        if let Some(idx) = self.config.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
+                                        if let Some(idx) = self.config.colors.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
                                             replaced_index = Some(idx);
                                             break;
                                         }
                                     }
                                     if let Some(idx) = replaced_index {
-                                        self.config.spell_colors[idx] = sc.clone();
+                                        self.config.colors.spell_colors[idx] = sc.clone();
                                     } else {
-                                        self.config.spell_colors.push(sc.clone());
+                                        self.config.colors.spell_colors.push(sc.clone());
                                     }
                                     if let Err(e) = self.config.save(self.config.character.as_deref()) {
                                         self.add_system_message(&format!("Failed to save spell color: {}", e));
@@ -5525,7 +5533,7 @@ impl App {
                         // First check if any of these spell IDs already exist
                         let mut replaced_index = None;
                         for spell_id in &spell_color.spells {
-                            if let Some(idx) = self.config.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
+                            if let Some(idx) = self.config.colors.spell_colors.iter().position(|sc| sc.spells.contains(spell_id)) {
                                 replaced_index = Some(idx);
                                 break;
                             }
@@ -5533,9 +5541,9 @@ impl App {
 
                         // If we found an existing entry, replace it; otherwise add new
                         if let Some(idx) = replaced_index {
-                            self.config.spell_colors[idx] = sc.clone();
+                            self.config.colors.spell_colors[idx] = sc.clone();
                         } else {
-                            self.config.spell_colors.push(sc.clone());
+                            self.config.colors.spell_colors.push(sc.clone());
                         }
 
                         if let Err(e) = self.config.save(self.config.character.as_deref()) {
@@ -5554,8 +5562,8 @@ impl App {
                     }
                     SpellColorFormResult::Delete(index) => {
                         // Delete from config
-                        if index < self.config.spell_colors.len() {
-                            let removed = self.config.spell_colors.remove(index);
+                        if index < self.config.colors.spell_colors.len() {
+                            let removed = self.config.colors.spell_colors.remove(index);
                             if let Err(e) = self.config.save(self.config.character.as_deref()) {
                                 self.add_system_message(&format!("Failed to delete spell color: {}", e));
                             } else {
@@ -5577,6 +5585,155 @@ impl App {
                         self.input_mode = InputMode::Normal;
                         self.add_system_message("Spell color form cancelled");
                     }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_uicolors_browser_input(&mut self, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
+        if let Some(ref mut browser) = self.uicolors_browser {
+            // Check if editor popup is open
+            if browser.editor.is_some() {
+                // Editor popup is open - handle editor input
+                // Convert crossterm types to ratatui::crossterm types
+                use ratatui::crossterm::event as re;
+                let rkey = match key {
+                    KeyCode::Backspace => re::KeyCode::Backspace,
+                    KeyCode::Enter => re::KeyCode::Enter,
+                    KeyCode::Left => re::KeyCode::Left,
+                    KeyCode::Right => re::KeyCode::Right,
+                    KeyCode::Up => re::KeyCode::Up,
+                    KeyCode::Down => re::KeyCode::Down,
+                    KeyCode::Home => re::KeyCode::Home,
+                    KeyCode::End => re::KeyCode::End,
+                    KeyCode::PageUp => re::KeyCode::PageUp,
+                    KeyCode::PageDown => re::KeyCode::PageDown,
+                    KeyCode::Tab => re::KeyCode::Tab,
+                    KeyCode::BackTab => re::KeyCode::BackTab,
+                    KeyCode::Delete => re::KeyCode::Delete,
+                    KeyCode::Insert => re::KeyCode::Insert,
+                    KeyCode::F(n) => re::KeyCode::F(n),
+                    KeyCode::Char(c) => re::KeyCode::Char(c),
+                    KeyCode::Null => re::KeyCode::Null,
+                    KeyCode::Esc => re::KeyCode::Esc,
+                    _ => re::KeyCode::Null,
+                };
+
+                let mut rmods = re::KeyModifiers::empty();
+                if modifiers.contains(KeyModifiers::SHIFT) {
+                    rmods.insert(re::KeyModifiers::SHIFT);
+                }
+                if modifiers.contains(KeyModifiers::CONTROL) {
+                    rmods.insert(re::KeyModifiers::CONTROL);
+                }
+                if modifiers.contains(KeyModifiers::ALT) {
+                    rmods.insert(re::KeyModifiers::ALT);
+                }
+
+                let key_event = re::KeyEvent::new(rkey, rmods);
+                if let Some(editor) = &mut browser.editor {
+                    if let Some((fg_opt, bg_opt)) = editor.handle_key(key_event) {
+                        // Editor returned a result (Save or Cancel)
+                        if fg_opt.is_none() && bg_opt.is_none() {
+                            // Cancel - just close editor
+                            browser.close_editor();
+                            self.add_system_message("Color edit cancelled");
+                        } else {
+                            // Save - update the entry and save to file
+                            if let Some((category, name, _old_fg, _old_bg)) = browser.save_editor() {
+                                // Update config based on category and name
+                                match category.as_str() {
+                                    "UI" => {
+                                        // Update UI color in config
+                                        match name.as_str() {
+                                            "Background" => self.config.colors.ui.background_color = fg_opt.clone().unwrap_or_default(),
+                                            "Border" => self.config.colors.ui.border_color = fg_opt.clone().unwrap_or_default(),
+                                            "Command Echo" => self.config.colors.ui.command_echo_color = fg_opt.clone().unwrap_or_default(),
+                                            "Focused Border" => self.config.colors.ui.focused_border_color = fg_opt.clone().unwrap_or_default(),
+                                            "Text" => self.config.colors.ui.text_color = fg_opt.clone().unwrap_or_default(),
+                                            "Text Selection" => self.config.colors.ui.selection_bg_color = fg_opt.clone().unwrap_or_default(),
+                                            _ => {}
+                                        }
+                                    }
+                                    "PRESETS" => {
+                                        // Update preset in config
+                                        use crate::config::PresetColor;
+                                        self.config.colors.presets.insert(name.clone(), PresetColor {
+                                            fg: fg_opt.clone(),
+                                            bg: bg_opt.clone(),
+                                        });
+                                    }
+                                    "PROMPT" => {
+                                        // Update prompt color in config
+                                        // Extract character from "Prompt (X)" format
+                                        if let Some(ch) = name.strip_prefix("Prompt (").and_then(|s| s.strip_suffix(")")) {
+                                            if let Some(prompt) = self.config.colors.prompt_colors.iter_mut().find(|p| p.character == ch) {
+                                                if let Some(fg) = fg_opt.clone() {
+                                                    prompt.color = Some(fg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                                // Save to file
+                                let save_result = self.config.colors.save(self.config.character.as_deref());
+                                let success_msg = format!("Saved {} color", name);
+
+                                if let Err(e) = save_result {
+                                    browser.close_editor(); // Drop borrow before calling add_system_message
+                                    self.add_system_message(&format!("Failed to save colors: {}", e));
+                                } else {
+                                    // Reload browser with updated colors before dropping the borrow
+                                    *browser = crate::ui::UIColorsBrowser::new(&self.config.colors);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No editor open - handle browser navigation
+                match (key, modifiers) {
+                    (KeyCode::Esc, _) => {
+                        // Close browser
+                        self.uicolors_browser = None;
+                        self.input_mode = InputMode::Normal;
+                        self.add_system_message("UI colors browser closed");
+                    }
+                    (KeyCode::Up, _) => {
+                        browser.previous();
+                    }
+                    (KeyCode::Down, _) => {
+                        browser.next();
+                    }
+                    (KeyCode::PageUp, _) => {
+                        browser.page_up();
+                    }
+                    (KeyCode::PageDown, _) => {
+                        browser.page_down();
+                    }
+                    (KeyCode::Tab, _) => {
+                        browser.next();
+                    }
+                    (KeyCode::BackTab, _) => {
+                        browser.previous();
+                    }
+                    (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => {
+                        // Open color editor for selected entry
+                        browser.open_editor();
+                    }
+                    (KeyCode::Char('s'), KeyModifiers::CONTROL) | (KeyCode::Char('S'), KeyModifiers::CONTROL) => {
+                        // Save all colors to file
+                        if let Err(e) = self.config.colors.save(self.config.character.as_deref()) {
+                            self.add_system_message(&format!("Failed to save colors: {}", e));
+                        } else {
+                            self.add_system_message("Colors saved to colors.toml");
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -5777,14 +5934,14 @@ impl App {
                         self.handle_dot_command(&command, Some(command_tx));
                     } else {
                         // Echo ">" with prompt color, then command with command echo color
-                        let prompt_color = self.config.ui.prompt_colors
+                        let prompt_color = self.config.colors.prompt_colors
                             .iter()
                             .find(|pc| pc.character == ">")
                             .and_then(|pc| pc.fg.as_ref().or(pc.color.as_ref()))
                             .and_then(|color_str| Self::parse_hex_color(color_str))
                             .unwrap_or(Color::DarkGray);
 
-                        let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
+                        let echo_color = Self::parse_hex_color(&self.config.colors.ui.command_echo_color);
 
                         // Add ">" with prompt color
                         self.add_text_to_current_stream(StyledText {
@@ -5937,14 +6094,14 @@ impl App {
                 let display_text = text.replace('\r', "");
                 if !display_text.is_empty() {
                     // Echo ">" with prompt color
-                    let prompt_color = self.config.ui.prompt_colors
+                    let prompt_color = self.config.colors.prompt_colors
                         .iter()
                         .find(|pc| pc.character == ">")
                         .and_then(|pc| pc.fg.as_ref().or(pc.color.as_ref()))
                         .and_then(|color_str| Self::parse_hex_color(color_str))
                         .unwrap_or(Color::DarkGray);
 
-                    let echo_color = Self::parse_hex_color(&self.config.ui.command_echo_color);
+                    let echo_color = Self::parse_hex_color(&self.config.colors.ui.command_echo_color);
 
                     self.add_text_to_current_stream(StyledText {
                         content: ">".to_string(),
@@ -6102,6 +6259,28 @@ impl App {
                         if form.handle_mouse(mouse.column, mouse.row, true, terminal_area) {
                             return Ok(());
                         }
+                    }
+                }
+
+                // UI Colors browser drag handling
+                if self.input_mode == InputMode::UIColorsBrowser {
+                    if let Some(ref mut browser) = self.uicolors_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+
+                        // If editor is open, handle editor dragging first
+                        if let Some(ref mut editor) = browser.editor {
+                            editor.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+
+                        // Otherwise handle browser dragging
+                        browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                        return Ok(());
                     }
                 }
 
@@ -6363,15 +6542,43 @@ impl App {
                                                     // Clear selection drag start since we're dragging an object
                                                     self.selection_drag_start = None;
                                                 } else {
-                                                    debug!("Opening menu for link exist_id={} (no {} modifier held)", link_data.exist_id, drag_modifier);
-                                                    // No modifier held - immediately request menu
-                                                    if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
-                                                        self.add_system_message(&format!("Failed to request menu: {}", e));
+                                                    debug!("Handling click for link exist_id={} (no {} modifier held)", link_data.exist_id, drag_modifier);
+
+                                                    // Determine link type and handle accordingly
+                                                    // 1. <d> tag (exist_id="_direct_")
+                                                    // 2. <a> tag with coord="2524,1864" (movement)
+                                                    // 3. <a> tag with regular exist_id (context menu)
+
+                                                    if link_data.exist_id == "_direct_" {
+                                                        // <d> tag: Direct command execution
+                                                        let command = if !link_data.noun.is_empty() {
+                                                            // <d cmd='skill faqs'>: Use cmd attribute
+                                                            link_data.noun.clone()
+                                                        } else {
+                                                            // <d>SKILLS BASE</d>: Use text content
+                                                            link_data.text.clone()
+                                                        };
+                                                        debug!("Executing <d> direct command: {}", command);
+                                                        if let Err(e) = command_tx.send(command) {
+                                                            self.add_system_message(&format!("Failed to send command: {}", e));
+                                                        }
+                                                    } else if link_data.coord.as_deref() == Some("2524,1864") {
+                                                        // Movement link: Special coord for instant movement
+                                                        let command = format!("go {}", link_data.noun);
+                                                        debug!("Executing movement command: {}", command);
+                                                        if let Err(e) = command_tx.send(command) {
+                                                            self.add_system_message(&format!("Failed to send command: {}", e));
+                                                        }
                                                     } else {
-                                                        // Store the click position for positioning the menu when it arrives
-                                                        self.last_link_click_pos = Some((mouse.column, mouse.row));
+                                                        // Regular link: Request context menu
+                                                        if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
+                                                            self.add_system_message(&format!("Failed to request menu: {}", e));
+                                                        } else {
+                                                            // Store the click position for positioning the menu when it arrives
+                                                            self.last_link_click_pos = Some((mouse.column, mouse.row));
+                                                        }
                                                     }
-                                                    // Clear selection drag start since we're opening a menu
+                                                    // Clear selection drag start
                                                     self.selection_drag_start = None;
                                                 }
                                         } else {
@@ -6500,6 +6707,32 @@ impl App {
                                 height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
                             };
                             form.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // UI Colors browser drag release
+                if self.input_mode == InputMode::UIColorsBrowser {
+                    if let Some(ref mut browser) = self.uicolors_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+
+                        // If editor is open and dragging, handle editor release first
+                        if let Some(ref mut editor) = browser.editor {
+                            if editor.dragging {
+                                editor.handle_mouse(mouse.column, mouse.row, false, terminal_area);
+                                return Ok(());
+                            }
+                        }
+
+                        // Otherwise handle browser release
+                        if browser.dragging {
+                            browser.handle_mouse(mouse.column, mouse.row, false, terminal_area);
                             return Ok(());
                         }
                     }
@@ -6715,6 +6948,32 @@ impl App {
                                 height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
                             };
                             form.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // UI Colors browser dragging
+                if self.input_mode == InputMode::UIColorsBrowser {
+                    if let Some(ref mut browser) = self.uicolors_browser {
+                        let terminal_area = Rect {
+                            x: 0,
+                            y: 0,
+                            width: window_layouts.values().map(|r| r.x + r.width).max().unwrap_or(80),
+                            height: window_layouts.values().map(|r| r.y + r.height).max().unwrap_or(24),
+                        };
+
+                        // If editor is open and dragging, handle editor drag first
+                        if let Some(ref mut editor) = browser.editor {
+                            if editor.dragging {
+                                editor.handle_mouse(mouse.column, mouse.row, true, terminal_area);
+                                return Ok(());
+                            }
+                        }
+
+                        // Otherwise handle browser drag
+                        if browser.dragging {
+                            browser.handle_mouse(mouse.column, mouse.row, true, terminal_area);
                             return Ok(());
                         }
                     }
@@ -6938,8 +7197,13 @@ impl App {
             let seg_len = seg.text.chars().count();
             if col_offset >= col && col_offset < col + seg_len {
                 // Inside this segment
-                if let Some(link) = &seg.link_data {
-                    return Some(link.clone());
+                if let Some(mut link) = seg.link_data.clone() {
+                    // For <d> tags without cmd attribute, populate text from segment
+                    // This ensures we capture the actual displayed text
+                    if link.text.is_empty() {
+                        link.text = seg.text.clone();
+                    }
+                    return Some(link);
                 }
                 return None;
             }
@@ -6954,6 +7218,15 @@ impl App {
             ServerMessage::Connected => {
                 info!("Connected to server");
                 self.add_system_message("Connected to Lich");
+
+                // Easter egg: Play wizard_music on connection (tribute to original Wizard frontend)
+                if self.config.ui.wizard_music {
+                    if let Some(ref player) = self.sound_player {
+                        if let Err(e) = player.play_from_sounds_dir("wizard_music", Some(0.5)) {
+                            tracing::warn!("Failed to play wizard_music: {}", e);
+                        }
+                    }
+                }
             }
             ServerMessage::Disconnected => {
                 info!("Disconnected from server");
@@ -7090,7 +7363,7 @@ impl App {
                                     let char_str = ch.to_string();
 
                                     // Find matching color for this character
-                                    let color = self.config.ui.prompt_colors
+                                    let color = self.config.colors.prompt_colors
                                         .iter()
                                         .find(|pc| pc.character == char_str)
                                         .and_then(|pc| {
@@ -7244,15 +7517,12 @@ impl App {
 
                                     if !display_text.is_empty() {
                                         window.set_progress_with_text(value, max, Some(display_text.clone()));
-                                        debug!("Updated progress bar '{}' to {}% with text '{}'", id, value, display_text);
                                     } else {
                                         window.set_progress(value, max);
-                                        debug!("Updated progress bar '{}' to {}/{}", id, value, max);
                                     }
                                 }
-                            } else {
-                                debug!("No window found for progress bar id '{}'", id);
                             }
+                            // Silently ignore progress bars without matching windows (e.g., health2 duplicate)
                         }
                         ParsedElement::Label { id, value } => {
                             // Handle label elements like blood points
@@ -7418,7 +7688,6 @@ impl App {
                                                 time.clone(),
                                                 spell_color.clone()
                                             );
-                                            debug!("Updated active effect {} in window {}: {} ({}%)", id, window_name, text, value);
                                         }
                                     }
                                 }
@@ -7434,7 +7703,6 @@ impl App {
                                         if *effect_category == *category {
                                             if let Some(window) = self.window_manager.get_window(&window_name) {
                                                 window.clear_active_effects();
-                                                debug!("Cleared active effects in window {} for category {}", window_name, category);
                                             }
                                         }
                                     }
@@ -7466,13 +7734,18 @@ impl App {
     }
 
     fn add_system_message(&mut self, msg: &str) {
+        let formatted_msg = format!("*** {} ***", msg);
+
+        // Check for sound triggers on the formatted message
+        self.check_sound_triggers(&formatted_msg);
+
         self.add_text_to_current_stream(StyledText {
-            content: format!("*** {} ***", msg),
+            content: formatted_msg,
             fg: Some(Color::Yellow),
             bg: None,
             bold: true,
             span_type: SpanType::Normal,
-                            link_data: None,
+            link_data: None,
         });
         // Finish the line
         if let Ok(size) = crossterm::terminal::size() {
@@ -7487,7 +7760,6 @@ impl App {
             // Application
             ".quit".to_string(), ".q".to_string(),
             // Window management
-            ".createwindow".to_string(), ".createwin".to_string(),
             ".customwindow".to_string(), ".customwin".to_string(),
             ".deletewindow".to_string(), ".deletewin".to_string(),
             ".editwindow".to_string(), ".editwin".to_string(),
@@ -7657,16 +7929,16 @@ impl App {
             category: "UI".to_string(),
             key: "command_echo_color".to_string(),
             display_name: "Command Echo Color".to_string(),
-            value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
             description: Some("Color for echoed commands (hex color code)".to_string()),
             editable: true,
             name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "default_border_color".to_string(),
-            display_name: "Default Border Color".to_string(),
-            value: SettingValue::Color(self.config.ui.default_border_color.clone()),
+            key: "border_color".to_string(),
+            display_name: "Border Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
             description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
@@ -7675,17 +7947,35 @@ impl App {
             category: "UI".to_string(),
             key: "focused_border_color".to_string(),
             display_name: "Focused Border Color".to_string(),
-            value: SettingValue::Color(self.config.ui.focused_border_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
             description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "default_text_color".to_string(),
-            display_name: "Default Text Color".to_string(),
-            value: SettingValue::Color(self.config.ui.default_text_color.clone()),
+            key: "text_color".to_string(),
+            display_name: "Text Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
             description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "border_style".to_string(),
+            display_name: "Border Style".to_string(),
+            value: SettingValue::String(self.config.ui.border_style.clone()),
+            description: Some("Global default border style: single, double, rounded, thick, none".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "background_color".to_string(),
+            display_name: "Background Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
+            description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -7709,6 +7999,15 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
+            key: "wizard_music".to_string(),
+            display_name: "Wizard Music".to_string(),
+            value: SettingValue::Boolean(self.config.ui.wizard_music),
+            description: Some("Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
             key: "selection_enabled".to_string(),
             display_name: "Selection Enabled".to_string(),
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
@@ -7720,7 +8019,7 @@ impl App {
             category: "UI".to_string(),
             key: "selection_bg_color".to_string(),
             display_name: "Selection Highlight Color".to_string(),
-            value: SettingValue::Color(self.config.ui.selection_bg_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
             description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
@@ -7756,10 +8055,10 @@ impl App {
         });
 
         // Preset colors (sorted alphabetically) - show as "fg bg" format
-        let mut preset_names: Vec<String> = self.config.presets.keys().cloned().collect();
+        let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
         preset_names.sort();
         for preset_name in preset_names {
-            if let Some(preset) = self.config.presets.get(&preset_name) {
+            if let Some(preset) = self.config.colors.presets.get(&preset_name) {
                 let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
                 let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
                 let display = format!("{} {}", fg, bg);
@@ -7776,7 +8075,7 @@ impl App {
         }
 
         // Spell colors
-        for (idx, spell_range) in self.config.spell_colors.iter().enumerate() {
+        for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
             let spell_ids = spell_range.spells.iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
@@ -7793,7 +8092,7 @@ impl App {
         }
 
         // Prompt colors
-        for prompt_color in &self.config.ui.prompt_colors {
+        for prompt_color in &self.config.colors.prompt_colors {
             // Migrate legacy color field to fg if needed
             let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
             let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
@@ -7853,16 +8152,16 @@ impl App {
             category: "UI".to_string(),
             key: "command_echo_color".to_string(),
             display_name: "Command Echo Color".to_string(),
-            value: SettingValue::Color(self.config.ui.command_echo_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.command_echo_color.clone()),
             description: Some("Color for echoed commands (hex color code)".to_string()),
             editable: true,
             name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "default_border_color".to_string(),
-            display_name: "Default Border Color".to_string(),
-            value: SettingValue::Color(self.config.ui.default_border_color.clone()),
+            key: "border_color".to_string(),
+            display_name: "Border Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.border_color.clone()),
             description: Some("Global default border color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
@@ -7871,17 +8170,35 @@ impl App {
             category: "UI".to_string(),
             key: "focused_border_color".to_string(),
             display_name: "Focused Border Color".to_string(),
-            value: SettingValue::Color(self.config.ui.focused_border_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.focused_border_color.clone()),
             description: Some("Border color for focused/active windows (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "default_text_color".to_string(),
-            display_name: "Default Text Color".to_string(),
-            value: SettingValue::Color(self.config.ui.default_text_color.clone()),
+            key: "text_color".to_string(),
+            display_name: "Text Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.text_color.clone()),
             description: Some("Global default text color (palette name or #RRGGBB)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "border_style".to_string(),
+            display_name: "Border Style".to_string(),
+            value: SettingValue::String(self.config.ui.border_style.clone()),
+            description: Some("Global default border style: single, double, rounded, thick, none".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "background_color".to_string(),
+            display_name: "Background Color".to_string(),
+            value: SettingValue::Color(self.config.colors.ui.background_color.clone()),
+            description: Some("Global default background color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -7905,6 +8222,15 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
+            key: "wizard_music".to_string(),
+            display_name: "Wizard Music".to_string(),
+            value: SettingValue::Boolean(self.config.ui.wizard_music),
+            description: Some("Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
             key: "selection_enabled".to_string(),
             display_name: "Selection Enabled".to_string(),
             value: SettingValue::Boolean(self.config.ui.selection_enabled),
@@ -7916,7 +8242,7 @@ impl App {
             category: "UI".to_string(),
             key: "selection_bg_color".to_string(),
             display_name: "Selection Highlight Color".to_string(),
-            value: SettingValue::Color(self.config.ui.selection_bg_color.clone()),
+            value: SettingValue::Color(self.config.colors.ui.selection_bg_color.clone()),
             description: Some("Text selection highlight color (palette name or #RRGGBB)".to_string()),
             editable: true,
             name_width: None,
@@ -7952,10 +8278,10 @@ impl App {
         });
 
         // Preset colors (sorted alphabetically) - show as "fg bg" format
-        let mut preset_names: Vec<String> = self.config.presets.keys().cloned().collect();
+        let mut preset_names: Vec<String> = self.config.colors.presets.keys().cloned().collect();
         preset_names.sort();
         for preset_name in preset_names {
-            if let Some(preset) = self.config.presets.get(&preset_name) {
+            if let Some(preset) = self.config.colors.presets.get(&preset_name) {
                 let fg = preset.fg.as_ref().map(|s| s.as_str()).unwrap_or("-");
                 let bg = preset.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
                 let display = format!("{} {}", fg, bg);
@@ -7972,7 +8298,7 @@ impl App {
         }
 
         // Spell colors
-        for (idx, spell_range) in self.config.spell_colors.iter().enumerate() {
+        for (idx, spell_range) in self.config.colors.spell_colors.iter().enumerate() {
             let spell_ids = spell_range.spells.iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
@@ -7989,7 +8315,7 @@ impl App {
         }
 
         // Prompt colors
-        for prompt_color in &self.config.ui.prompt_colors {
+        for prompt_color in &self.config.colors.prompt_colors {
             // Migrate legacy color field to fg if needed
             let fg = prompt_color.fg.as_ref().or(prompt_color.color.as_ref()).map(|s| s.as_str()).unwrap_or("-");
             let bg = prompt_color.bg.as_ref().map(|s| s.as_str()).unwrap_or("-");
@@ -8165,32 +8491,49 @@ impl App {
             // UI settings
             "command_echo_color" => {
                 let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                self.config.ui.command_echo_color = resolved;
+                self.config.colors.ui.command_echo_color = resolved;
                 true
             }
-            "default_border_color" => {
+            "border_color" => {
                 let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                self.config.ui.default_border_color = resolved;
+                self.config.colors.ui.border_color = resolved;
                 true
             }
             "focused_border_color" => {
                 let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                self.config.ui.focused_border_color = resolved;
+                self.config.colors.ui.focused_border_color = resolved;
                 true
             }
-            "default_text_color" => {
+            "text_color" => {
                 let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                self.config.ui.default_text_color = resolved;
+                self.config.colors.ui.text_color = resolved;
+                true
+            }
+            "border_style" => {
+                self.config.ui.border_style = value.to_string();
+                true
+            }
+            "background_color" => {
+                let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
+                self.config.colors.ui.background_color = resolved;
                 true
             }
             "selection_bg_color" => {
                 let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                self.config.ui.selection_bg_color = resolved;
+                self.config.colors.ui.selection_bg_color = resolved;
                 true
             }
             "countdown_icon" => {
                 self.config.ui.countdown_icon = value.to_string();
                 true
+            }
+            "wizard_music" => {
+                if let Ok(enabled) = value.parse::<bool>() {
+                    self.config.ui.wizard_music = enabled;
+                    true
+                } else {
+                    false
+                }
             }
             "poll_timeout_ms" => {
                 if let Ok(timeout) = value.parse::<u64>() {
@@ -8238,7 +8581,7 @@ impl App {
                 if let Some(idx_str) = key.strip_prefix("spell_color_") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
                         let resolved = self.config.resolve_color(value).unwrap_or_else(|| value.to_string());
-                        if let Some(spell_range) = self.config.spell_colors.get_mut(idx) {
+                        if let Some(spell_range) = self.config.colors.spell_colors.get_mut(idx) {
                             spell_range.color = resolved;
                             true
                         } else {
@@ -8259,7 +8602,7 @@ impl App {
                     if parts.len() == 2 {
                         let fg_resolved = if parts[0] == "-" { None } else { self.config.resolve_color(parts[0]) };
                         let bg_resolved = if parts[1] == "-" { None } else { self.config.resolve_color(parts[1]) };
-                        if let Some(prompt) = self.config.ui.prompt_colors.iter_mut().find(|p| p.character == character) {
+                        if let Some(prompt) = self.config.colors.prompt_colors.iter_mut().find(|p| p.character == character) {
                             prompt.fg = fg_resolved;
                             prompt.bg = bg_resolved;
                             prompt.color = None; // Clear legacy field
@@ -8283,7 +8626,7 @@ impl App {
                     if parts.len() == 2 {
                         let fg_resolved = if parts[0] == "-" { None } else { self.config.resolve_color(parts[0]) };
                         let bg_resolved = if parts[1] == "-" { None } else { self.config.resolve_color(parts[1]) };
-                        if let Some(preset) = self.config.presets.get_mut(preset_name) {
+                        if let Some(preset) = self.config.colors.presets.get_mut(preset_name) {
                             preset.fg = fg_resolved;
                             preset.bg = bg_resolved;
                             true

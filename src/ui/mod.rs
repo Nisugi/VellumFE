@@ -28,6 +28,7 @@ mod color_form;
 mod spell_color_browser;
 mod spell_color_form;
 mod spacer;
+mod uicolors_browser;
 
 #[allow(unused_imports)]
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
@@ -71,6 +72,7 @@ pub use color_form::{ColorForm, FormAction as ColorFormAction};
 pub use spell_color_browser::SpellColorBrowser;
 pub use spell_color_form::{SpellColorFormWidget, SpellColorFormResult};
 pub use spacer::Spacer;
+pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColorEntryType};
 
 use ratatui::{
     layout::Rect,
