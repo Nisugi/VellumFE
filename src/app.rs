@@ -141,6 +141,7 @@ pub struct App {
     baseline_layout: Option<Layout>,  // Baseline layout (original widget positions/sizes) for proportional resizing
     resize_debouncer: ResizeDebouncer,  // Debouncer for terminal resize events (300ms default)
     shown_bounds_warning: bool,  // Track if we've shown the out-of-bounds warning
+    base_layout_name: Option<String>,  // Name of base layout for auto-save reference
 }
 
 /// Drag and drop state
@@ -186,8 +187,8 @@ impl App {
         let terminal_size = crossterm::terminal::size().ok();
 
         // Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
-        let layout = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
-        info!("Loaded layout with {} windows", layout.windows.len());
+        let (layout, base_layout_name) = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
+        info!("Loaded layout with {} windows (base: {:?})", layout.windows.len(), base_layout_name);
 
         // Clone layout as baseline for resize calculations (before any modifications)
         let baseline_layout = layout.clone();
@@ -396,6 +397,7 @@ impl App {
             baseline_layout: Some(baseline_layout),  // Store baseline layout for resize calculations
             resize_debouncer: ResizeDebouncer::new(300),  // 300ms debounce for terminal resize
             shown_bounds_warning: false,  // Haven't shown warning yet
+            base_layout_name,  // Track which layout file was loaded as base
         })
     }
 
@@ -1649,6 +1651,54 @@ impl App {
         tracing::debug!("Proportional resize complete (v2)");
     }
 
+    /// Auto-scale layout based on terminal size change
+    /// This is called when terminal size changes (both immediate and deferred resize paths)
+    fn auto_scale_layout(&mut self, width: u16, height: u16) {
+        // Auto-scale layout if we have a baseline
+        if let Some(ref baseline_layout) = self.baseline_layout {
+            // Get baseline terminal size from baseline layout
+            if let (Some(base_width), Some(base_height)) = (baseline_layout.terminal_width, baseline_layout.terminal_height) {
+                // Check if size actually changed from baseline
+                if width != base_width || height != base_height {
+                    let width_delta = width as i32 - base_width as i32;
+                    let height_delta = height as i32 - base_height as i32;
+
+                    tracing::info!(
+                        "Auto-scaling layout: baseline={}x{}, current={}x{}, delta=({:+}, {:+})",
+                        base_width, base_height, width, height, width_delta, height_delta
+                    );
+
+                    // Replace current layout with baseline layout (reset to original positions/sizes)
+                    self.layout = baseline_layout.clone();
+
+                    // Apply proportional resize to layout
+                    self.apply_proportional_resize2(width_delta, height_delta);
+
+                    // Update window manager with new layout
+                    self.update_window_manager_config();
+                    self.update_command_input_config();
+
+                    // Auto-save the scaled layout
+                    if let Some(ref char_name) = self.config.character {
+                        let base_name = self.base_layout_name.clone()
+                            .or_else(|| self.layout.base_layout.clone())
+                            .unwrap_or_else(|| char_name.clone());
+
+                        if let Err(e) = self.layout.save_auto(char_name, &base_name, Some((width, height))) {
+                            tracing::error!("Failed to autosave scaled layout: {}", e);
+                        } else {
+                            tracing::info!("Auto-scaled layout saved (base: {})", &base_name);
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Baseline layout has no terminal size - cannot auto-scale");
+            }
+        } else {
+            tracing::warn!("No baseline layout - cannot auto-scale on resize");
+        }
+    }
+
     /// Update window manager configs from current config
     fn update_window_manager_config(&mut self) {
         let countdown_icon = Some(self.config.ui.countdown_icon.clone());
@@ -1953,6 +2003,7 @@ impl App {
                     Ok(new_layout) => {
                         self.layout = new_layout.clone();
                         self.baseline_layout = Some(new_layout);  // Store as new baseline
+                        self.base_layout_name = Some(name.to_string());  // Update base layout name for autosave
                         self.add_system_message(&format!("Layout '{}' loaded", name));
                         self.update_window_manager_config();
                         self.update_command_input_config();
@@ -3238,19 +3289,22 @@ impl App {
                     // Update window manager with new layout
                     self.update_window_manager_config();
 
-                    // Autosave resized layout (force update terminal size to match resized widgets)
-                    let autosave_name = if let Some(ref char_name) = self.config.character {
-                        format!("auto_{}", char_name)
-                    } else {
-                        "autosave".to_string()
-                    };
+                    // Autosave resized layout with base_layout reference
+                    if let Some(ref char_name) = self.config.character {
+                        // Determine base layout name (clone to avoid borrow issues)
+                        let base_name = self.base_layout_name.clone()
+                            .or_else(|| self.layout.base_layout.clone())
+                            .unwrap_or_else(|| char_name.clone());  // Default to character name
 
-                    if let Err(e) = self.layout.save(&autosave_name, Some(current_size), true) {
-                        tracing::error!("Failed to autosave resized layout: {}", e);
-                        self.add_system_message(&format!("Resize complete (autosave failed: {})", e));
+                        if let Err(e) = self.layout.save_auto(char_name, &base_name, Some(current_size)) {
+                            tracing::error!("Failed to autosave resized layout: {}", e);
+                            self.add_system_message(&format!("Resize complete (autosave failed: {})", e));
+                        } else {
+                            tracing::info!("Resized layout autosaved (base: {})", &base_name);
+                            self.add_system_message("Resize complete - layout autosaved");
+                        }
                     } else {
-                        tracing::info!("Resized layout autosaved as {}", autosave_name);
-                        self.add_system_message("Resize complete - layout autosaved");
+                        self.add_system_message("Resize complete (no character specified, not autosaved)");
                     }
                 } else {
                     self.add_system_message("Failed to get current terminal size");
@@ -4001,7 +4055,9 @@ impl App {
                                 );
                                 self.add_system_message(&warning_msg);
                             }
-                            // Layout recalculation happens automatically on next frame
+
+                            // Auto-scale layout if we have a baseline
+                            self.auto_scale_layout(w, h);
                         } else {
                             tracing::trace!("Resize to {}x{} debounced (waiting for resize to finish)", width, height);
                         }
@@ -4024,7 +4080,9 @@ impl App {
                     );
                     self.add_system_message(&warning_msg);
                 }
-                // Layout recalculation happens automatically on next frame
+
+                // Auto-scale layout using the helper method
+                self.auto_scale_layout(width, height);
             }
 
             // Handle server messages
@@ -4067,6 +4125,26 @@ impl App {
             tracing::error!("Failed to save command history: {}", e);
         } else {
             tracing::info!("Command history saved");
+        }
+
+        // Auto-save layout before exit
+        tracing::info!("Checking for character to auto-save layout: {:?}", self.config.character);
+        if let Some(character) = self.config.character.as_ref() {
+            let terminal_size = crossterm::terminal::size().ok();
+
+            // Determine base layout name (clone to avoid borrow issues)
+            let base_name = self.base_layout_name.clone()
+                .or_else(|| self.layout.base_layout.clone())
+                .unwrap_or_else(|| character.clone());  // Default to character name if no base layout set
+
+            tracing::info!("Auto-saving layout for {} (base: {})", character, &base_name);
+
+            if let Err(e) = self.layout.save_auto(character, &base_name, terminal_size) {
+                tracing::error!("Failed to auto-save layout: {}", e);
+                // Don't fail exit on save error
+            }
+        } else {
+            tracing::debug!("No character specified, skipping auto-save");
         }
 
         // Cleanup terminal

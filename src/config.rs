@@ -433,6 +433,8 @@ pub struct Layout {
     pub terminal_width: Option<u16>,   // Designed terminal width (for resize calculations)
     #[serde(default)]
     pub terminal_height: Option<u16>,  // Designed terminal height (for resize calculations)
+    #[serde(default)]
+    pub base_layout: Option<String>,   // Reference to base layout (for auto layouts)
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -1555,11 +1557,13 @@ impl Layout {
     /// Load layout with optional terminal size for auto-selection
     /// Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
     pub fn load(character: Option<&str>) -> Result<Self> {
-        Self::load_with_terminal_size(character, None)
+        let (layout, _base_name) = Self::load_with_terminal_size(character, None)?;
+        Ok(layout)
     }
 
     /// Load layout with terminal size for auto-selection
-    pub fn load_with_terminal_size(character: Option<&str>, terminal_size: Option<(u16, u16)>) -> Result<Self> {
+    /// Returns (layout, base_layout_name) where base_layout_name is the source layout file name (without .toml)
+    pub fn load_with_terminal_size(character: Option<&str>, terminal_size: Option<(u16, u16)>) -> Result<(Self, Option<String>)> {
         let layouts_dir = Config::layouts_dir()?;
 
         // Try character-specific autosave first (skip auto-selection if user manually resized)
@@ -1567,13 +1571,113 @@ impl Layout {
             let auto_char_path = layouts_dir.join(format!("auto_{}.toml", char_name));
             if auto_char_path.exists() {
                 tracing::info!("Loading auto-saved layout for {}", char_name);
-                return Self::load_from_file(&auto_char_path);
+                let mut layout = Self::load_from_file(&auto_char_path)?;
+                let mut base_name = layout.base_layout.clone(); // Track the base layout name from auto file
+
+                // If auto layout doesn't have base_layout set (old format), try to find the base layout
+                if base_name.is_none() {
+                    tracing::warn!("Auto layout has no base_layout field, attempting to find base layout");
+
+                    // Try exact match first
+                    let char_path = layouts_dir.join(format!("{}.toml", char_name));
+                    if char_path.exists() {
+                        base_name = Some(char_name.to_string());
+                        tracing::info!("Found base layout: {}", char_name);
+                    } else {
+                        // Try to find character-specific layout with terminal size suffix
+                        if let Ok(entries) = fs::read_dir(&layouts_dir) {
+                            let char_name_lower = char_name.to_lowercase();
+                            for entry in entries.flatten() {
+                                if let Some(filename) = entry.file_name().to_str() {
+                                    if filename.to_lowercase().starts_with(&format!("{}_", char_name_lower))
+                                        && filename.ends_with(".toml")
+                                        && !filename.starts_with("auto_") {
+                                        let layout_name = filename.trim_end_matches(".toml");
+                                        base_name = Some(layout_name.to_string());
+                                        tracing::info!("Found base layout with suffix: {}", layout_name);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // If still no base layout found, default to "default"
+                        if base_name.is_none() {
+                            base_name = Some("default".to_string());
+                            tracing::info!("No character-specific base layout found, using 'default'");
+                        }
+                    }
+                }
+
+                // Check if we need to scale from base layout
+                if let Some((curr_width, curr_height)) = terminal_size {
+                    if let Some(layout_width) = layout.terminal_width {
+                        if let Some(layout_height) = layout.terminal_height {
+                            if curr_width != layout_width || curr_height != layout_height {
+                                tracing::info!("Terminal size changed from {}x{} to {}x{}, scaling from base layout",
+                                    layout_width, layout_height, curr_width, curr_height);
+
+                                // Try to load base layout for accurate scaling
+                                if let Some(ref base_layout_name) = base_name {
+                                    let base_path = layouts_dir.join(format!("{}.toml", base_layout_name));
+                                    if base_path.exists() {
+                                        match Self::load_from_file(&base_path) {
+                                            Ok(base_layout) => {
+                                                tracing::info!("Scaling from base layout '{}'", base_layout_name);
+                                                layout = base_layout;
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("Failed to load base layout '{}': {}, using auto layout as base",
+                                                    base_layout_name, e);
+                                            }
+                                        }
+                                    } else {
+                                        tracing::warn!("Base layout '{}' not found, using auto layout as base", base_layout_name);
+                                    }
+                                }
+
+                                // Scale to current terminal size
+                                layout.scale_to_terminal_size(curr_width, curr_height);
+                            }
+                        }
+                    }
+                }
+
+                return Ok((layout, base_name));
             }
 
-            let char_path = layouts_dir.join(format!("{}.toml", char_name));
-            if char_path.exists() {
-                tracing::info!("Loading character-specific layout for {}", char_name);
-                return Self::load_from_file(&char_path);
+            // Try to find character-specific layout files by scanning directory
+            // This ensures we get the correct case from the filesystem
+            if let Ok(entries) = fs::read_dir(&layouts_dir) {
+                let char_name_lower = char_name.to_lowercase();
+
+                for entry in entries.flatten() {
+                    if let Some(filename) = entry.file_name().to_str() {
+                        let filename_lower = filename.to_lowercase();
+
+                        // Skip auto_ files
+                        if filename.starts_with("auto_") {
+                            continue;
+                        }
+
+                        // Check for exact match: <character>.toml (case-insensitive)
+                        if filename_lower == format!("{}.toml", char_name_lower) {
+                            let layout_name = filename.trim_end_matches(".toml");
+                            tracing::info!("Loading character-specific layout: {}", layout_name);
+                            let layout = Self::load_from_file(&entry.path())?;
+                            return Ok((layout, Some(layout_name.to_string())));
+                        }
+
+                        // Check for suffix match: <character>_*.toml (e.g., nisugi_102x54.toml)
+                        if filename_lower.starts_with(&format!("{}_", char_name_lower))
+                            && filename.ends_with(".toml") {
+                            let layout_name = filename.trim_end_matches(".toml");
+                            tracing::info!("Loading character-specific layout with suffix: {}", layout_name);
+                            let layout = Self::load_from_file(&entry.path())?;
+                            return Ok((layout, Some(layout_name.to_string())));
+                        }
+                    }
+                }
             }
         }
 
@@ -1581,7 +1685,8 @@ impl Layout {
         let autosave_path = layouts_dir.join("autosave.toml");
         if autosave_path.exists() {
             tracing::info!("Loading generic autosave layout");
-            return Self::load_from_file(&autosave_path);
+            let layout = Self::load_from_file(&autosave_path)?;
+            return Ok((layout, Some("autosave".to_string())));
         }
 
         // Check layout mappings if terminal size provided
@@ -1592,7 +1697,8 @@ impl Layout {
                     let mapped_path = layouts_dir.join(format!("{}.toml", layout_name));
                     if mapped_path.exists() {
                         tracing::info!("Loading mapped layout '{}' for terminal size {}x{}", layout_name, width, height);
-                        return Self::load_from_file(&mapped_path);
+                        let layout = Self::load_from_file(&mapped_path)?;
+                        return Ok((layout, Some(layout_name)));
                     } else {
                         tracing::warn!("Mapped layout '{}' not found at {:?}, falling back to default", layout_name, mapped_path);
                     }
@@ -1604,7 +1710,8 @@ impl Layout {
         let default_path = layouts_dir.join("default.toml");
         if default_path.exists() {
             tracing::info!("Loading default layout");
-            return Self::load_from_file(&default_path);
+            let layout = Self::load_from_file(&default_path)?;
+            return Ok((layout, Some("default".to_string())));
         }
 
         // Fall back to embedded default
@@ -1617,7 +1724,71 @@ impl Layout {
         fs::write(&default_path, DEFAULT_LAYOUT)
             .context("Failed to write default layout")?;
 
-        Ok(layout)
+        Ok((layout, Some("default".to_string())))
+    }
+
+    /// Scale all windows proportionally to fit new terminal size
+    pub fn scale_to_terminal_size(&mut self, new_width: u16, new_height: u16) {
+        let base_width = self.terminal_width.unwrap_or(new_width);
+        let base_height = self.terminal_height.unwrap_or(new_height);
+
+        if base_width == 0 || base_height == 0 {
+            tracing::warn!("Invalid base terminal size ({}x{}), skipping scale", base_width, base_height);
+            return;
+        }
+
+        let scale_x = new_width as f32 / base_width as f32;
+        let scale_y = new_height as f32 / base_height as f32;
+
+        tracing::info!("Scaling layout from {}x{} to {}x{} (scale: {:.2}x, {:.2}y)",
+            base_width, base_height, new_width, new_height, scale_x, scale_y);
+
+        for window in &mut self.windows {
+            let old_col = window.col;
+            let old_row = window.row;
+            let old_cols = window.cols;
+            let old_rows = window.rows;
+
+            window.col = (window.col as f32 * scale_x).round() as u16;
+            window.row = (window.row as f32 * scale_y).round() as u16;
+            window.cols = (window.cols as f32 * scale_x).round() as u16;
+            window.rows = (window.rows as f32 * scale_y).round() as u16;
+
+            // Ensure minimum sizes
+            if window.cols < 1 { window.cols = 1; }
+            if window.rows < 1 { window.rows = 1; }
+
+            // Respect min/max constraints if set
+            if let Some(min_cols) = window.min_cols {
+                if window.cols < min_cols {
+                    window.cols = min_cols;
+                }
+            }
+            if let Some(max_cols) = window.max_cols {
+                if window.cols > max_cols {
+                    window.cols = max_cols;
+                }
+            }
+            if let Some(min_rows) = window.min_rows {
+                if window.rows < min_rows {
+                    window.rows = min_rows;
+                }
+            }
+            if let Some(max_rows) = window.max_rows {
+                if window.rows > max_rows {
+                    window.rows = max_rows;
+                }
+            }
+
+            tracing::debug!("  {} [{}]: pos {}x{} -> {}x{}, size {}x{} -> {}x{}",
+                window.name, window.widget_type,
+                old_col, old_row, window.col, window.row,
+                old_cols, old_rows, window.cols, window.rows);
+        }
+
+        // Update terminal size to new size
+        self.terminal_width = Some(new_width);
+        self.terminal_height = Some(new_height);
     }
 
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
@@ -1693,6 +1864,35 @@ impl Layout {
             .context("Failed to serialize layout")?;
         fs::write(&layout_path, toml_string)
             .context("Failed to write layout file")?;
+
+        Ok(())
+    }
+
+    /// Save as auto layout with base_layout reference
+    pub fn save_auto(&mut self, character: &str, base_layout_name: &str, terminal_size: Option<(u16, u16)>) -> Result<()> {
+        // Set base_layout reference
+        self.base_layout = Some(base_layout_name.to_string());
+
+        // Always update terminal size for auto layouts
+        if let Some((width, height)) = terminal_size {
+            self.terminal_width = Some(width);
+            self.terminal_height = Some(height);
+        }
+
+        let auto_name = format!("auto_{}", character);
+        let layout_path = Config::layout_path(&auto_name)?;
+
+        if let Some(parent) = layout_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let toml_string = toml::to_string_pretty(&self)
+            .context("Failed to serialize auto layout")?;
+        fs::write(&layout_path, toml_string)
+            .context("Failed to write auto layout file")?;
+
+        tracing::info!("Saved auto layout for {} (base: {}, terminal: {:?}x{:?})",
+            character, base_layout_name, self.terminal_width, self.terminal_height);
 
         Ok(())
     }
