@@ -103,27 +103,55 @@ impl HighlightBrowser {
     }
 
     pub fn page_up(&mut self) {
-        let visible_height: usize = 20; // Approximate
-        let jump = visible_height.saturating_sub(1).max(1);
-        self.selected_index = self.selected_index.saturating_sub(jump);
+        if self.selected_index >= 10 {
+            self.selected_index -= 10;
+        } else {
+            self.selected_index = 0;
+        }
         self.adjust_scroll();
     }
 
     pub fn page_down(&mut self) {
         let filtered = self.filtered_entries();
-        let visible_height: usize = 20; // Approximate
-        let jump = visible_height.saturating_sub(1).max(1);
-        self.selected_index = (self.selected_index + jump).min(filtered.len().saturating_sub(1));
+        if self.selected_index + 10 < filtered.len() {
+            self.selected_index += 10;
+        } else if !filtered.is_empty() {
+            self.selected_index = filtered.len() - 1;
+        }
         self.adjust_scroll();
     }
 
     fn adjust_scroll(&mut self) {
-        let visible_height: usize = 20; // Approximate
-        // Ensure selected item is visible
-        if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        } else if self.selected_index >= self.scroll_offset + visible_height {
-            self.scroll_offset = self.selected_index.saturating_sub(visible_height - 1);
+        // Calculate total display rows including category headers
+        let filtered = self.filtered_entries();
+        let mut total_display_rows = 0;
+        let mut last_category: Option<&str> = None;
+        let mut selected_display_row = 0;
+
+        for (idx, entry) in filtered.iter().enumerate() {
+            let entry_category = entry.category.as_ref().map(|s| s.as_str()).unwrap_or("Uncategorized");
+
+            // Add category header row if category changes
+            if last_category != Some(entry_category) {
+                total_display_rows += 1;
+                last_category = Some(entry_category);
+            }
+
+            // Track which display row the selected item is on
+            if idx == self.selected_index {
+                selected_display_row = total_display_rows;
+            }
+
+            total_display_rows += 1;
+        }
+
+        let visible_rows = 15; // One less than list_height to account for sticky headers
+
+        // Adjust scroll to keep selected item in view
+        if selected_display_row < self.scroll_offset {
+            self.scroll_offset = selected_display_row;
+        } else if selected_display_row >= self.scroll_offset + visible_rows {
+            self.scroll_offset = selected_display_row.saturating_sub(visible_rows - 1);
         }
     }
 
@@ -134,7 +162,7 @@ impl HighlightBrowser {
 
     /// Handle mouse events for dragging the popup
     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> bool {
-        let popup_width = 80.min(area.width);
+        let popup_width = 70.min(area.width);
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -163,188 +191,183 @@ impl HighlightBrowser {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
-        // Calculate popup size
-        let popup_width = 80.min(area.width);
-        let popup_height = 30.min(area.height);
+        let width = 70;
+        let height = 20;
 
         // Center popup initially
         if self.popup_x == 0 && self.popup_y == 0 {
-            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
-            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+            self.popup_x = (area.width.saturating_sub(width)) / 2;
+            self.popup_y = (area.height.saturating_sub(height)) / 2;
         }
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width,
-            height: popup_height,
-        };
+        let x = self.popup_x;
+        let y = self.popup_y;
 
-        // Fill background with solid black
-        for y in popup_area.y..popup_area.y + popup_area.height {
-            for x in popup_area.x..popup_area.x + popup_area.width {
-                if x < area.width && y < area.height {
-                    buf[(x, y)].set_char(' ').set_bg(Color::Black);
+        // Draw black background
+        for row in 0..height {
+            for col in 0..width {
+                if x + col < area.width && y + row < area.height {
+                    buf[(x + col, y + row)].set_char(' ').set_bg(Color::Black);
                 }
             }
         }
 
-        // Draw border
+        // Draw cyan border
         let border_color = Color::Cyan;
-        self.draw_border(&popup_area, buf, border_color);
+        self.draw_border(&Rect { x, y, width, height }, buf, border_color);
 
-        // Draw title
+        // Title (left-aligned)
         let title = " Highlight Browser ";
-        let title_x = popup_area.x + (popup_area.width.saturating_sub(title.len() as u16)) / 2;
         for (i, ch) in title.chars().enumerate() {
-            if let Some(x) = title_x.checked_add(i as u16) {
-                if x < popup_area.x + popup_area.width {
-                    buf[(x, popup_area.y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
-                }
+            if (x + 1 + i as u16) < (x + width) {
+                buf[(x + 1 + i as u16, y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
             }
         }
 
-        // Draw instructions at bottom
-        let instructions = "↑/↓: Navigate | Enter: Edit | Delete: Remove | PgUp/PgDn: Scroll | Esc: Close";
-        let instr_y = popup_area.y + popup_area.height - 1;
-        let instr_x = popup_area.x + 2;
-        for (i, ch) in instructions.chars().enumerate() {
-            if let Some(x) = instr_x.checked_add(i as u16) {
-                if x < popup_area.x + popup_area.width - 1 {
-                    buf[(x, instr_y)].set_char(ch).set_fg(Color::DarkGray).set_bg(Color::Black);
-                }
-            }
-        }
-
-        // Inner content area
-        let content_x = popup_area.x + 1;
-        let content_y = popup_area.y + 1;
-        let content_width = popup_area.width.saturating_sub(2);
-        let content_height = popup_area.height.saturating_sub(3);
-
-        // Render highlights list
+        // Render entries with display_row tracking
+        let list_y = y + 1;
+        let list_height = 16; // height 20 - 4 (borders + footer)
         let filtered = self.filtered_entries();
-        let mut current_category = String::new();
-        let mut y = content_y;
+        let mut last_category: Option<&str> = None;
+        let mut last_rendered_category: Option<&str> = None;
+        let mut display_row = 0;
+        let mut render_row = 0;
+        let visible_start = self.scroll_offset;
+        let visible_end = visible_start + list_height;
 
-        for (display_idx, entry) in filtered.iter().enumerate().skip(self.scroll_offset) {
-            if y >= content_y + content_height {
+        for (idx, entry) in filtered.iter().enumerate() {
+            let entry_category = entry.category.as_ref().map(|s| s.as_str()).unwrap_or("Uncategorized");
+
+            // Check if we need a category header
+            if last_category != Some(entry_category) {
+                // Always increment display_row for the header
+                if display_row >= visible_start {
+                    // Header is in visible range or we're past it
+                    if display_row < visible_end && render_row < list_height {
+                        // Render the header
+                        let current_y = list_y + render_row as u16;
+                        let header_text = format!(" ═══ {} ═══", entry_category.to_uppercase());
+                        let header_style = ratatui::style::Style::default()
+                            .fg(Color::Rgb(255, 215, 0)) // Gold
+                            .bg(Color::Black)
+                            .add_modifier(Modifier::BOLD);
+
+                        for (i, ch) in header_text.chars().enumerate() {
+                            if i < (width - 2) as usize {
+                                buf[(x + 1 + i as u16, current_y)].set_char(ch).set_style(header_style);
+                            }
+                        }
+
+                        // Fill rest of line with spaces
+                        for i in header_text.len()..(width - 2) as usize {
+                            buf[(x + 1 + i as u16, current_y)].set_char(' ').set_bg(Color::Black);
+                        }
+
+                        render_row += 1;
+                        last_rendered_category = Some(entry_category);
+                    }
+                }
+                display_row += 1;
+                last_category = Some(entry_category);
+            }
+
+            // Skip if before visible range
+            if display_row < visible_start {
+                display_row += 1;
+                continue;
+            }
+
+            // If this is a new category in the visible area and we haven't rendered its header yet
+            if last_rendered_category != Some(entry_category) && render_row < list_height {
+                // Render sticky header for this category
+                let current_y = list_y + render_row as u16;
+                let header_text = format!(" ═══ {} ═══", entry_category.to_uppercase());
+                let header_style = ratatui::style::Style::default()
+                    .fg(Color::Rgb(255, 215, 0)) // Gold
+                    .bg(Color::Black)
+                    .add_modifier(Modifier::BOLD);
+
+                for (i, ch) in header_text.chars().enumerate() {
+                    if i < (width - 2) as usize {
+                        buf[(x + 1 + i as u16, current_y)].set_char(ch).set_style(header_style);
+                    }
+                }
+
+                // Fill rest of line with spaces
+                for i in header_text.len()..(width - 2) as usize {
+                    buf[(x + 1 + i as u16, current_y)].set_char(' ').set_bg(Color::Black);
+                }
+
+                render_row += 1;
+                last_rendered_category = Some(entry_category);
+            }
+
+            // Stop if past visible range OR no room for entry
+            if display_row >= visible_end || render_row >= list_height {
                 break;
             }
 
-            // Render category header if changed
-            let entry_category = entry.category.as_ref().map(|s| s.as_str()).unwrap_or("Uncategorized");
-            if entry_category != current_category {
-                current_category = entry_category.to_string();
+            // Render entry row (with 1 col padding from left border)
+            let current_y = list_y + render_row as u16;
+            let is_selected = idx == self.selected_index;
 
-                let header = format!("[{}]", entry_category);
-                for (i, ch) in header.chars().enumerate() {
-                    if let Some(x) = content_x.checked_add(i as u16) {
-                        if x < content_x + content_width {
-                            let mut cell = buf[(x, y)].clone();
-                            cell.set_char(ch).set_fg(Color::Yellow).set_bg(Color::Black);
-                            cell.modifier.insert(Modifier::BOLD);
-                            buf[(x, y)] = cell;
-                        }
-                    }
-                }
-                y += 1;
-                if y >= content_y + content_height {
-                    break;
-                }
-            }
-
-            // Determine if this item is selected
-            let is_selected = display_idx == self.selected_index;
-
-            // Build display name with sound indicator
-            let sound_indicator = if entry.has_sound { " \u{266B}" } else { "" };
-            let name_with_sound = format!("{}{}", entry.name, sound_indicator);
-
-            // Style based on selection
-            let (text_fg, text_bg) = if is_selected {
-                (Color::Black, Color::Cyan)
-            } else {
-                (Color::White, Color::Black)
-            };
-
-            let mut x_pos = content_x;
-
-            // Render indent
-            for ch in "  ".chars() {
-                if x_pos < content_x + content_width {
-                    buf[(x_pos, y)].set_char(ch).set_fg(text_fg).set_bg(text_bg);
-                    x_pos += 1;
-                }
-            }
-
-            // Render foreground color preview (3 blocks)
+            // Col 2-4: FG color preview
             if let Some(ref fg_color) = entry.fg {
                 let resolved_fg = config.resolve_color(fg_color);
                 if let Some(hex_fg) = resolved_fg {
                     if let Some(color) = Self::parse_hex_color(&hex_fg) {
-                        for _ in 0..3 {
-                            if x_pos < content_x + content_width {
-                                buf[(x_pos, y)].set_char('█').set_fg(color).set_bg(text_bg);
-                                x_pos += 1;
-                            }
+                        for i in 0..3 {
+                            buf[(x + 2 + i, current_y)].set_char(' ').set_bg(color);
                         }
                     }
                 }
+            } else {
+                // No color: show [-]
+                buf[(x + 3, current_y)].set_char('-').set_fg(Color::Gray).set_bg(Color::Black);
             }
 
-            // Space between fg and bg
-            if x_pos < content_x + content_width {
-                buf[(x_pos, y)].set_char(' ').set_fg(text_fg).set_bg(text_bg);
-                x_pos += 1;
-            }
-
-            // Render background color preview (3 blocks)
+            // Col 7-9: BG color preview
             if let Some(ref bg_color) = entry.bg {
                 let resolved_bg = config.resolve_color(bg_color);
                 if let Some(hex_bg) = resolved_bg {
                     if let Some(color) = Self::parse_hex_color(&hex_bg) {
-                        for _ in 0..3 {
-                            if x_pos < content_x + content_width {
-                                buf[(x_pos, y)].set_char('█').set_fg(color).set_bg(text_bg);
-                                x_pos += 1;
-                            }
+                        for i in 0..3 {
+                            buf[(x + 7 + i, current_y)].set_char(' ').set_bg(color);
                         }
                     }
                 }
+            } else {
+                buf[(x + 7, current_y)].set_char('[').set_fg(Color::Gray).set_bg(Color::Black);
+                buf[(x + 8, current_y)].set_char('-').set_fg(Color::Gray).set_bg(Color::Black);
+                buf[(x + 9, current_y)].set_char(']').set_fg(Color::Gray).set_bg(Color::Black);
             }
 
-            // Space before name
-            if x_pos < content_x + content_width {
-                buf[(x_pos, y)].set_char(' ').set_fg(text_fg).set_bg(text_bg);
-                x_pos += 1;
-            }
+            // Col 13+: Entry name (cyan normally, gold when selected)
+            let name_style = if is_selected {
+                ratatui::style::Style::default().fg(Color::Rgb(255, 215, 0)).bg(Color::Black) // Gold when selected
+            } else {
+                ratatui::style::Style::default().fg(Color::Cyan).bg(Color::Black) // Cyan otherwise
+            };
 
-            // Render name (no truncation, just fill to end of available space)
-            for ch in name_with_sound.chars() {
-                if x_pos < content_x + content_width {
-                    buf[(x_pos, y)].set_char(ch).set_fg(text_fg).set_bg(text_bg);
-                    x_pos += 1;
-                } else {
-                    break;
+            let sound_indicator = if entry.has_sound { " ♫" } else { "" };
+            let name_with_sound = format!("   {}{}", entry.name, sound_indicator);
+            for (i, ch) in name_with_sound.chars().enumerate() {
+                let col = x + 13 + i as u16;
+                if col < x + width - 1 {
+                    buf[(col, current_y)].set_char(ch).set_style(name_style);
                 }
             }
 
-            y += 1;
+            display_row += 1;
+            render_row += 1;
         }
 
-        // Show scroll indicator if needed
-        if filtered.len() > content_height as usize {
-            let scroll_info = format!("{}/{}", self.selected_index + 1, filtered.len());
-            let scroll_x = popup_area.x + popup_area.width.saturating_sub(scroll_info.len() as u16 + 2);
-            let scroll_y = popup_area.y;
-            for (i, ch) in scroll_info.chars().enumerate() {
-                if let Some(x) = scroll_x.checked_add(i as u16) {
-                    if x < popup_area.x + popup_area.width - 1 {
-                        buf[(x, scroll_y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
-                    }
-                }
-            }
+        // Footer (one line above the bottom border)
+        let footer = " Tab/Arrows:Navigate | Enter:Edit | Del:Delete | Esc:Close ";
+        let footer_y = y + height - 2;
+        let footer_x = x + ((width - footer.len() as u16) / 2);
+        for (i, ch) in footer.chars().enumerate() {
+            buf[(footer_x + i as u16, footer_y)].set_char(ch).set_fg(Color::White).set_bg(Color::Black);
         }
     }
 

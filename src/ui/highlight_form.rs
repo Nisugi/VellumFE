@@ -41,7 +41,7 @@ pub struct HighlightFormWidget {
     fast_parse: bool,
 
     // Form state
-    focused_field: usize,          // 0-12: which field has focus
+    focused_field: usize,          // 0-9: which field has focus (0-6 text, 7-9 checkboxes)
     status_message: String,
     pattern_error: Option<String>,
     mode: FormMode,
@@ -160,13 +160,13 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 13;
+        self.focused_field = (self.focused_field + 1) % 10;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            12
+            9
         } else {
             self.focused_field - 1
         };
@@ -185,27 +185,39 @@ impl HighlightFormWidget {
                 }
                 None
             }
+            KeyCode::Up => {
+                self.focus_prev();
+                None
+            }
+            KeyCode::Down => {
+                self.focus_next();
+                None
+            }
             KeyCode::Esc => Some(FormResult::Cancel),
-            KeyCode::Char(' ') if (5..=7).contains(&self.focused_field) => {
-                // Toggle checkboxes
+            KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+S to save
+                self.try_save()
+            }
+            KeyCode::Char(' ') | KeyCode::Enter if (7..=9).contains(&self.focused_field) => {
+                // Toggle checkboxes (fields 7-9)
                 match self.focused_field {
-                    5 => self.bold = !self.bold,
-                    6 => self.color_entire_line = !self.color_entire_line,
-                    7 => self.fast_parse = !self.fast_parse,
+                    7 => self.bold = !self.bold,
+                    8 => self.color_entire_line = !self.color_entire_line,
+                    9 => self.fast_parse = !self.fast_parse,
                     _ => {}
                 }
                 None
             }
-            KeyCode::Enter if self.focused_field == 10 => {
-                // Save button
-                self.try_save()
+            KeyCode::Delete if matches!(self.mode, FormMode::Edit(_)) => {
+                // Delete key in edit mode
+                if let FormMode::Edit(ref name) = self.mode {
+                    Some(FormResult::Delete { name: name.clone() })
+                } else {
+                    None
+                }
             }
-            KeyCode::Enter if self.focused_field == 11 => {
-                // Cancel button
-                Some(FormResult::Cancel)
-            }
-            KeyCode::Enter if self.focused_field == 12 => {
-                // Delete button (only in Edit mode)
+            KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(self.mode, FormMode::Edit(_)) => {
+                // Ctrl+D to delete in edit mode
                 if let FormMode::Edit(ref name) = self.mode {
                     Some(FormResult::Delete { name: name.clone() })
                 } else {
@@ -228,8 +240,8 @@ impl HighlightFormWidget {
                     2 => self.category.input(input.clone()),
                     3 => self.fg_color.input(input.clone()),
                     4 => self.bg_color.input(input.clone()),
-                    8 => self.sound.input(input.clone()),
-                    9 => self.sound_volume.input(input.clone()),
+                    5 => self.sound.input(input.clone()),
+                    6 => self.sound_volume.input(input.clone()),
                     _ => false,
                 };
 
@@ -348,208 +360,211 @@ impl HighlightFormWidget {
 
     /// Render the form as a draggable popup
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
-        let popup_width = 62;
-        let popup_height = 40;
+        let width = 62;
+        let height = 20; // Reduced from 40 to fit style guide pattern
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width.min(area.width.saturating_sub(self.popup_x)),
-            height: popup_height.min(area.height.saturating_sub(self.popup_y)),
-        };
+        // Center popup initially
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(width)) / 2;
+            self.popup_y = (area.height.saturating_sub(height)) / 2;
+        }
 
-        // Draw solid black background
-        for y in popup_area.y..popup_area.y + popup_area.height {
-            for x in popup_area.x..popup_area.x + popup_area.width {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char(' ');
-                    cell.set_bg(Color::Black);
+        let x = self.popup_x;
+        let y = self.popup_y;
+
+        // Draw black background
+        for row in 0..height {
+            for col in 0..width {
+                if x + col < area.width && y + row < area.height {
+                    buf[(x + col, y + row)].set_char(' ').set_bg(Color::Black);
                 }
             }
         }
 
-        // Render outer block
+        // Draw cyan border
+        self.draw_border(x, y, width, height, buf);
+
+        // Title (left-aligned)
         let title = match &self.mode {
-            FormMode::Create => "Add Highlight",
-            FormMode::Edit(_) => "Edit Highlight",
+            FormMode::Create => " Add Highlight ",
+            FormMode::Edit(_) => " Edit Highlight ",
         };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(title)
-            .title_alignment(Alignment::Center);
-
-        RatatuiWidget::render(block, popup_area, buf);
-
-        // Inner area for content
-        let inner = Rect {
-            x: popup_area.x + 2,
-            y: popup_area.y + 1,
-            width: popup_area.width.saturating_sub(4),
-            height: popup_area.height.saturating_sub(2),
-        };
-
-        // Render fields
-        self.render_fields(inner, buf, config);
-    }
-
-    /// Render all form fields
-    fn render_fields(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
-        let mut y = area.y;
-        let focused = self.focused_field;
-
-        // Name field (height 3)
-        Self::render_text_field(0, focused, "Name:", &mut self.name, area.x, y, area.width, buf);
-        y += 3;
-
-        // Pattern field (height 3)
-        Self::render_text_field(1, focused, "Pattern:", &mut self.pattern, area.x, y, area.width, buf);
-        y += 3;
-        if let Some(ref error) = self.pattern_error {
-            let error_text = Paragraph::new(error.as_str())
-                .style(Style::default().fg(Color::Red));
-            let error_area = Rect { x: area.x + 12, y, width: area.width.saturating_sub(12), height: 1 };
-            RatatuiWidget::render(error_text, error_area, buf);
-            y += 1;
-        }
-
-        // Category field (height 3)
-        Self::render_text_field(2, focused, "Category:", &mut self.category, area.x, y, area.width, buf);
-        y += 3;
-
-        // Foreground color (height 3)
-        let fg_line = self.fg_color.lines()[0].to_string();
-        Self::render_text_field(3, focused, "Foreground:", &mut self.fg_color, area.x, y, area.width - 8, buf);
-        // Color preview box (positioned in middle of the 3-row field)
-        self.render_color_preview(&fg_line, area.x + area.width - 6, y + 1, buf, config);
-        y += 3;
-
-        // Background color (height 3)
-        let bg_line = self.bg_color.lines()[0].to_string();
-        Self::render_text_field(4, focused, "Background:", &mut self.bg_color, area.x, y, area.width - 8, buf);
-        // Color preview box (positioned in middle of the 3-row field)
-        self.render_color_preview(&bg_line, area.x + area.width - 6, y + 1, buf, config);
-        y += 4;
-
-        // Checkboxes (height 1 each)
-        self.render_checkbox(5, "Bold", self.bold, area.x, y, buf);
-        y += 1;
-        self.render_checkbox(6, "Color entire line", self.color_entire_line, area.x, y, buf);
-        y += 1;
-        self.render_checkbox(7, "Fast parse", self.fast_parse, area.x, y, buf);
-        y += 2;
-
-        // Sound field (height 3)
-        Self::render_text_field(8, focused, "Sound:", &mut self.sound, area.x, y, area.width, buf);
-        y += 3;
-
-        // Sound volume field (height 3) - value 0.0-1.0
-        Self::render_text_field(9, focused, "Volume:", &mut self.sound_volume, area.x, y, 30, buf);
-        y += 4;
-
-        // Buttons
-        self.render_buttons(area.x, y, buf);
-        y += 2;
-
-        // Status bar
-        let status = Paragraph::new(self.status_message.as_str())
-            .style(Style::default().fg(Color::Gray));
-        let status_area = Rect { x: area.x, y, width: area.width, height: 1 };
-        RatatuiWidget::render(status, status_area, buf);
-    }
-
-    /// Render a text input field
-    fn render_text_field(
-        field_id: usize,
-        focused_field: usize,
-        label: &str,
-        textarea: &mut TextArea,
-        x: u16,
-        y: u16,
-        width: u16,
-        buf: &mut Buffer,
-    ) {
-        // Label
-        let label_span = Span::styled(label, Style::default().fg(Color::White));
-        let label_area = Rect { x, y, width: 12, height: 1 };
-        let label_para = Paragraph::new(Line::from(label_span));
-        RatatuiWidget::render(label_para, label_area, buf);
-
-        // Set style based on focus
-        let style = if focused_field == field_id {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        textarea.set_style(style);
-        textarea.set_cursor_style(Style::default().bg(Color::Yellow));
-
-        // Input area - TextArea needs height 3 minimum (border + text + cursor)
-        let input_area = Rect {
-            x: x + 12,
-            y,
-            width: width.saturating_sub(12),
-            height: 3,
-        };
-
-        // Set border and style
-        let border_style = if focused_field == field_id {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        textarea.set_block(Block::default().borders(Borders::ALL).border_style(border_style));
-
-        // Render the TextArea
-        // Note: Widget is implemented for &TextArea, not &mut TextArea
-        RatatuiWidget::render(&*textarea, input_area, buf);
-    }
-
-    /// Render a checkbox
-    fn render_checkbox(&self, field_id: usize, label: &str, checked: bool, x: u16, y: u16, buf: &mut Buffer) {
-        let style = if self.focused_field == field_id {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let checkbox_text = if checked { "[X] " } else { "[ ] " };
-        let text = format!("{}{}", checkbox_text, label);
-
-        let para = Paragraph::new(text).style(style);
-        let area = Rect { x, y, width: 30, height: 1 };
-        RatatuiWidget::render(para, area, buf);
-    }
-
-    /// Render color preview box
-    fn render_color_preview(&self, color_text: &str, x: u16, y: u16, buf: &mut Buffer, config: &crate::config::Config) {
-        let color_text = color_text.trim();
-
-        if color_text.is_empty() {
-            // Empty box
-            let para = Paragraph::new("[    ]").style(Style::default().fg(Color::DarkGray));
-            let area = Rect { x, y, width: 6, height: 1 };
-            RatatuiWidget::render(para, area, buf);
-            return;
-        }
-
-        // Resolve color name to hex (or use hex directly)
-        let resolved_color = config.resolve_color(color_text);
-        if let Some(hex_color) = resolved_color {
-            if let Ok(color) = Self::parse_hex_color(&hex_color) {
-                let block = Block::default().style(Style::default().bg(color));
-                let area = Rect { x, y, width: 4, height: 1 };
-                RatatuiWidget::render(block, area, buf);
-                return;
+        for (i, ch) in title.chars().enumerate() {
+            if (x + 1 + i as u16) < (x + width) {
+                buf[(x + 1 + i as u16, y)].set_char(ch).set_fg(Color::Cyan).set_bg(Color::Black);
             }
         }
 
-        // Invalid color
-        let para = Paragraph::new("[ERR]").style(Style::default().fg(Color::Red));
-        let area = Rect { x, y, width: 6, height: 1 };
-        RatatuiWidget::render(para, area, buf);
+        // Render fields
+        self.render_fields(x, y, width, height, buf, config);
+
+        // Footer
+        let footer = " Ctrl+S:Save | Del/Ctrl+D:Delete | Esc:Cancel ";
+        let footer_y = y + height - 2;
+        let footer_x = x + ((width - footer.len() as u16) / 2);
+        for (i, ch) in footer.chars().enumerate() {
+            buf[(footer_x + i as u16, footer_y)].set_char(ch).set_fg(Color::White).set_bg(Color::Black);
+        }
+    }
+
+    fn draw_border(&self, x: u16, y: u16, width: u16, height: u16, buf: &mut Buffer) {
+        let border_style = Style::default().fg(Color::Cyan);
+
+        // Top border
+        buf[(x, y)].set_char('┌').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y)].set_char('┐').set_style(border_style);
+
+        // Side borders
+        for row in 1..height - 1 {
+            buf[(x, y + row)].set_char('│').set_style(border_style);
+            buf[(x + width - 1, y + row)].set_char('│').set_style(border_style);
+        }
+
+        // Bottom border
+        buf[(x, y + height - 1)].set_char('└').set_style(border_style);
+        for col in 1..width - 1 {
+            buf[(x + col, y + height - 1)].set_char('─').set_style(border_style);
+        }
+        buf[(x + width - 1, y + height - 1)].set_char('┘').set_style(border_style);
+    }
+
+    /// Render all form fields
+    fn render_fields(&mut self, x: u16, y: u16, width: u16, height: u16, buf: &mut Buffer, config: &crate::config::Config) {
+        let mut current_y = y + 2; // Start below title bar
+        let label_width = 16; // Enough for "Background:"
+        let input_start = x + 2 + label_width;
+        let maroon = Color::Rgb(64, 0, 0);
+
+        // Field 0: Name
+        self.render_text_row(0, "Name:", &self.name, x + 2, current_y, input_start, 30, maroon, buf);
+        current_y += 1;
+
+        // Field 1: Pattern
+        self.render_text_row(1, "Pattern:", &self.pattern, x + 2, current_y, input_start, 30, maroon, buf);
+        current_y += 1;
+
+        // Field 2: Category
+        self.render_text_row(2, "Category:", &self.category, x + 2, current_y, input_start, 30, maroon, buf);
+        current_y += 1;
+
+        // Field 3: Foreground (10 char + 1 space + 2 char preview)
+        self.render_color_row(3, "Foreground:", &self.fg_color, x + 2, current_y, input_start, maroon, buf, config);
+        current_y += 1;
+
+        // Field 4: Background (10 char + 1 space + 2 char preview)
+        self.render_color_row(4, "Background:", &self.bg_color, x + 2, current_y, input_start, maroon, buf, config);
+        current_y += 1;
+
+        // Field 5: Sound
+        self.render_text_row(5, "Sound:", &self.sound, x + 2, current_y, input_start, 30, maroon, buf);
+        current_y += 1;
+
+        // Field 6: Volume
+        self.render_text_row(6, "Volume:", &self.sound_volume, x + 2, current_y, input_start, 10, maroon, buf);
+        current_y += 2;
+
+        // Checkboxes (Fields 7-9)
+        self.render_checkbox(7, "Bold", self.bold, x + 2, current_y);
+        buf[(x + 2, current_y)].set_char('[').set_fg(if self.focused_field == 7 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 3, current_y)].set_char(if self.bold { '✓' } else { ' ' }).set_fg(if self.focused_field == 7 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 4, current_y)].set_char(']').set_fg(if self.focused_field == 7 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        let bold_label = " Bold";
+        for (i, ch) in bold_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 7 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        }
+        current_y += 1;
+
+        self.render_checkbox(8, "Color entire line", self.color_entire_line, x + 2, current_y);
+        buf[(x + 2, current_y)].set_char('[').set_fg(if self.focused_field == 8 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 3, current_y)].set_char(if self.color_entire_line { '✓' } else { ' ' }).set_fg(if self.focused_field == 8 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 4, current_y)].set_char(']').set_fg(if self.focused_field == 8 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        let cel_label = " Color entire line";
+        for (i, ch) in cel_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 8 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        }
+        current_y += 1;
+
+        self.render_checkbox(9, "Fast parse", self.fast_parse, x + 2, current_y);
+        buf[(x + 2, current_y)].set_char('[').set_fg(if self.focused_field == 9 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 3, current_y)].set_char(if self.fast_parse { '✓' } else { ' ' }).set_fg(if self.focused_field == 9 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 4, current_y)].set_char(']').set_fg(if self.focused_field == 9 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        let fp_label = " Fast parse";
+        for (i, ch) in fp_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 9 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        }
+    }
+
+    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
+        let focused = self.focused_field == field_id;
+        let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+
+        // Render label
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
+        }
+
+        // Render input background
+        for i in 0..input_width {
+            buf[(input_x + i, y)].set_bg(bg);
+        }
+
+        // Render text content
+        let text = &textarea.lines()[0];
+        for (i, ch) in text.chars().enumerate().take(input_width as usize) {
+            buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+        }
+    }
+
+    fn render_color_row(&self, field_id: usize, label: &str, textarea: &TextArea, x: u16, y: u16, input_x: u16, bg: Color, buf: &mut Buffer, config: &crate::config::Config) {
+        let focused = self.focused_field == field_id;
+        let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
+
+        // Render label
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
+        }
+
+        // Render 10-char input background
+        for i in 0..10 {
+            buf[(input_x + i, y)].set_bg(bg);
+        }
+
+        // Render text content (max 10 chars)
+        let text = &textarea.lines()[0];
+        for (i, ch) in text.chars().enumerate().take(10) {
+            buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
+        }
+
+        // 1 space gap
+        buf[(input_x + 10, y)].set_char(' ').set_bg(Color::Black);
+
+        // 2-char color preview (no brackets)
+        if let Some(color) = self.parse_and_resolve_color(text, config) {
+            buf[(input_x + 11, y)].set_char(' ').set_bg(color);
+            buf[(input_x + 12, y)].set_char(' ').set_bg(color);
+        }
+    }
+
+    fn parse_and_resolve_color(&self, color_text: &str, config: &crate::config::Config) -> Option<Color> {
+        let trimmed = color_text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        // Try resolving through config
+        if let Some(hex) = config.resolve_color(trimmed) {
+            return Self::parse_hex_color(&hex).ok();
+        }
+
+        // Try parsing directly as hex
+        Self::parse_hex_color(trimmed).ok()
+    }
+
+    fn render_checkbox(&self, field_id: usize, label: &str, checked: bool, x: u16, y: u16) {
+        // No-op stub - checkboxes are rendered inline in render_fields
     }
 
     /// Parse hex color string (#RRGGBB)
@@ -565,109 +580,10 @@ impl HighlightFormWidget {
         Ok(Color::Rgb(r, g, b))
     }
 
-    fn render_color_field(
-        field_id: usize,
-        focused_field: usize,
-        label: &str,
-        textarea: &mut TextArea,
-        x: u16,
-        y: u16,
-        width: u16,
-        buf: &mut Buffer,
-        config: &crate::config::Config,
-    ) {
-        // Label
-        let label_span = Span::styled(label, Style::default().fg(Color::White));
-        let label_area = Rect { x, y, width: 12, height: 1 };
-        let label_para = Paragraph::new(Line::from(label_span));
-        RatatuiWidget::render(label_para, label_area, buf);
-
-        // Set style based on focus
-        let style = if focused_field == field_id {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        textarea.set_style(style);
-        textarea.set_cursor_style(Style::default().bg(Color::Yellow));
-
-        // Input area - leave space for preview
-        let input_area = Rect {
-            x: x + 12,
-            y,
-            width: width.saturating_sub(17), // Extra space for preview
-            height: 3,
-        };
-
-        RatatuiWidget::render(&*textarea, input_area, buf);
-
-        // Draw color preview
-        let color_text = textarea.lines()[0].to_string();
-        if !color_text.is_empty() {
-            // Resolve color name to hex
-            let resolved_color = config.resolve_color(&color_text);
-            if let Some(hex_color) = resolved_color {
-                if let Ok(color) = Self::parse_hex_color(&hex_color) {
-                    // Draw preview block (███) to the right of input
-                    let preview_x = x + width.saturating_sub(4);
-                    for i in 0..3 {
-                        if let Some(cell) = buf.cell_mut((preview_x + i, y + 1)) {
-                            cell.set_char('█');
-                            cell.set_fg(color);
-                            cell.set_bg(Color::Black);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Render action buttons
-    fn render_buttons(&self, x: u16, y: u16, buf: &mut Buffer) {
-        // Save button
-        let (save_text, save_style) = if self.focused_field == 10 {
-            // Focused: inverted colors with bold
-            ("[ SAVE ]", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
-        } else {
-            // Not focused: just green text
-            ("[ Save ]", Style::default().fg(Color::Green))
-        };
-        let save_para = Paragraph::new(save_text).style(save_style);
-        let save_area = Rect { x, y, width: 9, height: 1 };
-        RatatuiWidget::render(save_para, save_area, buf);
-
-        // Cancel button
-        let (cancel_text, cancel_style) = if self.focused_field == 11 {
-            // Focused: inverted colors with bold
-            ("[ CANCEL ]", Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD))
-        } else {
-            // Not focused: just red text
-            ("[ Cancel ]", Style::default().fg(Color::Red))
-        };
-        let cancel_para = Paragraph::new(cancel_text).style(cancel_style);
-        let cancel_area = Rect { x: x + 11, y, width: 11, height: 1 };
-        RatatuiWidget::render(cancel_para, cancel_area, buf);
-
-        // Delete button (only in Edit mode)
-        if matches!(self.mode, FormMode::Edit(_)) {
-            let (delete_text, delete_style) = if self.focused_field == 12 {
-                // Focused: inverted colors with bold
-                ("[ DELETE ]", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
-            } else {
-                // Not focused: just yellow text
-                ("[ Delete ]", Style::default().fg(Color::Yellow))
-            };
-            let delete_para = Paragraph::new(delete_text).style(delete_style);
-            let delete_area = Rect { x: x + 24, y, width: 11, height: 1 };
-            RatatuiWidget::render(delete_para, delete_area, buf);
-        }
-    }
-
     /// Handle mouse events for dragging
     pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
         let popup_width = 62;
-        let popup_height = 40;
+        let popup_height = 20;
 
         let popup_area = Rect {
             x: self.popup_x,
