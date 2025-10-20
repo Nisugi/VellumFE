@@ -459,6 +459,7 @@ pub struct WindowConfig {
     pub indicator_colors: Option<Vec<String>>, // Indicator state colors
     pub compass_active_color: Option<String>, // Compass active exit color
     pub compass_inactive_color: Option<String>, // Compass inactive exit color
+    pub show_timestamps: Option<bool>,  // Show timestamps at end of lines
     pub dashboard_layout: Option<String>,  // Dashboard layout type
     pub dashboard_indicators: Option<Vec<crate::config::DashboardIndicatorDef>>, // Dashboard indicators
     pub dashboard_spacing: Option<u16>,  // Dashboard spacing
@@ -764,6 +765,7 @@ impl WindowManager {
                                 tab.name.clone(),
                                 tab.stream.clone(),
                                 config.buffer_size,
+                                tab.show_timestamps.unwrap_or(false),
                             );
                         }
                     } else {
@@ -823,6 +825,7 @@ impl WindowManager {
                         );
                     text_window.set_background_color(config.background_color.clone());
                     text_window.set_content_align(config.content_align.clone());
+                    text_window.set_show_timestamps(config.show_timestamps.unwrap_or(false));
                     // Set highlights (convert HashMap to Vec)
                     let highlights_vec: Vec<_> = highlights.values().cloned().collect();
                     text_window.set_highlights(highlights_vec);
@@ -1235,6 +1238,7 @@ impl WindowManager {
                                     tab.name.clone(),
                                     tab.stream.clone(),
                                     config.buffer_size,
+                                    tab.show_timestamps.unwrap_or(false),
                                 );
                             }
                         } else {
@@ -1294,6 +1298,7 @@ impl WindowManager {
                             );
                         text_window.set_background_color(config.background_color.clone());
                         text_window.set_content_align(config.content_align.clone());
+                        text_window.set_show_timestamps(config.show_timestamps.unwrap_or(false));
                         // Set highlights (convert HashMap to Vec)
                         let highlights_vec: Vec<_> = self.highlights.values().cloned().collect();
                         text_window.set_highlights(highlights_vec);
@@ -1375,6 +1380,7 @@ impl WindowManager {
                                             tab.name.clone(),
                                             tab.stream.clone(),
                                             config.buffer_size,
+                                            tab.show_timestamps.unwrap_or(false),
                                         );
                                         // Map the new tab's stream
                                         self.stream_map.insert(tab.stream.clone(), config.name.clone());
