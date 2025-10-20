@@ -1,6 +1,9 @@
 [presets.links]
 fg = "#477ab3"
 
+[presets.commands]
+fg = "#d2691e"
+
 [presets.speech]
 fg = "#53a684"
 
