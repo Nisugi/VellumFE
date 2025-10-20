@@ -1467,27 +1467,53 @@ impl App {
                 } else { true }
             });
 
-            // Sort by row and distribute
+            // Sort by row and distribute proportionally
             widgets_in_col.sort_by_key(|(_, row, _, _)| *row);
-            let total_scalable_height: u16 = widgets_in_col.iter().map(|(_, _, rows, _)| *rows).sum();
+
+            let total_scalable_height: u16 = widgets_in_col.iter()
+                .filter(|(n, _, _, _)| !height_applied.contains(n))
+                .map(|(_, _, rows, _)| *rows)
+                .sum();
+
             if total_scalable_height == 0 { continue; }
 
             let mut adjustments: Vec<(String, i32)> = Vec::new();
-            let mut leftover = 0i32;
+            let mut leftover = height_delta;
+
+            tracing::debug!("HEIGHT DISTRIBUTION (col {}): height_delta={}, total_scalable_height={}", current_col, height_delta, total_scalable_height);
+
+            // Distribute proportionally based on current size
             for (name, _row, rows, _cols) in &widgets_in_col {
-                let proportion = *rows as f64 / total_scalable_height as f64;
-                let share = (proportion * height_delta as f64).floor() as i32;
-                leftover += ((proportion * height_delta as f64) - share as f64).round() as i32;
-                if !height_applied.contains(name) { adjustments.push((name.clone(), share)); }
-            }
-            if leftover != 0 && !adjustments.is_empty() {
-                if let Some((name, _, _, _)) = widgets_in_col.iter()
-                    .enumerate()
-                    .filter(|(_, (n, _, _, _))| !height_applied.contains(n))
-                    .max_by_key(|(_, (_, _, rows, _))| *rows)
-                    .map(|(_, t)| t) {
-                    if let Some(adj) = adjustments.iter_mut().find(|(n, _)| n == name) { adj.1 += leftover; }
+                if !height_applied.contains(name) {
+                    let proportion = *rows as f64 / total_scalable_height as f64;
+                    let share = (proportion * height_delta as f64).floor() as i32;
+                    leftover -= share;
+                    tracing::debug!("  {} (rows={}): proportion={:.4}, share={}", name, rows, proportion, share);
+                    adjustments.push((name.clone(), share));
                 }
+            }
+
+            tracing::debug!("  Leftover after proportional distribution: {}", leftover);
+
+            // Distribute leftover (one row at a time to first windows)
+            let mut idx = 0;
+            while leftover > 0 && idx < adjustments.len() {
+                adjustments[idx].1 += 1;
+                tracing::debug!("  Distributing +1 leftover row to {}", adjustments[idx].0);
+                leftover -= 1;
+                idx += 1;
+            }
+            while leftover < 0 && idx < adjustments.len() {
+                adjustments[idx].1 -= 1;
+                tracing::debug!("  Distributing -1 leftover row to {}", adjustments[idx].0);
+                leftover += 1;
+                idx += 1;
+            }
+
+            tracing::debug!("  Final adjustments:");
+            for (name, delta) in &adjustments {
+                let orig_rows = widgets_in_col.iter().find(|(n, _, _, _)| n == name).map(|(_, _, r, _)| *r).unwrap_or(0);
+                tracing::debug!("    {}: {} rows -> +{} delta -> {} rows", name, orig_rows, delta, orig_rows as i32 + delta);
             }
 
             let mut current_row = 0u16;
@@ -1628,14 +1654,31 @@ impl App {
             if total_scalable_width == 0 { continue; }
 
             let mut adjustments: Vec<(String, i32)> = Vec::new();
-            let mut _leftover = 0i32;
             let mut redistribution_pool = 0i32;
+            let mut leftover = width_delta;
+
+            // Distribute proportionally based on current size
             for (name, _wt, _row, _col, _rows, cols) in &widgets_at_row {
-                if static_both.contains(name) { continue; }
-                let proportion = *cols as f64 / total_scalable_width as f64;
-                let share = (proportion * width_delta as f64).floor() as i32;
-                _leftover += ((proportion * width_delta as f64) - share as f64).round() as i32;
-                if !width_applied.contains(name) { adjustments.push((name.clone(), share)); }
+                if static_both.contains(name) || embedded_widgets.contains(name) { continue; }
+                if !width_applied.contains(name) {
+                    let proportion = *cols as f64 / total_scalable_width as f64;
+                    let share = (proportion * width_delta as f64).floor() as i32;
+                    leftover -= share;
+                    adjustments.push((name.clone(), share));
+                }
+            }
+
+            // Distribute leftover (one column at a time to first windows)
+            let mut idx = 0;
+            while leftover > 0 && idx < adjustments.len() {
+                adjustments[idx].1 += 1;
+                leftover -= 1;
+                idx += 1;
+            }
+            while leftover < 0 && idx < adjustments.len() {
+                adjustments[idx].1 -= 1;
+                leftover += 1;
+                idx += 1;
             }
 
             let mut capped_widgets = HashSet::new();
@@ -3346,8 +3389,29 @@ impl App {
                     self.add_system_message("Failed to get current terminal size");
                 }
             }
+            "help" | "h" | "?" => {
+                self.add_system_message("=== VellumFE Dot Commands ===");
+                self.add_system_message("Application: .quit, .menu, .settings, .help");
+                self.add_system_message("Layouts: .savelayout [name], .loadlayout [name], .layouts, .baseline, .resize");
+                self.add_system_message("Windows: .windows, .templates, .createwindow <template>, .customwindow <name> <streams>");
+                self.add_system_message("         .deletewindow <name>, .editwindow [name], .addwindow, .editinput");
+                self.add_system_message("         .rename <win> <title>, .border <win> <style> [color], .contentalign <win> <align>");
+                self.add_system_message("         .lockwindows, .unlockwindows");
+                self.add_system_message("Tabbed Windows: .createtabbed <name> <tab:stream,...>, .addtab <win> <tab> <stream>");
+                self.add_system_message("                .removetab <win> <tab>, .switchtab <win> <tab>, .movetab <win> <tab> <pos>");
+                self.add_system_message("                .tabcolors <win> <active> [unread] [inactive]");
+                self.add_system_message("Progress/Countdown: .setprogress <win> <cur> <max>, .setcountdown <win> <sec>");
+                self.add_system_message("                    .setbarcolor <win> <color> [bg_color]");
+                self.add_system_message("Highlights: .highlights, .addhl, .edithl <name>, .delhl <name>, .testhl <name> <text>");
+                self.add_system_message("Keybinds: .keybinds, .addkeybind, .editkeybind <key>, .deletekeybind <key>");
+                self.add_system_message("Colors: .colors, .addcolor, .spellcolors, .addspellcolor, .uicolors");
+                self.add_system_message("Testing: .indicatoron, .indicatoroff, .randominjuries, .randomcompass");
+                self.add_system_message("         .randomprogress, .randomcountdowns, .togglespellid <win>, .testmenu <id> [noun]");
+                self.add_system_message("For detailed help, see the wiki: https://github.com/your-repo/vellumfe/wiki");
+            }
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
+                self.add_system_message("Type .help for list of commands");
             }
         }
     }

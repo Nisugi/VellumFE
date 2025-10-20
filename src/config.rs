@@ -988,7 +988,7 @@ fn default_border_style() -> String {
 }
 
 fn default_background_color() -> String {
-    "#000000".to_string() // black
+    "-".to_string() // transparent/no background
 }
 
 fn default_wizard_music() -> bool {
@@ -1933,6 +1933,29 @@ impl Layout {
     /// If force_terminal_size is true, always update terminal_width/height to terminal_size
     /// Save layout to shared layouts directory (.savelayout command)
     /// Saves to: ~/.vellum-fe/default/layouts/{name}.toml
+    /// Normalize windows before saving - convert None colors back to "-" to preserve transparency
+    fn normalize_windows_for_save(&mut self) {
+        for window in &mut self.windows {
+            // Convert None to Some("-") for color fields to preserve transparency setting
+            let normalize = |field: &mut Option<String>| {
+                if field.is_none() {
+                    *field = Some("-".to_string());
+                }
+            };
+
+            normalize(&mut window.background_color);
+            normalize(&mut window.border_color);
+            normalize(&mut window.bar_color);
+            normalize(&mut window.bar_background_color);
+            normalize(&mut window.text_color);
+            normalize(&mut window.tab_active_color);
+            normalize(&mut window.tab_inactive_color);
+            normalize(&mut window.tab_unread_color);
+            normalize(&mut window.compass_active_color);
+            normalize(&mut window.compass_inactive_color);
+        }
+    }
+
     pub fn save(&mut self, name: &str, terminal_size: Option<(u16, u16)>, force_terminal_size: bool) -> Result<()> {
         // Capture terminal size for layout baseline
         if force_terminal_size {
@@ -1956,6 +1979,9 @@ impl Layout {
                 self.terminal_width.unwrap(), self.terminal_height.unwrap()
             );
         }
+
+        // Normalize windows before saving (convert None colors to "-")
+        self.normalize_windows_for_save();
 
         // Save to shared layouts directory: ~/.vellum-fe/default/layouts/{name}.toml
         let layouts_dir = Config::layouts_dir()?;
@@ -1982,6 +2008,9 @@ impl Layout {
             self.terminal_width = Some(width);
             self.terminal_height = Some(height);
         }
+
+        // Normalize windows before saving (convert None colors to "-")
+        self.normalize_windows_for_save();
 
         // Save to character profile: ~/.vellum-fe/{character}/layout.toml
         let profile_dir = Config::profile_dir(Some(character))?;

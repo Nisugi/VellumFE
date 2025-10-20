@@ -1,5 +1,6 @@
-# Default Window Layout for VellumFE
-# This file contains only the [[windows]] sections for easy layout editing
+terminal_width = 105
+terminal_height = 54
+base_layout = "bottombar"
 
 [[windows]]
 name = "main"
@@ -7,210 +8,719 @@ widget_type = "text"
 streams = ["main"]
 row = 0
 col = 0
-rows = 24
-cols = 120
+rows = 38
+cols = 105
 buffer_size = 10000
 show_border = true
+border_color = "-"
+background_color = "-"
+bar_color = "-"
+bar_background_color = "-"
 transparent_background = true
-
-[[windows]]
-name = "health"
-widget_type = "progress"
-streams = []
-row = 24
-col = 0
-rows = 3
-cols = 24
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Health"
-bar_color = "#6e0202"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "mana"
-widget_type = "progress"
-streams = []
-row = 24
-col = 24
-rows = 3
-cols = 24
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Mana"
-bar_color = "#08086d"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "stamina"
-widget_type = "progress"
-streams = []
-row = 24
-col = 48
-rows = 3
-cols = 24
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Stamina"
-bar_color = "#bd7b00"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "spirit"
-widget_type = "progress"
-streams = []
-row = 24
-col = 72
-rows = 3
-cols = 24
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Spirit"
-bar_color = "#6e727c"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "mindstate"
-widget_type = "progress"
-streams = []
-row = 24
-col = 96
-rows = 3
-cols = 24
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Mind"
-bar_color = "#008b8b"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "stance"
-widget_type = "progress"
-streams = []
-row = 27
-col = 0
-rows = 3
-cols = 20
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Stance"
-bar_color = "#000080"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "encumlevel"
-widget_type = "progress"
-streams = []
-row = 27
-col = 20
-rows = 3
-cols = 25
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Encumbrance"
-bar_color = "#006400"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "roundtime"
-widget_type = "countdown"
-streams = []
-row = 27
-col = 45
-rows = 3
-cols = 15
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "RT"
-bar_color = "#ff0000"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "casttime"
-widget_type = "countdown"
-streams = []
-row = 27
-col = 60
-rows = 3
-cols = 15
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Cast"
-bar_color = "#0000ff"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "stuntime"
-widget_type = "countdown"
-streams = []
-row = 27
-col = 75
-rows = 3
-cols = 15
-buffer_size = 0
-show_border = true
-border_style = "single"
-title = "Stun"
-bar_color = "#ffff00"
-bar_background_color = "#000000"
-transparent_background = false
-
-[[windows]]
-name = "thoughts"
-widget_type = "text"
-streams = ["thoughts"]
-row = 30
-col = 0
-rows = 10
-cols = 84
-buffer_size = 500
-show_border = true
-transparent_background = true
-
-[[windows]]
-name = "speech"
-widget_type = "text"
-streams = [
-    "speech",
-    "whisper",
-]
-row = 30
-col = 84
-rows = 10
-cols = 36
-buffer_size = 1000
-show_border = true
-transparent_background = true
+locked = false
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+text_color = "-"
+compass_active_color = "-"
+compass_inactive_color = "-"
+numbers_only = false
 
 [[windows]]
 name = "command_input"
 widget_type = "command_input"
 streams = []
-row = 40
-col = 0
+row = 51
+col = 19
 rows = 3
-cols = 120
-buffer_size = 0
+cols = 85
+buffer_size = 100
 show_border = true
+border_style = "single"
+border_color = "#808080"
+title = ""
+content_align = "top-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
 transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
 min_rows = 1
 max_rows = 5
 min_cols = 20
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "compass"
+widget_type = "compass"
+streams = []
+row = 51
+col = 0
+rows = 3
+cols = 7
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Exits"
+content_align = "center-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "status_dashboard"
+widget_type = "dashboard"
+streams = []
+row = 53
+col = 8
+rows = 1
+cols = 10
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Status"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_spacing = 1
+dashboard_hide_inactive = true
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows.dashboard_indicators]]
+id = "poisoned"
+icon = ""
+colors = [
+    "#000000",
+    "#00ff00",
+]
+
+[[windows.dashboard_indicators]]
+id = "diseased"
+icon = ""
+colors = [
+    "#000000",
+    "#8b4513",
+]
+
+[[windows.dashboard_indicators]]
+id = "bleeding"
+icon = ""
+colors = [
+    "#000000",
+    "#ff0000",
+]
+
+[[windows.dashboard_indicators]]
+id = "stunned"
+icon = ""
+colors = [
+    "#000000",
+    "#ffff00",
+]
+
+[[windows.dashboard_indicators]]
+id = "webbed"
+icon = "󰯊"
+colors = [
+    "#000000",
+    "#cccccc",
+]
+
+[[windows]]
+name = "roundtime"
+widget_type = "countdown"
+streams = []
+row = 52
+col = 8
+rows = 1
+cols = 10
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "RT"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#ff0000"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "casttime"
+widget_type = "countdown"
+streams = []
+row = 51
+col = 8
+rows = 1
+cols = 10
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Cast"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#0000ff"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "health"
+widget_type = "progress"
+streams = []
+row = 49
+col = 0
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Health"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#6e0202"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "mana"
+widget_type = "progress"
+streams = []
+row = 49
+col = 15
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Mana"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#08086d"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "stamina"
+widget_type = "progress"
+streams = []
+row = 49
+col = 30
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Stamina"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#bd7b00"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "spirit"
+widget_type = "progress"
+streams = []
+row = 49
+col = 45
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Spirit"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#6e727c"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "stuntime"
+widget_type = "countdown"
+streams = []
+row = 50
+col = 8
+rows = 1
+cols = 10
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Stun"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#ffff00"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "compass_spacer"
+widget_type = "spacer"
+streams = []
+row = 50
+col = 0
+rows = 1
+cols = 7
+buffer_size = 1000
+show_border = true
+border_style = "single"
+border_color = "#808080"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 7
+max_cols = 7
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "stance"
+widget_type = "progress"
+streams = []
+row = 49
+col = 60
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Stance"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#000080"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "encumbrance"
+widget_type = "progress"
+streams = []
+row = 49
+col = 75
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Encumbrance"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#006400"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "mindstate"
+widget_type = "progress"
+streams = []
+row = 49
+col = 90
+rows = 1
+cols = 14
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Mind"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#008b8b"
+bar_background_color = "#000000"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "lefthand"
+widget_type = "lefthand"
+streams = []
+row = 50
+col = 19
+rows = 1
+cols = 28
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Left Hand"
+content_align = "center-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+hand_icon = "L:"
+text_color = "#666666"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "righthand"
+widget_type = "righthand"
+streams = []
+row = 50
+col = 47
+rows = 1
+cols = 28
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+title = "Right Hand"
+content_align = "center"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+hand_icon = "R:"
+text_color = "#666666"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "spellhand"
+widget_type = "spellhand"
+streams = []
+row = 50
+col = 75
+rows = 1
+cols = 27
+buffer_size = 100
+show_border = false
+border_style = "single"
+border_color = "#808080"
+border_sides = []
+title = ""
+content_align = "center"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = false
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+hand_icon = "S:"
+text_color = "#666666"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows]]
+name = "chat"
+widget_type = "tabbed"
+streams = []
+row = 38
+col = 0
+rows = 11
+cols = 105
+buffer_size = 5000
+show_border = false
+border_color = "#808080"
+content_align = "top-left"
+background_color = "-"
+bar_color = "#00ff00"
+bar_background_color = "#333333"
+transparent_background = true
+locked = false
+dashboard_layout = "horizontal"
+dashboard_hide_inactive = false
+effect_category = "Cooldowns"
+tab_bar_position = "top"
+tab_active_color = "-"
+tab_inactive_color = "-"
+tab_unread_color = "-"
+tab_unread_prefix = "* "
+text_color = "#ffffff"
+compass_active_color = "#00ff00"
+compass_inactive_color = "#333333"
+numbers_only = false
+effect_default_color = "#ffffff"
+
+[[windows.tabs]]
+name = "Thoughts"
+stream = "thoughts"
+
+[[windows.tabs]]
+name = "Speech"
+stream = "speech"
+
+[[windows.tabs]]
+name = "Announcements"
+stream = "announcements"
+
+[[windows.tabs]]
+name = "Ambients"
+stream = "ambients"
+
+[[windows.tabs]]
+name = "Loot"
+stream = "loot"
