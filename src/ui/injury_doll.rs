@@ -94,7 +94,11 @@ impl InjuryDoll {
     }
 
     pub fn set_background_color(&mut self, color: Option<String>) {
-        self.background_color = color;
+        // Handle three-state: None = transparent, Some("-") = transparent, Some(value) = use value
+        self.background_color = match color {
+            Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
+            other => other,
+        };
     }
 
     pub fn set_content_align(&mut self, align: Option<String>) {
