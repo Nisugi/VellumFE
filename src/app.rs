@@ -183,7 +183,16 @@ enum ResizeEdge {
 }
 
 impl App {
-    pub fn new(mut config: Config) -> Result<Self> {
+    pub fn new(mut config: Config, nomusic: bool) -> Result<Self> {
+        // Override startup_music if --nomusic flag is set
+        // Override startup_music if --nomusic flag is set
+        if nomusic {
+            config.ui.startup_music = false;
+        }
+        if nomusic {
+            config.ui.startup_music = false;
+        }
+
         // Load layout (separate from config)
         // Get terminal size for layout auto-selection
         let terminal_size = crossterm::terminal::size().ok();
@@ -299,6 +308,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
+                show_timestamps: w.show_timestamps,
                 numbers_only: Some(w.numbers_only),
                 injury_default_color: w.injury_default_color.clone(),
                 injury1_color: w.injury1_color.clone(),
@@ -483,6 +493,24 @@ impl App {
     }
 
     
+
+    /// Check if terminal is large enough for a popup editor
+    /// Returns true if terminal is large enough, false otherwise (and displays warning)
+    fn check_terminal_size_for_popup(&mut self, min_width: u16, min_height: u16, popup_name: &str) -> bool {
+        if let Ok((term_w, term_h)) = crossterm::terminal::size() {
+            if term_w < min_width || term_h < min_height {
+                self.add_system_message(&format!(
+                    "Terminal too small for {} (need {}x{}, have {}x{}) - please resize terminal",
+                    popup_name, min_width, min_height, term_w, term_h
+                ));
+                return false;
+            }
+            true
+        } else {
+            self.add_system_message("Failed to get terminal size");
+            false
+        }
+    }
 
     /// Check if text matches any highlight patterns with sounds and play them
     fn check_sound_triggers(&mut self, text: &str) {
@@ -1831,7 +1859,7 @@ impl App {
                 border_sides: w.border_sides.clone(),
                 title: w.title.clone(),
                 content_align: w.content_align.clone(),
-                background_color: w.get_background_color(&self.config.colors),
+                background_color: w.background_color.clone(),  // Don't resolve - preserve None/"-"/value as-is
                 bar_color: w.bar_color.clone(),
                 bar_background_color: w.bar_background_color.clone(),
                 text_color: w.get_text_color(&self.config.colors),
@@ -1853,6 +1881,7 @@ impl App {
                 hand_icon: w.hand_icon.clone(),
                 compass_active_color: w.compass_active_color.clone(),
                 compass_inactive_color: w.compass_inactive_color.clone(),
+                show_timestamps: w.show_timestamps,
                 numbers_only: Some(w.numbers_only),
                 injury_default_color: w.injury_default_color.clone(),
                 injury1_color: w.injury1_color.clone(),
@@ -2252,6 +2281,7 @@ impl App {
                     tabs.push(TabConfig {
                         name: tab_parts[0].trim().to_string(),
                         stream: tab_parts[1].trim().to_string(),
+                        show_timestamps: None,
                     });
                 }
 
@@ -2353,6 +2383,7 @@ impl App {
                         tabs.push(TabConfig {
                             name: tab_name.to_string(),
                             stream: stream_name.to_string(),
+                            show_timestamps: None,
                         });
                     }
 
@@ -2592,6 +2623,11 @@ impl App {
                 self.add_system_message(&format!("Available window templates: {}", templates.join(", ")));
             }
             "editwindow" | "editwin" => {
+                // Check terminal size before opening window editor
+                if !self.check_terminal_size_for_popup(70, 20, "window editor") {
+                    return;
+                }
+
                 // Get list of window names
                 let window_names: Vec<String> = self.layout.windows.iter().map(|w| w.name.clone()).collect();
 
@@ -2609,6 +2645,11 @@ impl App {
                 self.add_system_message("Window editor opened - select window to edit");
             }
             "addwindow" | "newwindow" => {
+                // Check terminal size before opening window editor
+                if !self.check_terminal_size_for_popup(70, 20, "window editor") {
+                    return;
+                }
+
                 // Open window editor for new window
                 let existing_names: Vec<String> = self.layout.windows.iter().map(|w| w.name.clone()).collect();
                 self.window_editor.open_for_new_window(existing_names);
@@ -2616,6 +2657,11 @@ impl App {
                 self.add_system_message("Window editor opened - select widget type");
             }
             "editinput" | "editcommandbox" => {
+                // Check terminal size before opening window editor
+                if !self.check_terminal_size_for_popup(70, 20, "window editor") {
+                    return;
+                }
+
                 // Find command_input from windows array
                 let window_def = self.layout.windows.iter()
                     .find(|w| w.widget_type == "command_input")
@@ -3090,6 +3136,10 @@ impl App {
                 }
             }
             "addhighlight" | "addhl" => {
+                // Check terminal size before opening highlight form
+                if !self.check_terminal_size_for_popup(62, 20, "highlight form") {
+                    return;
+                }
                 // Open highlight form in Create mode
                 let form = crate::ui::HighlightFormWidget::new();
 
@@ -3105,8 +3155,13 @@ impl App {
 
                 let name = parts[1];
 
-                if let Some(pattern) = self.config.highlights.get(name) {
-                    let form = crate::ui::HighlightFormWidget::new_edit(name.to_string(), pattern);
+                // Clone pattern first to avoid borrow checker issues
+                if let Some(pattern) = self.config.highlights.get(name).cloned() {
+                    // Check terminal size before opening highlight form
+                    if !self.check_terminal_size_for_popup(62, 20, "highlight form") {
+                        return;
+                    }
+                    let form = crate::ui::HighlightFormWidget::new_edit(name.to_string(), &pattern);
                     self.highlight_form = Some(form);
                     self.input_mode = InputMode::HighlightForm;
                     self.add_system_message(&format!("Editing highlight '{}' (Tab to navigate, Esc to cancel)", name));
@@ -3192,6 +3247,10 @@ impl App {
                 }
             }
             "addkeybind" | "addkey" => {
+                // Check terminal size before opening keybind form
+                if !self.check_terminal_size_for_popup(52, 9, "keybind form") {
+                    return;
+                }
                 // Open keybind form in Create mode
                 let form = crate::ui::KeybindFormWidget::new();
                 self.keybind_form = Some(form);
@@ -3207,13 +3266,19 @@ impl App {
 
                 let key_combo = parts[1];
 
-                if let Some(keybind_action) = self.config.keybinds.get(key_combo) {
+                // Clone keybind first to avoid borrow checker issues
+                if let Some(keybind_action) = self.config.keybinds.get(key_combo).cloned() {
+                    // Check terminal size before opening keybind form
+                    if !self.check_terminal_size_for_popup(52, 9, "keybind form") {
+                        return;
+                    }
+
                     use crate::config::KeyBindAction;
                     use crate::ui::KeybindActionType;
 
                     let (action_type, value) = match keybind_action {
-                        KeyBindAction::Action(action_str) => (KeybindActionType::Action, action_str.clone()),
-                        KeyBindAction::Macro(macro_action) => (KeybindActionType::Macro, macro_action.macro_text.clone()),
+                        KeyBindAction::Action(action_str) => (KeybindActionType::Action, action_str),
+                        KeyBindAction::Macro(macro_action) => (KeybindActionType::Macro, macro_action.macro_text),
                     };
 
                     let form = crate::ui::KeybindFormWidget::new_edit(key_combo.to_string(), action_type, value);
@@ -3249,6 +3314,10 @@ impl App {
                 self.open_keybind_browser();
             }
             "settings" | "config" => {
+                // Check terminal size before opening settings editor
+                if !self.check_terminal_size_for_popup(70, 20, "settings editor") {
+                    return;
+                }
                 // Open settings editor with all config values
                 self.open_settings_editor();
             }
@@ -5154,6 +5223,11 @@ impl App {
         // Handle edit action (after browser borrow is dropped)
         if let Some(name) = selected_name {
             if let Some(pattern) = self.config.highlights.get(&name).cloned() {
+                // Check terminal size before opening highlight form
+                if !self.check_terminal_size_for_popup(62, 20, "highlight form") {
+                    return Ok(());
+                }
+
                 // Close browser and open highlight form in edit mode
                 self.highlight_browser = None;
 
@@ -5239,6 +5313,11 @@ impl App {
         // Handle edit action (after browser borrow is dropped)
         if let Some(key_combo) = selected_key {
             if let Some(keybind_action) = self.config.keybinds.get(&key_combo).cloned() {
+                // Check terminal size before opening keybind form
+                if !self.check_terminal_size_for_popup(52, 9, "keybind form") {
+                    return Ok(());
+                }
+
                 use crate::config::KeyBindAction;
                 use crate::ui::KeybindActionType;
 
@@ -7406,11 +7485,11 @@ impl App {
                 info!("Connected to server");
                 self.add_system_message("Connected to Lich");
 
-                // Easter egg: Play wizard_music on connection (tribute to original Wizard frontend)
-                if self.config.ui.wizard_music {
+                // Easter egg: Play startup_music on connection (tribute to original Wizard frontend)
+                if self.config.ui.startup_music {
                     if let Some(ref player) = self.sound_player {
-                        if let Err(e) = player.play_from_sounds_dir("wizard_music", Some(0.5)) {
-                            tracing::warn!("Failed to play wizard_music: {}", e);
+                        if let Err(e) = player.play_from_sounds_dir(&self.config.ui.startup_music_file, Some(0.5)) {
+                            tracing::warn!("Failed to play startup_music: {}", e);
                         }
                     }
                 }
@@ -7650,6 +7729,8 @@ impl App {
                                 "stance"
                             } else if id == "mindState" && self.window_manager.get_window("mindstate").is_some() {
                                 "mindstate"
+                            } else if id == "encumlevel" && self.window_manager.get_window("encumbrance").is_some() {
+                                "encumbrance"
                             } else {
                                 &id
                             };
@@ -8167,10 +8248,19 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "wizard_music".to_string(),
-            display_name: "Wizard Music".to_string(),
-            value: SettingValue::Boolean(self.config.ui.wizard_music),
-            description: Some("Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)".to_string()),
+            key: "startup_music".to_string(),
+            display_name: "Startup Music".to_string(),
+            value: SettingValue::Boolean(self.config.ui.startup_music),
+            description: Some("Play music on connection".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "startup_music_file".to_string(),
+            display_name: "Startup Music File".to_string(),
+            value: SettingValue::String(self.config.ui.startup_music_file.clone()),
+            description: Some("Sound file to play on startup (without extension)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -8396,10 +8486,19 @@ impl App {
         });
         items.push(SettingItem {
             category: "UI".to_string(),
-            key: "wizard_music".to_string(),
-            display_name: "Wizard Music".to_string(),
-            value: SettingValue::Boolean(self.config.ui.wizard_music),
-            description: Some("Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)".to_string()),
+            key: "startup_music".to_string(),
+            display_name: "Startup Music".to_string(),
+            value: SettingValue::Boolean(self.config.ui.startup_music),
+            description: Some("Play music on connection".to_string()),
+            editable: true,
+            name_width: None,
+        });
+        items.push(SettingItem {
+            category: "UI".to_string(),
+            key: "startup_music_file".to_string(),
+            display_name: "Startup Music File".to_string(),
+            value: SettingValue::String(self.config.ui.startup_music_file.clone()),
+            description: Some("Sound file to play on startup (without extension)".to_string()),
             editable: true,
             name_width: None,
         });
@@ -8702,13 +8801,17 @@ impl App {
                 self.config.ui.countdown_icon = value.to_string();
                 true
             }
-            "wizard_music" => {
+            "startup_music" => {
                 if let Ok(enabled) = value.parse::<bool>() {
-                    self.config.ui.wizard_music = enabled;
+                    self.config.ui.startup_music = enabled;
                     true
                 } else {
                     false
                 }
+            }
+            "startup_music_file" => {
+                self.config.ui.startup_music_file = value.to_string();
+                true
             }
             "poll_timeout_ms" => {
                 if let Ok(timeout) = value.parse::<u64>() {
