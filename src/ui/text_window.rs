@@ -106,6 +106,8 @@ pub struct TextWindow {
     // Recent links cache for click detection
     recent_links: VecDeque<LinkData>,
     max_recent_links: usize,
+    // Timestamp configuration
+    show_timestamps: bool,
 }
 
 impl TextWindow {
@@ -134,6 +136,7 @@ impl TextWindow {
             fast_pattern_map: Vec::new(),  // No fast pattern mapping by default
             recent_links: VecDeque::new(),  // No recent links yet
             max_recent_links: 100,  // Keep last 100 links
+            show_timestamps: false,  // Timestamps off by default
         }
     }
 
@@ -204,7 +207,11 @@ impl TextWindow {
     }
 
     pub fn set_background_color(&mut self, color: Option<String>) {
-        self.background_color = color;
+        // Handle three-state: None = transparent, Some("-") = transparent, Some(value) = use value
+        self.background_color = match color {
+            Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
+            other => other,
+        };
     }
 
     pub fn set_content_align(&mut self, align: Option<String>) {
@@ -216,8 +223,19 @@ impl TextWindow {
         self.title = title;
     }
 
+    pub fn set_show_timestamps(&mut self, show: bool) {
+        self.show_timestamps = show;
+    }
+
     pub fn has_border(&self) -> bool {
         self.show_border
+    }
+
+    /// Format current time as timestamp (e.g., "[7:08 AM]")
+    fn format_timestamp() -> String {
+        use chrono::Local;
+        let now = Local::now();
+        format!(" [{}]", now.format("%l:%M %p").to_string().trim())
     }
 
     pub fn add_text(&mut self, styled: StyledText) {
@@ -269,6 +287,15 @@ impl TextWindow {
 
         // Apply highlights before storing/wrapping
         self.apply_highlights();
+
+        // Add timestamp if enabled (before storing/wrapping)
+        if self.show_timestamps {
+            let timestamp = Self::format_timestamp();
+            let timestamp_style = Style::default()
+                .fg(Color::DarkGray)
+                .bg(Color::Reset);
+            self.current_line_spans.push((timestamp, timestamp_style, SpanType::Normal, None));
+        }
 
         // Store the original logical line
         let logical_line = LogicalLine {

@@ -180,15 +180,21 @@ impl TabbedTextWindow {
     }
 
     pub fn set_background_color(&mut self, color: Option<String>) {
-        self.background_color = color;
+        // Handle three-state: None = transparent, Some("-") = transparent, Some(value) = use value
+        self.background_color = match color {
+            Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
+            other => other,
+        };
     }
 
     /// Add a new tab dynamically
-    pub fn add_tab(&mut self, name: String, stream: String, max_lines: usize) {
+    pub fn add_tab(&mut self, name: String, stream: String, max_lines: usize, show_timestamps: bool) {
+        let mut window = TextWindow::new(name.clone(), max_lines);
+        window.set_show_timestamps(show_timestamps);
         self.tabs.push(TabInfo {
-            name: name.clone(),
+            name,
             stream,
-            window: TextWindow::new(name, max_lines),
+            window,
             has_unread: false,
             unread_count: 0,
         });
