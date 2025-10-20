@@ -36,7 +36,8 @@ struct TabEditorState {
     tab_name_input: TextArea<'static>,
     tab_stream_input: TextArea<'static>,
     editing_index: Option<usize>,
-    focused_input: usize, // 0 = name, 1 = stream
+    focused_input: usize, // 0 = name, 1 = stream, 2 = show_timestamps checkbox
+    show_timestamps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +182,7 @@ pub struct WindowEditor {
     border_right: bool,
     dashboard_hide_inactive: bool,
     numbers_only: bool,  // For progress bars: show only numbers, no text
+    show_timestamps: bool,  // For text windows: show timestamps at end of lines
 
     // Tab editor state
     tab_editor: TabEditorState,
@@ -268,6 +270,7 @@ impl WindowEditor {
             border_right: true,
             dashboard_hide_inactive: false,
             numbers_only: false,
+            show_timestamps: false,
             tab_editor: TabEditorState {
                 selected_index: 0,
                 mode: TabEditMode::Browsing,
@@ -275,6 +278,7 @@ impl WindowEditor {
                 tab_stream_input: Self::create_textarea(20),
                 editing_index: None,
                 focused_input: 0,
+                show_timestamps: false,
             },
             indicator_editor: IndicatorEditorState {
                 selected_index: 0,
@@ -479,6 +483,7 @@ impl WindowEditor {
         self.transparent_bg = self.current_window.transparent_background;
         self.show_border = self.current_window.show_border;
         self.numbers_only = self.current_window.numbers_only;
+        self.show_timestamps = self.current_window.show_timestamps.unwrap_or(false);
 
         // Border sides
         if let Some(ref sides) = self.current_window.border_sides {
@@ -499,8 +504,11 @@ impl WindowEditor {
         self.border_color_input.insert_str(border_color);
 
         self.bg_color_input.delete_line_by_head();
-        let bg_color = self.current_window.background_color.as_deref().unwrap_or("#000000");
-        self.bg_color_input.insert_str(bg_color);
+        // Handle three-state: None = inherit, Some("-") = transparent, Some(value) = use value
+        if let Some(ref bg) = self.current_window.background_color {
+            self.bg_color_input.insert_str(bg);
+        }
+        // If None, leave empty (will inherit from global config)
 
         // Buffer size
         self.buffer_size_input.delete_line_by_head();
@@ -708,6 +716,7 @@ impl WindowEditor {
         self.current_window.transparent_background = self.transparent_bg;
         self.current_window.show_border = self.show_border;
         self.current_window.numbers_only = self.numbers_only;
+        self.current_window.show_timestamps = Some(self.show_timestamps);
 
         // Border sides
         let mut sides = Vec::new();
@@ -725,8 +734,13 @@ impl WindowEditor {
         let border_color = self.border_color_input.lines()[0].to_string();
         self.current_window.border_color = if border_color.is_empty() { None } else { Some(border_color) };
 
-        let bg_color = self.bg_color_input.lines()[0].to_string();
-        self.current_window.background_color = if bg_color.is_empty() { None } else { Some(bg_color) };
+        // Handle background color three-state: empty = None (inherit), "-" = transparent, value = use value
+        let bg_color = self.bg_color_input.lines()[0].to_string().trim().to_string();
+        self.current_window.background_color = if bg_color.is_empty() {
+            None  // Inherit from global config
+        } else {
+            Some(bg_color)  // Can be "-" for transparent or "#RRGGBB" for explicit color
+        };
 
         // Buffer size
         self.current_window.buffer_size = self.buffer_size_input.lines()[0].parse::<usize>().unwrap_or(1000).max(100);
@@ -1065,7 +1079,7 @@ impl WindowEditor {
                 }
                 None
             },
-            KeyCode::Char(' ') if matches!(self.focused_field, 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 58 | 59) => {
+            KeyCode::Char(' ') if matches!(self.focused_field, 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 58 | 59 | 60) => {
                 // Toggle checkboxes
                 match self.focused_field {
                     12 => self.show_title = !self.show_title,
@@ -1078,6 +1092,7 @@ impl WindowEditor {
                     19 => self.border_right = !self.border_right,
                     58 => self.dashboard_hide_inactive = !self.dashboard_hide_inactive,
                     59 => self.numbers_only = !self.numbers_only,  // Progress bar Numbers Only
+                    60 => self.show_timestamps = !self.show_timestamps,  // Text window Show Timestamps
                     _ => {}
                 }
                 None
@@ -1220,6 +1235,7 @@ impl WindowEditor {
                         self.tab_editor.mode = TabEditMode::Adding;
                         self.tab_editor.tab_name_input.delete_line_by_head();
                         self.tab_editor.tab_stream_input.delete_line_by_head();
+                        self.tab_editor.show_timestamps = false;
                         self.tab_editor.focused_input = 0;
                         None
                     },
@@ -1232,6 +1248,7 @@ impl WindowEditor {
                                 self.tab_editor.tab_name_input.insert_str(&tab.name);
                                 self.tab_editor.tab_stream_input.delete_line_by_head();
                                 self.tab_editor.tab_stream_input.insert_str(&tab.stream);
+                                self.tab_editor.show_timestamps = tab.show_timestamps.unwrap_or(false);
                                 self.tab_editor.editing_index = Some(idx);
                                 self.tab_editor.mode = TabEditMode::Editing;
                                 self.tab_editor.focused_input = 0;
@@ -1269,14 +1286,15 @@ impl WindowEditor {
                             }
 
                             if let Some(ref mut tabs) = self.current_window.tabs {
+                                let show_timestamps_value = Some(self.tab_editor.show_timestamps);
                                 if self.tab_editor.mode == TabEditMode::Editing {
                                     if let Some(idx) = self.tab_editor.editing_index {
                                         if idx < tabs.len() {
-                                            tabs[idx] = TabConfig { name, stream };
+                                            tabs[idx] = TabConfig { name, stream, show_timestamps: show_timestamps_value };
                                         }
                                     }
                                 } else {
-                                    tabs.push(TabConfig { name, stream });
+                                    tabs.push(TabConfig { name, stream, show_timestamps: show_timestamps_value });
                                 }
                             }
 
@@ -1285,19 +1303,25 @@ impl WindowEditor {
                         None
                     },
                     KeyCode::Tab => {
-                        // Switch between name and stream inputs
-                        self.tab_editor.focused_input = if self.tab_editor.focused_input == 0 { 1 } else { 0 };
+                        // Cycle through: name (0) -> stream (1) -> checkbox (2) -> name
+                        self.tab_editor.focused_input = (self.tab_editor.focused_input + 1) % 3;
+                        None
+                    },
+                    KeyCode::Char(' ') if self.tab_editor.focused_input == 2 => {
+                        // Toggle show_timestamps checkbox
+                        self.tab_editor.show_timestamps = !self.tab_editor.show_timestamps;
                         None
                     },
                     _ => {
                         use tui_textarea::Input;
                         let input: Input = key.into();
-                        // Route input to the focused field
+                        // Route input to the focused field (only for text inputs)
                         if self.tab_editor.focused_input == 0 {
                             self.tab_editor.tab_name_input.input(input);
-                        } else {
+                        } else if self.tab_editor.focused_input == 1 {
                             self.tab_editor.tab_stream_input.input(input);
                         }
+                        // Ignore input for checkbox (field 2)
                         None
                     }
                 }
@@ -1455,7 +1479,12 @@ impl WindowEditor {
 
         // Widget-specific fields
         match widget_type {
-            "text" | "entity" => {
+            "text" => {
+                order.push(22); // buffer_size
+                order.push(23); // streams
+                order.push(60); // show_timestamps
+            },
+            "entity" => {
                 order.push(22); // buffer_size
                 order.push(23); // streams
             },
@@ -1755,9 +1784,13 @@ impl WindowEditor {
 
         match widget_type {
             "text" => {
-                // Buffer Size input (8 chars, left) | Streams input (21 chars, right)
+                // Row 12: Buffer Size input (8 chars, left) | Streams input (21 chars, right)
                 Self::render_inline_textarea(self.focused_field, 22, "Buffer Size:", &mut self.buffer_size_input, left_x, y, 8, buf, config);
                 Self::render_inline_textarea(self.focused_field, 23, "Streams:", &mut self.streams_input, right_x, y, 21, buf, config);
+                y += 1;
+
+                // Row 13: blank | Show Timestamps checkbox
+                self.render_checkbox(60, "Show Timestamps", self.show_timestamps, right_x, y, buf);
                 y += 1;
             },
 
@@ -1969,11 +2002,14 @@ impl WindowEditor {
 
         match self.tab_editor.mode {
             TabEditMode::Browsing => {
-                // Show tabs list
+                // Show tabs list in 3-column format
                 if let Some(ref tabs) = self.current_window.tabs {
                     for (i, tab) in tabs.iter().enumerate().take(10) {
                         let prefix = if i == self.tab_editor.selected_index { "> " } else { "  " };
-                        let text = format!("{}{} -> {}", prefix, tab.name, tab.stream);
+                        // Format: "  Name                  ->  stream"
+                        // Name padded to 20 chars, then " -> ", then stream
+                        let name_padded = format!("{:<20}", tab.name);
+                        let text = format!("{}{}  ->  {}", prefix, name_padded, tab.stream);
                         let style = if i == self.tab_editor.selected_index {
                             Style::default().fg(Color::Yellow)
                         } else {
@@ -2009,8 +2045,17 @@ impl WindowEditor {
                 self.tab_editor.tab_stream_input.set_cursor_line_style(Style::default());
                 self.tab_editor.tab_stream_input.render(Rect { x: x + 11, y: y + 6, width: 30, height: 1 }, buf);
 
+                // Show Timestamps checkbox
+                let checkbox_style = if self.tab_editor.focused_input == 2 {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+                let checkbox_str = if self.tab_editor.show_timestamps { "[✓] Show Timestamps" } else { "[ ] Show Timestamps" };
+                buf.set_string(x, y + 8, checkbox_str, checkbox_style);
+
                 // Instructions
-                buf.set_string(x, y + 8, "Tab: Switch Field | Enter: Save | Esc: Cancel", Style::default().fg(Color::Yellow));
+                buf.set_string(x, y + 10, "Tab: Switch Field | Space: Toggle | Enter: Save | Esc: Cancel", Style::default().fg(Color::Yellow));
             }
         }
     }
