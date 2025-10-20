@@ -360,7 +360,7 @@ impl XmlParser {
             self.handle_label(tag, elements);
         } else if tag.starts_with("<nav ") {
             self.handle_nav(tag, elements);
-        } else if tag.starts_with("<d ") {
+        } else if tag.starts_with("<d ") || tag == "<d>" {
             self.handle_d_tag(tag);
         } else if tag == "</d>" {
             self.handle_d_close();
@@ -937,7 +937,7 @@ impl XmlParser {
         }
     }
 
-    fn create_text_element(&self, content: String) -> ParsedElement {
+    fn create_text_element(&mut self, content: String) -> ParsedElement {
         // Get current colors from stacks (last pushed takes precedence)
         let mut fg = None;
         let mut bg = None;
@@ -959,6 +959,13 @@ impl XmlParser {
 
         // Decode HTML entities
         let content = self.decode_entities(&content);
+
+        // If we're inside a link (<a> or <d> tag), append this text to the link's text field
+        if self.link_depth > 0 {
+            if let Some(ref mut link_data) = self.current_link_data {
+                link_data.text.push_str(&content);
+            }
+        }
 
         // Determine semantic type based on current state
         // Priority: Monsterbold > Spell > Link > Normal
@@ -992,7 +999,7 @@ impl XmlParser {
     }
 
     /// Flush text buffer and check for event patterns
-    fn flush_text_with_events(&self, text: String, elements: &mut Vec<ParsedElement>) {
+    fn flush_text_with_events(&mut self, text: String, elements: &mut Vec<ParsedElement>) {
         if text.is_empty() {
             return;
         }
