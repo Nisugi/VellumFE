@@ -35,6 +35,7 @@ thiserror = "2.0"
 dirs = "5.0"
 clap = { version = "4.5", features = ["derive"] }
 include_dir = "0.7"
+chrono = "0.4"
 
 # Logging
 tracing = "0.1"
