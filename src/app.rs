@@ -1480,7 +1480,7 @@ impl App {
             let mut adjustments: Vec<(String, i32)> = Vec::new();
             let mut leftover = height_delta;
 
-            tracing::debug!("HEIGHT DISTRIBUTION (col {}): height_delta={}, total_scalable_height={}", current_col, height_delta, total_scalable_height);
+            tracing::debug!("HEIGHT DISTRIBUTION (col {}-{}): height_delta={}, total_scalable_height={}", anchor_col, anchor_col_end, height_delta, total_scalable_height);
 
             // Distribute proportionally based on current size
             for (name, _row, rows, _cols) in &widgets_in_col {
@@ -5813,27 +5813,31 @@ impl App {
 
                 let key_event = re::KeyEvent::new(rkey, rmods);
                 if let Some(editor) = &mut browser.editor {
-                    if let Some((fg_opt, bg_opt)) = editor.handle_key(key_event) {
-                        // Editor returned a result (Save or Cancel)
-                        if fg_opt.is_none() && bg_opt.is_none() {
-                            // Cancel - just close editor
-                            browser.close_editor();
-                            self.add_system_message("Color edit cancelled");
-                        } else {
-                            // Save - update the entry and save to file
-                            if let Some((category, name, _old_fg, _old_bg)) = browser.save_editor() {
+                    if let Some(result) = editor.handle_key(key_event) {
+                        use crate::ui::UIColorEditorResult;
+                        match result {
+                            UIColorEditorResult::Cancel => {
+                                // Cancel - just close editor
+                                browser.close_editor();
+                                self.add_system_message("Color edit cancelled");
+                            }
+                            UIColorEditorResult::Save { fg: fg_opt, bg: bg_opt } => {
+                                // Save - update the entry and save to file
+                                if let Some((category, name, _old_fg, _old_bg)) = browser.save_editor() {
                                 // Update config based on category and name
                                 match category.as_str() {
                                     "UI" => {
                                         // Update UI color in config
+                                        // UI colors use fg field primarily, but fallback to bg field if fg is empty
+                                        let color_value = fg_opt.clone().or(bg_opt.clone()).unwrap_or_default();
                                         match name.as_str() {
-                                            "Background" => self.config.colors.ui.background_color = fg_opt.clone().unwrap_or_default(),
-                                            "Border" => self.config.colors.ui.border_color = fg_opt.clone().unwrap_or_default(),
-                                            "Command Echo" => self.config.colors.ui.command_echo_color = fg_opt.clone().unwrap_or_default(),
-                                            "Focused Border" => self.config.colors.ui.focused_border_color = fg_opt.clone().unwrap_or_default(),
-                                            "Text" => self.config.colors.ui.text_color = fg_opt.clone().unwrap_or_default(),
-                                            "Text Selection" => self.config.colors.ui.selection_bg_color = fg_opt.clone().unwrap_or_default(),
-                                            "Textarea Background" => self.config.colors.ui.textarea_background = fg_opt.clone().unwrap_or_default(),
+                                            "Background" => self.config.colors.ui.background_color = color_value,
+                                            "Border" => self.config.colors.ui.border_color = color_value.clone(),
+                                            "Command Echo" => self.config.colors.ui.command_echo_color = color_value.clone(),
+                                            "Focused Border" => self.config.colors.ui.focused_border_color = color_value.clone(),
+                                            "Text" => self.config.colors.ui.text_color = color_value.clone(),
+                                            "Text Selection" => self.config.colors.ui.selection_bg_color = color_value.clone(),
+                                            "Textarea Background" => self.config.colors.ui.textarea_background = color_value.clone(),
                                             _ => {}
                                         }
                                     }
@@ -5871,6 +5875,7 @@ impl App {
                                     *browser = crate::ui::UIColorsBrowser::new(&self.config.colors);
                                 }
                             }
+                            }
                         }
                     }
                 }
@@ -5903,14 +5908,16 @@ impl App {
                     }
                     (KeyCode::Enter, _) | (KeyCode::Char(' '), KeyModifiers::NONE) => {
                         // Open color editor for selected entry
-                        browser.open_editor();
+                        browser.open_editor(&self.config.colors.ui.textarea_background);
                     }
                     (KeyCode::Char('s'), KeyModifiers::CONTROL) | (KeyCode::Char('S'), KeyModifiers::CONTROL) => {
-                        // Save all colors to file
+                        // Save all colors to file and close browser
                         if let Err(e) = self.config.colors.save(self.config.character.as_deref()) {
                             self.add_system_message(&format!("Failed to save colors: {}", e));
                         } else {
                             self.add_system_message("Colors saved to colors.toml");
+                            self.uicolors_browser = None;
+                            self.input_mode = InputMode::Normal;
                         }
                     }
                     _ => {}

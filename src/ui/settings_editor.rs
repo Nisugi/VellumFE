@@ -507,7 +507,7 @@ impl SettingsEditor {
             };
 
             // Style guide format: "  Label:              [value in textarea_background]"
-            let textarea_bg = Self::parse_hex_color(&config.colors.ui.textarea_background).unwrap_or(Color::Rgb(64, 0, 0));
+            let textarea_bg = Self::parse_hex_color(&config.colors.ui.textarea_background).unwrap_or(Color::Reset);
             let label_color = if is_selected { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
             // Render label with indent (2 spaces)

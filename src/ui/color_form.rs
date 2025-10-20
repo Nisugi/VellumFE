@@ -292,13 +292,13 @@ impl ColorForm {
         }
 
         // Parse textarea background color from config
-        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex
         let textarea_bg = if config.colors.ui.textarea_background == "-" {
             Color::Reset
         } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
-            Color::Rgb(53, 5, 5) // Fallback to maroon
+            Color::Reset
         };
 
         // Clear the popup area to prevent bleed-through
@@ -392,7 +392,7 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        // Input style: maroon background, cyan text; focused -> gold/yellow
+        // Input style: background, cyan text; focused -> gold/yellow
         let base_style = Style::default().fg(Color::Cyan).bg(textarea_bg);
         let focused_style = Style::default().fg(Color::Black).bg(Color::Rgb(255, 215, 0)).add_modifier(Modifier::BOLD);
         textarea.set_style(if focused_field == field_id { focused_style } else { base_style });

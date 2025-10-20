@@ -125,23 +125,12 @@ impl KeybindFormWidget {
 
         match key.code {
             KeyCode::Tab => {
-                // Tab through fields: 0=Action, 1=Macro, 2=Key Combo, 3=Action/Macro field
+                // Tab: go forwards with wraparound
                 let max_field = 3;
-
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    // Shift+Tab: go backwards with wraparound
-                    if self.focused_field == 0 {
-                        self.focused_field = max_field;
-                    } else {
-                        self.focused_field -= 1;
-                    }
+                if self.focused_field >= max_field {
+                    self.focused_field = 0;
                 } else {
-                    // Tab: go forwards with wraparound
-                    if self.focused_field >= max_field {
-                        self.focused_field = 0;
-                    } else {
-                        self.focused_field += 1;
-                    }
+                    self.focused_field += 1;
                 }
                 None
             }

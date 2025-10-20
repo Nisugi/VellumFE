@@ -236,11 +236,11 @@ impl HighlightFormWidget {
 
         match key.code {
             KeyCode::Tab => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.focus_prev();
-                } else {
-                    self.focus_next();
-                }
+                self.focus_next();
+                None
+            }
+            KeyCode::BackTab => {
+                self.focus_prev();
                 None
             }
             KeyCode::Up if self.focused_field == 5 => {
@@ -523,41 +523,41 @@ impl HighlightFormWidget {
         let input_start = x + 2 + label_width;
 
         // Parse textarea background color from config
-        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
-        let maroon = if config.colors.ui.textarea_background == "-" {
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex
+        let txtbg = if config.colors.ui.textarea_background == "-" {
             Color::Reset
         } else if let Ok(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
-            Color::Rgb(64, 0, 0) // Fallback to dark maroon
+            Color::Reset
         };
 
         // Field 0: Name
-        self.render_text_row(0, "Name:", &self.name, "monster_kill", x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(0, "Name:", &self.name, "monster_kill", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 1: Pattern
-        self.render_text_row(1, "Pattern:", &self.pattern, "You swing.*at", x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(1, "Pattern:", &self.pattern, "You swing.*at", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 2: Category
-        self.render_text_row(2, "Category:", &self.category, "Combat", x + 2, current_y, input_start, 30, maroon, buf);
+        self.render_text_row(2, "Category:", &self.category, "Combat", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 3: Foreground (10 char + 1 space + 2 char preview)
-        self.render_color_row(3, "Foreground:", &self.fg_color, "#ff0000", x + 2, current_y, input_start, maroon, buf, config);
+        self.render_color_row(3, "Foreground:", &self.fg_color, "#ff0000", x + 2, current_y, input_start, txtbg, buf, config);
         current_y += 1;
 
         // Field 4: Background (10 char + 1 space + 2 char preview)
-        self.render_color_row(4, "Background:", &self.bg_color, "optional", x + 2, current_y, input_start, maroon, buf, config);
+        self.render_color_row(4, "Background:", &self.bg_color, "optional", x + 2, current_y, input_start, txtbg, buf, config);
         current_y += 1;
 
         // Field 5: Sound (dropdown)
-        self.render_sound_dropdown(x + 2, current_y, input_start, maroon, buf);
+        self.render_sound_dropdown(x + 2, current_y, input_start, txtbg, buf);
         current_y += 1;
 
         // Field 6: Volume
-        self.render_text_row(6, "Volume:", &self.sound_volume, "0.8", x + 2, current_y, input_start, 10, maroon, buf);
+        self.render_text_row(6, "Volume:", &self.sound_volume, "0.8", x + 2, current_y, input_start, 10, txtbg, buf);
         current_y += 2;
 
         // Checkboxes (Fields 7-9)

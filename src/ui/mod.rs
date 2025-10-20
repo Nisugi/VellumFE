@@ -72,7 +72,7 @@ pub use color_form::{ColorForm, FormAction as ColorFormAction};
 pub use spell_color_browser::SpellColorBrowser;
 pub use spell_color_form::{SpellColorFormWidget, SpellColorFormResult};
 pub use spacer::Spacer;
-pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColorEntryType};
+pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColorEntryType, UIColorEditorResult};
 
 use ratatui::{
     layout::Rect,

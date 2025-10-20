@@ -121,11 +121,24 @@ impl SoundPlayer {
         let sounds_dir = crate::config::Config::sounds_dir()
             .map_err(|e| anyhow::anyhow!("Failed to get sounds directory: {}", e))?;
 
-        let path = sounds_dir.join(filename);
+        let mut path = sounds_dir.join(filename);
 
+        // If file doesn't exist as-is, try common audio extensions
         if !path.exists() {
-            warn!("Sound file not found: {:?}", path);
-            return Ok(()); // Don't error, just skip
+            let extensions = ["mp3", "wav", "ogg", "flac"];
+            let mut found = false;
+            for ext in &extensions {
+                let path_with_ext = sounds_dir.join(format!("{}.{}", filename, ext));
+                if path_with_ext.exists() {
+                    path = path_with_ext;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                warn!("Sound file not found: {:?} (tried extensions: mp3, wav, ogg, flac)", sounds_dir.join(filename));
+                return Ok(()); // Don't error, just skip
+            }
         }
 
         self.play(&path, volume_override, filename)

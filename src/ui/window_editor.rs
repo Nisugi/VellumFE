@@ -1043,25 +1043,14 @@ impl WindowEditor {
                 })
             },
             KeyCode::Tab => {
+                // Forward
                 let tab_order = self.get_tab_order();
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    // Backward
-                    if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
-                        self.focused_field = if pos == 0 {
-                            tab_order[tab_order.len() - 1]
-                        } else {
-                            tab_order[pos - 1]
-                        };
-                    }
-                } else {
-                    // Forward
-                    if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
-                        self.focused_field = if pos >= tab_order.len() - 1 {
-                            tab_order[0]
-                        } else {
-                            tab_order[pos + 1]
-                        };
-                    }
+                if let Some(pos) = tab_order.iter().position(|&f| f == self.focused_field) {
+                    self.focused_field = if pos >= tab_order.len() - 1 {
+                        tab_order[0]
+                    } else {
+                        tab_order[pos + 1]
+                    };
                 }
                 None
             },

@@ -16,6 +16,12 @@ pub enum UIColorEntryType {
 }
 
 #[derive(Clone, Debug)]
+pub enum UIColorEditorResult {
+    Save { fg: Option<String>, bg: Option<String> },
+    Cancel,
+}
+
+#[derive(Clone, Debug)]
 pub struct UIColorEntry {
     pub name: String,
     pub category: String,
@@ -36,10 +42,11 @@ pub struct UIColorEditor {
     pub dragging: bool,
     drag_offset_x: u16,
     drag_offset_y: u16,
+    textarea_bg_color: Color,
 }
 
 impl UIColorEditor {
-    pub fn new(entry: &UIColorEntry) -> Self {
+    pub fn new(entry: &UIColorEntry, textarea_bg: &str) -> Self {
         let mut color_fg = TextArea::default();
         if let Some(fg) = &entry.fg_color {
             color_fg.insert_str(fg);
@@ -49,6 +56,13 @@ impl UIColorEditor {
         if let Some(bg) = &entry.bg_color {
             color_bg.insert_str(bg);
         }
+
+        // Parse textarea background color
+        let textarea_bg_color = if textarea_bg == "-" {
+            Color::Reset
+        } else {
+            Self::parse_color_static(textarea_bg)
+        };
 
         Self {
             asset_name: entry.name.clone(),
@@ -60,28 +74,45 @@ impl UIColorEditor {
             dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
+            textarea_bg_color,
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<(Option<String>, Option<String>)> {
+    fn parse_color_static(color_str: &str) -> Color {
+        if color_str.is_empty() {
+            return Color::Reset;
+        }
+        if color_str.starts_with('#') && color_str.len() >= 7 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                u8::from_str_radix(&color_str[1..3], 16),
+                u8::from_str_radix(&color_str[3..5], 16),
+                u8::from_str_radix(&color_str[5..7], 16),
+            ) {
+                return Color::Rgb(r, g, b);
+            }
+        }
+        Color::Reset
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<UIColorEditorResult> {
         match key.code {
-            KeyCode::Esc => return Some((None, None)), // Cancel
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Esc => return Some(UIColorEditorResult::Cancel),
+            KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Save
                 let fg = self.color_fg.lines()[0].trim();
                 let bg = self.color_bg.lines()[0].trim();
-                return Some((
-                    if fg.is_empty() { None } else { Some(fg.to_string()) },
-                    if bg.is_empty() { None } else { Some(bg.to_string()) },
-                ));
-            }
-            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                // Shift+Tab: previous field
-                self.focused_field = if self.focused_field == 0 { 1 } else { 0 };
+                return Some(UIColorEditorResult::Save {
+                    fg: if fg.is_empty() { None } else { Some(fg.to_string()) },
+                    bg: if bg.is_empty() { None } else { Some(bg.to_string()) },
+                });
             }
             KeyCode::Tab => {
                 // Tab: next field
                 self.focused_field = if self.focused_field == 1 { 0 } else { 1 };
+            }
+            KeyCode::BackTab => {
+                // Shift+Tab: previous field
+                self.focused_field = if self.focused_field == 0 { 1 } else { 0 };
             }
             KeyCode::Up => {
                 self.focused_field = if self.focused_field == 0 { 1 } else { 0 };
@@ -219,8 +250,8 @@ impl UIColorEditor {
         // 6 spaces after "Color:"
         let textarea_start = x + 1 + 8 + 6; // "  Color:" = 8 chars, + 6 spaces = col 15
 
-        // Color FG textarea (10 chars, dark maroon, no focus highlight)
-        let fg_style = Style::default().fg(Color::White).bg(Color::Rgb(64, 0, 0));
+        // Color FG textarea (10 chars, textarea_bg_color, no focus highlight)
+        let fg_style = Style::default().fg(Color::White).bg(self.textarea_bg_color);
         let fg_text = self.color_fg.lines()[0].clone();
         for i in 0..10 {
             let ch = fg_text.chars().nth(i).unwrap_or(' ');
@@ -258,8 +289,8 @@ impl UIColorEditor {
         // 6 spaces after "Background:" (which is 13 chars, so textarea starts at col 20)
         let bg_textarea_start = x + 1 + 13 + 1; // "  Background:" = 13 chars, + 1 spaces = col 15
 
-        // Color BG textarea (10 chars, dark maroon, no focus highlight)
-        let bg_style = Style::default().fg(Color::White).bg(Color::Rgb(64, 0, 0));
+        // Color BG textarea (10 chars, textarea_bg_color, no focus highlight)
+        let bg_style = Style::default().fg(Color::White).bg(self.textarea_bg_color);
         let bg_text = self.color_bg.lines()[0].clone();
         for i in 0..10 {
             let ch = bg_text.chars().nth(i).unwrap_or(' ');
@@ -282,7 +313,7 @@ impl UIColorEditor {
         }
 
         // Footer (one line above the bottom border)
-        let footer = " Ctrl+Enter:Save | Tab:Next Field | Esc:Cancel ";
+        let footer = " Ctrl+S:Save | Tab:Next Field | Esc:Cancel ";
         let footer_x = x + (width - footer.len() as u16) / 2;
         for (i, ch) in footer.chars().enumerate() {
             buf.get_mut(footer_x + i as u16, y + height - 2)
@@ -485,9 +516,9 @@ impl UIColorsBrowser {
         }
     }
 
-    pub fn open_editor(&mut self) {
+    pub fn open_editor(&mut self, textarea_bg: &str) {
         if let Some(entry) = self.entries.get(self.selected_index) {
-            self.editor = Some(UIColorEditor::new(entry));
+            self.editor = Some(UIColorEditor::new(entry, textarea_bg));
         }
     }
 
