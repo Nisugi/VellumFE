@@ -152,41 +152,44 @@ impl Widget {
         }
     }
 
-    /// Search methods - only work for Text windows
+    /// Search methods - work for Text and Tabbed windows
     pub fn start_search(&mut self, pattern: &str) -> Result<usize, regex::Error> {
         match self {
             Widget::Text(w) => w.start_search(pattern),
+            Widget::Tabbed(w) => w.start_search(pattern),
             _ => Ok(0), // Non-text widgets don't support search
         }
     }
 
     pub fn clear_search(&mut self) {
-        if let Widget::Text(w) = self {
-            w.clear_search();
+        match self {
+            Widget::Text(w) => w.clear_search(),
+            Widget::Tabbed(w) => w.clear_search(),
+            _ => {}
         }
     }
 
     pub fn next_match(&mut self) -> bool {
-        if let Widget::Text(w) = self {
-            w.next_match()
-        } else {
-            false
+        match self {
+            Widget::Text(w) => w.next_match(),
+            Widget::Tabbed(w) => w.next_match(),
+            _ => false,
         }
     }
 
     pub fn prev_match(&mut self) -> bool {
-        if let Widget::Text(w) = self {
-            w.prev_match()
-        } else {
-            false
+        match self {
+            Widget::Text(w) => w.prev_match(),
+            Widget::Tabbed(w) => w.prev_match(),
+            _ => false,
         }
     }
 
     pub fn search_info(&self) -> Option<(usize, usize)> {
-        if let Widget::Text(w) = self {
-            w.search_info()
-        } else {
-            None
+        match self {
+            Widget::Text(w) => w.search_info(),
+            Widget::Tabbed(w) => w.search_info(),
+            _ => None,
         }
     }
 

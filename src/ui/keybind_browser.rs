@@ -75,8 +75,8 @@ impl KeybindBrowser {
             selected_index: 0,
             scroll_offset: 0,
             num_sections,
-            popup_x: 10,
-            popup_y: 2,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -183,9 +183,15 @@ impl KeybindBrowser {
         false
     }
 
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let width = 70;
         let height = 20;
+
+        // Center on first render
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(width)) / 2;
+            self.popup_y = (area.height.saturating_sub(height)) / 2;
+        }
 
         let x = self.popup_x;
         let y = self.popup_y;
@@ -305,21 +311,52 @@ impl KeybindBrowser {
             let is_selected = idx == self.selected_index;
             let current_y = list_y + render_row as u16;
 
-            // Format: [key_combo] type: value
-            let entry_text = format!("[{}] {}: {}", entry.key_combo, entry.action_type, entry.action_value);
-            let available_width = (width - 2) as usize; // Account for padding
-            let display_text = if entry_text.len() > available_width {
-                format!("{}...", &entry_text[..available_width.saturating_sub(3)])
+            // Format as 3 columns: Key (20 chars) | Type (10 chars) | Value (remaining)
+            let key_width = 20;
+            let type_width = 10;
+            let value_start = key_width + type_width;
+            let value_width = (width as usize).saturating_sub(value_start + 4); // -4 for borders and padding
+
+            // Truncate or pad key combo
+            let key_text = if entry.key_combo.len() > key_width {
+                format!("{}...", &entry.key_combo[..key_width.saturating_sub(3)])
             } else {
-                entry_text
+                format!("{:<width$}", entry.key_combo, width = key_width)
+            };
+
+            // Type column (Action/Macro)
+            let type_text = format!("{:<width$}", entry.action_type, width = type_width);
+
+            // Truncate value if needed
+            let value_text = if entry.action_value.len() > value_width {
+                format!("{}...", &entry.action_value[..value_width.saturating_sub(3)])
+            } else {
+                entry.action_value.clone()
             };
 
             let entry_color = if is_selected { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
-            // Render entry text
-            for (i, ch) in display_text.chars().enumerate() {
-                if (x + 1 + i as u16) < (x + width - 1) {
-                    buf[(x + 1 + i as u16, current_y)].set_char(ch).set_fg(entry_color).set_bg(Color::Black);
+            // Render key combo column
+            let key_x = x + 2;
+            for (i, ch) in key_text.chars().enumerate() {
+                if (key_x + i as u16) < (x + width - 1) {
+                    buf[(key_x + i as u16, current_y)].set_char(ch).set_fg(entry_color).set_bg(Color::Black);
+                }
+            }
+
+            // Render type column
+            let type_x = key_x + key_width as u16;
+            for (i, ch) in type_text.chars().enumerate() {
+                if (type_x + i as u16) < (x + width - 1) {
+                    buf[(type_x + i as u16, current_y)].set_char(ch).set_fg(entry_color).set_bg(Color::Black);
+                }
+            }
+
+            // Render value column
+            let value_x = type_x + type_width as u16;
+            for (i, ch) in value_text.chars().enumerate() {
+                if (value_x + i as u16) < (x + width - 1) {
+                    buf[(value_x + i as u16, current_y)].set_char(ch).set_fg(entry_color).set_bg(Color::Black);
                 }
             }
 

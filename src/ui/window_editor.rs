@@ -3,7 +3,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
+    widgets::{Block, Borders, Clear, Paragraph, Widget as RatatuiWidget},
 };
 use tui_textarea::TextArea;
 // use std::collections::HashMap; // unused
@@ -197,8 +197,8 @@ impl WindowEditor {
         Self {
             mode: EditorMode::SelectingWindow,
             active: false,
-            popup_x: 5,
-            popup_y: 1,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -1535,6 +1535,12 @@ impl WindowEditor {
         let popup_width = 70;
         let popup_height = 20;
 
+        // Center on first render
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        }
+
         // Clamp position to screen bounds
         self.popup_x = self.popup_x.min(area.width.saturating_sub(popup_width));
         self.popup_y = self.popup_y.min(area.height.saturating_sub(popup_height));
@@ -1545,6 +1551,9 @@ impl WindowEditor {
             width: popup_width,
             height: popup_height,
         };
+
+        // Clear the popup area to prevent bleed-through
+        Clear.render(popup_area, buf);
 
         // Fill background with black
         for y in popup_area.y..popup_area.y + popup_area.height {

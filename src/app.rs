@@ -183,14 +183,62 @@ enum ResizeEdge {
 }
 
 impl App {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(mut config: Config) -> Result<Self> {
         // Load layout (separate from config)
         // Get terminal size for layout auto-selection
         let terminal_size = crossterm::terminal::size().ok();
 
+        // Resolve UI color fields (including textarea_background)
+        // Keep "-" as-is to signal "no background color" - don't convert to any default
+        if config.colors.ui.textarea_background != "-" && !config.colors.ui.textarea_background.is_empty() {
+            if let Some(resolved) = config.resolve_color(&config.colors.ui.textarea_background.clone()) {
+                config.colors.ui.textarea_background = resolved;
+            }
+            // If resolve_color returns None (for invalid names), keep original value
+        }
+
         // Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
-        let (layout, base_layout_name) = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
+        let (mut layout, base_layout_name) = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
         info!("Loaded layout with {} windows (base: {:?})", layout.windows.len(), base_layout_name);
+
+        // Resolve color names to hex codes (including converting "-" to None)
+        for window in &mut layout.windows {
+            let mut resolve_opt = |v: &mut Option<String>| {
+                if let Some(ref s) = v.clone() {
+                    *v = config.resolve_color(s);
+                }
+            };
+
+            resolve_opt(&mut window.border_color);
+            resolve_opt(&mut window.background_color);
+            resolve_opt(&mut window.bar_color);
+            resolve_opt(&mut window.bar_background_color);
+            resolve_opt(&mut window.text_color);
+            resolve_opt(&mut window.tab_active_color);
+            resolve_opt(&mut window.tab_inactive_color);
+            resolve_opt(&mut window.tab_unread_color);
+            resolve_opt(&mut window.compass_active_color);
+            resolve_opt(&mut window.compass_inactive_color);
+            resolve_opt(&mut window.effect_default_color);
+            resolve_opt(&mut window.injury_default_color);
+            resolve_opt(&mut window.injury1_color);
+            resolve_opt(&mut window.injury2_color);
+            resolve_opt(&mut window.injury3_color);
+            resolve_opt(&mut window.scar1_color);
+            resolve_opt(&mut window.scar2_color);
+            resolve_opt(&mut window.scar3_color);
+
+            if let Some(ref mut vec_colors) = window.indicator_colors {
+                for c in vec_colors.iter_mut() {
+                    if let Some(resolved) = config.resolve_color(c) {
+                        *c = resolved;
+                    } else {
+                        // If resolved to None, clear the string (will be handled as default)
+                        c.clear();
+                    }
+                }
+            }
+        }
 
         // Clone layout as baseline for resize calculations (before any modifications)
         let baseline_layout = layout.clone();
@@ -3958,7 +4006,7 @@ impl App {
                 }
 
                 // Render color palette browser as popup (if open)
-                if let Some(ref browser) = self.color_palette_browser {
+                if let Some(ref mut browser) = self.color_palette_browser {
                     browser.render(f.area(), f.buffer_mut());
                 }
 
@@ -3968,7 +4016,7 @@ impl App {
                 }
 
                 // Render spell color browser as popup (if open)
-                if let Some(ref browser) = self.spell_color_browser {
+                if let Some(ref mut browser) = self.spell_color_browser {
                     browser.render(f.area(), f.buffer_mut());
                 }
 
@@ -5213,14 +5261,14 @@ impl App {
                     // Delete selected color
                     if let Some(color_name) = browser.get_selected() {
                         // Remove from config
-                        self.config.color_palette.retain(|c| c.name != color_name);
+                        self.config.colors.color_palette.retain(|c| c.name != color_name);
 
                         // Save config
                         if let Err(e) = self.config.save(self.config.character.as_deref()) {
                             message_to_send = Some(format!("Failed to save config: {}", e));
                         } else {
                             // Refresh browser with updated palette
-                            *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                            *browser = crate::ui::ColorPaletteBrowser::new(self.config.colors.color_palette.clone());
                             message_to_send = Some(format!("Deleted color: {}", color_name));
                         }
                     }
@@ -5229,7 +5277,7 @@ impl App {
                     // Toggle favorite
                     browser.toggle_favorite();
                     // Save config with updated palette
-                    self.config.color_palette = browser.get_colors().clone();
+                    self.config.colors.color_palette = browser.get_colors().clone();
                     if let Err(e) = self.config.save(self.config.character.as_deref()) {
                         message_to_send = Some(format!("Failed to save config: {}", e));
                     }
@@ -5270,21 +5318,21 @@ impl App {
                         if let Some(ref old_name) = original_name {
                             if old_name != &color.name {
                                 // Remove old color
-                                self.config.color_palette.retain(|c| &c.name != old_name);
+                                self.config.colors.color_palette.retain(|c| &c.name != old_name);
                             } else {
                                 // Just updating existing color
-                                self.config.color_palette.retain(|c| c.name != color.name);
+                                self.config.colors.color_palette.retain(|c| c.name != color.name);
                             }
                         } else {
                             // Check for duplicate name when creating new
-                            if self.config.color_palette.iter().any(|c| c.name == color.name) {
+                            if self.config.colors.color_palette.iter().any(|c| c.name == color.name) {
                                 self.add_system_message(&format!("Color '{}' already exists", color.name));
                                 return Ok(());
                             }
                         }
 
                         // Add the color
-                        self.config.color_palette.push(color.clone());
+                        self.config.colors.color_palette.push(color.clone());
 
                         // Save config
                         if let Err(e) = self.config.save(self.config.character.as_deref()) {
@@ -5296,7 +5344,7 @@ impl App {
 
                             // Refresh browser if it's open
                             if let Some(ref mut browser) = self.color_palette_browser {
-                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.colors.color_palette.clone());
                             }
 
                             let action_verb = if original_name.is_some() { "Updated" } else { "Added" };
@@ -5317,7 +5365,7 @@ impl App {
                         };
 
                         // Delete the color
-                        self.config.color_palette.retain(|c| c.name != name);
+                        self.config.colors.color_palette.retain(|c| c.name != name);
 
                         // Save config
                         if let Err(e) = self.config.save(self.config.character.as_deref()) {
@@ -5329,7 +5377,7 @@ impl App {
 
                             // Refresh browser if it's open
                             if let Some(ref mut browser) = self.color_palette_browser {
-                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.color_palette.clone());
+                                *browser = crate::ui::ColorPaletteBrowser::new(self.config.colors.color_palette.clone());
                             }
 
                             self.add_system_message(&format!("Deleted color: {}", name));
@@ -7535,10 +7583,6 @@ impl App {
                                 &id
                             };
 
-                            // Get window dimensions BEFORE borrowing window mutably
-                            let window_width = self.window_manager.get_window_width(&id).unwrap_or(20);
-                            let has_border = self.window_manager.get_window_border(&id).unwrap_or(true);
-
                             if let Some(window) = self.window_manager.get_window(window_id) {
                                 // Special handling for encumbrance - change color based on value
                                 if id == "encumlevel" {
@@ -7562,29 +7606,9 @@ impl App {
                                 } else {
                                     // value is percentage (0-100), max is 100
                                     // text contains display text like "mana 407/407" or "clear as a bell"
-
-                                    // Determine display text based on available width
-                                    let display_text = if text.contains('/') {
-                                        let available_width = if has_border {
-                                            window_width.saturating_sub(2)
-                                        } else {
-                                            window_width
-                                        };
-
-                                        // Try full text first (e.g., "Health 350/357")
-                                        if text.len() as u16 <= available_width {
-                                            text.clone()
-                                        } else {
-                                            // Strip prefix if too long (e.g., "350/357")
-                                            text.split_whitespace().skip(1).collect::<Vec<_>>().join(" ")
-                                        }
-                                    } else {
-                                        // Custom text like "clear as a bell" - use as-is
-                                        text.clone()
-                                    };
-
-                                    if !display_text.is_empty() {
-                                        window.set_progress_with_text(value, max, Some(display_text.clone()));
+                                    // Let the progress bar widget handle text stripping based on numbers_only setting
+                                    if !text.is_empty() {
+                                        window.set_progress_with_text(value, max, Some(text.clone()));
                                     } else {
                                         window.set_progress(value, max);
                                     }
@@ -8444,7 +8468,7 @@ impl App {
     fn open_color_palette_browser(&mut self) {
         use crate::ui::ColorPaletteBrowser;
 
-        let browser = ColorPaletteBrowser::new(self.config.color_palette.clone());
+        let browser = ColorPaletteBrowser::new(self.config.colors.color_palette.clone());
         self.color_palette_browser = Some(browser);
         self.input_mode = InputMode::ColorPaletteBrowser;
         self.add_system_message("Opening color palette (Up/Down to navigate, Enter to edit, F to favorite, / to filter, Esc to close)");

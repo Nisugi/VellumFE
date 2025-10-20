@@ -134,8 +134,8 @@ impl HighlightFormWidget {
             mode: FormMode::Create,
             sound_files: Self::load_sound_files(),
             sound_file_index: 0, // Default to "none"
-            popup_x: 10,
-            popup_y: 2,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -523,7 +523,10 @@ impl HighlightFormWidget {
         let input_start = x + 2 + label_width;
 
         // Parse textarea background color from config
-        let maroon = if let Ok(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
+        let maroon = if config.colors.ui.textarea_background == "-" {
+            Color::Reset
+        } else if let Ok(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
             Color::Rgb(64, 0, 0) // Fallback to dark maroon

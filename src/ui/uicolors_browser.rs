@@ -3,6 +3,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 use tui_textarea::TextArea;
 use crate::config::ColorConfig;
@@ -145,6 +146,10 @@ impl UIColorEditor {
         let y = self.popup_y;
         let width = POPUP_WIDTH;
         let height = POPUP_HEIGHT;
+
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect { x, y, width, height };
+        Clear.render(popup_area, buf);
 
         // Black background
         for row in 0..height {
@@ -537,6 +542,10 @@ impl UIColorsBrowser {
 
         let x = self.popup_x;
         let y = self.popup_y;
+
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect { x, y, width: self.width, height: self.height };
+        Clear.render(popup_area, buf);
 
         // Draw black background
         for row in 0..self.height {

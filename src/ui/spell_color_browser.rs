@@ -3,6 +3,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 use crate::config::SpellColorRange;
 
@@ -42,7 +43,7 @@ impl SpellColorBrowser {
             entries,
             selected_index: 0,
             scroll_offset: 0,
-            popup_position: (10, 2),
+            popup_position: (0, 0),
             is_dragging: false,
             drag_offset: (0, 0),
         }
@@ -162,10 +163,27 @@ impl SpellColorBrowser {
         false
     }
 
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (popup_col, popup_row) = self.popup_position;
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let popup_width = 70;
         let popup_height = 20;
+
+        // Center on first render
+        if self.popup_position == (0, 0) {
+            let centered_x = (area.width.saturating_sub(popup_width)) / 2;
+            let centered_y = (area.height.saturating_sub(popup_height)) / 2;
+            self.popup_position = (centered_x, centered_y);
+        }
+
+        let (popup_col, popup_row) = self.popup_position;
+
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect {
+            x: popup_col,
+            y: popup_row,
+            width: popup_width,
+            height: popup_height,
+        };
+        Clear.render(popup_area, buf);
 
         // Draw black background
         for row in popup_row..popup_row + popup_height {

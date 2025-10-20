@@ -4,7 +4,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget as RatatuiWidget, Block, Borders},
+    widgets::{Clear, Paragraph, Widget as RatatuiWidget, Block, Borders},
 };
 use tui_textarea::TextArea;
 use crate::config::SpellColorRange;
@@ -59,7 +59,7 @@ impl SpellColorFormWidget {
             bar_color,
             text_color,
             bg_color,
-            popup_position: (10, 2),
+            popup_position: (0, 0),
             is_dragging: false,
             drag_offset: (0, 0),
         }
@@ -93,7 +93,7 @@ impl SpellColorFormWidget {
             bar_color,
             text_color,
             bg_color,
-            popup_position: (10, 2),
+            popup_position: (0, 0),
             is_dragging: false,
             drag_offset: (0, 0),
         }
@@ -350,16 +350,36 @@ impl SpellColorFormWidget {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
-        let (popup_col, popup_row) = self.popup_position;
         let popup_width = 52;
         let popup_height = 9;
 
+        // Center on first render
+        if self.popup_position == (0, 0) {
+            let centered_x = (area.width.saturating_sub(popup_width)) / 2;
+            let centered_y = (area.height.saturating_sub(popup_height)) / 2;
+            self.popup_position = (centered_x, centered_y);
+        }
+
+        let (popup_col, popup_row) = self.popup_position;
+
         // Parse textarea background color from config
-        let textarea_bg = if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
+        let textarea_bg = if config.colors.ui.textarea_background == "-" {
+            Color::Reset
+        } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
             Color::Rgb(53, 5, 5) // Fallback to maroon
         };
+
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect {
+            x: popup_col,
+            y: popup_row,
+            width: popup_width,
+            height: popup_height,
+        };
+        Clear.render(popup_area, buf);
 
         // Draw black background
         for row in popup_row..popup_row + popup_height {

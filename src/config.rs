@@ -9,6 +9,8 @@ use include_dir::{include_dir, Dir};
 // Embed default configuration files at compile time
 const DEFAULT_CONFIG: &str = include_str!("../defaults/config.toml");
 const DEFAULT_COLORS: &str = include_str!("../defaults/colors.toml");
+const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/highlights.toml");
+const DEFAULT_KEYBINDS: &str = include_str!("../defaults/keybinds.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
 
 // Embed entire directories - automatically includes all files
@@ -22,22 +24,20 @@ const LAYOUT_DEFAULT: &str = include_str!("../defaults/layouts/layout.toml");
 pub struct Config {
     pub connection: ConnectionConfig,
     pub ui: UiConfig,
-    #[serde(default)]
+    #[serde(skip)]  // Loaded from separate highlights.toml file
     pub highlights: HashMap<String, HighlightPattern>,
-    #[serde(default)]
+    #[serde(skip)]  // Loaded from separate keybinds.toml file
     pub keybinds: HashMap<String, KeyBindAction>,
     #[serde(default)]
     pub sound: SoundConfig,
     #[serde(default)]
     pub event_patterns: HashMap<String, EventPattern>,
     #[serde(default)]
-    pub color_palette: Vec<PaletteColor>,
-    #[serde(default)]
     pub layout_mappings: Vec<LayoutMapping>,
     #[serde(skip)]  // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>,  // Character name for character-specific saving
-    #[serde(skip)]  // Loaded from separate colors.toml file
-    pub colors: ColorConfig,  // All color configuration (presets, prompt_colors, ui colors, spell colors)
+    #[serde(skip)]  // Loaded from separate colors.toml file (includes color_palette)
+    pub colors: ColorConfig,  // All color configuration (presets, prompt_colors, ui colors, spell colors, color_palette)
 }
 
 /// Terminal size range to layout mapping
@@ -160,6 +160,9 @@ pub struct ColorConfig {
     // Spell colors are managed by .addspellcolor/.spellcolors but stored here
     #[serde(default)]
     pub spell_colors: Vec<SpellColorRange>,
+    // Color palette for .colors browser
+    #[serde(default)]
+    pub color_palette: Vec<PaletteColor>,
 }
 
 impl Default for UiColors {
@@ -186,6 +189,7 @@ impl Default for ColorConfig {
                 prompt_colors: Vec::new(),
                 ui: UiColors::default(),
                 spell_colors: Vec::new(),
+                color_palette: Vec::new(),
             }
         })
     }
@@ -199,8 +203,15 @@ impl ColorConfig {
         if colors_path.exists() {
             let contents = fs::read_to_string(&colors_path)
                 .context("Failed to read colors.toml")?;
-            let colors: ColorConfig = toml::from_str(&contents)
+            let mut colors: ColorConfig = toml::from_str(&contents)
                 .context("Failed to parse colors.toml")?;
+
+            // Merge defaults for missing color_palette (for backward compatibility)
+            if colors.color_palette.is_empty() {
+                let defaults = Self::default();
+                colors.color_palette = defaults.color_palette;
+            }
+
             Ok(colors)
         } else {
             // Return default if file doesn't exist (will be created by extract_defaults)
@@ -215,6 +226,61 @@ impl ColorConfig {
             .context("Failed to serialize colors")?;
         fs::write(&colors_path, contents)
             .context("Failed to write colors.toml")?;
+        Ok(())
+    }
+}
+
+/// Helper functions for loading/saving highlights and keybinds
+impl Config {
+    /// Load highlights from highlights.toml for a character
+    fn load_highlights(character: Option<&str>) -> Result<HashMap<String, HighlightPattern>> {
+        let highlights_path = Self::highlights_path(character)?;
+
+        if highlights_path.exists() {
+            let contents = fs::read_to_string(&highlights_path)
+                .context("Failed to read highlights.toml")?;
+            let highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
+                .context("Failed to parse highlights.toml")?;
+            Ok(highlights)
+        } else {
+            // Return defaults from embedded file
+            Ok(toml::from_str(DEFAULT_HIGHLIGHTS).unwrap_or_default())
+        }
+    }
+
+    /// Save highlights to highlights.toml for a character
+    fn save_highlights(&self, character: Option<&str>) -> Result<()> {
+        let highlights_path = Self::highlights_path(character)?;
+        let contents = toml::to_string_pretty(&self.highlights)
+            .context("Failed to serialize highlights")?;
+        fs::write(&highlights_path, contents)
+            .context("Failed to write highlights.toml")?;
+        Ok(())
+    }
+
+    /// Load keybinds from keybinds.toml for a character
+    fn load_keybinds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+        let keybinds_path = Self::keybinds_path(character)?;
+
+        if keybinds_path.exists() {
+            let contents = fs::read_to_string(&keybinds_path)
+                .context("Failed to read keybinds.toml")?;
+            let keybinds: HashMap<String, KeyBindAction> = toml::from_str(&contents)
+                .context("Failed to parse keybinds.toml")?;
+            Ok(keybinds)
+        } else {
+            // Return defaults from embedded file
+            Ok(toml::from_str(DEFAULT_KEYBINDS).unwrap_or_else(|_| default_keybinds()))
+        }
+    }
+
+    /// Save keybinds to keybinds.toml for a character
+    fn save_keybinds(&self, character: Option<&str>) -> Result<()> {
+        let keybinds_path = Self::keybinds_path(character)?;
+        let contents = toml::to_string_pretty(&self.keybinds)
+            .context("Failed to serialize keybinds")?;
+        fs::write(&keybinds_path, contents)
+            .context("Failed to write keybinds.toml")?;
         Ok(())
     }
 }
@@ -1007,7 +1073,7 @@ fn default_selection_bg_color() -> String {
 }
 
 fn default_textarea_background() -> String {
-    "#400000".to_string() // dark maroon
+    "-".to_string() // No background color (terminal default)
 }
 
 fn default_drag_modifier_key() -> String {
@@ -1970,7 +2036,7 @@ impl Config {
 
         // Look up in palette
         let color_lower = color_input.to_lowercase();
-        for palette_color in &self.color_palette {
+        for palette_color in &self.colors.color_palette {
             if palette_color.name.to_lowercase() == color_lower {
                 return Some(palette_color.color.clone());
             }
@@ -3915,6 +3981,22 @@ impl Config {
             tracing::info!("Extracted colors.toml to {:?}", colors_path);
         }
 
+        // Extract highlights.toml to profile (if it doesn't exist)
+        let highlights_path = profile.join("highlights.toml");
+        if !highlights_path.exists() {
+            fs::write(&highlights_path, DEFAULT_HIGHLIGHTS)
+                .context("Failed to write highlights.toml")?;
+            tracing::info!("Extracted highlights.toml to {:?}", highlights_path);
+        }
+
+        // Extract keybinds.toml to profile (if it doesn't exist)
+        let keybinds_path = profile.join("keybinds.toml");
+        if !keybinds_path.exists() {
+            fs::write(&keybinds_path, DEFAULT_KEYBINDS)
+                .context("Failed to write keybinds.toml")?;
+            tracing::info!("Extracted keybinds.toml to {:?}", keybinds_path);
+        }
+
         // Create empty history.txt in profile (if it doesn't exist)
         let history_path = profile.join("history.txt");
         if !history_path.exists() {
@@ -3945,20 +4027,10 @@ impl Config {
         // Store character name for later saves
         config.character = character.map(|s| s.to_string());
 
-        // Load colors from separate colors.toml file
+        // Load from separate files
         config.colors = ColorConfig::load(character)?;
-
-        // If keybinds is empty, populate with defaults
-        if config.keybinds.is_empty() {
-            config.keybinds = default_keybinds();
-        }
-
-        // If color_palette is empty, populate with defaults from embedded config
-        if config.color_palette.is_empty() {
-            if let Ok(default_config) = toml::from_str::<Config>(DEFAULT_CONFIG) {
-                config.color_palette = default_config.color_palette;
-            }
-        }
+        config.highlights = Self::load_highlights(character)?;
+        config.keybinds = Self::load_keybinds(character)?;
 
         Ok(config)
     }
@@ -3973,10 +4045,16 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
+        // Save main config (without highlights, keybinds, colors, color_palette - those are skipped)
         let contents = toml::to_string_pretty(self)
             .context("Failed to serialize config")?;
         fs::write(&config_path, contents)
             .context("Failed to write config file")?;
+
+        // Save to separate files
+        self.colors.save(char_name)?;
+        self.save_highlights(char_name)?;
+        self.save_keybinds(char_name)?;
 
         Ok(())
     }
@@ -4045,6 +4123,12 @@ impl Config {
         Ok(Self::profile_dir(character)?.join("highlights.toml"))
     }
 
+    /// Get path to keybinds.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/keybinds.toml
+    pub fn keybinds_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("keybinds.toml"))
+    }
+
     /// List all saved layouts
     pub fn list_layouts() -> Result<Vec<String>> {
         let layouts_dir = Self::config_dir()?.join("layouts");
@@ -4110,63 +4194,11 @@ impl Default for Config {
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
             },
-            highlights: {
-                let mut map = HashMap::new();
-                // Example: Fast highlight for multiple player names (ultra-fast with Aho-Corasick)
-                map.insert("friends".to_string(), HighlightPattern {
-                    pattern: "Alice|Bob|Charlie|David|Eve|Frank".to_string(),
-                    category: Some("Social".to_string()),
-                    fg: Some("#ff00ff".to_string()),
-                    bg: None,
-                    bold: true,
-                    color_entire_line: false,
-                    fast_parse: true,
-                    sound: None,
-                    sound_volume: None,
-                });
-                // Example: Highlight your combat actions in red (partial line, regex)
-                map.insert("swing".to_string(), HighlightPattern {
-                    pattern: r"You swing.*".to_string(),
-                    category: Some("Combat".to_string()),
-                    fg: Some("#ff0000".to_string()),
-                    bg: None,
-                    bold: true,
-                    color_entire_line: false,
-                    fast_parse: false,
-                    sound: None,
-                    sound_volume: None,
-                });
-                // Example: Highlight damage numbers in yellow (partial line, regex)
-                map.insert("damage".to_string(), HighlightPattern {
-                    pattern: r"\d+ points? of damage".to_string(),
-                    category: Some("Combat".to_string()),
-                    fg: Some("#ffff00".to_string()),
-                    bg: None,
-                    bold: true,
-                    color_entire_line: false,
-                    fast_parse: false,
-                    sound: None,
-                    sound_volume: None,
-                });
-                // Example: Highlight death messages with bright background (whole line, regex)
-                map.insert("death".to_string(), HighlightPattern {
-                    pattern: r".*dies.*".to_string(),
-                    category: Some("Combat".to_string()),
-                    fg: Some("#ffffff".to_string()),
-                    bg: Some("#ff0000".to_string()),
-                    bold: true,
-                    color_entire_line: true,
-                    fast_parse: false,
-                    sound: None,
-                    sound_volume: None,
-                });
-                map
-            },
-            keybinds: default_keybinds(),
-            colors: ColorConfig::default(),
+            highlights: HashMap::new(),  // Loaded from highlights.toml
+            keybinds: HashMap::new(),  // Loaded from keybinds.toml
+            colors: ColorConfig::default(),  // Loaded from colors.toml
             sound: SoundConfig::default(),
             event_patterns: HashMap::new(),  // Empty by default - user adds via config
-            color_palette: Vec::new(),  // Empty by default - loaded from embedded defaults
             layout_mappings: Vec::new(),  // Empty by default - user adds via config
             character: None,  // Set at runtime via load_with_options
         }

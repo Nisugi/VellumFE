@@ -91,8 +91,8 @@ impl KeybindFormWidget {
             status_message: String::new(),
             key_combo_error: None,
             mode: FormMode::Create,
-            popup_x: 10,
-            popup_y: 2,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -299,6 +299,12 @@ impl KeybindFormWidget {
         let width = 52;
         let height = 9;
 
+        // Center on first render
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(width)) / 2;
+            self.popup_y = (area.height.saturating_sub(height)) / 2;
+        }
+
         let x = self.popup_x;
         let y = self.popup_y;
 
@@ -371,7 +377,10 @@ impl KeybindFormWidget {
         let mut current_y = y + 2;
 
         // Parse textarea background color from config
-        let maroon = if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
+        let maroon = if config.colors.ui.textarea_background == "-" {
+            Color::Reset
+        } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
             Color::Rgb(64, 0, 0) // Fallback to dark maroon

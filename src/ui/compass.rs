@@ -243,7 +243,11 @@ impl Compass {
                 if char_x < inner_area.x + inner_area.width && y < inner_area.y + inner_area.height {
                     buf[(char_x, y)].set_char(c);
                     buf[(char_x, y)].set_fg(color);
-                    buf[(char_x, y)].set_bg(Color::Black);
+                    // Only set background if explicitly configured
+                    if let Some(ref color_hex) = self.background_color {
+                        let bg_color = Self::parse_color(color_hex);
+                        buf[(char_x, y)].set_bg(bg_color);
+                    }
                 }
             }
         }

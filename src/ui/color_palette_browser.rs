@@ -2,6 +2,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    widgets::{Clear, Widget},
 };
 use crate::config::PaletteColor;
 
@@ -34,8 +35,8 @@ impl ColorPaletteBrowser {
             selected_index: 0,
             scroll_offset: 0,
             filter: String::new(),
-            popup_x: 10,
-            popup_y: 2,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -185,9 +186,15 @@ impl ColorPaletteBrowser {
         false
     }
 
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let popup_width = 70;
         let popup_height = 20;
+
+        // Center on first render
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        }
 
         let popup_area = Rect {
             x: self.popup_x,
@@ -195,6 +202,9 @@ impl ColorPaletteBrowser {
             width: popup_width.min(area.width.saturating_sub(self.popup_x)),
             height: popup_height.min(area.height.saturating_sub(self.popup_y)),
         };
+
+        // Clear the popup area to prevent bleed-through
+        Clear.render(popup_area, buf);
 
         // Draw solid black background
         for y in popup_area.y..popup_area.y + popup_area.height {

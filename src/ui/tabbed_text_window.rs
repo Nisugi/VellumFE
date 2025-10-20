@@ -591,4 +591,47 @@ impl TabbedTextWindow {
             },
         }
     }
+
+    /// Start search in the active tab's text window
+    pub fn start_search(&mut self, pattern: &str) -> Result<usize, regex::Error> {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.start_search(pattern)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Clear search from the active tab's text window
+    pub fn clear_search(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.clear_search();
+        }
+    }
+
+    /// Go to next match in the active tab's text window
+    pub fn next_match(&mut self) -> bool {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.next_match()
+        } else {
+            false
+        }
+    }
+
+    /// Go to previous match in the active tab's text window
+    pub fn prev_match(&mut self) -> bool {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.prev_match()
+        } else {
+            false
+        }
+    }
+
+    /// Get search info (current match, total matches) from the active tab's text window
+    pub fn search_info(&self) -> Option<(usize, usize)> {
+        if let Some(tab) = self.tabs.get(self.active_tab_index) {
+            tab.window.search_info()
+        } else {
+            None
+        }
+    }
 }

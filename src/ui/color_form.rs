@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget as RatatuiWidget},
+    widgets::{Block, Borders, Clear, Paragraph, Widget as RatatuiWidget},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::TextArea;
@@ -55,8 +55,8 @@ impl ColorForm {
             favorite: false,
             focused_field: 0,
             mode: FormMode::Create,
-            popup_x: 20,
-            popup_y: 5,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -87,8 +87,8 @@ impl ColorForm {
             favorite: palette_color.favorite,
             focused_field: 0,
             mode: FormMode::Edit { original_name, original_len },
-            popup_x: 20,
-            popup_y: 5,
+            popup_x: 0,
+            popup_y: 0,
             is_dragging: false,
             drag_offset_x: 0,
             drag_offset_y: 0,
@@ -100,10 +100,8 @@ impl ColorForm {
             KeyCode::Esc => {
                 return Some(FormAction::Cancel);
             }
-            KeyCode::Char('s') => {
-                if key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                    return self.validate_and_save();
-                }
+            KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                return self.validate_and_save();
             }
             KeyCode::BackTab => {
                 self.previous_field();
@@ -118,10 +116,13 @@ impl ColorForm {
                     // Toggle favorite on Enter when focused
                     self.favorite = !self.favorite;
                     return None;
-                } else {
-                    // Move to next field
+                } else if self.focused_field >= 0 && self.focused_field <= 2 {
+                    // In text field - move to next field
                     self.next_field();
                     return None;
+                } else {
+                    // On favorite or beyond - save the form
+                    return self.validate_and_save();
                 }
             }
             KeyCode::Char(' ') if self.focused_field == 3 => {
@@ -284,12 +285,30 @@ impl ColorForm {
         let popup_width = 52;
         let popup_height = 9;
 
+        // Center on first render
+        if self.popup_x == 0 && self.popup_y == 0 {
+            self.popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            self.popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        }
+
         // Parse textarea background color from config
-        let textarea_bg = if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
+        // If "-" is specified, use Color::Reset (terminal default), otherwise parse hex or use maroon fallback
+        let textarea_bg = if config.colors.ui.textarea_background == "-" {
+            Color::Reset
+        } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
             Color::Rgb(53, 5, 5) // Fallback to maroon
         };
+
+        // Clear the popup area to prevent bleed-through
+        let popup_area = Rect {
+            x: self.popup_x,
+            y: self.popup_y,
+            width: popup_width,
+            height: popup_height,
+        };
+        Clear.render(popup_area, buf);
 
         // Draw black background
         for row in self.popup_y..self.popup_y + popup_height {
@@ -346,7 +365,7 @@ impl ColorForm {
         y += 2;
 
         // Status bar
-        let status = "Tab:Next  Shift+Tab:Prev  Ctrl+S:Save  Esc:Close";
+        let status = "Tab:Next  Shift+Tab:Prev  Enter:Save  Esc:Close";
         buf.set_string(self.popup_x + 2, y, status, Style::default().fg(Color::Gray));
     }
 

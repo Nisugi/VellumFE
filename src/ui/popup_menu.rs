@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
 /// A popup menu for context actions
@@ -108,6 +108,9 @@ impl PopupMenu {
             width: menu_width.min(area.width),
             height: menu_height.min(area.height),
         };
+
+        // Clear the popup area to prevent bleed-through
+        Clear.render(menu_rect, buf);
 
         // Calculate inner width for padding
         let inner_width = menu_width.saturating_sub(2) as usize; // Subtract borders

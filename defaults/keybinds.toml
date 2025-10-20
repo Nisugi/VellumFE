@@ -1,0 +1,113 @@
+# VellumFE Keybind Configuration
+# This file contains all keyboard bindings
+# Editable via .addkeybind/.keybinds commands
+
+# Basic command input navigation
+right = "cursor_right"
+left = "cursor_left"
+up = "previous_command"
+down = "next_command"
+home = "cursor_home"
+end = "cursor_end"
+backspace = "cursor_backspace"
+delete = "cursor_delete"
+enter = "send_command"
+tab = "switch_current_window"
+
+# Word movement
+"ctrl+left" = "cursor_word_left"
+"ctrl+right" = "cursor_word_right"
+
+# Window scrolling
+page_up = "scroll_current_window_up_page"
+page_down = "scroll_current_window_down_page"
+"alt+page_up" = "scroll_current_window_up_one"
+"alt+page_down" = "scroll_current_window_down_one"
+
+# Search
+"ctrl+f" = "start_search"
+"ctrl+page_up" = "prev_search_match"
+"ctrl+page_down" = "next_search_match"
+
+# Performance stats
+f12 = "toggle_performance_stats"
+
+# Numpad movement macros
+[num_1]
+macro_text = "sw\r"
+
+[num_2]
+macro_text = "s\r"
+
+[num_3]
+macro_text = "se\r"
+
+[num_4]
+macro_text = "w\r"
+
+[num_5]
+macro_text = "out\r"
+
+[num_6]
+macro_text = "e\r"
+
+[num_7]
+macro_text = "nw\r"
+
+[num_8]
+macro_text = "n\r"
+
+[num_9]
+macro_text = "ne\r"
+
+[num_0]
+macro_text = "down\r"
+
+["num_."]
+macro_text = "up\r"
+
+["num_+"]
+macro_text = "look\r"
+
+["num_-"]
+macro_text = "info\r"
+
+["num_*"]
+macro_text = "exp\r"
+
+["num_/"]
+macro_text = "health\r"
+
+# Shift+numpad peer macros
+["shift+num_1"]
+macro_text = "peer sw\r"
+
+["shift+num_2"]
+macro_text = "peer s\r"
+
+["shift+num_3"]
+macro_text = "peer se\r"
+
+["shift+num_4"]
+macro_text = "peer w\r"
+
+["shift+num_5"]
+macro_text = "peer out\r"
+
+["shift+num_6"]
+macro_text = "peer e\r"
+
+["shift+num_7"]
+macro_text = "peer nw\r"
+
+["shift+num_8"]
+macro_text = "peer n\r"
+
+["shift+num_9"]
+macro_text = "peer ne\r"
+
+["shift+num_0"]
+macro_text = "peer down\r"
+
+["shift+num_."]
+macro_text = "peer up\r"
