@@ -1,6 +1,6 @@
 terminal_width = 105
 terminal_height = 54
-base_layout = "bottombar"
+base_layout = "layout"
 
 [[windows]]
 name = "main"
@@ -33,7 +33,7 @@ streams = []
 row = 51
 col = 19
 rows = 3
-cols = 85
+cols = 86
 buffer_size = 100
 show_border = true
 border_style = "single"
@@ -684,6 +684,7 @@ rows = 11
 cols = 105
 buffer_size = 5000
 show_border = false
+border_style = "single"
 border_color = "#808080"
 content_align = "top-left"
 background_color = "-"
@@ -702,20 +703,24 @@ tab_unread_prefix = "* "
 text_color = "#ffffff"
 compass_active_color = "#00ff00"
 compass_inactive_color = "#333333"
+show_timestamps = false
 numbers_only = false
 effect_default_color = "#ffffff"
 
 [[windows.tabs]]
 name = "Thoughts"
 stream = "thoughts"
+show_timestamps = true
 
 [[windows.tabs]]
 name = "Speech"
 stream = "speech"
+show_timestamps = true
 
 [[windows.tabs]]
 name = "Announcements"
 stream = "announcements"
+show_timestamps = true
 
 [[windows.tabs]]
 name = "Ambients"

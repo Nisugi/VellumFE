@@ -365,6 +365,9 @@ pub struct WindowDef {
     pub compass_active_color: Option<String>,    // Color for available exits (default: #00ff00)
     #[serde(default)]
     pub compass_inactive_color: Option<String>,  // Color for unavailable exits (default: #333333)
+    // Timestamp configuration
+    #[serde(default)]
+    pub show_timestamps: Option<bool>,  // Show timestamps at end of lines (e.g., [7:08 AM])
     // Layout resizing constraints
     #[serde(default)]
     pub min_rows: Option<u16>,  // Minimum height (enforced during resize)
@@ -404,6 +407,8 @@ pub struct WindowDef {
 pub struct TabConfig {
     pub name: String,    // Tab display name
     pub stream: String,  // Stream to route to this tab
+    #[serde(default)]
+    pub show_timestamps: Option<bool>,  // Show timestamps at end of lines for this tab
 }
 
 impl Default for WindowDef {
@@ -446,6 +451,7 @@ impl Default for WindowDef {
             countdown_icon: None,
             compass_active_color: None,
             compass_inactive_color: None,
+            show_timestamps: None,
             min_rows: None,
             max_rows: None,
             min_cols: None,
@@ -581,9 +587,11 @@ pub struct UiConfig {
     pub countdown_icon: String,  // Unicode character for countdown blocks (e.g., "\u{f0c8}")
     #[serde(default = "default_poll_timeout_ms")]
     pub poll_timeout_ms: u64,  // Event poll timeout in milliseconds (lower = higher FPS, higher CPU)
-    // Easter egg: Wizard frontend nostalgia
-    #[serde(default = "default_wizard_music")]
-    pub wizard_music: bool,  // Play wizard_music sound on connection (nostalgic tribute to the original Wizard frontend)
+    // Startup music settings
+    #[serde(default = "default_startup_music")]
+    pub startup_music: bool,  // Play startup music on connection
+    #[serde(default = "default_startup_music_file")]
+    pub startup_music_file: String,  // Sound file to play on startup (without extension)
     // Text selection settings
     #[serde(default = "default_selection_enabled")]
     pub selection_enabled: bool,
@@ -991,8 +999,12 @@ fn default_background_color() -> String {
     "-".to_string() // transparent/no background
 }
 
-fn default_wizard_music() -> bool {
+fn default_startup_music() -> bool {
     true  // Enable by default - nostalgic easter egg
+}
+
+fn default_startup_music_file() -> String {
+    "wizard_music".to_string()  // Default to wizard_music for nostalgia
 }
 
 /// Get default keybindings (based on ProfanityFE defaults)
@@ -4213,7 +4225,8 @@ impl Default for Config {
                 border_style: default_border_style(),
                 countdown_icon: default_countdown_icon(),
                 poll_timeout_ms: default_poll_timeout_ms(),
-                wizard_music: default_wizard_music(),
+                startup_music: default_startup_music(),
+                startup_music_file: default_startup_music_file(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
                 drag_modifier_key: default_drag_modifier_key(),

@@ -10,7 +10,8 @@ show_timestamps = true
 border_style = "single"
 countdown_icon = ""
 poll_timeout_ms = 16
-wizard_music = true
+startup_music = true
+startup_music_file = "wizard_music"
 selection_enabled = true
 selection_respect_window_boundaries = true
 drag_modifier_key = "ctrl"
@@ -24,7 +25,7 @@ perf_stats_height = 23
 
 [sound]
 enabled = true
-volume = 0.699999988079071
+volume = 0.5
 cooldown_ms = 500
 
 [event_patterns.stun_rounds]
@@ -36,11 +37,11 @@ duration_capture = 1
 duration_multiplier = 5.0
 enabled = true
 
-[event_patterns.stun_shadow_valley]
-pattern = "Just as you think the falling will never end, you crash through an ethereal barrier"
+[event_patterns.stun_recovery]
+pattern = 'You recover from being stunned\.'
 event_type = "stun"
-action = "set"
-duration = 16
+action = "clear"
+duration = 0
 duration_multiplier = 1.0
 enabled = true
 
@@ -52,10 +53,10 @@ duration = 31
 duration_multiplier = 1.0
 enabled = true
 
-[event_patterns.stun_recovery]
-pattern = 'You recover from being stunned\.'
+[event_patterns.stun_shadow_valley]
+pattern = "Just as you think the falling will never end, you crash through an ethereal barrier"
 event_type = "stun"
-action = "clear"
-duration = 0
+action = "set"
+duration = 16
 duration_multiplier = 1.0
 enabled = true
