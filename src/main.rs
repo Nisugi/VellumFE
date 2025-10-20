@@ -33,6 +33,10 @@ struct Args {
     #[arg(long, default_value = "false")]
     links: bool,
 
+    /// Disable startup music on connection
+    #[arg(long, default_value = "false")]
+    nomusic: bool,
+
     /// Validate a layout file against multiple sizes and exit
     #[arg(long, value_name = "PATH", required = false)]
     validate_layout: Option<String>,
@@ -112,7 +116,7 @@ async fn main() -> Result<()> {
     }
 
     // Create and run the application
-    let mut app = App::new(config)?;
+    let mut app = App::new(config, args.nomusic)?;
 
     // Auto-shrink layout if terminal is smaller than designed size
     app.check_and_auto_resize()?;

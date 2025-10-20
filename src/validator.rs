@@ -95,7 +95,7 @@ pub fn validate_layout_path(path: &Path, baseline: (u16, u16), sizes: &[(u16, u1
 
     // Build a minimal app using current config, then swap layout/baseline
     let cfg = Config::load_with_options(None, 8000)?;
-    let mut app = crate::app::App::new(cfg)?;
+    let mut app = crate::app::App::new(cfg, false)?;
 
     // Use file layout as baseline
     app.set_layout_for_validation(layout.clone(), baseline);
