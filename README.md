@@ -14,23 +14,19 @@ A modern, high-performance terminal frontend for GemStone IV, built with [Ratatu
 - **Spell Coloring** - Customize active spell/effect colors by spell ID for easy visual distinction
 - **Mouse Support** - Click to focus, scroll to navigate, drag to move/resize
 - **Text Selection** - Click and drag to select text, auto-copy to clipboard (Shift+drag for native terminal selection)
+- **Clickable Links** - Wrayth-style context menus on game objects (right-click or click items)
 - **Stream Routing** - Game streams automatically route to appropriate windows
-- **Layout Management** - Save and load custom window layouts
+- **Layout Management** - Save and load custom window layouts with `.resize` auto-scaling
 - **Performance Monitoring** - Real-time FPS, render times, network, and memory stats
 - **XML Parsing** - Full support for GemStone IV's XML protocol
 - **Live Configuration** - Most settings can be changed without restarting
+- **Sound Support** - Highlight-based sound triggers with configurable volume
 
 ## Quick Start
 
-### 1. Build from Source
+### 1. Download the Latest Release
 
-```bash
-git clone https://github.com/Nisugi/VellumFE.git
-cd vellum-fe
-cargo build --release
-```
-
-The binary will be at `target/release/vellum-fe`.
+Download the latest `vellum-fe.exe` from the [Releases](https://github.com/Nisugi/VellumFE/releases) page.
 
 ### 2. Start Lich in Detached Mode
 
@@ -45,88 +41,155 @@ C:\Ruby4Lich5\3.4.x\bin\rubyw.exe C:\Ruby4Lich5\Lich5\lich.rbw --login Character
 ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
 ```
 
+Wait 5-10 seconds for Lich to fully connect before launching VellumFE.
+
 ### 3. Launch VellumFE
 
+**Windows:**
+```powershell
+.\vellum-fe.exe --port 8000 --character YourCharName --links true
+```
+
+**Linux/Mac:**
 ```bash
-# Basic launch (uses default config)
-./vellum-fe
-
-# With command-line options
 ./vellum-fe --port 8000 --character YourCharName --links true
-
-# View all options
-./vellum-fe --help
 ```
 
 **Command-Line Options:**
 - `--port` / `-p` - Port to connect to (default: 8000)
 - `--character` / `-c` - Character name (loads character-specific config)
-- `--links` - Enable link highlighting (default: false)
+- `--links` - Enable clickable links (default: true)
 
 The client will connect to Lich on `localhost:8000` by default.
 
+## Essential Commands
+
+**Getting Started:**
+```
+.menu                         # Open the main menu - start here!
+.help                         # Show all available commands
+```
+
+The `.menu` command is your main entry point - it provides easy access to all configuration options, window management, and settings.
+
+**Quick Commands:**
+```
+.settings                     # Edit all configuration options
+.highlights                   # Manage text highlights
+.uicolors                     # Customize UI colors and themes
+.keybinds                     # Configure keyboard shortcuts
+.windows                      # List all active windows
+.savelayout [name]            # Save your current layout
+.resize                       # Auto-scale layout to current terminal size
+```
+
+**Example Workflow:**
+1. Launch VellumFE and connect to Lich
+2. Type `.menu` to open the main menu
+3. Configure windows, highlights, and settings through the menu
+4. Type `.savelayout` to save your configuration
+5. Type `.resize` whenever you change terminal size
+
 ## Documentation
 
-**📖 [Read the full documentation in the Wiki](https://github.com/Nisugi/VellumFE/wiki)**
+**📖 [Full Documentation Wiki](wiki/)**
 
-### Quick Links
+The `/wiki/` directory contains comprehensive documentation:
 
-- [Installation Guide](https://github.com/Nisugi/VellumFE/wiki/Installation)
-- [Window Management](https://github.com/Nisugi/VellumFE/wiki/Window-Management)
-- [Widget Reference](https://github.com/Nisugi/VellumFE/wiki/Widget-Reference) - All 40+ widgets documented
-- [Commands Reference](https://github.com/Nisugi/VellumFE/wiki/Commands-Reference) - Complete list of dot commands
-- [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide)
-- [Troubleshooting](https://github.com/Nisugi/VellumFE/wiki/Troubleshooting)
-- [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide)
-- [Feature Roadmap](https://github.com/Nisugi/VellumFE/wiki/Feature-Roadmap)
+- [Getting Started](wiki/Getting-Started.md) - Installation and first-time setup
+- [Configuration](wiki/Configuration.md) - Complete configuration reference
+- [Commands](wiki/Commands.md) - All dot commands documented
+- [Windows and Layouts](wiki/Windows-and-Layouts.md) - Window management guide
+- [Window Types](wiki/Window-Types.md) - All 40+ widget types
+- [Highlights](wiki/Highlights.md) - Creating and managing highlights
+- [Keybinds](wiki/Keybinds.md) - Keybind system and built-in actions
+- [Mouse Controls](wiki/Mouse-Controls.md) - Mouse operations and clickable links
+- [Themes and Colors](wiki/Themes-and-Colors.md) - Color customization with 7 pre-made themes
+- [Troubleshooting](wiki/Troubleshooting.md) - Common issues and solutions
+- [FAQ](wiki/FAQ.md) - 50+ frequently asked questions
 
-## Creating Your First Window
-
-```
-.createwindow loot        # Create a loot window
-.createwindow health      # Add a health bar
-.createwindow compass     # Add a compass
-.savelayout hunting       # Save your layout
-```
+**Advanced Topics:**
+- [Advanced: Streams](wiki/Advanced-Streams.md) - Stream routing deep dive
+- [Advanced: Characters](wiki/Advanced-Characters.md) - Multi-character configuration
+- [Advanced: XML](wiki/Advanced-XML.md) - XML protocol reference
 
 ## Configuration
 
 VellumFE uses a directory-based config structure for multi-character support:
 
-**Config Locations:**
-- `~/.vellum-fe/configs/default.toml` - Default configuration
-- `~/.vellum-fe/configs/<character>.toml` - Character-specific configs
-- `~/.vellum-fe/layouts/default.toml` - Default window layout
-- `~/.vellum-fe/layouts/<character>.toml` - Character-specific layouts
-- `~/.vellum-fe/layouts/auto_<character>.toml` - Autosaved layouts (highest priority)
-- `~/.vellum-fe/debug.log` - Debug log (or `debug_<character>.log` if using `-c`)
+**Config Locations (Windows):**
+- `C:\Users\<you>\.vellum-fe\configs\default.toml` - Default configuration
+- `C:\Users\<you>\.vellum-fe\configs\<character>.toml` - Character-specific configs
+- `C:\Users\<you>\.vellum-fe\layouts\default.toml` - Default window layout
+- `C:\Users\<you>\.vellum-fe\layouts\<character>.toml` - Character-specific layouts
+- `C:\Users\<you>\.vellum-fe\layouts\auto_<character>.toml` - Autosaved layouts (highest priority)
+- `C:\Users\<you>\.vellum-fe\sounds\` - Sound files for highlight triggers
+- `C:\Users\<you>\.vellum-fe\debug.log` - Debug log (or `debug_<character>.log` if using `-c`)
 
-On first run, default configs are automatically created. See the [Configuration Guide](https://github.com/Nisugi/VellumFE/wiki/Configuration-Guide) for details.
+**Config Locations (Linux/Mac):**
+- `~/.vellum-fe/configs/` - Configuration files
+- `~/.vellum-fe/layouts/` - Window layouts
+- `~/.vellum-fe/sounds/` - Sound files
+- `~/.vellum-fe/debug.log` - Debug log
 
-## Development
+On first run, default configs are automatically created.
+
+## Mouse Controls
+
+- **Click Title Bar** - Drag to move window
+- **Click Edges/Corners** - Drag to resize window
+- **Click Text** - Focus window
+- **Scroll Wheel** - Scroll through text history
+- **Click and Drag Text** - Select and copy to clipboard
+- **Shift + Drag** - Native terminal selection (bypasses VellumFE)
+- **Click Links** - Open context menu (when `--links` enabled)
+
+## Building from Source
+
+Only needed if you want to contribute or modify the code:
 
 ```bash
-# Build for development
-cargo build
-
-# Run with debug logs
-RUST_LOG=debug cargo run
-
-# Run with character-specific config and debug log
-cargo run -- --character Zoleta
-# Logs: ~/.vellum-fe/debug_Zoleta.log
-
-# Build for release
+git clone https://github.com/Nisugi/VellumFE.git
+cd VellumFE
 cargo build --release
 ```
 
-See [Development Guide](https://github.com/Nisugi/VellumFE/wiki/Development-Guide) for architecture details and contribution guidelines.
+The binary will be at `target/release/vellum-fe` (or `vellum-fe.exe` on Windows).
+
+**Development:**
+```bash
+cargo build                   # Build for development
+cargo run                     # Run with default settings
+cargo run -- --character Test # Run with character-specific config
+RUST_LOG=debug cargo run      # Run with debug logging (Linux/Mac)
+```
+
+See [CLAUDE.md](CLAUDE.md) for complete architecture documentation.
 
 ## Requirements
 
-- Rust 1.70+
-- Lich (for connecting to GemStone IV)
-- Terminal with mouse support (recommended: Windows Terminal, iTerm2, Alacritty)
+- **Lich** - Required for connecting to GemStone IV ([Lich 5](https://github.com/elanthia-online/lich-5))
+- **Terminal with Mouse Support** - Recommended: Windows Terminal, iTerm2, Alacritty, Kitty
+- **Windows/Linux/Mac** - Cross-platform support
+
+## Troubleshooting
+
+**Connection Issues:**
+- Make sure Lich is running in detached mode (`--detachable-client=8000`)
+- Wait 5-10 seconds after starting Lich before launching VellumFE
+- Check the port matches (default: 8000)
+- See [Troubleshooting Guide](wiki/Troubleshooting.md) for more
+
+**Configuration Issues:**
+- Delete `~/.vellum-fe/` directory to reset to defaults
+- Check debug logs in `~/.vellum-fe/debug.log`
+- Use `.settings` command to view/edit all config options
+
+## Support
+
+- **Issues/Bugs**: [GitHub Issues](https://github.com/Nisugi/VellumFE/issues)
+- **Wiki**: [Documentation Wiki](wiki/)
+- **Discord**: [GemStone IV Discord](https://discord.gg/gemstone) - #lich channel
 
 ## License
 
