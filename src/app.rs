@@ -102,10 +102,10 @@ pub struct App {
     search_input: CommandInput,  // Separate input for search
     parser: XmlParser,
     running: bool,
-    prompt_shown: bool, // Track if we've shown a prompt since last real text
     current_stream: String, // Track which stream we're currently writing to
     discard_current_stream: bool, // If true, discard text because no window exists for current stream
-    skip_next_prompt: bool, // Skip the next prompt (after returning from a non-main stream)
+    chunk_has_main_text: bool, // Track if current chunk (since last prompt) has main stream text
+    chunk_has_silent_updates: bool, // Track if current chunk has silent updates (buffs, vitals, etc.)
     server_time_offset: i64, // Offset between server time and local time (server_time - local_time) - used for countdown calculations to avoid clock drift
     focused_window_index: usize, // Index of currently focused window for scrolling
     resize_state: Option<ResizeState>, // Track active resize operation
@@ -418,10 +418,10 @@ impl App {
             config,
             layout,
             running: true,
-            prompt_shown: false,
             current_stream: "main".to_string(),
             discard_current_stream: false,
-            skip_next_prompt: false,
+            chunk_has_main_text: false,
+            chunk_has_silent_updates: false,
             server_time_offset: 0, // No offset until first prompt
             focused_window_index: 0, // Start with first window focused
             resize_state: None, // No active resize initially
@@ -6235,9 +6235,6 @@ impl App {
                             self.finish_current_line(inner_width);
                         }
 
-                        // Reset prompt_shown so next prompt will display
-                        self.prompt_shown = false;
-
                         // Track bytes sent (+1 for newline added by network module)
                         self.perf_stats.record_bytes_sent((command.len() + 1) as u64);
                         let _ = command_tx.send(command);
@@ -6393,8 +6390,6 @@ impl App {
                         self.finish_current_line(inner_width);
                     }
 
-                    // Reset prompt_shown so next prompt will display
-                    self.prompt_shown = false;
                 }
 
                 // Track bytes sent (+1 for newline added by network module)
@@ -7528,15 +7523,33 @@ impl App {
                 self.perf_stats.record_parse(parse_duration);
                 self.perf_stats.record_elements_parsed(elements.len() as u64);
 
-                // Check if this line has Text elements with actual content (not just empty strings)
-                let has_text = elements.iter().any(|e| {
-                    if let ParsedElement::Text { content, .. } = e {
-                        !content.trim().is_empty()
+                // Check if this line has actual visible text in the main stream
+                // Accumulate this across the chunk (until we see a prompt)
+                let has_main_text = elements.iter().any(|e| {
+                    if let ParsedElement::Text { content, stream, .. } = e {
+                        stream == "main" && !content.trim().is_empty()
                     } else {
                         false
                     }
                 });
-                let _has_prompt = elements.iter().any(|e| matches!(e, ParsedElement::Prompt { .. }));
+                if has_main_text {
+                    self.chunk_has_main_text = true;
+                }
+
+                // Check if this line has silent update elements
+                let has_silent_updates = elements.iter().any(|e| {
+                    matches!(e,
+                        ParsedElement::ActiveEffect { .. } |
+                        ParsedElement::ClearActiveEffects { .. } |
+                        ParsedElement::ProgressBar { .. } |
+                        ParsedElement::BloodPoints { .. } |
+                        ParsedElement::InjuryImage { .. } |
+                        ParsedElement::Component { .. }  // Room objs/players/exits updates
+                    )
+                });
+                if has_silent_updates {
+                    self.chunk_has_silent_updates = true;
+                }
 
                 // Extract server time from this chunk's prompt (if present)
                 // Calculate offset between server time and local time
@@ -7601,29 +7614,25 @@ impl App {
                                             span_type,
                                             link_data,
                                         });
-                                        // Reset prompt_shown flag when we see actual text content (not just whitespace)
-                                        if !content.trim().is_empty() {
-                                            self.prompt_shown = false;
-                                        }
                                     }
                                 }
                             }
                         }
                         ParsedElement::Prompt { text, .. } => {
-                            // Skip this prompt if we just returned from a non-main stream
-                            if self.skip_next_prompt {
-                                debug!("Skipping prompt after stream pop");
-                                self.skip_next_prompt = false;
-                                continue;
+                            // Decide whether to show this prompt based on the entire chunk
+                            // Skip if: chunk had ONLY silent updates (no main text)
+                            let should_skip = self.chunk_has_silent_updates && !self.chunk_has_main_text;
+
+                            if should_skip {
+                                debug!("Skipping prompt '{}' - chunk had only silent updates", text);
                             }
 
-                            // Show prompt if:
-                            // 1. Line has text (show prompt after text), OR
-                            // 2. Line has no text AND we haven't shown a prompt yet since last text
-                            let should_show = !text.trim().is_empty() &&
-                                              (has_text || !self.prompt_shown);
+                            // Reset chunk tracking for next chunk
+                            self.chunk_has_main_text = false;
+                            self.chunk_has_silent_updates = false;
 
-                            if should_show {
+                            // Show prompts with content (unless skipped)
+                            if !text.trim().is_empty() && !should_skip {
                                 // Color each character in the prompt based on configuration
                                 for ch in text.chars() {
                                     let char_str = ch.to_string();
@@ -7652,7 +7661,6 @@ impl App {
                             link_data: None,
                                     });
                                 }
-                                self.prompt_shown = true;
                             }
                         }
                         ParsedElement::StreamPush { id } => {
@@ -7698,19 +7706,6 @@ impl App {
                                     self.stream_buffer.clear();
                                 }
                                 _ => {}
-                            }
-
-                            // Only skip the next prompt if the stream was routed to a non-main window
-                            // If the stream fell back to main (no dedicated window), keep the prompt
-                            let stream_window = self.window_manager
-                                .stream_map
-                                .get(&self.current_stream)
-                                .cloned()
-                                .unwrap_or_else(|| "main".to_string());
-
-                            if stream_window != "main" {
-                                // Stream was routed elsewhere, skip the duplicate prompt
-                                self.skip_next_prompt = true;
                             }
 
                             // Reset discard flag when returning to main stream

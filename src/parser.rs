@@ -314,8 +314,11 @@ impl XmlParser {
         } else if tag == "<popBold/>" || tag == "</b>" {
             self.handle_pop_bold();
         } else if tag.starts_with("<component ") && tag.contains("</component>") {
-            // Silently ignore component tags (both empty and with content)
-            // These are for separate windows we're not implementing yet
+            // Emit Component element so app.rs can detect these for prompt skipping
+            // Content is ignored (room window data we don't display)
+            if let Some(id) = Self::extract_attribute(tag, "id") {
+                elements.push(ParsedElement::Component { id, value: String::new() });
+            }
         } else if tag.starts_with("<compDef ") && tag.contains("</compDef>") {
             // Silently ignore compDef tags (room descriptions, exits, objects)
             // These are for separate windows we're not implementing yet
