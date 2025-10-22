@@ -7544,7 +7544,8 @@ impl App {
                         ParsedElement::ProgressBar { .. } |
                         ParsedElement::BloodPoints { .. } |
                         ParsedElement::InjuryImage { .. } |
-                        ParsedElement::Component { .. }  // Room objs/players/exits updates
+                        ParsedElement::Component { .. } |  // Room objs/players/exits updates
+                        ParsedElement::MenuResponse { .. } // Menu data (no visible text)
                     )
                 });
                 if has_silent_updates {
