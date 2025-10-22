@@ -179,19 +179,17 @@ impl Indicator {
             0
         };
 
+        // Skip rendering content if value is 0 (inactive) - makes it transparent
+        if self.value == 0 {
+            return;
+        }
+
         // Get color for current value
         let color_index = (self.value as usize).min(self.colors.len().saturating_sub(1));
         let color = Self::parse_color(&self.colors[color_index]);
 
         // Render the label text with appropriate color
-        // If value is 0 and we're hiding inactive indicators, don't render
-        let display_text = if self.value == 0 {
-            // For inactive indicators, show dimmed text or nothing based on config
-            // For now, show dimmed
-            &self.label
-        } else {
-            &self.label
-        };
+        let display_text = &self.label;
 
         // Center the text in the available space
         let text_width = display_text.len() as u16;

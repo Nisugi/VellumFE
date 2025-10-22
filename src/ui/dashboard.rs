@@ -276,7 +276,10 @@ impl Dashboard {
                 if col < buf.area.right() && y < buf.area.bottom() {
                     buf[(col, y)].set_char(ch);
                     buf[(col, y)].set_fg(color);
-                    buf[(col, y)].set_bg(Color::Black);
+                    // Only set background if not transparent
+                    if !self.transparent_background {
+                        buf[(col, y)].set_bg(Color::Black);
+                    }
                 }
             }
 
@@ -304,7 +307,10 @@ impl Dashboard {
                 if col < buf.area.right() && y < buf.area.bottom() {
                     buf[(col, y)].set_char(ch);
                     buf[(col, y)].set_fg(color);
-                    buf[(col, y)].set_bg(Color::Black);
+                    // Only set background if not transparent
+                    if !self.transparent_background {
+                        buf[(col, y)].set_bg(Color::Black);
+                    }
                 }
             }
 
@@ -351,7 +357,10 @@ impl Dashboard {
                 if col < buf.area.right() && y < buf.area.bottom() {
                     buf[(col, y)].set_char(ch);
                     buf[(col, y)].set_fg(color);
-                    buf[(col, y)].set_bg(Color::Black);
+                    // Only set background if not transparent
+                    if !self.transparent_background {
+                        buf[(col, y)].set_bg(Color::Black);
+                    }
                 }
             }
         }
