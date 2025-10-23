@@ -404,17 +404,18 @@ impl TextWindow {
                         char_style.bold = true;
                     }
 
-                    // Don't override if it's a link/monsterbold (higher priority)
-                    // Actually, re-apply original colors for links/monsterbold
+                    // Links and monsterbold: preserve their foreground color on top of highlight background
+                    // This ensures links are always distinguishable while respecting highlight background
                     let original_idx = i;
                     let mut char_idx = 0;
                     for (content, style, span_type, _link) in &self.current_line_spans {
                         for _ch in content.chars() {
                             if char_idx == original_idx {
                                 if *span_type == SpanType::Link || *span_type == SpanType::Monsterbold {
-                                    // Re-apply original style for links and monsterbold
+                                    // Re-apply original foreground color for links/monsterbold
+                                    // But keep the highlight background color
                                     char_style.fg = style.fg;
-                                    char_style.bg = style.bg;
+                                    // Don't override bg - keep highlight background
                                     char_style.bold = style.add_modifier.contains(Modifier::BOLD);
                                 }
                                 break;
