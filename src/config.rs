@@ -3635,7 +3635,7 @@ impl Config {
                 dashboard_indicators: None,
                 dashboard_spacing: None,
                 dashboard_hide_inactive: None,
-                visible_count: Some(5),
+                visible_count: None,  // Auto-adjust to window height
                 effect_category: Some("Buffs".to_string()),
                 tabs: None,
                 tab_bar_position: None,
@@ -3680,7 +3680,7 @@ impl Config {
                 dashboard_indicators: None,
                 dashboard_spacing: None,
                 dashboard_hide_inactive: None,
-                visible_count: Some(3),
+                visible_count: None,  // Auto-adjust to window height
                 effect_category: Some("Debuffs".to_string()),
                 tabs: None,
                 tab_bar_position: None,
@@ -3725,7 +3725,7 @@ impl Config {
                 dashboard_indicators: None,
                 dashboard_spacing: None,
                 dashboard_hide_inactive: None,
-                visible_count: Some(3),
+                visible_count: None,  // Auto-adjust to window height
                 effect_category: Some("Cooldowns".to_string()),
                 tabs: None,
                 tab_bar_position: None,
