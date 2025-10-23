@@ -7709,6 +7709,19 @@ impl App {
                                 _ => {}
                             }
 
+                            // If the stream we're popping from was routed to a non-main window,
+                            // skip the next prompt to avoid duplicates in main window
+                            let stream_window = self.window_manager
+                                .stream_map
+                                .get(&self.current_stream)
+                                .cloned()
+                                .unwrap_or_else(|| "main".to_string());
+
+                            if stream_window != "main" {
+                                // Stream was routed elsewhere (thoughts, speech, etc.), skip the prompt
+                                self.chunk_has_silent_updates = true;
+                            }
+
                             // Reset discard flag when returning to main stream
                             self.discard_current_stream = false;
                             self.current_stream = "main".to_string();
