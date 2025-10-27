@@ -1,194 +1,70 @@
-# Getting Started with VellumFE
+# Getting Started
 
-This guide will help you get VellumFE up and running for the first time.
+This guide walks through prerequisites, the expected launch sequence, and first-run tips so you can connect to Lich quickly without compiling Rust.
 
 ## Prerequisites
 
-Before launching VellumFE, you need:
+- **Lich 5** installed and configured for your GemStone IV account.
+- A **terminal that supports mouse input** (Windows Terminal, MobaXterm, iTerm2, Kitty, Alacritty, etc.).
+- The prebuilt **`vellum-fe.exe` (or `vellum-fe` on Linux/macOS)** from the Releases page.
 
-1. **Lich** - The Ruby scripting engine for GemStone IV
-2. **GemStone IV Account** - Active game account
-3. **VellumFE Binary** - The `vellumfe.exe` executable
+> You do *not* need Rust toolchains for normal play.
 
-## Installation
+## Launch Sequence
 
-1. Download the latest VellumFE release
-2. Extract `vellumfe.exe` to a folder of your choice
-3. That's it! No additional installation required
+1. **Start Lich in detached mode**
+   - Windows PowerShell:
+     ```powershell
+     "C:\Ruby4Lich5\3.4.x\bin\rubyw.exe" "C:\Ruby4Lich5\Lich5\lich.rbw" --login CharacterName --gemstone --without-frontend --detachable-client=8000
+     ```
+   - Linux/macOS:
+     ```bash
+     ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
+     ```
 
-## First Launch
+2. **Launch VellumFE**
+   ```powershell
+   .\vellum-fe.exe --port 8000 --character CharacterName --links
+   ```
+   Replace the port or character name to match your Lich session. The `--links` flag turns on clickable links.
 
-### Step 1: Start Lich in Detached Mode
+3. **Type `.menu` inside VellumFE** to explore layouts, highlights, colors, and other configurations.
 
-Before launching VellumFE, you must start Lich in detached mode:
+## Command-Line Options
 
-**Windows (PowerShell or Command Prompt):**
-```powershell
-C:\Ruby4Lich5\3.4.x\bin\rubyw.exe C:\Path\To\Lich5\lich.rbw --login YourCharacterName --gemstone --without-frontend --detachable-client=8001
-```
+| Option | Description |
+| --- | --- |
+| `-p, --port <number>` | TCP port used by Lich detached mode (default `8000`). |
+| `-c, --character <name>` | Character profile name; determines which config directory (*.toml, layouts, history) is loaded. |
+| `--links` | Enables clickable link parsing for context menus. |
+| `--nomusic` | Skips startup music on connect. |
+| `--validate-layout <path>` | Validate a layout file against multiple terminal sizes and exit. Use with `--baseline` / `--sizes`. |
+| `--baseline <WxH>` | Override the designed size when validating layouts (e.g., `--baseline 120x40`). |
+| `--sizes <WxH[,WxH...]>` | Comma-separated list of terminal sizes to test, such as `--sizes 100x30,120x40,160x50`. |
 
-**Important Notes:**
-- Replace `3.4.x` with your actual Ruby version (e.g., `3.4.2`, `3.4.5`)
-- Replace `YourCharacterName` with your character's name
+## First-Run Behavior
 
-**Linux/Mac:**
-```bash
-ruby ~/lich5/lich.rbw --login YourCharacterName --gemstone --without-frontend --detachable-client=8001
-```
+Running the executable builds out `~/.vellum-fe/` (Windows: `C:\Users\<you>\.vellum-fe\`) with shared assets and a per-character profile:
 
-### Step 2: Launch VellumFE
+- `layouts/` – shared layout library (`layout.toml`, `none.toml`, `sidebar.toml`, your saves).
+- `sounds/` – drop custom audio files here (`.mp3`, `.wav`, `.ogg`, `.flac`).
+- `cmdlist1.xml` – command/link map copied from the defaults directory for clickable menus.
+- `<character>/` – character-specific data (name is lowercased to match Lich conventions):
+  - `config.toml` – primary settings (connection, UI, sound, event patterns).
+  - `colors.toml` – UI palette, presets, prompt coloring, spell colors, and shared color palette entries.
+  - `highlights.toml` – highlight definitions organized by category.
+  - `keybinds.toml` – key combination mapping (actions or macros).
+  - `layout.toml` – current layout file, autosaved on terminal resize and on `.quit` or `Ctrl+C`.
+  - `history.txt` – command history for the input box.
+  - `debug.log` – logging output per character.
 
-Once Lich is running, launch VellumFE:
+Default files ship inside the binary via `include_dir`, so a missing file is automatically recreated with safe defaults on launch.
 
-```bash
-.\vellumfe.exe --port 8001 --character YourCharacterName --links
-```
+## After Launch
 
-**Command-Line Arguments:**
-- `--port` or `-p` - Port number (must match Lich's detachable-client port, default: 8000)
-- `--character` or `-c` - Character name (loads character-specific config, optional)
-- `--links` - Enable clickable links with context menus (recommended)
+- `.menu` opens the main menu with shortcuts to colors, highlights, keybinds, windows, and settings.
+- `.savelayout <name>` stores your current layout to the shared `layouts` directory. `.loadlayout <name>` restores any layout you have saved.
+- `.settings` exposes every configurable field with inline descriptions; press `Tab` to move between inputs and `Enter` to save.
+- `.highlights`, `.keybinds`, `.uicolors`, `.palette`, and other dot commands open specialized managers that mirror the wiki sections listed on the home page.
 
-**Examples:**
-```bash
-# Basic launch (uses default config)
-.\vellumfe.exe --port 8001
-
-# Character-specific config
-.\vellumfe.exe --port 8001 --character Nisugi
-
-# All options
-.\vellumfe.exe --port 8001 --character Nisugi --links
-```
-
-### Step 3: Verify Connection
-
-After launching, you should see:
-- VellumFE connects to Lich
-- Game text appears in the main window
-- Progress bars show your vitals (health, mana, etc.)
-- You can type commands in the input box at the bottom
-
-If you don't see game text, check:
-1. Lich is running and fully started (starting VellumFE too soon)
-2. Port numbers match between Lich and VellumFE
-3. No firewall blocking localhost connections
-
-## Basic Controls
-
-### Keyboard
-
-- **Type commands** - Just start typing in the command input
-- **Send command** - Press `Enter`
-- **Tab** - Cycle focus between windows
-- **Page Up/Down** - Scroll in focused window
-- **Ctrl+S** - Save selection
-- **Ctrl+C** - Closes VellumFE
-- **Esc** - Clear selection or close popups
-
-### Mouse
-
-- **Scroll** - Mouse wheel over any window
-- **Move window** - Click and drag the title bar
-- **Resize window** - Click and drag borders or corners
-- **Select text** - Click and drag to select (auto-copies on release)
-- **Click links** - Left-click any highlighted word (if `--links` enabled)
-- **Switch tabs** - Click tab names in tabbed windows
-- **Drag & Drop** - Ctrl + Left-click and drag links for wrayth style drag & drop
-
-### Dot Commands
-
-VellumFE has special commands that start with `.` - these are handled locally and not sent to the game:
-
-- `.quit` - Exit VellumFE saving profile
-- `.menu` - Access settings
-- `.help` - Show help (lists all dot commands)
-
-See [Commands Reference](Commands.md) for the complete list.
-
-## First Steps
-
-### 1. Explore the Default Layout
-
-The default layout includes:
-- **Main window** - Game output
-- **Room window** - Room descriptions
-- **Vitals bars** - Health, mana, stamina, spirit
-- **Roundtime countdown** - Shows remaining roundtime
-- **Command input** - Bottom of screen
-
-### 2. Try Moving a Window
-
-1. Click and hold on a window's title bar
-2. Drag to move it
-3. Release to place it
-
-### 3. Try Resizing a Window
-
-1. Click and hold on a window's border or corner
-2. Drag to resize
-3. Release when satisfied
-
-### 4. Open Settings
-
-Type `.settings` and press Enter to explore configuration options:
-- Colors and themes
-- Sound settings
-- Connection settings
-- Preset colors
-
-Navigate with arrow keys, press Enter to edit values.
-
-### 5. Save Your Layout
-
-After arranging windows, save your layout:
-```
-.savelayout mylayout
-```
-
-Load it later with:
-```
-.loadlayout mylayout
-```
-
-## Next Steps
-
-Now that you're up and running, check out:
-
-- [Windows and Layouts](Windows-and-Layouts.md) - Learn about window types and positioning
-- [Configuration](Configuration.md) - Customize colors, presets, and more
-- [Highlights](Highlights.md) - Set up custom text highlights
-- [Commands Reference](Commands.md) - Master all dot commands
-- [Mouse Controls](Mouse-Controls.md) - Advanced mouse operations
-
-## Quick Tips
-
-1. **Auto-save on exit** - VellumFE automatically saves your layout when you quit (as `auto_<character>.toml`)
-2. **Character-specific configs** - Use `--character` to keep separate settings per character
-3. **Debug logs** - Check `~/.vellum-fe/debug_<character>.log` if something goes wrong
-4. **Shift+Mouse** - Hold Shift while selecting to use native terminal selection (bypasses VellumFE)
-5. **Tab navigation** - Use Tab key to cycle window focus for keyboard scrolling
-
-## Common Issues
-
-### "Connection failed" or "Connection refused"
-- Make sure Lich is running first
-- Wait 5-10 seconds after starting Lich
-- Verify port numbers match
-
-### "No game text appearing"
-- Lich may still be starting - wait a bit longer
-- Check Lich logs for errors
-- Try restarting Lich in detached mode
-
-### "Can't move/resize windows"
-- Make sure you're clicking the title bar (for move) or borders (for resize)
-- Title bar excludes corners - click in the middle
-- Your terminal must support mouse events
-
-### "Clickable links not working"
-- Make sure you launched with `--links` flag
-- Links only work for game objects wrapped in `<a>` tags
-- Not all text is clickable, only tagged objects
-
-See [Troubleshooting](Troubleshooting.md) for more help.
+If you ever need to reset to stock behavior, remove the `~/.vellum-fe/<character>/` directory while VellumFE is closed—the next run will rebuild defaults.
