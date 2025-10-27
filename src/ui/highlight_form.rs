@@ -532,24 +532,48 @@ impl HighlightFormWidget {
             Color::Reset
         };
 
+        let focused_field = self.focused_field;
+
         // Field 0: Name
-        self.render_text_row(0, "Name:", &self.name, "monster_kill", x + 2, current_y, input_start, 30, txtbg, buf);
+        Self::render_text_row(focused_field, 0, "Name:", &mut self.name, "monster_kill", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 1: Pattern
-        self.render_text_row(1, "Pattern:", &self.pattern, "You swing.*at", x + 2, current_y, input_start, 30, txtbg, buf);
+        Self::render_text_row(focused_field, 1, "Pattern:", &mut self.pattern, "You swing.*at", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 2: Category
-        self.render_text_row(2, "Category:", &self.category, "Combat", x + 2, current_y, input_start, 30, txtbg, buf);
+        Self::render_text_row(focused_field, 2, "Category:", &mut self.category, "Combat", x + 2, current_y, input_start, 30, txtbg, buf);
         current_y += 1;
 
         // Field 3: Foreground (10 char + 1 space + 2 char preview)
-        self.render_color_row(3, "Foreground:", &self.fg_color, "#ff0000", x + 2, current_y, input_start, txtbg, buf, config);
+        {
+            let fg_text = self.fg_color.lines()[0].clone();
+            Self::render_color_row_internal(focused_field, 3, "Foreground:", &mut self.fg_color, "#ff0000", x + 2, current_y, input_start, txtbg, buf);
+            // Color preview
+            buf[(input_start + 10, current_y)].set_char(' ').set_bg(Color::Black);
+            if !fg_text.is_empty() {
+                if let Some(color) = self.parse_and_resolve_color(&fg_text, config) {
+                    buf[(input_start + 11, current_y)].set_char(' ').set_bg(color);
+                    buf[(input_start + 12, current_y)].set_char(' ').set_bg(color);
+                }
+            }
+        }
         current_y += 1;
 
         // Field 4: Background (10 char + 1 space + 2 char preview)
-        self.render_color_row(4, "Background:", &self.bg_color, "optional", x + 2, current_y, input_start, txtbg, buf, config);
+        {
+            let bg_text = self.bg_color.lines()[0].clone();
+            Self::render_color_row_internal(focused_field, 4, "Background:", &mut self.bg_color, "optional", x + 2, current_y, input_start, txtbg, buf);
+            // Color preview
+            buf[(input_start + 10, current_y)].set_char(' ').set_bg(Color::Black);
+            if !bg_text.is_empty() {
+                if let Some(color) = self.parse_and_resolve_color(&bg_text, config) {
+                    buf[(input_start + 11, current_y)].set_char(' ').set_bg(color);
+                    buf[(input_start + 12, current_y)].set_char(' ').set_bg(color);
+                }
+            }
+        }
         current_y += 1;
 
         // Field 5: Sound (dropdown)
@@ -557,7 +581,7 @@ impl HighlightFormWidget {
         current_y += 1;
 
         // Field 6: Volume
-        self.render_text_row(6, "Volume:", &self.sound_volume, "0.8", x + 2, current_y, input_start, 10, txtbg, buf);
+        Self::render_text_row(focused_field, 6, "Volume:", &mut self.sound_volume, "0.8", x + 2, current_y, input_start, 10, txtbg, buf);
         current_y += 2;
 
         // Checkboxes (Fields 7-9)
@@ -591,8 +615,8 @@ impl HighlightFormWidget {
         }
     }
 
-    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
-        let focused = self.focused_field == field_id;
+    fn render_text_row(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
+        let focused = focused_field == field_id;
         let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
         // Render label
@@ -600,28 +624,29 @@ impl HighlightFormWidget {
             buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
         }
 
-        // Render input background
-        for i in 0..input_width {
-            buf[(input_x + i, y)].set_bg(bg);
-        }
+        // Create rect for the TextArea widget
+        let textarea_rect = Rect {
+            x: input_x,
+            y,
+            width: input_width,
+            height: 1,
+        };
 
-        // Render text content or hint
-        let text = &textarea.lines()[0];
-        if text.is_empty() {
-            // Show hint in dark gray
-            for (i, ch) in hint.chars().enumerate().take(input_width as usize) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
-            }
-        } else {
-            // Show actual text
-            for (i, ch) in text.chars().enumerate().take(input_width as usize) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
-            }
-        }
+        // Set block style for the textarea (no border, just background)
+        let block = ratatui::widgets::Block::default()
+            .style(Style::default().bg(bg));
+
+        textarea.set_block(block);
+
+        // Set text style
+        textarea.set_style(Style::default().fg(Color::White).bg(bg));
+
+        // Render the TextArea widget - it handles cursor positioning and scrolling automatically
+        textarea.render(textarea_rect, buf);
     }
 
-    fn render_color_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, bg: Color, buf: &mut Buffer, config: &crate::config::Config) {
-        let focused = self.focused_field == field_id;
+    fn render_color_row_internal(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, hint: &str, x: u16, y: u16, input_x: u16, bg: Color, buf: &mut Buffer) {
+        let focused = focused_field == field_id;
         let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
         // Render label
@@ -629,36 +654,27 @@ impl HighlightFormWidget {
             buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
         }
 
-        // Render 10-char input background
-        for i in 0..10 {
-            buf[(input_x + i, y)].set_bg(bg);
-        }
+        // Create rect for the TextArea widget (10 chars wide for color input)
+        let textarea_rect = Rect {
+            x: input_x,
+            y,
+            width: 10,
+            height: 1,
+        };
 
-        // Render text content or hint (max 10 chars)
-        let text = &textarea.lines()[0];
-        if text.is_empty() {
-            // Show hint in dark gray
-            for (i, ch) in hint.chars().enumerate().take(10) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
-            }
-        } else {
-            // Show actual text
-            for (i, ch) in text.chars().enumerate().take(10) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
-            }
-        }
+        // Set block style for the textarea (no border, just background)
+        let block = ratatui::widgets::Block::default()
+            .style(Style::default().bg(bg));
 
-        // 1 space gap
-        buf[(input_x + 10, y)].set_char(' ').set_bg(Color::Black);
+        textarea.set_block(block);
 
-        // 2-char color preview (no brackets)
-        if !text.is_empty() {
-            if let Some(color) = self.parse_and_resolve_color(text, config) {
-                buf[(input_x + 11, y)].set_char(' ').set_bg(color);
-                buf[(input_x + 12, y)].set_char(' ').set_bg(color);
-            }
-        }
+        // Set text style
+        textarea.set_style(Style::default().fg(Color::White).bg(bg));
+
+        // Render the TextArea widget
+        textarea.render(textarea_rect, buf);
     }
+
 
     fn render_sound_dropdown(&self, x: u16, y: u16, input_x: u16, _bg: Color, buf: &mut Buffer) {
         let focused = self.focused_field == 5;

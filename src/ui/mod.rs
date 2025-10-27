@@ -29,6 +29,8 @@ mod spell_color_browser;
 mod spell_color_form;
 mod spacer;
 mod uicolors_browser;
+mod inventory_window;
+mod room_window;
 
 #[allow(unused_imports)]
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
@@ -73,6 +75,8 @@ pub use spell_color_browser::SpellColorBrowser;
 pub use spell_color_form::{SpellColorFormWidget, SpellColorFormResult};
 pub use spacer::Spacer;
 pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColorEntryType, UIColorEditorResult};
+pub use inventory_window::InventoryWindow;
+pub use room_window::RoomWindow;
 
 use ratatui::{
     layout::Rect,

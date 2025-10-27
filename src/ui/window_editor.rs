@@ -84,7 +84,7 @@ const DASHBOARD_LAYOUTS: &[&str] = &["horizontal", "vertical", "grid_2x2", "grid
 /// Get available templates for a widget type
 fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
     match widget_type {
-        "text" => vec!["thoughts", "speech", "familiar", "room", "logons", "deaths", "arrivals", "ambients", "announcements", "loot", "custom"],
+        "text" => vec!["thoughts", "speech", "familiar", "logons", "deaths", "arrivals", "ambients", "announcements", "loot", "custom"],
         "tabbed" => vec!["chat", "custom"],
         "progress" => vec!["health", "mana", "stamina", "spirit", "bloodpoints", "stance", "encumbrance", "mindstate", "custom"],
         "countdown" => vec!["roundtime", "casttime", "stuntime", "custom"],
@@ -95,6 +95,8 @@ fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
         "compass" => vec!["compass"],
         "injury_doll" => vec!["injuries"],
         "hands" => vec!["lefthand", "righthand", "spellhand"],
+        "inventory" => vec!["inventory"],
+        "room" => vec!["room"],
         "command_input" => vec!["command_input"],
         _ => vec!["custom"],
     }
@@ -219,6 +221,8 @@ impl WindowEditor {
                 "compass".to_string(),
                 "injury_doll".to_string(),
                 "hands".to_string(),
+                "inventory".to_string(),
+                "room".to_string(),
                 "command_input".to_string(),
                 "spacer".to_string(),
             ],
@@ -412,6 +416,16 @@ impl WindowEditor {
             "hands" => {
                 self.current_window.rows = 3;
                 self.current_window.cols = 20;
+            },
+            "inventory" => {
+                self.current_window.rows = 20;
+                self.current_window.cols = 60;
+                self.current_window.streams = vec!["inv".to_string()];
+            },
+            "room" => {
+                self.current_window.rows = 10;
+                self.current_window.cols = 60;
+                self.current_window.streams = vec!["room".to_string()];
             },
             _ => {
                 self.current_window.rows = 10;

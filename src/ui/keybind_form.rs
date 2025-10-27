@@ -403,9 +403,11 @@ impl KeybindFormWidget {
         }
         current_y += 1;
 
+        let focused_field = self.focused_field;
+
         // Row 3: Key Combo (Field 2) - 1 col spacing, 37 col width
         let key_input_start = x + 2 + 10 + 1; // "Key Combo:" (10) + 1 space
-        self.render_text_row(2, "Key Combo:", &self.key_combo, "ctrl+e, f5, alt+shift+a", x + 2, current_y, key_input_start, 37, maroon, buf);
+        Self::render_text_row(focused_field, 2, "Key Combo:", &mut self.key_combo, "ctrl+e, f5, alt+shift+a", x + 2, current_y, key_input_start, 37, maroon, buf);
         current_y += 2;
 
         // Row 5: Action dropdown or Macro text (4 col spacing, 37 col width)
@@ -416,13 +418,13 @@ impl KeybindFormWidget {
             }
             KeybindActionType::Macro => {
                 let macro_input_start = x + 2 + 11 + 4; // "Macro Text:" (11) + 4 spaces
-                self.render_text_row(3, "Macro Text:", &self.macro_text, "run left\\r", x + 2, current_y, macro_input_start, 37, maroon, buf);
+                Self::render_text_row(focused_field, 3, "Macro Text:", &mut self.macro_text, "run left\\r", x + 2, current_y, macro_input_start, 37, maroon, buf);
             }
         }
     }
 
-    fn render_text_row(&self, field_id: usize, label: &str, textarea: &TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
-        let focused = self.focused_field == field_id;
+    fn render_text_row(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
+        let focused = focused_field == field_id;
         let label_color = if focused { Color::Rgb(255, 215, 0) } else { Color::Cyan };
 
         // Render label
@@ -430,24 +432,25 @@ impl KeybindFormWidget {
             buf[(x + i as u16, y)].set_char(ch).set_fg(label_color).set_bg(Color::Black);
         }
 
-        // Render input background
-        for i in 0..input_width {
-            buf[(input_x + i, y)].set_bg(bg);
-        }
+        // Create rect for the TextArea widget
+        let textarea_rect = Rect {
+            x: input_x,
+            y,
+            width: input_width,
+            height: 1,
+        };
 
-        // Render text content or hint
-        let text = &textarea.lines()[0];
-        if text.is_empty() {
-            // Show hint in dark gray
-            for (i, ch) in hint.chars().enumerate().take(input_width as usize) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::DarkGray).set_bg(bg);
-            }
-        } else {
-            // Show actual text
-            for (i, ch) in text.chars().enumerate().take(input_width as usize) {
-                buf[(input_x + i as u16, y)].set_char(ch).set_fg(Color::White).set_bg(bg);
-            }
-        }
+        // Set block style for the textarea (no border, just background)
+        let block = ratatui::widgets::Block::default()
+            .style(ratatui::style::Style::default().bg(bg));
+
+        textarea.set_block(block);
+
+        // Set text style
+        textarea.set_style(ratatui::style::Style::default().fg(Color::White).bg(bg));
+
+        // Render the TextArea widget - it handles cursor positioning and scrolling automatically
+        textarea.render(textarea_rect, buf);
     }
 
     fn render_action_dropdown(&self, x: u16, y: u16, input_x: u16, input_width: u16, _bg: Color, buf: &mut Buffer) {

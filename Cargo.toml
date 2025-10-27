@@ -52,3 +52,6 @@ rodio = "0.19"
 
 # Clipboard support
 arboard = "3.4"
+
+# Open URLs in default browser
+open = "5.0"

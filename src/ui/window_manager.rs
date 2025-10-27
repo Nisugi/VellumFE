@@ -1,6 +1,7 @@
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use std::collections::HashMap;
-use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer};
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer, InventoryWindow, RoomWindow};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
@@ -20,6 +21,8 @@ pub enum Widget {
     Targets(Targets),
     Players(Players),
     Spacer(Spacer),
+    Inventory(InventoryWindow),
+    Room(RoomWindow),
 }
 
 impl Widget {
@@ -55,6 +58,12 @@ impl Widget {
             Widget::Spacer(w) => {
                 w.render(area, buf);
             }
+            Widget::Inventory(w) => {
+                w.render(area, buf);
+            }
+            Widget::Room(w) => {
+                w.render(area, buf);
+            }
         }
     }
 
@@ -77,6 +86,8 @@ impl Widget {
         match self {
             Widget::Text(w) => w.scroll_up(lines),
             Widget::Tabbed(w) => w.scroll_up(lines),
+            Widget::Inventory(w) => w.scroll_up(lines),
+            Widget::Room(w) => w.scroll_up(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_up();
@@ -102,6 +113,8 @@ impl Widget {
         match self {
             Widget::Text(w) => w.scroll_down(lines),
             Widget::Tabbed(w) => w.scroll_down(lines),
+            Widget::Inventory(w) => w.scroll_down(lines),
+            Widget::Room(w) => w.scroll_down(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_down();
@@ -127,6 +140,8 @@ impl Widget {
         match self {
             Widget::Text(w) => w.set_width(width),
             Widget::Tabbed(w) => w.update_inner_width(width),
+            Widget::Inventory(w) => w.update_inner_size(width, 0), // Height will be set during layout
+            Widget::Room(w) => w.update_inner_size(width, 0), // Height will be set during layout
             Widget::Spacer(_) => {},
             _ => {}
         }
@@ -149,6 +164,8 @@ impl Widget {
             Widget::Targets(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Players(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Spacer(w) => w.set_border_config(show_border, border_style, border_color),
+            Widget::Inventory(_) => {}, // Inventory uses its own border management
+            Widget::Room(_) => {}, // Room uses its own border management
         }
     }
 
@@ -210,6 +227,8 @@ impl Widget {
             Widget::Targets(_) => {},
             Widget::Players(_) => {},
             Widget::Spacer(_) => {},
+            Widget::Inventory(_) => {}, // Inventory doesn't support custom border sides
+            Widget::Room(_) => {}, // Room doesn't support custom border sides
         }
     }
 
@@ -230,6 +249,8 @@ impl Widget {
             Widget::Targets(w) => w.set_title(title),
             Widget::Players(w) => w.set_title(title),
             Widget::Spacer(_) => {},
+            Widget::Inventory(w) => w.set_title(title),
+            Widget::Room(w) => w.set_title(title),
         }
     }
 
@@ -815,6 +836,48 @@ impl WindowManager {
                     );
                     Widget::Players(players)
                 }
+                "inventory" => {
+                    let mut inventory = InventoryWindow::new(title.clone());
+                    inventory.set_show_border(config.show_border);
+                    if let Some(ref border_style) = config.border_style {
+                        use crate::ui::inventory_window::BorderStyleType;
+                        let style = match border_style.as_str() {
+                            "double" => BorderStyleType::Double,
+                            "rounded" => BorderStyleType::Rounded,
+                            "thick" => BorderStyleType::Thick,
+                            "none" => BorderStyleType::None,
+                            _ => BorderStyleType::Single,
+                        };
+                        inventory.set_border_style(style);
+                    }
+                    // Convert border color string to Color
+                    let border_color = config.border_color.as_ref().and_then(|color_str| {
+                        Self::parse_hex_color(color_str)
+                    });
+                    inventory.set_border_color(border_color);
+                    Widget::Inventory(inventory)
+                }
+                "room" => {
+                    let mut room = RoomWindow::new(title.clone());
+                    room.set_show_border(config.show_border);
+                    if let Some(ref border_style) = config.border_style {
+                        use crate::ui::room_window::BorderStyleType;
+                        let style = match border_style.as_str() {
+                            "double" => BorderStyleType::Double,
+                            "rounded" => BorderStyleType::Rounded,
+                            "thick" => BorderStyleType::Thick,
+                            "none" => BorderStyleType::None,
+                            _ => BorderStyleType::Single,
+                        };
+                        room.set_border_style(style);
+                    }
+                    // Convert border color string to Color
+                    let border_color = config.border_color.as_ref().and_then(|color_str| {
+                        Self::parse_hex_color(color_str)
+                    });
+                    room.set_border_color(border_color);
+                    Widget::Room(room)
+                }
                 _ => {
                     // Default to text window
                     let mut text_window = TextWindow::new(&title, config.buffer_size)
@@ -992,7 +1055,12 @@ impl WindowManager {
     pub fn update_widths(&mut self, layouts: &HashMap<String, Rect>) {
         for (name, window) in &mut self.windows {
             if let Some(rect) = layouts.get(name) {
-                window.set_width(rect.width.saturating_sub(2)); // Account for borders
+                // For inventory and room windows, update both width and height
+                match window {
+                    Widget::Inventory(w) => w.update_inner_size(rect.width, rect.height),
+                    Widget::Room(w) => w.update_inner_size(rect.width, rect.height),
+                    _ => window.set_width(rect.width.saturating_sub(2)), // Account for borders for other widgets
+                }
             }
         }
     }
@@ -1187,6 +1255,29 @@ impl WindowManager {
 
                         dashboard.set_content_align(config.content_align.clone());
                         Widget::Dashboard(dashboard)
+                    }
+                    "active_effects" => {
+                        let mut active_effects = active_effects::ActiveEffects::new(
+                            &title,
+                            config.effect_category.clone().unwrap_or_else(|| "ActiveSpells".to_string())
+                        );
+
+                        active_effects.set_border_config(
+                            config.show_border,
+                            config.border_style.clone(),
+                            config.border_color.clone(),
+                        );
+                        active_effects.set_border_sides(config.border_sides.clone());
+
+                        if let Some(ref color) = config.bar_color {
+                            active_effects.set_bar_color(color.clone());
+                        }
+
+                        if let Some(visible_count) = config.visible_count {
+                            active_effects.set_visible_count(Some(visible_count));
+                        }
+
+                        Widget::ActiveEffects(active_effects)
                     }
                     "tabbed" => {
                         // Parse tab bar position
@@ -1486,7 +1577,30 @@ impl WindowManager {
     /// Update highlight patterns (reload after config change)
     pub fn update_highlights(&mut self, highlights: HashMap<String, crate::config::HighlightPattern>) {
         self.highlights = highlights;
-        // Text windows will use the updated highlights on next render
-        // (highlights are checked via window_manager reference, not stored in windows)
+
+        // Update all existing text windows with new highlights
+        let highlights_vec: Vec<_> = self.highlights.values().cloned().collect();
+        for widget in self.windows.values_mut() {
+            if let Widget::Text(text_window) = widget {
+                text_window.set_highlights(highlights_vec.clone());
+            } else if let Widget::Tabbed(tabbed_window) = widget {
+                // Update highlights for all tabs in tabbed windows
+                tabbed_window.set_highlights(highlights_vec.clone());
+            }
+        }
+    }
+
+    /// Parse hex color string to ratatui Color
+    fn parse_hex_color(hex: &str) -> Option<Color> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return None;
+        }
+
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+
+        Some(Color::Rgb(r, g, b))
     }
 }

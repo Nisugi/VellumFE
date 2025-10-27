@@ -415,6 +415,13 @@ impl TabbedTextWindow {
         tabs_widget.render(area, buf);
     }
 
+    /// Update highlights for all tabs
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        for tab in &mut self.tabs {
+            tab.window.set_highlights(highlights.clone());
+        }
+    }
+
     /// Render with focus indicator
     pub fn render_with_focus(
         &mut self,
