@@ -19,7 +19,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     Terminal,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -94,6 +94,77 @@ enum InputMode {
     UIColorsBrowser,  // UI colors browser
 }
 
+/// Inventory buffer state for diff optimization
+/// Buffers inventory lines and only re-processes changed items
+struct InventoryBufferState {
+    /// Whether we're currently buffering inventory lines
+    buffering: bool,
+    /// Current buffer of raw XML lines (including "Your worn items are:" header)
+    current_buffer: Vec<String>,
+    /// Previous inventory buffer for diffing
+    old_buffer: Vec<String>,
+    /// Cache of processed output: raw_xml_line -> wrapped TextSegments
+    /// Limited to 200 entries to prevent unbounded growth
+    processed_cache: HashMap<String, Vec<Vec<crate::ui::TextSegment>>>,
+}
+
+impl InventoryBufferState {
+    fn new() -> Self {
+        Self {
+            buffering: false,
+            current_buffer: Vec::new(),
+            old_buffer: Vec::new(),
+            processed_cache: HashMap::new(),
+        }
+    }
+
+    /// Start buffering mode
+    fn start_buffering(&mut self) {
+        self.buffering = true;
+        self.current_buffer.clear();
+    }
+
+    /// Stop buffering mode
+    fn stop_buffering(&mut self) {
+        self.buffering = false;
+    }
+
+    /// Add line to current buffer
+    fn add_line(&mut self, line: String) {
+        self.current_buffer.push(line);
+    }
+
+    /// Check if buffers are identical
+    fn buffers_identical(&self) -> bool {
+        self.current_buffer == self.old_buffer
+    }
+
+    /// Swap buffers after processing
+    fn swap_buffers(&mut self) {
+        self.old_buffer = std::mem::take(&mut self.current_buffer);
+    }
+
+    /// Prune cache to max 200 entries (LRU-style: remove items not in current buffer)
+    fn prune_cache(&mut self) {
+        if self.processed_cache.len() <= 200 {
+            return;
+        }
+
+        // Keep only entries that are in old_buffer or current_buffer
+        let keep_set: HashSet<String> = self.old_buffer.iter()
+            .chain(self.current_buffer.iter())
+            .cloned()
+            .collect();
+
+        self.processed_cache.retain(|k, _| keep_set.contains(k));
+
+        // If still too large, clear entire cache (shouldn't happen in practice)
+        if self.processed_cache.len() > 200 {
+            self.processed_cache.clear();
+        }
+    }
+}
+
 pub struct App {
     config: Config,
     layout: Layout,
@@ -144,6 +215,12 @@ pub struct App {
     resize_debouncer: ResizeDebouncer,  // Debouncer for terminal resize events (300ms default)
     shown_bounds_warning: bool,  // Track if we've shown the out-of-bounds warning
     base_layout_name: Option<String>,  // Name of base layout for auto-save reference
+    // Room tracking
+    nav_room_id: Option<String>,  // Navigation room ID (e.g., "2022628" from <nav rm='2022628'/>)
+    lich_room_id: Option<String>,  // Lich room ID (e.g., "33711" extracted from room name display)
+    room_subtitle: Option<String>,  // Room subtitle (e.g., " - Emberthorn Refuge, Bowery")
+    // Inventory buffer state for diff optimization
+    inventory_buffer_state: InventoryBufferState,
 }
 
 /// Drag and drop state
@@ -459,6 +536,12 @@ impl App {
             resize_debouncer: ResizeDebouncer::new(300),  // 300ms debounce for terminal resize
             shown_bounds_warning: false,  // Haven't shown warning yet
             base_layout_name,  // Track which layout file was loaded as base
+            // Room tracking initialized
+            nav_room_id: None,
+            lich_room_id: None,
+            room_subtitle: None,
+            // Inventory buffer state initialized
+            inventory_buffer_state: InventoryBufferState::new(),
         })
     }
 
@@ -566,6 +649,17 @@ impl App {
                 Widget::Text(text_window) => {
                     text_window.add_text(text);
                 }
+                Widget::Inventory(inv_window) => {
+                    // Skip adding text when buffering - it will be added from buffer processing
+                    if !self.inventory_buffer_state.buffering {
+                        inv_window.add_text(text.content, text.fg, text.bg, text.bold, text.span_type, text.link_data);
+                    }
+                }
+                Widget::Room(room_window) => {
+                    // Room window gets text via Component elements, not direct stream text
+                    // This case shouldn't normally be reached since room content comes through <compDef> tags
+                    room_window.add_text(text);
+                }
                 _ => {
                     // Other widget types don't support text
                 }
@@ -593,6 +687,12 @@ impl App {
                 }
                 Widget::Text(text_window) => {
                     text_window.finish_line(inner_width);
+                }
+                Widget::Inventory(inv_window) => {
+                    inv_window.finish_line();
+                }
+                Widget::Room(room_window) => {
+                    room_window.finish_line();
                 }
                 _ => {
                     // Other widget types don't support text
@@ -3787,6 +3887,20 @@ impl App {
 
     /// Format a category code into a display name
     /// Handle event pattern matches (stun, webbed, etc.)
+    fn handle_launch_url(&mut self, url: &str) {
+        // Construct full URL by appending path to play.net base
+        let full_url = format!("https://www.play.net{}", url);
+
+        tracing::info!("Opening URL in browser: {}", full_url);
+
+        // Use the `open` crate to launch in default browser
+        if let Err(e) = open::that(&full_url) {
+            tracing::error!("Failed to open URL: {}", e);
+            self.add_system_message("Failed to open URL in browser");
+        }
+        // Silently succeed without showing system message (URL contains session tokens)
+    }
+
     fn handle_event(&mut self, event_type: &str, action: crate::config::EventAction, duration: u32) {
         use crate::config::EventAction;
 
@@ -4197,6 +4311,9 @@ impl App {
             // Record total render time
             let render_duration = render_start.elapsed();
             self.perf_stats.record_render_time(render_duration);
+            if render_duration.as_millis() > 50 {
+                debug!("PERF: Render took {}ms - possible lag!", render_duration.as_millis());
+            }
 
             // Record frame completion
             self.perf_stats.record_frame();
@@ -4266,14 +4383,21 @@ impl App {
             // Handle server messages
             let msg_start = std::time::Instant::now();
             let mut msg_count = 0;
+            let in_inv_before = self.inventory_buffer_state.buffering;
             while let Ok(msg) = server_rx.try_recv() {
                 self.handle_server_message(msg);
                 msg_count += 1;
             }
             let msg_duration = msg_start.elapsed();
+            let in_inv_after = self.inventory_buffer_state.buffering;
+
+            // Log detailed timing if processing took a while OR if we processed inventory
             if msg_duration.as_millis() > 100 {
-                tracing::warn!("Message processing took {}ms ({} messages) - possible freeze!",
-                    msg_duration.as_millis(), msg_count);
+                tracing::warn!("PERF: Message processing took {}ms ({} messages, inv_stream: {} -> {}) - possible freeze!",
+                    msg_duration.as_millis(), msg_count, in_inv_before, in_inv_after);
+            } else if msg_duration.as_millis() > 20 && (in_inv_before || in_inv_after) {
+                debug!("PERF: Message processing took {}ms ({} messages, inv_stream: {} -> {})",
+                    msg_duration.as_millis(), msg_count, in_inv_before, in_inv_after);
             }
 
             // Update memory stats periodically (count total lines buffered)
@@ -6733,12 +6857,30 @@ impl App {
                                     }
                                 }
 
-                                // Check if we clicked on a link (text window or tabbed window)
+                                // Check if we clicked on a link (text, tabbed, or room window)
                                 // Do this after tab switching check
                                 if let Some(widget) = self.window_manager.get_window_const(name) {
-                                    // Determine if this is a tabbed window and calculate adjusted rect
-                                    let (text_window, adjusted_rect) = match widget {
-                                        Widget::Text(tw) => (Some(tw), *rect),
+                                    // Determine window type and calculate adjusted rect
+                                    enum WindowType<'a> {
+                                        Text(&'a crate::ui::TextWindow),
+                                        Room(&'a crate::ui::RoomWindow, bool), // room_window, has_border
+                                        Inventory(&'a crate::ui::InventoryWindow, bool), // inventory_window, has_border
+                                    }
+
+                                    let (window_type, adjusted_rect) = match widget {
+                                        Widget::Text(tw) => (Some(WindowType::Text(tw)), *rect),
+                                        Widget::Room(rw) => {
+                                            let has_border = self.layout.windows.get(idx)
+                                                .map(|w| w.show_border)
+                                                .unwrap_or(false);
+                                            (Some(WindowType::Room(rw, has_border)), *rect)
+                                        }
+                                        Widget::Inventory(inv) => {
+                                            let has_border = self.layout.windows.get(idx)
+                                                .map(|w| w.show_border)
+                                                .unwrap_or(false);
+                                            (Some(WindowType::Inventory(inv, has_border)), *rect)
+                                        }
                                         Widget::Tabbed(tabbed) => {
                                             // For tabbed windows, get the active tab's text window
                                             // But first check we didn't click on the tab bar itself
@@ -6772,76 +6914,90 @@ impl App {
                                                     height: rect.height.saturating_sub((2 * outer_border_offset + tab_bar_height) as u16),
                                                 };
 
-                                                (tabbed.get_active_window(), adjusted)
+                                                (tabbed.get_active_window().map(WindowType::Text), adjusted)
                                             }
                                         }
                                         _ => (None, *rect),
                                     };
 
-                                    if let Some(text_window) = text_window {
-                                        debug!("Mouse down on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
-                                        if let Some(link_data) = Self::link_at_position(text_window, mouse.column, mouse.row, adjusted_rect) {
+                                    if let Some(window_type) = window_type {
+                                        let link_data = match window_type {
+                                            WindowType::Text(text_window) => {
+                                                debug!("Mouse down on text window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                                Self::link_at_position(text_window, mouse.column, mouse.row, adjusted_rect)
+                                            }
+                                            WindowType::Room(room_window, has_border) => {
+                                                debug!("Mouse down on room window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                                Self::link_at_position_room(room_window, mouse.column, mouse.row, adjusted_rect, has_border)
+                                            }
+                                            WindowType::Inventory(inventory_window, has_border) => {
+                                                debug!("Mouse down on inventory window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                                Self::link_at_position_inventory(inventory_window, mouse.column, mouse.row, adjusted_rect, has_border)
+                                            }
+                                        };
+
+                                        if let Some(link_data) = link_data {
                                             debug!("Clicked link span: noun='{}' exist_id='{}'", link_data.noun, link_data.exist_id);
-                                                // Check if the required modifier key is held for drag and drop
-                                                let drag_modifier = self.config.ui.drag_modifier_key.to_lowercase();
-                                                let has_modifier = match drag_modifier.as_str() {
-                                                    "ctrl" => mouse.modifiers.contains(KeyModifiers::CONTROL),
-                                                    "alt" => mouse.modifiers.contains(KeyModifiers::ALT),
-                                                    "shift" => mouse.modifiers.contains(KeyModifiers::SHIFT),
-                                                    "none" => true,  // No modifier required
-                                                    _ => false,
-                                                };
+                                            // Check if the required modifier key is held for drag and drop
+                                            let drag_modifier = self.config.ui.drag_modifier_key.to_lowercase();
+                                            let has_modifier = match drag_modifier.as_str() {
+                                                "ctrl" => mouse.modifiers.contains(KeyModifiers::CONTROL),
+                                                "alt" => mouse.modifiers.contains(KeyModifiers::ALT),
+                                                "shift" => mouse.modifiers.contains(KeyModifiers::SHIFT),
+                                                "none" => true,  // No modifier required
+                                                _ => false,
+                                            };
 
-                                                if has_modifier {
-                                                    debug!("Starting drag for link exist_id={} (modifier: {})", link_data.exist_id, drag_modifier);
-                                                    // Start drag operation
-                                                    self.drag_state = Some(DragState {
-                                                        link_data: link_data.clone(),
-                                                        start_pos: (mouse.column, mouse.row),
-                                                        current_pos: (mouse.column, mouse.row),
-                                                    });
-                                                    // Clear selection drag start since we're dragging an object
-                                                    self.selection_drag_start = None;
-                                                } else {
-                                                    debug!("Handling click for link exist_id={} (no {} modifier held)", link_data.exist_id, drag_modifier);
+                                            if has_modifier {
+                                                debug!("Starting drag for link exist_id={} (modifier: {})", link_data.exist_id, drag_modifier);
+                                                // Start drag operation
+                                                self.drag_state = Some(DragState {
+                                                    link_data: link_data.clone(),
+                                                    start_pos: (mouse.column, mouse.row),
+                                                    current_pos: (mouse.column, mouse.row),
+                                                });
+                                                // Clear selection drag start since we're dragging an object
+                                                self.selection_drag_start = None;
+                                            } else {
+                                                debug!("Handling click for link exist_id={} (no {} modifier held)", link_data.exist_id, drag_modifier);
 
-                                                    // Determine link type and handle accordingly
-                                                    // 1. <d> tag (exist_id="_direct_")
-                                                    // 2. <a> tag with coord="2524,1864" (movement)
-                                                    // 3. <a> tag with regular exist_id (context menu)
+                                                // Determine link type and handle accordingly
+                                                // 1. <d> tag (exist_id="_direct_")
+                                                // 2. <a> tag with coord="2524,1864" (movement)
+                                                // 3. <a> tag with regular exist_id (context menu)
 
-                                                    if link_data.exist_id == "_direct_" {
-                                                        // <d> tag: Direct command execution
-                                                        let command = if !link_data.noun.is_empty() {
-                                                            // <d cmd='skill faqs'>: Use cmd attribute
-                                                            link_data.noun.clone()
-                                                        } else {
-                                                            // <d>SKILLS BASE</d>: Use text content
-                                                            link_data.text.clone()
-                                                        };
-                                                        debug!("Executing <d> direct command: {}", command);
-                                                        if let Err(e) = command_tx.send(command) {
-                                                            self.add_system_message(&format!("Failed to send command: {}", e));
-                                                        }
-                                                    } else if link_data.coord.as_deref() == Some("2524,1864") {
-                                                        // Movement link: Special coord for instant movement
-                                                        let command = format!("go {}", link_data.noun);
-                                                        debug!("Executing movement command: {}", command);
-                                                        if let Err(e) = command_tx.send(command) {
-                                                            self.add_system_message(&format!("Failed to send command: {}", e));
-                                                        }
+                                                if link_data.exist_id == "_direct_" {
+                                                    // <d> tag: Direct command execution
+                                                    let command = if !link_data.noun.is_empty() {
+                                                        // <d cmd='skill faqs'>: Use cmd attribute
+                                                        link_data.noun.clone()
                                                     } else {
-                                                        // Regular link: Request context menu
-                                                        if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
-                                                            self.add_system_message(&format!("Failed to request menu: {}", e));
-                                                        } else {
-                                                            // Store the click position for positioning the menu when it arrives
-                                                            self.last_link_click_pos = Some((mouse.column, mouse.row));
-                                                        }
+                                                        // <d>SKILLS BASE</d>: Use text content
+                                                        link_data.text.clone()
+                                                    };
+                                                    debug!("Executing <d> direct command: {}", command);
+                                                    if let Err(e) = command_tx.send(command) {
+                                                        self.add_system_message(&format!("Failed to send command: {}", e));
                                                     }
-                                                    // Clear selection drag start
-                                                    self.selection_drag_start = None;
+                                                } else if link_data.coord.as_deref() == Some("2524,1864") {
+                                                    // Movement link: Special coord for instant movement
+                                                    let command = format!("go {}", link_data.noun);
+                                                    debug!("Executing movement command: {}", command);
+                                                    if let Err(e) = command_tx.send(command) {
+                                                        self.add_system_message(&format!("Failed to send command: {}", e));
+                                                    }
+                                                } else {
+                                                    // Regular link: Request context menu
+                                                    if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
+                                                        self.add_system_message(&format!("Failed to request menu: {}", e));
+                                                    } else {
+                                                        // Store the click position for positioning the menu when it arrives
+                                                        self.last_link_click_pos = Some((mouse.column, mouse.row));
+                                                    }
                                                 }
+                                                // Clear selection drag start
+                                                self.selection_drag_start = None;
+                                            }
                                         } else {
                                             debug!("No link at click position");
                                         }
@@ -7318,7 +7474,6 @@ impl App {
                         {
                             if let Some(window) = self.window_manager.get_window(&name) {
                                 window.scroll_up(3);
-                                debug!("Scrolled up window '{}'", name);
                             }
                             break;
                         }
@@ -7336,7 +7491,6 @@ impl App {
                         {
                             if let Some(window) = self.window_manager.get_window(&name) {
                                 window.scroll_down(3);
-                                debug!("Scrolled down window '{}'", name);
                             }
                             break;
                         }
@@ -7474,6 +7628,126 @@ impl App {
         None
     }
 
+    /// Find a link (by precise span) at a given mouse position in a room window
+    fn link_at_position_room(
+        room_window: &crate::ui::RoomWindow,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: ratatui::layout::Rect,
+        has_border: bool,
+    ) -> Option<crate::ui::LinkData> {
+        let border_offset = if has_border { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            tracing::debug!("Room click out of bounds");
+            return None;
+        }
+
+        // Get wrapped lines from room window (same as what's displayed)
+        let wrapped_lines = room_window.get_wrapped_lines();
+
+        let line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        tracing::debug!("Room click: line_idx={}, col_offset={}, wrapped_lines={}", line_idx, col_offset, wrapped_lines.len());
+
+        if line_idx >= wrapped_lines.len() {
+            tracing::debug!("Room click line_idx out of range");
+            return None;
+        }
+
+        let line = &wrapped_lines[line_idx];
+        tracing::debug!("Room click line has {} segments", line.len());
+        let mut col = 0usize;
+        for (seg_idx, seg) in line.iter().enumerate() {
+            let seg_len = seg.text.chars().count();
+            tracing::debug!("  Seg {}: text='{}' cols={}-{} has_link={}", seg_idx, seg.text, col, col + seg_len, seg.link_data.is_some());
+            if col_offset >= col && col_offset < col + seg_len {
+                // Inside this segment
+                if let Some(mut link) = seg.link_data.clone() {
+                    // For <d> tags without cmd attribute, populate text from segment
+                    // This ensures we capture the actual displayed text
+                    if link.text.is_empty() {
+                        link.text = seg.text.clone();
+                    }
+                    tracing::debug!("Found link in room: noun={}", link.noun);
+                    return Some(link);
+                }
+                tracing::debug!("Clicked segment has no link");
+                return None;
+            }
+            col += seg_len;
+        }
+
+        tracing::debug!("No segment matched click position");
+        None
+    }
+
+    /// Find a link (by precise span) at a given mouse position in an inventory window
+    fn link_at_position_inventory(
+        inventory_window: &crate::ui::InventoryWindow,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: ratatui::layout::Rect,
+        has_border: bool,
+    ) -> Option<crate::ui::LinkData> {
+        let border_offset = if has_border { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            tracing::debug!("Inventory click out of bounds");
+            return None;
+        }
+
+        // Get wrapped lines from inventory window (same as what's displayed)
+        let wrapped_lines = inventory_window.get_lines();
+
+        let line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        tracing::debug!("Inventory click: line_idx={}, col_offset={}, wrapped_lines={}", line_idx, col_offset, wrapped_lines.len());
+
+        if line_idx >= wrapped_lines.len() {
+            tracing::debug!("Inventory click line_idx out of range");
+            return None;
+        }
+
+        let line = &wrapped_lines[line_idx];
+        tracing::debug!("Inventory click line has {} segments", line.len());
+        let mut col = 0usize;
+        for (seg_idx, seg) in line.iter().enumerate() {
+            let seg_len = seg.text.chars().count();
+            tracing::debug!("  Seg {}: text='{}' cols={}-{} has_link={}", seg_idx, seg.text, col, col + seg_len, seg.link_data.is_some());
+            if col_offset >= col && col_offset < col + seg_len {
+                // Inside this segment
+                if let Some(mut link) = seg.link_data.clone() {
+                    // For <d> tags without cmd attribute, populate text from segment
+                    // This ensures we capture the actual displayed text
+                    if link.text.is_empty() {
+                        link.text = seg.text.clone();
+                    }
+                    tracing::debug!("Found link in inventory: noun={}", link.noun);
+                    return Some(link);
+                }
+                tracing::debug!("Clicked segment has no link");
+                return None;
+            }
+            col += seg_len;
+        }
+
+        tracing::debug!("No segment matched click position");
+        None
+    }
+
     fn handle_server_message(&mut self, msg: ServerMessage) {
         match msg {
             ServerMessage::Connected => {
@@ -7495,6 +7769,8 @@ impl App {
                 self.running = false;
             }
             ServerMessage::Text(line) => {
+                let msg_start = std::time::Instant::now();
+
                 // Track network bytes received
                 self.perf_stats.record_bytes_received(line.len() as u64);
 
@@ -7514,6 +7790,65 @@ impl App {
                         self.finish_current_line(inner_width);
                     }
                     return;
+                }
+
+                // Inventory buffering logic - collect lines starting with "  " when buffering
+                if self.inventory_buffer_state.buffering {
+                    if line.starts_with("  ") {
+                        // Skip blank lines (just whitespace) - they're not inventory items
+                        if line.trim().is_empty() {
+                            return;
+                        }
+
+                        // Add line to buffer and skip normal processing
+                        self.inventory_buffer_state.add_line(line.to_string());
+                        return;
+                    } else if line.starts_with('[') {
+                        // Script echo (e.g., "[exec1]>gird") - pass through to main window
+                        // Continue buffering - don't stop the inventory stream
+                        // This line will be processed normally below and go to main stream
+                        debug!("Inventory buffering: Script echo detected, passing through to main: '{}'", &line[..line.len().min(80)]);
+                    } else if line.trim() == "<popStream/>" || line.starts_with("<popStream") {
+                        // Normal end of inventory stream - stop buffering and process
+                        // Don't warn - this is the expected way the stream ends
+                        debug!("Inventory buffering: Stream ended normally with <popStream/>, processing {} items",
+                            self.inventory_buffer_state.current_buffer.len());
+                        self.inventory_buffer_state.stop_buffering();
+
+                        // Process the buffered inventory now
+                        if !self.inventory_buffer_state.current_buffer.is_empty() {
+                            self.process_inventory_buffer();
+                        }
+
+                        // The current line will be processed normally below (XML parser will handle popStream)
+                    } else if line.contains('<') {
+                        // XML tags (e.g., targetcount updates: "<clearStream id="targetcount"/><pushStream id="targetcount"/>[ 0]<popStream/>")
+                        // Pass through to main window, continue buffering
+                        // These are system messages that shouldn't interrupt inventory
+                        debug!("Inventory buffering: XML tags detected, passing through to main: '{}'", &line[..line.len().min(80)]);
+                    } else {
+                        // *** INVENTORY STREAM INTERRUPTED ***
+                        // Line doesn't start with "  " (inventory), "[" (script echo), contain XML, or is <popStream>
+                        // This is an unexpected split - inventory stream ended prematurely
+                        tracing::warn!(
+                            "INVENTORY STREAM SPLIT: Expected inventory line (starts with '  ') but got: '{}' | \
+                            Buffered {} inventory lines before split | \
+                            Current stream: '{}' | \
+                            This line will go to main window instead of inventory",
+                            &line[..line.len().min(100)],
+                            self.inventory_buffer_state.current_buffer.len(),
+                            self.current_stream
+                        );
+
+                        self.inventory_buffer_state.stop_buffering();
+
+                        // Process the buffered inventory now
+                        if !self.inventory_buffer_state.current_buffer.is_empty() {
+                            self.process_inventory_buffer();
+                        }
+
+                        // The current line will be processed normally below (will go to main stream)
+                    }
                 }
 
                 // Parse XML and add to window (with timing)
@@ -7604,6 +7939,26 @@ impl App {
                                 _ => {
                                     // Normal text handling for other streams
                                     if !content.is_empty() {
+                                        // Try to extract Lich room ID from room name format: [Name - ID]
+                                        // Example: "[Emberthorn Refuge, Bowery - 33711]"
+                                        if self.current_stream == "main" && content.contains("[") && content.contains(" - ") {
+                                            // Try to match pattern: [...  - NUMBER]
+                                            if let Some(dash_pos) = content.rfind(" - ") {
+                                                if let Some(bracket_pos) = content[dash_pos..].find(']') {
+                                                    let id_start = dash_pos + 3; // After " - "
+                                                    let id_end = dash_pos + bracket_pos;
+                                                    let potential_id = &content[id_start..id_end].trim();
+
+                                                    // Check if it's all digits (room ID)
+                                                    if potential_id.chars().all(|c| c.is_ascii_digit()) {
+                                                        self.lich_room_id = Some(potential_id.to_string());
+                                                        debug!("Extracted Lich room ID from room name: {}", potential_id);
+                                                        self.update_room_window_title();
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         // Check for sound triggers in highlights
                                         self.check_sound_triggers(&content);
 
@@ -7663,6 +8018,12 @@ impl App {
                                     });
                                 }
                             }
+
+                            // Process inventory buffer after prompt (if we have buffered content)
+                            // But only if we're NOT currently buffering (don't process mid-stream)
+                            if !self.inventory_buffer_state.current_buffer.is_empty() && !self.inventory_buffer_state.buffering {
+                                self.process_inventory_buffer();
+                            }
                         }
                         ParsedElement::StreamPush { id } => {
                             // Switch to new stream
@@ -7682,6 +8043,28 @@ impl App {
                             match id.as_str() {
                                 "combat" | "playerlist" => {
                                     self.stream_buffer.clear();
+                                }
+                                "inv" => {
+                                    // Only start buffering if inventory window exists
+                                    // Otherwise we'd waste CPU buffering lines that go nowhere
+                                    if self.window_manager.has_window_for_stream("inv") {
+                                        // Start buffering inventory lines for diff optimization
+                                        // Don't clear inventory window yet - will clear only if buffer changes
+                                        self.inventory_buffer_state.start_buffering();
+                                        // Add header line to buffer so it's included when buffer is processed
+                                        // (The Text element also adds it to the window, but we clear the window before processing buffer)
+                                        self.inventory_buffer_state.add_line("Your worn items are:".to_string());
+                                    }
+                                }
+                                "room" => {
+                                    // Clear all room components when room stream is pushed
+                                    if let Some(window_name) = self.window_manager.stream_map.get("room").cloned() {
+                                        if let Some(widget) = self.window_manager.get_window(&window_name) {
+                                            if let crate::ui::Widget::Room(room_window) = widget {
+                                                room_window.clear_all_components();
+                                            }
+                                        }
+                                    }
                                 }
                                 _ => {}
                             }
@@ -7758,12 +8141,10 @@ impl App {
                                     };
                                     window.set_bar_colors(Some(color.to_string()), Some("#000000".to_string()));
                                     window.set_progress_with_text(value, max, Some(text.clone()));
-                                    debug!("Updated encumbrance bar to {}% with color {} and text '{}'", value, color, text);
                                 } else if id == "stance" || id == "pbarStance" {
                                     // Special handling for stance - show stance name based on percentage
                                     let stance_text = Self::stance_percentage_to_text(value);
                                     window.set_progress_with_text(value, max, Some(stance_text.clone()));
-                                    debug!("Updated stance bar to {}% with text '{}'", value, stance_text);
                                 } else {
                                     // value is percentage (0-100), max is 100
                                     // text contains display text like "mana 407/407" or "clear as a bell"
@@ -7847,8 +8228,12 @@ impl App {
                         }
                         ParsedElement::InjuryImage { id, name } => {
                             // <image id="head" name="Injury2"/>
+                            // <image id="head" name="head"/> means cleared (no injury)
                             // Convert injury name to level: Injury1-3 = 1-3, Scar1-3 = 4-6
-                            let level = if name.starts_with("Injury") {
+                            // When name equals body part ID, it means cleared (level 0)
+                            let level = if name == id {
+                                0 // Cleared - name equals body part ID
+                            } else if name.starts_with("Injury") {
                                 match name.chars().last() {
                                     Some('1') => 1,
                                     Some('2') => 2,
@@ -7863,7 +8248,7 @@ impl App {
                                     _ => 0,
                                 }
                             } else {
-                                0 // No injury
+                                0 // Unknown injury type - treat as cleared
                             };
 
                             if let Some(window) = self.window_manager.get_window("injuries") {
@@ -7875,24 +8260,20 @@ impl App {
                             // Update grouped hands widget if it exists
                             if let Some(window) = self.window_manager.get_window("hands") {
                                 window.set_left_hand(item.clone());
-                                debug!("Updated left hand (grouped): {}", item);
                             }
                             // Update individual lefthand widget if it exists
                             if let Some(window) = self.window_manager.get_window("lefthand") {
                                 window.set_hand_content(item.clone());
-                                debug!("Updated left hand (individual): {}", item);
                             }
                         }
                         ParsedElement::RightHand { item } => {
                             // Update grouped hands widget if it exists
                             if let Some(window) = self.window_manager.get_window("hands") {
                                 window.set_right_hand(item.clone());
-                                debug!("Updated right hand (grouped): {}", item);
                             }
                             // Update individual righthand widget if it exists
                             if let Some(window) = self.window_manager.get_window("righthand") {
                                 window.set_hand_content(item.clone());
-                                debug!("Updated right hand (individual): {}", item);
                             }
                         }
                         ParsedElement::SpellHand { spell } => {
@@ -7970,6 +8351,105 @@ impl App {
                             // Handle event patterns (stun, webbed, etc.)
                             self.handle_event(&event_type, action, duration);
                         }
+                        ParsedElement::Component { id, value } => {
+                            // Route component updates to room window
+                            // Components: "room desc", "room objs", "room players", "room exits"
+                            if let Some(window_name) = self.window_manager.stream_map.get("room").cloned() {
+                                if let Some(widget) = self.window_manager.get_window(&window_name) {
+                                    if let crate::ui::Widget::Room(room_window) = widget {
+                                        // Start component
+                                        room_window.start_component(id.clone());
+
+                                        // Only process non-empty components
+                                        let trimmed_value = value.trim();
+                                        if !trimmed_value.is_empty() {
+                                            // Save parser state before parsing component (components are self-contained)
+                                            let saved_color_stack = self.parser.color_stack.clone();
+                                            let saved_preset_stack = self.parser.preset_stack.clone();
+                                            let saved_style_stack = self.parser.style_stack.clone();
+                                            let saved_bold_stack = self.parser.bold_stack.clone();
+                                            let saved_link_depth = self.parser.link_depth;
+                                            let saved_spell_depth = self.parser.spell_depth;
+                                            let saved_link_data = self.parser.current_link_data.clone();
+
+                                            // Clear stacks for component parsing (start with clean state)
+                                            self.parser.color_stack.clear();
+                                            self.parser.preset_stack.clear();
+                                            self.parser.style_stack.clear();
+                                            self.parser.bold_stack.clear();
+                                            self.parser.link_depth = 0;
+                                            self.parser.spell_depth = 0;
+                                            self.parser.current_link_data = None;
+
+                                            // Debug: Log the XML we're about to parse
+                                            if value.contains("You also see") {
+                                                tracing::debug!("Parsing room objs XML: {}", value);
+                                            }
+
+                                            // Parse the content with the XML parser to extract styled text
+                                            let parsed_content = self.parser.parse_line(&value);
+
+                                            // Add text elements to the room window
+                                            for element in parsed_content {
+                                                if let ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } = element {
+                                                    // Debug: Log segments that might be bleeding
+                                                    if content.trim() == "and" || content.trim() == "," || content.contains("also see") {
+                                                        tracing::debug!(
+                                                            "Room text: '{}' fg={:?} bold={} span_type={:?} link={}",
+                                                            content, fg_color, bold, span_type, link_data.is_some()
+                                                        );
+                                                    }
+                                                    room_window.add_text(StyledText {
+                                                        content,
+                                                        fg: fg_color.and_then(|c| Self::parse_hex_color(&c)),
+                                                        bg: bg_color.and_then(|c| Self::parse_hex_color(&c)),
+                                                        bold,
+                                                        span_type,
+                                                        link_data,
+                                                    });
+                                                }
+                                            }
+
+                                            room_window.finish_line();
+
+                                            // Restore parser state after component parsing
+                                            self.parser.color_stack = saved_color_stack;
+                                            self.parser.preset_stack = saved_preset_stack;
+                                            self.parser.style_stack = saved_style_stack;
+                                            self.parser.bold_stack = saved_bold_stack;
+                                            self.parser.link_depth = saved_link_depth;
+                                            self.parser.spell_depth = saved_spell_depth;
+                                            self.parser.current_link_data = saved_link_data;
+                                        }
+
+                                        room_window.finish_component();
+                                    }
+                                }
+                            }
+                        }
+                        ParsedElement::RoomId { id } => {
+                            // Store nav room ID
+                            // Lich room ID will be extracted from room name text when it appears
+                            self.nav_room_id = Some(id.clone());
+                            self.update_room_window_title();
+                        }
+                        ParsedElement::StreamWindow { id, subtitle } => {
+                            // Handle stream window updates
+                            if id == "room" {
+                                if let Some(subtitle_text) = subtitle {
+                                    // Remove leading " - " if present
+                                    let clean_subtitle = subtitle_text.trim_start_matches(" - ");
+                                    self.room_subtitle = Some(clean_subtitle.to_string());
+
+                                    // Update room window title
+                                    self.update_room_window_title();
+                                }
+                            }
+                        }
+                        ParsedElement::LaunchURL { url } => {
+                            // Handle LaunchURL - open in browser
+                            self.handle_launch_url(&url);
+                        }
                         _ => {
                             // Other element types don't add visible content
                         }
@@ -8005,6 +8485,87 @@ impl App {
             let inner_width = size.0.saturating_sub(2);
             self.finish_current_line(inner_width);
         }
+    }
+
+    /// Process buffered inventory lines with diff optimization
+    /// Only re-processes lines that changed from last update
+    fn process_inventory_buffer(&mut self) {
+        // Check if buffers are identical - if so, skip update entirely
+        if self.inventory_buffer_state.buffers_identical() {
+            self.inventory_buffer_state.swap_buffers();
+            return;
+        }
+
+        // Get inventory window
+        let window_name = match self.window_manager.stream_map.get("inv").cloned() {
+            Some(name) => name,
+            None => {
+                self.inventory_buffer_state.swap_buffers();
+                return;
+            }
+        };
+
+        // Clear inventory window before processing
+        if let Some(widget) = self.window_manager.get_window(&window_name) {
+            if let crate::ui::Widget::Inventory(inv_window) = widget {
+                inv_window.clear();
+            }
+        }
+
+        // Process each line in current buffer
+        // Check cache first, only parse new/changed lines
+        for raw_line in &self.inventory_buffer_state.current_buffer {
+            let should_parse = !self.inventory_buffer_state.processed_cache.contains_key(raw_line);
+
+            // Parse the line to get elements
+            let elements = self.parser.parse_line(raw_line);
+
+            // Process elements and add to inventory window
+            let mut added_text = false;
+            for element in elements {
+                if let ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } = element {
+                    // Parse color strings to Color
+                    let fg = fg_color.and_then(|hex| Self::parse_hex_color(&hex));
+                    let bg = bg_color.and_then(|hex| Self::parse_hex_color(&hex));
+
+                    // Add to inventory window using normal flow
+                    if let Some(widget) = self.window_manager.get_window(&window_name) {
+                        if let crate::ui::Widget::Inventory(inv_window) = widget {
+                            // Use the standard add_text flow which handles proper wrapping
+                            inv_window.add_text(
+                                content,
+                                fg,
+                                bg,
+                                bold,
+                                span_type,
+                                link_data
+                            );
+                            added_text = true;
+                        }
+                    }
+                }
+            }
+
+            // Finish the line to trigger wrapping (only if we actually added text)
+            if added_text {
+                if let Some(widget) = self.window_manager.get_window(&window_name) {
+                    if let crate::ui::Widget::Inventory(inv_window) = widget {
+                        inv_window.finish_line();
+                    }
+                }
+            }
+
+            // Mark as processed in cache (just use the raw line as key)
+            if should_parse {
+                self.inventory_buffer_state.processed_cache.insert(raw_line.clone(), vec![]);
+            }
+        }
+
+        // Prune cache to prevent unbounded growth
+        self.inventory_buffer_state.prune_cache();
+
+        // Swap buffers for next comparison
+        self.inventory_buffer_state.swap_buffers();
     }
 
     /// Get list of available dot commands for tab completion
@@ -8940,6 +9501,45 @@ impl App {
         }
 
         result
+    }
+
+    /// Update room window title with formatted room IDs
+    fn update_room_window_title(&mut self) {
+        // Format: [subtitle - lich_room_id] (u_nav_room_id)
+        // Example: [Emberthorn Refuge, Bowery - 33712] (u2022629)
+
+        let title = if let Some(ref subtitle) = self.room_subtitle {
+            if let Some(ref lich_id) = self.lich_room_id {
+                if let Some(ref nav_id) = self.nav_room_id {
+                    format!("[{} - {}] (u{})", subtitle, lich_id, nav_id)
+                } else {
+                    format!("[{}]", subtitle)
+                }
+            } else if let Some(ref nav_id) = self.nav_room_id {
+                format!("[{}] (u{})", subtitle, nav_id)
+            } else {
+                format!("[{}]", subtitle)
+            }
+        } else if let Some(ref lich_id) = self.lich_room_id {
+            if let Some(ref nav_id) = self.nav_room_id {
+                format!("[{}] (u{})", lich_id, nav_id)
+            } else {
+                format!("[{}]", lich_id)
+            }
+        } else if let Some(ref nav_id) = self.nav_room_id {
+            format!("(u{})", nav_id)
+        } else {
+            return; // No title to set
+        };
+
+        // Find and update room window
+        if let Some(window_name) = self.window_manager.stream_map.get("room").cloned() {
+            if let Some(widget) = self.window_manager.get_window(&window_name) {
+                if let crate::ui::Widget::Room(room_window) = widget {
+                    room_window.set_title(title);
+                }
+            }
+        }
     }
 }
 

@@ -265,8 +265,6 @@ impl TextWindow {
 
             if !should_append {
                 // New link - create new entry with this content as the text
-                tracing::debug!("Caching new link: noun='{}' exist_id='{}' content='{}'",
-                    link_data.noun, link_data.exist_id, styled.content);
                 let mut new_link = link_data.clone();
                 new_link.text = styled.content.clone();
                 self.recent_links.push_back(new_link);
@@ -1151,6 +1149,7 @@ pub struct LineSegments {
 }
 
 /// A segment of styled text within a line
+#[derive(Clone)]
 pub struct TextSegment {
     pub text: String,
     pub fg: Option<Color>,
