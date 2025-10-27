@@ -38,12 +38,12 @@ impl PerformanceStatsWidget {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer, stats: &PerformanceStats) {
-        // Fill background if specified
+        // Fill background if specified (clear text behind widget)
         if let Some(bg_color) = self.background_color {
             for y in area.y..area.y + area.height {
                 for x in area.x..area.x + area.width {
                     if x < buf.area().width && y < buf.area().height {
-                        buf[(x, y)].set_bg(bg_color);
+                        buf[(x, y)].set_char(' ').set_bg(bg_color).set_fg(Color::Reset);
                     }
                 }
             }

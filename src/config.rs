@@ -3379,7 +3379,7 @@ impl Config {
                 text_color: None,
                 transparent_background: true,
                 locked: false,
-                indicator_colors: Some(vec!["#000000".to_string(), "#00ff00".to_string()]), // off, green
+                indicator_colors: Some(vec!["-".to_string(), "#00ff00".to_string()]), // off (transparent), green (on)
                 dashboard_layout: None,
                 dashboard_indicators: None,
                 dashboard_spacing: None,
@@ -3424,7 +3424,7 @@ impl Config {
                 text_color: None,
                 transparent_background: true,
                 locked: false,
-                indicator_colors: Some(vec!["#000000".to_string(), "#8b4513".to_string()]), // off, brownish-red
+                indicator_colors: Some(vec!["-".to_string(), "#8b4513".to_string()]), // off (transparent), brownish-red (on)
                 dashboard_layout: None,
                 dashboard_indicators: None,
                 dashboard_spacing: None,
@@ -3469,7 +3469,7 @@ impl Config {
                 text_color: None,
                 transparent_background: true,
                 locked: false,
-                indicator_colors: Some(vec!["#000000".to_string(), "#ff0000".to_string()]), // off, red
+                indicator_colors: Some(vec!["-".to_string(), "#ff0000".to_string()]), // off (transparent), red (on)
                 dashboard_layout: None,
                 dashboard_indicators: None,
                 dashboard_spacing: None,
@@ -3514,7 +3514,7 @@ impl Config {
                 text_color: None,
                 transparent_background: true,
                 locked: false,
-                indicator_colors: Some(vec!["#000000".to_string(), "#ffff00".to_string()]), // off, yellow
+                indicator_colors: Some(vec!["-".to_string(), "#ffff00".to_string()]), // off (transparent), yellow (on)
                 dashboard_layout: None,
                 dashboard_indicators: None,
                 dashboard_spacing: None,
@@ -3559,7 +3559,7 @@ impl Config {
                 text_color: None,
                 transparent_background: true,
                 locked: false,
-                indicator_colors: Some(vec!["#000000".to_string(), "#cccccc".to_string()]), // off, bright grey
+                indicator_colors: Some(vec!["-".to_string(), "#cccccc".to_string()]), // off (transparent), bright grey (on)
                 dashboard_layout: None,
                 dashboard_indicators: None,
                 dashboard_spacing: None,
@@ -3610,27 +3610,27 @@ impl Config {
                     DashboardIndicatorDef {
                         id: "poisoned".to_string(),
                         icon: "\u{e231}".to_string(),
-                        colors: vec!["#000000".to_string(), "#00ff00".to_string()],
+                        colors: vec!["-".to_string(), "#00ff00".to_string()],
                     },
                     DashboardIndicatorDef {
                         id: "diseased".to_string(),
                         icon: "\u{e286}".to_string(),
-                        colors: vec!["#000000".to_string(), "#8b4513".to_string()],
+                        colors: vec!["-".to_string(), "#8b4513".to_string()],
                     },
                     DashboardIndicatorDef {
                         id: "bleeding".to_string(),
                         icon: "\u{f043}".to_string(),
-                        colors: vec!["#000000".to_string(), "#ff0000".to_string()],
+                        colors: vec!["-".to_string(), "#ff0000".to_string()],
                     },
                     DashboardIndicatorDef {
                         id: "stunned".to_string(),
                         icon: "\u{f0e7}".to_string(),
-                        colors: vec!["#000000".to_string(), "#ffff00".to_string()],
+                        colors: vec!["-".to_string(), "#ffff00".to_string()],
                     },
                     DashboardIndicatorDef {
                         id: "webbed".to_string(),
                         icon: "\u{f0bca}".to_string(),
-                        colors: vec!["#000000".to_string(), "#cccccc".to_string()],
+                        colors: vec!["-".to_string(), "#cccccc".to_string()],
                     },
                 ]),
                 dashboard_spacing: Some(1),
