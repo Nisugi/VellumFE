@@ -22,3 +22,11 @@ debug.log
 # Wiki sync temporary directory
 .wiki-repo/
 .claude/settings.local.json
+
+# Map editor and data files
+map_editor.html
+mapdb.json
+defaults/mapdb.json
+defaults/map_coordinates.json
+temp_map*.json
+map_coordinates_from_csv.json

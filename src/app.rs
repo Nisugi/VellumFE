@@ -297,8 +297,8 @@ impl App {
 
             resolve_opt(&mut window.border_color);
             resolve_opt(&mut window.background_color);
-            resolve_opt(&mut window.bar_color);
-            resolve_opt(&mut window.bar_background_color);
+            resolve_opt(&mut window.bar_fill);
+            resolve_opt(&mut window.bar_background);
             resolve_opt(&mut window.text_color);
             resolve_opt(&mut window.tab_active_color);
             resolve_opt(&mut window.tab_inactive_color);
@@ -364,8 +364,8 @@ impl App {
                 title: w.title.clone(),
                 content_align: w.content_align.clone(),
                 background_color: w.background_color.clone(),
-                bar_color: w.bar_color.clone(),
-                bar_background_color: w.bar_background_color.clone(),
+                bar_fill: w.bar_fill.clone(),
+                bar_background: w.bar_background.clone(),
                 text_color: w.text_color.clone(),
                 transparent_background: w.transparent_background,
                 countdown_icon: countdown_icon.clone(),
@@ -1960,8 +1960,8 @@ impl App {
                 title: w.title.clone(),
                 content_align: w.content_align.clone(),
                 background_color: w.background_color.clone(),  // Don't resolve - preserve None/"-"/value as-is
-                bar_color: w.bar_color.clone(),
-                bar_background_color: w.bar_background_color.clone(),
+                bar_fill: w.bar_fill.clone(),
+                bar_background: w.bar_background.clone(),
                 text_color: w.get_text_color(&self.config.colors),
                 transparent_background: w.transparent_background,
                 countdown_icon: countdown_icon.clone(),
@@ -2017,6 +2017,7 @@ impl App {
             }
 
             self.command_input.set_background_color(cmd_window.get_background_color(&self.config.colors));
+            self.command_input.set_text_color(cmd_window.get_text_color(&self.config.colors));
 
             tracing::debug!("Updated command_input config from layout");
         } else {
@@ -2260,6 +2261,38 @@ impl App {
                     Err(e) => self.add_system_message(&format!("Failed to load layout: {}", e)),
                 }
             }
+            "menuloadlayout" => {
+                // Load layout and automatically trigger resize (used by menu system)
+                let name = parts.get(1).unwrap_or(&"default");
+                let layout_path = match Config::layout_path(name) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to get layout path: {}", e));
+                        return;
+                    }
+                };
+                match Layout::load_from_file(&layout_path) {
+                    Ok(new_layout) => {
+                        self.layout = new_layout.clone();
+                        self.baseline_layout = Some(new_layout);  // Store as new baseline
+                        self.base_layout_name = Some(name.to_string());  // Update base layout name for autosave
+                        self.add_system_message(&format!("Layout '{}' loaded", name));
+                        self.update_window_manager_config();
+                        self.update_command_input_config();
+
+                        // Log if layout has terminal size info
+                        if let (Some(w), Some(h)) = (self.layout.terminal_width, self.layout.terminal_height) {
+                            tracing::info!("Loaded layout with designed terminal size: {}x{}", w, h);
+                        } else {
+                            tracing::warn!("Layout has no terminal size - .resize will use .baseline snapshot if set");
+                        }
+
+                        // Automatically trigger resize to adjust to current terminal size
+                        self.handle_dot_command(".resize", command_tx);
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to load layout: {}", e)),
+                }
+            }
             "layouts" => {
                 match Config::list_layouts() {
                     Ok(layouts) => {
@@ -2315,8 +2348,8 @@ impl App {
                     title: Some(window_name.to_string()),
                     content_align: None,
             background_color: None,
-                    bar_color: None,
-                    bar_background_color: None,
+                    bar_fill: None,
+                    bar_background: None,
                     text_color: None,
                     transparent_background: true,
                     locked: false,
@@ -2406,8 +2439,8 @@ impl App {
                     title: Some(window_name.to_string()),
                     content_align: None,
             background_color: None,
-                    bar_color: None,
-                    bar_background_color: None,
+                    bar_fill: None,
+                    bar_background: None,
                     text_color: None,
                     transparent_background: true,
                     locked: false,
@@ -3212,8 +3245,8 @@ impl App {
                 let mut found = false;
                 for window_def in &mut self.layout.windows {
                     if window_def.name == window_name {
-                        window_def.bar_color = Some(bar_color.to_string());
-                        window_def.bar_background_color = bg_color.map(|s| s.to_string());
+                        window_def.bar_fill = Some(bar_color.to_string());
+                        window_def.bar_background = bg_color.map(|s| s.to_string());
                         found = true;
                         break;
                     }
@@ -3587,12 +3620,13 @@ impl App {
 
     /// Open the main popup menu centered on the terminal
     fn open_main_menu(&mut self) {
-        // Build main menu items (only top-level entries and settings)
+        // Build main menu items (alphabetical order)
         let mut items: Vec<crate::ui::MenuItem> = Vec::new();
 
         items.push(crate::ui::MenuItem { text: "Colors >".to_string(), command: "__SUBMENU__colors".to_string() });
         items.push(crate::ui::MenuItem { text: "Highlights >".to_string(), command: "__SUBMENU__highlights".to_string() });
         items.push(crate::ui::MenuItem { text: "Keybinds >".to_string(), command: "__SUBMENU__keybinds".to_string() });
+        items.push(crate::ui::MenuItem { text: "Layouts >".to_string(), command: "__SUBMENU__layouts".to_string() });
         items.push(crate::ui::MenuItem { text: "Settings".to_string(), command: ".settings".to_string() });
         items.push(crate::ui::MenuItem { text: "Windows >".to_string(), command: "__SUBMENU__windows".to_string() });
 
@@ -3631,6 +3665,33 @@ impl App {
                 crate::ui::MenuItem { text: "Browse windows".to_string(), command: ".editwindow".to_string() },
             ]
         );
+
+        // Build layouts submenu dynamically from available layouts
+        let mut layout_items = Vec::new();
+        match Config::list_layouts() {
+            Ok(layouts) => {
+                if layouts.is_empty() {
+                    layout_items.push(crate::ui::MenuItem {
+                        text: "(No saved layouts)".to_string(),
+                        command: "".to_string(),
+                    });
+                } else {
+                    for layout_name in layouts {
+                        layout_items.push(crate::ui::MenuItem {
+                            text: layout_name.clone(),
+                            command: format!(".menuloadlayout {}", layout_name),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                layout_items.push(crate::ui::MenuItem {
+                    text: format!("(Error: {})", e),
+                    command: "".to_string(),
+                });
+            }
+        }
+        self.menu_categories.insert("layouts".to_string(), layout_items);
 
         // Calculate centered position based on terminal size and menu size
         let (term_w, term_h) = match crossterm::terminal::size() {
@@ -3901,6 +3962,173 @@ impl App {
         // Silently succeed without showing system message (URL contains session tokens)
     }
 
+    /// Deduplicate room objects to improve performance with large item lists
+    /// Groups identical non-bold items (e.g., coins) and shows count if 10+ duplicates
+    /// Preserves bold items (creatures) without deduplication
+    fn deduplicate_room_objects(elements: Vec<ParsedElement>) -> Vec<ParsedElement> {
+        use std::collections::HashMap;
+        use crate::ui::LinkData;
+
+        // Threshold for showing count (only deduplicate if 10+ identical items)
+        const DEDUP_THRESHOLD: usize = 10;
+
+        // Group items by display text, tracking bold status and link data
+        #[derive(Debug)]
+        struct ItemGroup {
+            display_text: String,
+            is_bold: bool,
+            links: Vec<LinkData>,
+            fg_color: Option<String>,
+            bg_color: Option<String>,
+            span_type: SpanType,
+        }
+
+        let mut item_groups: HashMap<String, ItemGroup> = HashMap::new();
+        let mut prefix_elements = Vec::new();
+        let mut suffix_elements = Vec::new();
+        let mut in_items = false;
+
+        // Separate prefix, items, and suffix
+        for element in elements {
+            if let ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, stream } = element {
+                // Check if this is a link (room object)
+                if let Some(link) = &link_data {
+                    in_items = true;
+
+                    // Group by display text
+                    let key = content.clone();
+                    item_groups.entry(key.clone()).or_insert_with(|| ItemGroup {
+                        display_text: content.clone(),
+                        is_bold: bold,
+                        links: Vec::new(),
+                        fg_color: fg_color.clone(),
+                        bg_color: bg_color.clone(),
+                        span_type: span_type.clone(),
+                    }).links.push(link.clone());
+                } else if !in_items {
+                    // Prefix text (before items)
+                    prefix_elements.push(ParsedElement::Text {
+                        content,
+                        stream,
+                        fg_color,
+                        bg_color,
+                        bold,
+                        span_type,
+                        link_data,
+                    });
+                } else {
+                    // In items section but not a link - check if it's separator or suffix
+                    // Separators are just ", " or " and " - skip them (we'll rebuild)
+                    let trimmed = content.trim();
+                    if trimmed == "," || trimmed == "and" || trimmed.is_empty() {
+                        // Skip separators
+                        continue;
+                    } else {
+                        // This is suffix text (e.g., "and a bunch of other stuff")
+                        suffix_elements.push(ParsedElement::Text {
+                            content,
+                            stream,
+                            fg_color,
+                            bg_color,
+                            bold,
+                            span_type,
+                            link_data,
+                        });
+                    }
+                }
+            } else {
+                // Non-text elements (shouldn't happen in room objs, but preserve them)
+                if !in_items {
+                    prefix_elements.push(element);
+                } else {
+                    suffix_elements.push(element);
+                }
+            }
+        }
+
+        // Build deduplicated item list
+        let mut deduplicated_items = Vec::new();
+        let mut total_original_items = 0;
+        let mut total_deduplicated_items = 0;
+
+        for (_, group) in item_groups {
+            let count = group.links.len();
+            total_original_items += count;
+
+            // Skip deduplication for bold items (creatures) or if below threshold
+            if group.is_bold || count < DEDUP_THRESHOLD {
+                // Add each item individually
+                for link in &group.links {
+                    deduplicated_items.push((
+                        group.display_text.clone(),
+                        group.fg_color.clone(),
+                        group.bg_color.clone(),
+                        group.is_bold,
+                        group.span_type.clone(),
+                        Some(link.clone()),
+                    ));
+                    total_deduplicated_items += 1;
+                }
+            } else {
+                // Deduplicate: show "item (count)" with one link using first link
+                let display_text = format!("{} ({})", group.display_text, count);
+                tracing::debug!("Deduplicating {} x {} into single entry", count, group.display_text);
+                deduplicated_items.push((
+                    display_text,
+                    group.fg_color.clone(),
+                    group.bg_color.clone(),
+                    group.is_bold,
+                    group.span_type.clone(),
+                    Some(group.links[0].clone()),
+                ));
+                total_deduplicated_items += 1;
+            }
+        }
+
+        if total_original_items > total_deduplicated_items {
+            tracing::info!(
+                "Room objects deduplicated: {} items → {} items ({}% reduction)",
+                total_original_items,
+                total_deduplicated_items,
+                ((total_original_items - total_deduplicated_items) * 100) / total_original_items
+            );
+        }
+
+        // Rebuild elements with proper separators
+        let mut result = prefix_elements;
+
+        for (i, (content, fg_color, bg_color, bold, span_type, link_data)) in deduplicated_items.iter().enumerate() {
+            // Add item
+            result.push(ParsedElement::Text {
+                content: content.clone(),
+                stream: "room".to_string(),
+                fg_color: fg_color.clone(),
+                bg_color: bg_color.clone(),
+                bold: *bold,
+                span_type: span_type.clone(),
+                link_data: link_data.clone(),
+            });
+
+            // Add separator (comma or "and")
+            if i < deduplicated_items.len() - 1 {
+                result.push(ParsedElement::Text {
+                    content: ", ".to_string(),
+                    stream: "room".to_string(),
+                    fg_color: None,
+                    bg_color: None,
+                    bold: false,
+                    span_type: SpanType::Normal,
+                    link_data: None,
+                });
+            }
+        }
+
+        // Add suffix
+        result.extend(suffix_elements);
+
+        result
+    }
+
     fn handle_event(&mut self, event_type: &str, action: crate::config::EventAction, duration: u32) {
         use crate::config::EventAction;
 
@@ -4006,27 +4234,8 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        // Check minimum terminal size BEFORE entering alternate screen
-        const MIN_WIDTH: u16 = 80;
-        const MIN_HEIGHT: u16 = 24;
-
-        // Get terminal size without entering alternate screen yet
+        // Get terminal size for baseline snapshot
         let size = crossterm::terminal::size()?;
-        if size.0 < MIN_WIDTH || size.1 < MIN_HEIGHT {
-            eprintln!("\n╔════════════════════════════════════════════════════════════╗");
-            eprintln!("║              TERMINAL SIZE TOO SMALL                       ║");
-            eprintln!("╠════════════════════════════════════════════════════════════╣");
-            eprintln!("║ VellumFE requires a minimum terminal size to run.         ║");
-            eprintln!("║                                                            ║");
-            eprintln!("║ Current size: {}x{} (width x height)", size.0, size.1);
-            eprintln!("║ Required:     {}x{} (minimum)", MIN_WIDTH, MIN_HEIGHT);
-            eprintln!("║                                                            ║");
-            eprintln!("║ Please resize your terminal window and try again.         ║");
-            eprintln!("╚════════════════════════════════════════════════════════════╝\n");
-
-            return Err(anyhow::anyhow!("Terminal size {}x{} is below minimum {}x{}",
-                size.0, size.1, MIN_WIDTH, MIN_HEIGHT));
-        }
 
         // Setup terminal
         enable_raw_mode()?;
@@ -4332,24 +4541,9 @@ impl App {
                         self.handle_mouse_event(mouse, &window_layouts, &command_tx)?;
                     }
                     Event::Resize(width, height) => {
-                        const MIN_WIDTH: u16 = 80;
-                        const MIN_HEIGHT: u16 = 24;
-
                         // Check debouncer - only process resize if enough time has passed
                         if let Some((w, h)) = self.resize_debouncer.check_resize(width, height) {
                             tracing::debug!("Terminal resized to {}x{} (debounced)", w, h);
-
-                            if w < MIN_WIDTH || h < MIN_HEIGHT {
-                                tracing::warn!(
-                                    "Terminal size {}x{} is below minimum {}x{}. Layout may not display correctly.",
-                                    w, h, MIN_WIDTH, MIN_HEIGHT
-                                );
-                                let warning_msg = format!(
-                                    "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
-                                    w, h, MIN_WIDTH, MIN_HEIGHT
-                                );
-                                self.add_system_message(&warning_msg);
-                            }
 
                             // Auto-scale layout if we have a baseline
                             self.auto_scale_layout(w, h);
@@ -4366,15 +4560,6 @@ impl App {
             // Check for pending resize (if debounce period has passed)
             if let Some((width, height)) = self.resize_debouncer.check_pending() {
                 tracing::debug!("Processing pending resize to {}x{}", width, height);
-                const MIN_WIDTH: u16 = 80;
-                const MIN_HEIGHT: u16 = 24;
-                if width < MIN_WIDTH || height < MIN_HEIGHT {
-                    let warning_msg = format!(
-                        "⚠ Warning: Terminal size {}x{} is below minimum {}x{}. Please resize for optimal display.",
-                        width, height, MIN_WIDTH, MIN_HEIGHT
-                    );
-                    self.add_system_message(&warning_msg);
-                }
 
                 // Auto-scale layout using the helper method
                 self.auto_scale_layout(width, height);
@@ -4807,8 +4992,8 @@ impl App {
 
                         resolve_opt(&mut window.border_color);
                         resolve_opt(&mut window.background_color);
-                        resolve_opt(&mut window.bar_color);
-                        resolve_opt(&mut window.bar_background_color);
+                        resolve_opt(&mut window.bar_fill);
+                        resolve_opt(&mut window.bar_background);
                         resolve_opt(&mut window.text_color);
                         resolve_opt(&mut window.tab_active_color);
                         resolve_opt(&mut window.tab_inactive_color);
@@ -7804,31 +7989,33 @@ impl App {
                         self.inventory_buffer_state.add_line(line.to_string());
                         return;
                     } else if line.starts_with('[') {
-                        // Script echo (e.g., "[exec1]>gird") - pass through to main window
-                        // Continue buffering - don't stop the inventory stream
-                        // This line will be processed normally below and go to main stream
+                        // Script echo (e.g., "[exec1]>gird", "[05]" from targetcount)
+                        // Pass through to main window, continue buffering - don't stop the inventory stream
                         debug!("Inventory buffering: Script echo detected, passing through to main: '{}'", &line[..line.len().min(80)]);
-                    } else if line.trim() == "<popStream/>" || line.starts_with("<popStream") {
-                        // Normal end of inventory stream - stop buffering and process
-                        // Don't warn - this is the expected way the stream ends
-                        debug!("Inventory buffering: Stream ended normally with <popStream/>, processing {} items",
-                            self.inventory_buffer_state.current_buffer.len());
-                        self.inventory_buffer_state.stop_buffering();
-
-                        // Process the buffered inventory now
-                        if !self.inventory_buffer_state.current_buffer.is_empty() {
-                            self.process_inventory_buffer();
-                        }
-
-                        // The current line will be processed normally below (XML parser will handle popStream)
                     } else if line.contains('<') {
                         // XML tags (e.g., targetcount updates: "<clearStream id="targetcount"/><pushStream id="targetcount"/>[ 0]<popStream/>")
                         // Pass through to main window, continue buffering
                         // These are system messages that shouldn't interrupt inventory
                         debug!("Inventory buffering: XML tags detected, passing through to main: '{}'", &line[..line.len().min(80)]);
+                    } else if line.contains("targetcount") || line.contains("targetlist") ||
+                              line.contains("playercount") || line.contains("playerlist") ||
+                              line.contains("popStream") {
+                        // Stream-related content that should not end inventory buffering
+                        // Pass through to main window, continue buffering
+                        debug!("Inventory buffering: Stream operation detected ({}), passing through to main: '{}'",
+                               if line.contains("targetcount") { "targetcount" }
+                               else if line.contains("targetlist") { "targetlist" }
+                               else if line.contains("playercount") { "playercount" }
+                               else if line.contains("playerlist") { "playerlist" }
+                               else { "popStream" },
+                               &line[..line.len().min(80)]);
                     } else {
                         // *** INVENTORY STREAM INTERRUPTED ***
-                        // Line doesn't start with "  " (inventory), "[" (script echo), contain XML, or is <popStream>
+                        // Line doesn't match any of the patterns that should be ignored during inventory buffering:
+                        //   - Not an inventory line (starts with "  ")
+                        //   - Not a script echo (starts with "[")
+                        //   - Not XML tags (contains "<")
+                        //   - Not a stream operation (targetcount, targetlist, playercount, playerlist, popStream)
                         // This is an unexpected split - inventory stream ended prematurely
                         tracing::warn!(
                             "INVENTORY STREAM SPLIT: Expected inventory line (starts with '  ') but got: '{}' | \
@@ -8389,8 +8576,15 @@ impl App {
                                             // Parse the content with the XML parser to extract styled text
                                             let parsed_content = self.parser.parse_line(&value);
 
+                                            // Deduplicate room objects if this is the "room objs" component
+                                            let processed_content = if id == "room objs" {
+                                                Self::deduplicate_room_objects(parsed_content)
+                                            } else {
+                                                parsed_content
+                                            };
+
                                             // Add text elements to the room window
-                                            for element in parsed_content {
+                                            for element in processed_content {
                                                 if let ParsedElement::Text { content, fg_color, bg_color, bold, span_type, link_data, .. } = element {
                                                     // Debug: Log segments that might be bleeding
                                                     if content.trim() == "and" || content.trim() == "," || content.contains("also see") {
@@ -8432,6 +8626,8 @@ impl App {
                             // Lich room ID will be extracted from room name text when it appears
                             self.nav_room_id = Some(id.clone());
                             self.update_room_window_title();
+                            // Update map widgets with new room
+                            self.window_manager.update_current_room(id.clone());
                         }
                         ParsedElement::StreamWindow { id, subtitle } => {
                             // Handle stream window updates
