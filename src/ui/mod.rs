@@ -31,6 +31,7 @@ mod spacer;
 mod uicolors_browser;
 mod inventory_window;
 mod room_window;
+mod map_widget;
 
 #[allow(unused_imports)]
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
@@ -77,6 +78,7 @@ pub use spacer::Spacer;
 pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColorEntryType, UIColorEditorResult};
 pub use inventory_window::InventoryWindow;
 pub use room_window::RoomWindow;
+pub use map_widget::MapWidget;
 
 use ratatui::{
     layout::Rect,

@@ -97,6 +97,7 @@ fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
         "hands" => vec!["lefthand", "righthand", "spellhand"],
         "inventory" => vec!["inventory"],
         "room" => vec!["room"],
+        "map" => vec!["local_map"],
         "command_input" => vec!["command_input"],
         _ => vec!["custom"],
     }
@@ -223,6 +224,7 @@ impl WindowEditor {
                 "hands".to_string(),
                 "inventory".to_string(),
                 "room".to_string(),
+                "map".to_string(),
                 "command_input".to_string(),
                 "spacer".to_string(),
             ],
@@ -427,6 +429,10 @@ impl WindowEditor {
                 self.current_window.cols = 60;
                 self.current_window.streams = vec!["room".to_string()];
             },
+            "map" => {
+                self.current_window.rows = 25;
+                self.current_window.cols = 40;
+            },
             _ => {
                 self.current_window.rows = 10;
                 self.current_window.cols = 40;
@@ -557,11 +563,11 @@ impl WindowEditor {
             self.text_color_input.insert_str(text_color);
 
             self.bar_color_input.delete_line_by_head();
-            let bar_color = self.current_window.bar_color.as_deref().unwrap_or("#00ff00");
+            let bar_color = self.current_window.bar_fill.as_deref().unwrap_or("#00ff00");
             self.bar_color_input.insert_str(bar_color);
 
             self.bar_bg_color_input.delete_line_by_head();
-            let bar_bg_color = self.current_window.bar_background_color.as_deref().unwrap_or("#333333");
+            let bar_bg_color = self.current_window.bar_background.as_deref().unwrap_or("#333333");
             self.bar_bg_color_input.insert_str(bar_bg_color);
         }
 
@@ -794,8 +800,8 @@ impl WindowEditor {
 
             // Clear the normal color fields for injury_doll
             self.current_window.text_color = None;
-            self.current_window.bar_color = None;
-            self.current_window.bar_background_color = None;
+            self.current_window.bar_fill = None;
+            self.current_window.bar_background = None;
             self.current_window.compass_active_color = None;
             self.current_window.compass_inactive_color = None;
             self.current_window.effect_default_color = None;
@@ -806,10 +812,10 @@ impl WindowEditor {
             self.current_window.text_color = if text_color.is_empty() { None } else { Some(text_color) };
 
             let bar_color = self.bar_color_input.lines()[0].to_string();
-            self.current_window.bar_color = if bar_color.is_empty() { None } else { Some(bar_color) };
+            self.current_window.bar_fill = if bar_color.is_empty() { None } else { Some(bar_color) };
 
             let bar_bg_color = self.bar_bg_color_input.lines()[0].to_string();
-            self.current_window.bar_background_color = if bar_bg_color.is_empty() { None } else { Some(bar_bg_color) };
+            self.current_window.bar_background = if bar_bg_color.is_empty() { None } else { Some(bar_bg_color) };
 
             // Clear injury_doll fields for other widgets
             self.current_window.injury_default_color = None;

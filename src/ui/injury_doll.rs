@@ -26,6 +26,7 @@ pub struct InjuryDoll {
     colors: Vec<String>,
     background_color: Option<String>,
     content_align: Option<String>,
+    transparent_background: bool,
 }
 
 impl InjuryDoll {
@@ -48,6 +49,7 @@ impl InjuryDoll {
             ],
             background_color: None,
             content_align: None,
+            transparent_background: true,  // Default to transparent
         }
     }
 
@@ -103,6 +105,10 @@ impl InjuryDoll {
 
     pub fn set_content_align(&mut self, align: Option<String>) {
         self.content_align = align;
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
     }
 
     fn parse_color(hex: &str) -> Color {
@@ -173,15 +179,17 @@ impl InjuryDoll {
             .as_ref()
             .map(|color_hex| Self::parse_color(color_hex));
 
-        // Fill background if explicitly set
-        if let Some(bg_color) = bg_color {
-            for row in 0..inner_area.height {
-                for col in 0..inner_area.width {
-                    let x = inner_area.x + col;
-                    let y = inner_area.y + row;
-                    if x < buf.area().width && y < buf.area().height {
-                        buf[(x, y)].set_char(' ');
-                        buf[(x, y)].set_bg(bg_color);
+        // Fill background if not transparent and color is set
+        if !self.transparent_background {
+            if let Some(bg_color) = bg_color {
+                for row in 0..inner_area.height {
+                    for col in 0..inner_area.width {
+                        let x = inner_area.x + col;
+                        let y = inner_area.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_char(' ');
+                            buf[(x, y)].set_bg(bg_color);
+                        }
                     }
                 }
             }
@@ -240,8 +248,10 @@ impl InjuryDoll {
                 let color = self.get_injury_color(body_part);
                 buf[(x, y)].set_char(*ch);
                 buf[(x, y)].set_fg(color);
-                if let Some(bg) = bg_color {
-                    buf[(x, y)].set_bg(bg);
+                if !self.transparent_background {
+                    if let Some(bg) = bg_color {
+                        buf[(x, y)].set_bg(bg);
+                    }
                 }
             }
         }
@@ -264,8 +274,10 @@ impl InjuryDoll {
                 if x < buf.area().width && y < buf.area().height {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(color);
-                    if let Some(bg) = bg_color {
-                        buf[(x, y)].set_bg(bg);
+                    if !self.transparent_background {
+                        if let Some(bg) = bg_color {
+                            buf[(x, y)].set_bg(bg);
+                        }
                     }
                 }
             }

@@ -61,7 +61,7 @@ ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --deta
 - Windows use **absolute positioning** (row, col, rows, cols) - each window is independent
 - No grid layout - windows can overlap, have gaps, be moved/resized freely
 - WindowManager maintains windows and stream routing mappings
-- Widget types: `text`, `progress`, `countdown`, `tabbed`, `indicator`, `compass`, `injury_doll`, `hands`, `dashboard`, `active_effects`
+- Widget types: `text`, `progress`, `countdown`, `tabbed`, `indicator`, `compass`, `injury_doll`, `hands`, `dashboard`, `active_effects`, `map`
 
 **Stream Routing:**
 - Game output is divided into named streams (main, thoughts, speech, familiar, etc.)
@@ -251,6 +251,16 @@ Command list parser for clickable link context menus. Contains:
 - `<a exist='...' noun='...'>text</a>` - Clickable links for game objects
 - `<menuResponse id='...'><mi coord='...' noun='...'/></menuResponse>` - Menu data from server
 
+### src/map_data.rs
+Map coordinate data loader and context manager. Contains:
+- `MapData` - Container for all map contexts and room coordinates
+- `MapContext` - Single map area (e.g., "Wehnimer's Landing - Town Square")
+- `MapCoordinate` - (x, y, z) position for a room
+- `load_default()` - Loads embedded `defaults/map_coordinates.json`
+- `get_context_for_room()` - Determines which map context a room belongs to
+- `get_coordinate()` - Gets (x, y, z) position for a room ID
+- Supports separate coordinate spaces for outdoor areas vs building interiors
+
 ### src/ui/window_manager.rs
 Manages multiple windows and their layouts. Contains:
 - `calculate_layout()` - Converts window configs to Ratatui Rect positions
@@ -277,6 +287,17 @@ Countdown timer widget. Contains:
 - `set_countdown()` - Set end time (Unix timestamp)
 - Character-based fill animation (fills N chars where N = seconds remaining)
 - Automatic countdown via system time comparisons
+
+### src/ui/map_widget.rs
+Map widget for displaying local area navigation. Contains:
+- `new()` - Create map widget with title
+- `set_current_room()` - Update current room position and context
+- Context-aware display (auto-switches between outdoor/indoor maps)
+- Centered viewport (current room always at center, shows ±5 grid units)
+- Visual indicators: `●` = current room, `○` = visited, `·` = unvisited
+- Automatic connection lines between adjacent rooms
+- Map coordinate data loaded from `defaults/map_coordinates.json`
+- Supports multiple z-levels (up/down movement)
 
 ### src/ui/tabbed_text_window.rs
 Tabbed text window widget with activity indicators. Contains:
@@ -383,7 +404,7 @@ Window editor widget for creating/editing windows. Contains:
 - `handle_mouse()` - Mouse drag support for moving popup
 - `render()` - Draws popup with widget-specific fields
 - Dynamic field display based on widget_type
-- Supports all widget types: text, progress, countdown, tabbed, indicator, compass, injury_doll, hands, dashboard, active_effects
+- Supports all widget types: text, progress, countdown, tabbed, indicator, compass, injury_doll, hands, dashboard, active_effects, inventory, room, map
 - Popup uses `InputMode::WindowEditor` for state management
 
 ## Configuration
@@ -430,7 +451,7 @@ fg = "#53a684"
 
 [[ui.windows]]
 name = "main"
-widget_type = "text"  # or "progress", "countdown", "tabbed", etc.
+widget_type = "text"  # or "progress", "countdown", "tabbed", "map", etc.
 streams = ["main"]
 row = 0
 col = 0
@@ -470,6 +491,17 @@ stream = "thoughts"
 [[ui.windows.tabs]]
 name = "Whisper"
 stream = "whisper"
+
+# Map widget example
+[[ui.windows]]
+name = "map"
+widget_type = "map"
+row = 0
+col = 80
+rows = 25
+cols = 40
+show_border = true
+title = "Local Map"
 ```
 
 ## Dot Commands (Local, Not Sent to Game)

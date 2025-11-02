@@ -18,6 +18,8 @@ pub struct Indicator {
     // For injuries: [none, injury1, injury2, injury3, scar1, scar2, scar3]
     // For boolean: [off, on]
     colors: Vec<String>,
+    background_color: Option<String>,
+    transparent_background: bool,
     content_align: Option<String>,
 }
 
@@ -39,6 +41,8 @@ impl Indicator {
                 "#477ab3".to_string(),  // 5: scar 2 (blue)
                 "#7e62b3".to_string(),  // 6: scar 3 (purple)
             ],
+            background_color: None,
+            transparent_background: true,  // Default to transparent
             content_align: None,
         }
     }
@@ -82,6 +86,18 @@ impl Indicator {
     /// Set custom colors for each state
     pub fn set_colors(&mut self, colors: Vec<String>) {
         self.colors = colors;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        // Handle three-state: None = transparent, Some("-") = transparent, Some(value) = use value
+        self.background_color = match color {
+            Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
+            other => other,
+        };
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
     }
 
     pub fn set_content_align(&mut self, align: Option<String>) {
@@ -169,6 +185,23 @@ impl Indicator {
             return;
         }
 
+        // Fill background if not transparent and color is set
+        if !self.transparent_background {
+            if let Some(ref color_hex) = self.background_color {
+                let bg_color = Self::parse_color(color_hex);
+                for row in 0..inner_area.height {
+                    for col in 0..inner_area.width {
+                        let x = inner_area.x + col;
+                        let y = inner_area.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_char(' ');
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
+                }
+            }
+        }
+
         // Calculate content alignment offset (vertical only, like progress bars)
         const CONTENT_HEIGHT: u16 = 1;
         let row_offset = if let Some(ref align_str) = self.content_align {
@@ -207,6 +240,13 @@ impl Indicator {
                 if x < inner_area.x + inner_area.width && x < buf.area().width {
                     buf[(x, y)].set_char(c);
                     buf[(x, y)].set_fg(color);
+                    // Set background if not transparent and color is configured
+                    if !self.transparent_background {
+                        if let Some(ref color_hex) = self.background_color {
+                            let bg_color = Self::parse_color(color_hex);
+                            buf[(x, y)].set_bg(bg_color);
+                        }
+                    }
                 }
             }
         }

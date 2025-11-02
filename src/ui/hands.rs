@@ -21,6 +21,7 @@ pub struct Hands {
     border_sides: Option<Vec<String>>,
     text_color: Option<String>,
     background_color: Option<String>,
+    transparent_background: bool,
 }
 
 impl Hands {
@@ -34,8 +35,9 @@ impl Hands {
             border_style: None,
             border_color: None,
             border_sides: None,
-            text_color: Some("#ffffff".to_string()),
+            text_color: None,  // Will use global default
             background_color: None,
+            transparent_background: true,  // Default to transparent
         }
     }
 
@@ -107,6 +109,10 @@ impl Hands {
             Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
             other => other,
         };
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
     }
 
     fn parse_color(hex: &str) -> Color {
@@ -184,25 +190,28 @@ impl Hands {
             return;
         }
 
-        // Fill entire area with background color
-        let bg_color = self.background_color
-            .as_ref()
-            .map(|c| Self::parse_color(c))
-            .unwrap_or(Color::Reset);
+        // Fill entire area with background color if not transparent
+        if !self.transparent_background {
+            let bg_color = self.background_color
+                .as_ref()
+                .map(|c| Self::parse_color(c))
+                .unwrap_or(Color::Reset);
 
-        for row in 0..inner_area.height {
-            for col in 0..inner_area.width {
-                let x = inner_area.x + col;
-                let y = inner_area.y + row;
-                buf[(x, y)].set_char(' ');
-                buf[(x, y)].set_bg(bg_color);
+            for row in 0..inner_area.height {
+                for col in 0..inner_area.width {
+                    let x = inner_area.x + col;
+                    let y = inner_area.y + row;
+                    buf[(x, y)].set_char(' ');
+                    buf[(x, y)].set_bg(bg_color);
+                }
             }
         }
 
+        // Trust that text_color is always set by window manager from config resolution
         let text_color = self.text_color
             .as_ref()
             .map(|c| Self::parse_color(c))
-            .unwrap_or(Color::White);
+            .unwrap_or(Color::Reset);  // Fallback to terminal default (should never happen)
 
         // Render the three hands
         // Row 0: L: left_hand_text
@@ -228,7 +237,13 @@ impl Hands {
                 if x < inner_area.x + inner_area.width {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(text_color);
-                    buf[(x, y)].set_bg(bg_color);
+                    if !self.transparent_background {
+                        let bg_color = self.background_color
+                            .as_ref()
+                            .map(|c| Self::parse_color(c))
+                            .unwrap_or(Color::Reset);
+                        buf[(x, y)].set_bg(bg_color);
+                    }
                 }
             }
 
@@ -239,7 +254,13 @@ impl Hands {
                 if x < inner_area.x + inner_area.width {
                     buf[(x, y)].set_char(ch);
                     buf[(x, y)].set_fg(text_color);
-                    buf[(x, y)].set_bg(bg_color);
+                    if !self.transparent_background {
+                        let bg_color = self.background_color
+                            .as_ref()
+                            .map(|c| Self::parse_color(c))
+                            .unwrap_or(Color::Reset);
+                        buf[(x, y)].set_bg(bg_color);
+                    }
                 }
             }
         }

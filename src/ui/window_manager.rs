@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use std::collections::HashMap;
-use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer, InventoryWindow, RoomWindow};
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer, InventoryWindow, RoomWindow, MapWidget};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
@@ -23,6 +23,7 @@ pub enum Widget {
     Spacer(Spacer),
     Inventory(InventoryWindow),
     Room(RoomWindow),
+    Map(MapWidget),
 }
 
 impl Widget {
@@ -63,6 +64,10 @@ impl Widget {
             }
             Widget::Room(w) => {
                 w.render(area, buf);
+            }
+            Widget::Map(w) => {
+                use ratatui::widgets::Widget as RatatuiWidget;
+                RatatuiWidget::render(&*w, area, buf);
             }
         }
     }
@@ -166,6 +171,7 @@ impl Widget {
             Widget::Spacer(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Inventory(_) => {}, // Inventory uses its own border management
             Widget::Room(_) => {}, // Room uses its own border management
+            Widget::Map(w) => w.set_border(show_border), // Map uses simple border flag
         }
     }
 
@@ -229,6 +235,7 @@ impl Widget {
             Widget::Spacer(_) => {},
             Widget::Inventory(_) => {}, // Inventory doesn't support custom border sides
             Widget::Room(_) => {}, // Room doesn't support custom border sides
+            Widget::Map(_) => {}, // Map doesn't support custom border sides
         }
     }
 
@@ -251,6 +258,7 @@ impl Widget {
             Widget::Spacer(_) => {},
             Widget::Inventory(w) => w.set_title(title),
             Widget::Room(w) => w.set_title(title),
+            Widget::Map(w) => w.set_title(title),
         }
     }
 
@@ -277,6 +285,13 @@ impl Widget {
         }
     }
 
+    /// Set current room (only for map widgets)
+    pub fn set_current_room(&mut self, room_id: String) {
+        if let Widget::Map(w) = self {
+            w.set_current_room(room_id);
+        }
+    }
+
     /// Set transparent background (only for progress bars and countdowns)
     pub fn set_transparent_background(&mut self, transparent: bool) {
         match self {
@@ -284,6 +299,11 @@ impl Widget {
             Widget::Countdown(w) => w.set_transparent_background(transparent),
             Widget::ActiveEffects(w) => w.set_transparent_background(transparent),
             Widget::Spacer(w) => w.set_transparent_background(transparent),
+            Widget::Hands(w) => w.set_transparent_background(transparent),
+            Widget::Hand(w) => w.set_transparent_background(transparent),
+            Widget::Compass(w) => w.set_transparent_background(transparent),
+            Widget::InjuryDoll(w) => w.set_transparent_background(transparent),
+            Widget::Indicator(w) => w.set_transparent_background(transparent),
             _ => {}
         }
     }
@@ -308,6 +328,7 @@ impl Widget {
             Widget::Hand(w) => w.set_background_color(color),
             Widget::Compass(w) => w.set_background_color(color),
             Widget::InjuryDoll(w) => w.set_background_color(color),
+            Widget::Indicator(w) => w.set_background_color(color),
             Widget::Spacer(w) => w.set_background_color(color),
             _ => {}
         }
@@ -472,8 +493,8 @@ pub struct WindowConfig {
     pub title: Option<String>, // Custom title
     pub content_align: Option<String>, // Content alignment: "top-left", "bottom-left", etc.
     pub background_color: Option<String>, // Background color for entire widget area
-    pub bar_color: Option<String>,  // Progress bar color
-    pub bar_background_color: Option<String>, // Progress bar background
+    pub bar_fill: Option<String>,  // Progress bar filled portion color
+    pub bar_background: Option<String>, // Progress bar unfilled portion color
     pub text_color: Option<String>, // Text color for progress bars and other widgets
     pub transparent_background: bool,  // If true, unfilled portions are transparent
     pub countdown_icon: Option<String>, // Icon character for countdown widgets
@@ -542,9 +563,9 @@ impl WindowManager {
                         );
                     progress_bar.set_border_sides(config.border_sides.clone());
 
-                    tracing::debug!("ProgressBar {}: bar_color={:?}, bg_color={:?}",
-                        config.name, config.bar_color, config.bar_background_color);
-                    progress_bar.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                    tracing::debug!("ProgressBar {}: bar_fill={:?}, bar_background={:?}",
+                        config.name, config.bar_fill, config.bar_background);
+                    progress_bar.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                     progress_bar.set_transparent_background(config.transparent_background);
                     progress_bar.set_text_color(config.text_color.clone());
                     progress_bar.set_content_align(config.content_align.clone());
@@ -559,8 +580,9 @@ impl WindowManager {
                             config.border_color.clone(),
                         );
                     countdown.set_border_sides(config.border_sides.clone());
-                    countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                    countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                     countdown.set_transparent_background(config.transparent_background);
+                    countdown.set_text_color(config.text_color.clone());
                     countdown.set_content_align(config.content_align.clone());
 
                     // Set countdown icon: use window-specific if set, otherwise global default
@@ -710,6 +732,7 @@ impl WindowManager {
                     }
 
                     dashboard.set_transparent_background(config.transparent_background);
+                    dashboard.set_background_color(config.background_color.clone());
                     dashboard.set_content_align(config.content_align.clone());
                     Widget::Dashboard(dashboard)
                 }
@@ -726,7 +749,7 @@ impl WindowManager {
                     );
                     active_effects.set_border_sides(config.border_sides.clone());
 
-                    if let Some(ref color) = config.bar_color {
+                    if let Some(ref color) = config.bar_fill {
                         active_effects.set_bar_color(color.clone());
                     }
 
@@ -850,11 +873,7 @@ impl WindowManager {
                         };
                         inventory.set_border_style(style);
                     }
-                    // Convert border color string to Color
-                    let border_color = config.border_color.as_ref().and_then(|color_str| {
-                        Self::parse_hex_color(color_str)
-                    });
-                    inventory.set_border_color(border_color);
+                    inventory.set_border_color(config.border_color.clone());
                     Widget::Inventory(inventory)
                 }
                 "room" => {
@@ -871,12 +890,16 @@ impl WindowManager {
                         };
                         room.set_border_style(style);
                     }
-                    // Convert border color string to Color
-                    let border_color = config.border_color.as_ref().and_then(|color_str| {
-                        Self::parse_hex_color(color_str)
-                    });
-                    room.set_border_color(border_color);
+                    room.set_border_color(config.border_color.clone());
                     Widget::Room(room)
+                }
+                "map" => {
+                    let mut map = MapWidget::new(title.clone());
+                    map.set_border(config.show_border);
+                    if let Some(ref title_override) = config.title {
+                        map.set_title(title_override.clone());
+                    }
+                    Widget::Map(map)
                 }
                 _ => {
                     // Default to text window
@@ -1087,7 +1110,7 @@ impl WindowManager {
                                 config.border_color.clone(),
                             );
                         progress_bar.set_border_sides(config.border_sides.clone());
-                        progress_bar.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                        progress_bar.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                         progress_bar.set_transparent_background(config.transparent_background);
                         progress_bar.set_text_color(config.text_color.clone());
                         progress_bar.set_content_align(config.content_align.clone());
@@ -1102,8 +1125,9 @@ impl WindowManager {
                                 config.border_color.clone(),
                             );
                         countdown.set_border_sides(config.border_sides.clone());
-                        countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                        countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                         countdown.set_transparent_background(config.transparent_background);
+                        countdown.set_text_color(config.text_color.clone());
                         countdown.set_content_align(config.content_align.clone());
 
                         // Set countdown icon: use window-specific if set, otherwise global default
@@ -1253,6 +1277,8 @@ impl WindowManager {
                             }
                         }
 
+                        dashboard.set_transparent_background(config.transparent_background);
+                        dashboard.set_background_color(config.background_color.clone());
                         dashboard.set_content_align(config.content_align.clone());
                         Widget::Dashboard(dashboard)
                     }
@@ -1269,7 +1295,7 @@ impl WindowManager {
                         );
                         active_effects.set_border_sides(config.border_sides.clone());
 
-                        if let Some(ref color) = config.bar_color {
+                        if let Some(ref color) = config.bar_fill {
                             active_effects.set_bar_color(color.clone());
                         }
 
@@ -1491,13 +1517,14 @@ impl WindowManager {
                             }
                         }
                         Widget::Progress(progress) => {
-                            progress.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                            progress.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                             progress.set_transparent_background(config.transparent_background);
                             progress.set_content_align(config.content_align.clone());
                         }
                         Widget::Countdown(countdown) => {
-                            countdown.set_colors(config.bar_color.clone(), config.bar_background_color.clone());
+                            countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                             countdown.set_transparent_background(config.transparent_background);
+                            countdown.set_text_color(config.text_color.clone());
                             countdown.set_content_align(config.content_align.clone());
                             if let Some(ref icon_str) = config.countdown_icon {
                                 if let Some(icon_char) = icon_str.chars().next() {
@@ -1521,6 +1548,8 @@ impl WindowManager {
                             injury_doll.set_background_color(config.background_color.clone());
                         }
                         Widget::Dashboard(dashboard) => {
+                            dashboard.set_transparent_background(config.transparent_background);
+                            dashboard.set_background_color(config.background_color.clone());
                             dashboard.set_content_align(config.content_align.clone());
                             if let Some(spacing) = config.dashboard_spacing {
                                 dashboard.set_spacing(spacing);
@@ -1571,6 +1600,13 @@ impl WindowManager {
     pub fn update_dashboard_indicator(&mut self, indicator_id: &str, value: u8) {
         for window in self.windows.values_mut() {
             window.set_dashboard_indicator(indicator_id, value);
+        }
+    }
+
+    /// Update current room on all map widgets
+    pub fn update_current_room(&mut self, room_id: String) {
+        for window in self.windows.values_mut() {
+            window.set_current_room(room_id.clone());
         }
     }
 

@@ -157,9 +157,10 @@ impl ScrollableContainer {
             ratatui::widgets::Borders::NONE
         };
 
+        // Trust that border_color is set by window manager from config resolution
         let border_color = self.border_color.as_ref()
             .map(|c| ProgressBar::parse_color(c))
-            .unwrap_or(ratatui::style::Color::White);
+            .unwrap_or(ratatui::style::Color::Reset);  // Fallback to terminal default (should never happen)
 
         // Check if we have partial borders (not all four sides)
         let has_top = borders.contains(ratatui::widgets::Borders::TOP);

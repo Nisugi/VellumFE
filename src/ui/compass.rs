@@ -22,6 +22,7 @@ pub struct Compass {
     inactive_color: Option<String>, // Color for unavailable exits
     content_align: Option<String>,  // Content alignment within widget area
     background_color: Option<String>, // Background color for entire widget area
+    transparent_background: bool,
 }
 
 impl Compass {
@@ -37,6 +38,7 @@ impl Compass {
             inactive_color: Some("#333333".to_string()), // Dark gray for unavailable
             content_align: None,  // Default to top-left
             background_color: None,
+            transparent_background: true,  // Default to transparent
         }
     }
 
@@ -95,6 +97,10 @@ impl Compass {
             Some(ref s) if s == "-" => None,  // "-" means explicitly transparent
             other => other,
         };
+    }
+
+    pub fn set_transparent_background(&mut self, transparent: bool) {
+        self.transparent_background = transparent;
     }
 
     fn parse_color(hex: &str) -> Color {
@@ -178,16 +184,18 @@ impl Compass {
         //   ↓ · ↙ ▼ ↘
         // Each direction is 1 char, with 1 space between groups
 
-        // Fill background if explicitly set
-        if let Some(ref color_hex) = self.background_color {
-            let bg_color = Self::parse_color(color_hex);
-            for row in 0..inner_area.height {
-                for col in 0..inner_area.width {
-                    let x = inner_area.x + col;
-                    let y = inner_area.y + row;
-                    if x < buf.area().width && y < buf.area().height {
-                        buf[(x, y)].set_char(' ');
-                        buf[(x, y)].set_bg(bg_color);
+        // Fill background if not transparent and color is set
+        if !self.transparent_background {
+            if let Some(ref color_hex) = self.background_color {
+                let bg_color = Self::parse_color(color_hex);
+                for row in 0..inner_area.height {
+                    for col in 0..inner_area.width {
+                        let x = inner_area.x + col;
+                        let y = inner_area.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_char(' ');
+                            buf[(x, y)].set_bg(bg_color);
+                        }
                     }
                 }
             }
@@ -247,10 +255,12 @@ impl Compass {
                 if char_x < inner_area.x + inner_area.width && y < inner_area.y + inner_area.height {
                     buf[(char_x, y)].set_char(c);
                     buf[(char_x, y)].set_fg(color);
-                    // Only set background if explicitly configured
-                    if let Some(ref color_hex) = self.background_color {
-                        let bg_color = Self::parse_color(color_hex);
-                        buf[(char_x, y)].set_bg(bg_color);
+                    // Only set background if not transparent and color is configured
+                    if !self.transparent_background {
+                        if let Some(ref color_hex) = self.background_color {
+                            let bg_color = Self::parse_color(color_hex);
+                            buf[(char_x, y)].set_bg(bg_color);
+                        }
                     }
                 }
             }

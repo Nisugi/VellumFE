@@ -14,7 +14,8 @@ pub struct Countdown {
     border_style: Option<String>,
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
-    bar_color: Option<String>,
+    icon_color: Option<String>,  // Color for countdown icon and text (deprecated, use text_color)
+    text_color: Option<String>,  // Text color for countdown number and icons
     background_color: Option<String>,
     transparent_background: bool,  // If true, empty portion is transparent; if false, use background_color
     icon: char,  // Character to use for countdown blocks
@@ -30,7 +31,8 @@ impl Countdown {
             border_style: None,
             border_color: None,
             border_sides: None,
-            bar_color: Some("#00ff00".to_string()),
+            icon_color: None,  // Deprecated, kept for backwards compatibility
+            text_color: None,  // Will use global default
             background_color: None,
             transparent_background: true, // Transparent by default
             icon: '\u{f0c8}',  // Default to Nerd Font square icon
@@ -73,13 +75,17 @@ impl Countdown {
         self.label = title;
     }
 
-    pub fn set_colors(&mut self, bar_color: Option<String>, background_color: Option<String>) {
-        if bar_color.is_some() {
-            self.bar_color = bar_color;
+    pub fn set_colors(&mut self, icon_color: Option<String>, background_color: Option<String>) {
+        if icon_color.is_some() {
+            self.icon_color = icon_color;
         }
         if background_color.is_some() {
             self.background_color = background_color;
         }
+    }
+
+    pub fn set_text_color(&mut self, color: Option<String>) {
+        self.text_color = color;
     }
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
@@ -198,7 +204,11 @@ impl Countdown {
 
         let remaining = self.remaining_seconds(server_time_offset).max(0) as u32;
 
-        let bar_color = self.bar_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Green);
+        // Use text_color if set, otherwise fall back to icon_color for backwards compatibility
+        let text_color = self.text_color.as_ref()
+            .or(self.icon_color.as_ref())
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
         let bg_color = self.background_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Reset);
 
         // Clear the bar area
@@ -248,7 +258,7 @@ impl Countdown {
                 let x = inner_area.x + i as u16;
                 if x < inner_area.x + inner_area.width && x < buf.area().width {
                     buf[(x, y)].set_char(c);
-                    buf[(x, y)].set_fg(bar_color);
+                    buf[(x, y)].set_fg(text_color);
                     if !self.transparent_background {
                         buf[(x, y)].set_bg(bg_color);
                     }
@@ -262,7 +272,7 @@ impl Countdown {
                     let x = inner_area.x + pos;
                     if x < buf.area().width {
                         buf[(x, y)].set_char(self.icon);
-                        buf[(x, y)].set_fg(bar_color);
+                        buf[(x, y)].set_fg(text_color);
                         if !self.transparent_background {
                             buf[(x, y)].set_bg(bg_color);
                         }

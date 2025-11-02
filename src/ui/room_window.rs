@@ -23,7 +23,7 @@ pub struct RoomWindow {
     title: String,
     show_border: bool,
     border_style: BorderStyleType,
-    border_color: Option<Color>,
+    border_color: Option<String>,
 
     /// Component buffers (id -> styled lines)
     /// Components: "room desc", "room objs", "room players", "room exits", "sprite"
@@ -124,38 +124,136 @@ impl RoomWindow {
         self.needs_rewrap = true;
     }
 
-    /// Wrap a line of styled segments to window width
+    /// Wrap a line of styled segments to window width (word-aware wrapping)
     fn wrap_line(&self, segments: Vec<TextSegment>) -> Vec<Vec<TextSegment>> {
+        if self.inner_width == 0 {
+            return vec![Vec::new()];
+        }
+
         let mut wrapped_lines = Vec::new();
         let mut current_line = Vec::new();
         let mut current_width = 0;
 
+        // Track word buffer for smart wrapping
+        let mut word_buffer: Vec<TextSegment> = Vec::new();
+        let mut word_buffer_len = 0;
+        let mut in_word = false;
+
         for segment in segments {
-            let chars: Vec<char> = segment.text.chars().collect();
-            let mut char_idx = 0;
+            for ch in segment.text.chars() {
+                let is_whitespace = ch.is_whitespace();
 
-            while char_idx < chars.len() {
-                let remaining = self.inner_width.saturating_sub(current_width);
+                if is_whitespace {
+                    // Flush word buffer if we have one
+                    if in_word && !word_buffer.is_empty() {
+                        // Check if word fits on current line
+                        if current_width + word_buffer_len <= self.inner_width {
+                            // Word fits - add it to current line
+                            for word_seg in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line, word_seg);
+                            }
+                            current_width += word_buffer_len;
+                        } else if word_buffer_len <= self.inner_width {
+                            // Word doesn't fit on current line, but fits on new line - wrap
+                            if !current_line.is_empty() {
+                                wrapped_lines.push(std::mem::take(&mut current_line));
+                                current_width = 0;
+                            }
+                            // Add word to new line
+                            for word_seg in word_buffer.drain(..) {
+                                Self::append_to_line(&mut current_line, word_seg);
+                            }
+                            current_width += word_buffer_len;
+                        } else {
+                            // Word is longer than width - must break it mid-word
+                            for word_seg in word_buffer.drain(..) {
+                                for word_ch in word_seg.text.chars() {
+                                    if current_width >= self.inner_width {
+                                        wrapped_lines.push(std::mem::take(&mut current_line));
+                                        current_width = 0;
+                                    }
+                                    Self::append_to_line(&mut current_line, TextSegment {
+                                        text: word_ch.to_string(),
+                                        fg: word_seg.fg,
+                                        bg: word_seg.bg,
+                                        bold: word_seg.bold,
+                                        span_type: word_seg.span_type,
+                                        link_data: word_seg.link_data.clone(),
+                                    });
+                                    current_width += 1;
+                                }
+                            }
+                        }
+                        word_buffer_len = 0;
+                        in_word = false;
+                    }
 
-                if remaining == 0 {
-                    // Line is full, wrap
-                    wrapped_lines.push(std::mem::take(&mut current_line));
-                    current_width = 0;
-                }
-
-                let chars_to_take = remaining.min(chars.len() - char_idx);
-                if chars_to_take > 0 {
-                    let text: String = chars[char_idx..char_idx + chars_to_take].iter().collect();
-                    current_line.push(TextSegment {
-                        text,
+                    // Add whitespace immediately (don't buffer it)
+                    if current_width >= self.inner_width {
+                        // Wrap before whitespace
+                        wrapped_lines.push(std::mem::take(&mut current_line));
+                        current_width = 0;
+                        // Don't add whitespace at start of new line
+                        continue;
+                    }
+                    Self::append_to_line(&mut current_line, TextSegment {
+                        text: ch.to_string(),
                         fg: segment.fg,
                         bg: segment.bg,
                         bold: segment.bold,
                         span_type: segment.span_type,
                         link_data: segment.link_data.clone(),
                     });
-                    current_width += chars_to_take;
-                    char_idx += chars_to_take;
+                    current_width += 1;
+                } else {
+                    // Non-whitespace character - add to word buffer
+                    in_word = true;
+                    Self::append_to_buffer(&mut word_buffer, TextSegment {
+                        text: ch.to_string(),
+                        fg: segment.fg,
+                        bg: segment.bg,
+                        bold: segment.bold,
+                        span_type: segment.span_type,
+                        link_data: segment.link_data.clone(),
+                    });
+                    word_buffer_len += 1;
+                }
+            }
+        }
+
+        // Flush remaining word buffer
+        if !word_buffer.is_empty() {
+            if current_width + word_buffer_len <= self.inner_width {
+                // Word fits on current line
+                for word_seg in word_buffer {
+                    Self::append_to_line(&mut current_line, word_seg);
+                }
+            } else if word_buffer_len <= self.inner_width {
+                // Word needs new line
+                if !current_line.is_empty() {
+                    wrapped_lines.push(std::mem::take(&mut current_line));
+                }
+                for word_seg in word_buffer {
+                    Self::append_to_line(&mut current_line, word_seg);
+                }
+            } else {
+                // Word is too long - must break it
+                for word_seg in word_buffer {
+                    for word_ch in word_seg.text.chars() {
+                        if current_width >= self.inner_width {
+                            wrapped_lines.push(std::mem::take(&mut current_line));
+                            current_width = 0;
+                        }
+                        Self::append_to_line(&mut current_line, TextSegment {
+                            text: word_ch.to_string(),
+                            fg: word_seg.fg,
+                            bg: word_seg.bg,
+                            bold: word_seg.bold,
+                            span_type: word_seg.span_type,
+                            link_data: word_seg.link_data.clone(),
+                        });
+                        current_width += 1;
+                    }
                 }
             }
         }
@@ -171,6 +269,42 @@ impl RoomWindow {
         }
 
         wrapped_lines
+    }
+
+    /// Helper to append a segment to a line, merging with last segment if style matches
+    fn append_to_line(line: &mut Vec<TextSegment>, segment: TextSegment) {
+        if let Some(last_seg) = line.last_mut() {
+            if last_seg.fg == segment.fg
+                && last_seg.bg == segment.bg
+                && last_seg.bold == segment.bold
+                && last_seg.span_type == segment.span_type
+                && last_seg.link_data == segment.link_data
+            {
+                last_seg.text.push_str(&segment.text);
+            } else {
+                line.push(segment);
+            }
+        } else {
+            line.push(segment);
+        }
+    }
+
+    /// Helper to append a segment to buffer, merging with last segment if style matches
+    fn append_to_buffer(buffer: &mut Vec<TextSegment>, segment: TextSegment) {
+        if let Some(last_seg) = buffer.last_mut() {
+            if last_seg.fg == segment.fg
+                && last_seg.bg == segment.bg
+                && last_seg.bold == segment.bold
+                && last_seg.span_type == segment.span_type
+                && last_seg.link_data == segment.link_data
+            {
+                last_seg.text.push_str(&segment.text);
+            } else {
+                buffer.push(segment);
+            }
+        } else {
+            buffer.push(segment);
+        }
     }
 
     /// Update inner dimensions based on window size
@@ -340,8 +474,22 @@ impl RoomWindow {
     }
 
     /// Set border color
-    pub fn set_border_color(&mut self, color: Option<Color>) {
+    pub fn set_border_color(&mut self, color: Option<String>) {
         self.border_color = color;
+    }
+
+    /// Parse a hex color string to ratatui Color
+    fn parse_color(hex: &str) -> Color {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return Color::White;
+        }
+
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
+
+        Color::Rgb(r, g, b)
     }
 
     /// Set title
@@ -360,8 +508,11 @@ impl RoomWindow {
         let mut block = Block::default();
 
         if self.show_border {
+            let border_color = self.border_color.as_ref()
+                .map(|c| Self::parse_color(c))
+                .unwrap_or(Color::White);
             block = block.borders(Borders::ALL).border_style(
-                Style::default().fg(self.border_color.unwrap_or(Color::White))
+                Style::default().fg(border_color)
             );
 
             // Apply border type

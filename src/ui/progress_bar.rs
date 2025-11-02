@@ -22,9 +22,9 @@ pub struct ProgressBar {
     border_style: Option<String>,
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,  // Which borders to show: ["top", "bottom", "left", "right"]
-    bar_color: Option<String>,
-    background_color: Option<String>,
-    transparent_background: bool,  // If true, unfilled portion is transparent; if false, use background_color
+    bar_fill: Option<String>,  // Filled portion background color
+    bar_background: Option<String>,  // Unfilled portion background color
+    transparent_background: bool,  // If true, unfilled portion is transparent; if false, use bar_background
     text_color: Option<String>,  // Text color for bar content (default: white on filled, gray on empty)
     show_percentage: bool,
     show_values: bool,
@@ -44,8 +44,8 @@ impl ProgressBar {
             border_style: None,
             border_color: None,
             border_sides: None,  // Default: all borders
-            bar_color: Some("#00ff00".to_string()), // Green by default
-            background_color: None,
+            bar_fill: Some("#00ff00".to_string()), // Green by default
+            bar_background: None,
             transparent_background: true, // Transparent by default
             text_color: None,  // Default: white on filled, gray on empty
             show_percentage: true,
@@ -87,13 +87,13 @@ impl ProgressBar {
         self.label = title;
     }
 
-    pub fn set_colors(&mut self, bar_color: Option<String>, background_color: Option<String>) {
+    pub fn set_colors(&mut self, bar_fill: Option<String>, bar_background: Option<String>) {
         // Only update if provided (don't replace with None)
-        if bar_color.is_some() {
-            self.bar_color = bar_color;
+        if bar_fill.is_some() {
+            self.bar_fill = bar_fill;
         }
-        if background_color.is_some() {
-            self.background_color = background_color;
+        if bar_background.is_some() {
+            self.bar_background = bar_background;
         }
     }
 
@@ -298,8 +298,8 @@ impl ProgressBar {
         // ProfanityFE-style: Use background colors on text, not bar characters
         // The bar IS the colored background behind the text
 
-        let bar_color = self.bar_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Green);
-        let bg_color = self.background_color.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Reset);
+        let bar_color = self.bar_fill.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Green);
+        let bg_color = self.bar_background.as_ref().map(|c| Self::parse_color(c)).unwrap_or(Color::Reset);
 
         // Calculate split point based on percentage
         let split_position = ((percentage as f64 / 100.0) * available_width as f64) as u16;
@@ -377,24 +377,20 @@ impl ProgressBar {
                         if x < inner_area.x + inner_area.width && x < buf.area().width {
                             let char_position = x - inner_area.x;
 
+                            // Use same text color for both filled and unfilled portions
+                            let text_fg = self.text_color.as_ref()
+                                .map(|c| Self::parse_color(c))
+                                .unwrap_or(Color::White);
+
+                            buf[(x, y)].set_char(c);
+                            buf[(x, y)].set_fg(text_fg);
+
                             if char_position < split_position {
-                                // On filled portion: configurable text color (default white) on colored background
-                                buf[(x, y)].set_char(c);
-                                let text_fg = self.text_color.as_ref()
-                                    .map(|c| Self::parse_color(c))
-                                    .unwrap_or(Color::White);
-                                buf[(x, y)].set_fg(text_fg);
+                                // On filled portion: use bar color as background
                                 buf[(x, y)].set_bg(bar_color);
-                            } else {
-                                // On empty portion: configurable text color (default gray), background depends on transparent_background
-                                buf[(x, y)].set_char(c);
-                                let text_fg = self.text_color.as_ref()
-                                    .map(|c| Self::parse_color(c))
-                                    .unwrap_or(Color::DarkGray);
-                                buf[(x, y)].set_fg(text_fg);
-                                if !self.transparent_background {
-                                    buf[(x, y)].set_bg(bg_color);
-                                }
+                            } else if !self.transparent_background {
+                                // On empty portion: use background color only if not transparent
+                                buf[(x, y)].set_bg(bg_color);
                             }
                         }
                     }

@@ -35,6 +35,7 @@ pub struct Dashboard {
     border_style: Option<String>,
     border_color: Option<String>,
     border_sides: Option<Vec<String>>,
+    background_color: Option<String>,
     content_align: Option<String>,
     transparent_background: bool,
 }
@@ -52,6 +53,7 @@ impl Dashboard {
             border_style: None,
             border_color: None,
             border_sides: None,
+            background_color: None,  // Will use global default
             content_align: None,
             transparent_background: true,
         }
@@ -102,6 +104,10 @@ impl Dashboard {
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
         self.transparent_background = transparent;
+    }
+
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color;
     }
 
     /// Add an indicator to the dashboard
@@ -185,6 +191,11 @@ impl Dashboard {
 
         // Fill background only if not transparent
         if !self.transparent_background {
+            let bg_color = self.background_color
+                .as_ref()
+                .map(|c| Self::parse_color(c))
+                .unwrap_or(Color::Reset);
+
             for row in 0..inner_area.height {
                 for col in 0..inner_area.width {
                     let x = inner_area.x + col;
@@ -192,7 +203,7 @@ impl Dashboard {
                     // Bounds check against buffer dimensions
                     if x < buf.area.right() && y < buf.area.bottom() {
                         buf[(x, y)].set_char(' ');
-                        buf[(x, y)].set_bg(Color::Black);
+                        buf[(x, y)].set_bg(bg_color);
                     }
                 }
             }
@@ -258,6 +269,11 @@ impl Dashboard {
     }
 
     fn render_horizontal(&self, indicators: &[&DashboardIndicator], area: Rect, buf: &mut Buffer) {
+        let bg_color = self.background_color
+            .as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::Reset);
+
         let mut x = area.x;
         let y = area.y;
 
@@ -278,7 +294,7 @@ impl Dashboard {
                     buf[(col, y)].set_fg(color);
                     // Only set background if not transparent
                     if !self.transparent_background {
-                        buf[(col, y)].set_bg(Color::Black);
+                        buf[(col, y)].set_bg(bg_color);
                     }
                 }
             }
@@ -289,6 +305,11 @@ impl Dashboard {
     }
 
     fn render_vertical(&self, indicators: &[&DashboardIndicator], area: Rect, buf: &mut Buffer) {
+        let bg_color = self.background_color
+            .as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::Reset);
+
         let x = area.x;
         let mut y = area.y;
 
@@ -309,7 +330,7 @@ impl Dashboard {
                     buf[(col, y)].set_fg(color);
                     // Only set background if not transparent
                     if !self.transparent_background {
-                        buf[(col, y)].set_bg(Color::Black);
+                        buf[(col, y)].set_bg(bg_color);
                     }
                 }
             }
@@ -320,6 +341,11 @@ impl Dashboard {
     }
 
     fn render_grid(&self, indicators: &[&DashboardIndicator], grid_rows: usize, grid_cols: usize, area: Rect, buf: &mut Buffer) {
+        let bg_color = self.background_color
+            .as_ref()
+            .map(|c| Self::parse_color(c))
+            .unwrap_or(Color::Reset);
+
         let cell_width = if grid_cols > 0 {
             (area.width as usize) / grid_cols
         } else {
@@ -359,7 +385,7 @@ impl Dashboard {
                     buf[(col, y)].set_fg(color);
                     // Only set background if not transparent
                     if !self.transparent_background {
-                        buf[(col, y)].set_bg(Color::Black);
+                        buf[(col, y)].set_bg(bg_color);
                     }
                 }
             }

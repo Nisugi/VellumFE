@@ -7,19 +7,19 @@ Welcome to the documentation hub for **VellumFE**, the modern terminal frontend 
 1. **Start Lich in detached mode**  
    - Windows PowerShell:  
      ```
-     start "" "C:\Ruby4Lich5\3.4.x\bin\rubyw.exe" "C:\Ruby4Lich5\Lich5\lich.rbw" --login CharacterName --gemstone --without-frontend --detachable-client=8000
+     "C:\Ruby4Lich5\3.4.x\bin\rubyw.exe" "C:\Ruby4Lich5\Lich5\lich.rbw" --login CharacterName --gemstone --without-frontend --detachable-client=8000
      ```
    - Linux/macOS:  
      ```
      ruby ~/lich5/lich.rbw --login CharacterName --gemstone --without-frontend --detachable-client=8000
      ```
-2. **Launch VellumFE immediately (no wait required)**
+2. **Launch VellumFE**
    ```
    .\vellum-fe.exe --port 8000 --character CharacterName --links
    ```
    Add `--nomusic` if you prefer no startup music. You can change the track later via `[ui] startup_music_file`.
 3. **Official links open automatically**  
-   When the game emits a `<LaunchURL>` tag (locker, locker manager, premium services, etc.), VellumFE launches the URL in your default browser.
+   When the game emits a `<LaunchURL>` tag (goals), VellumFE launches the URL in your default browser.
 
 Detailed setup notes live in [Getting Started](Getting-Started.md).
 

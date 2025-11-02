@@ -23,7 +23,7 @@ pub struct InventoryWindow {
     title: String,
     show_border: bool,
     border_style: BorderStyleType,
-    border_color: Option<Color>,
+    border_color: Option<String>,
 
     /// Current inventory content (list of styled lines)
     lines: Vec<Vec<TextSegment>>,
@@ -399,8 +399,22 @@ impl InventoryWindow {
     }
 
     /// Set border color
-    pub fn set_border_color(&mut self, color: Option<Color>) {
+    pub fn set_border_color(&mut self, color: Option<String>) {
         self.border_color = color;
+    }
+
+    /// Parse a hex color string to ratatui Color
+    fn parse_color(hex: &str) -> Color {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return Color::White;
+        }
+
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
+
+        Color::Rgb(r, g, b)
     }
 
     /// Set title
@@ -414,8 +428,11 @@ impl InventoryWindow {
         let mut block = Block::default();
 
         if self.show_border {
+            let border_color = self.border_color.as_ref()
+                .map(|c| Self::parse_color(c))
+                .unwrap_or(Color::White);
             block = block.borders(Borders::ALL).border_style(
-                Style::default().fg(self.border_color.unwrap_or(Color::White))
+                Style::default().fg(border_color)
             );
 
             // Apply border type

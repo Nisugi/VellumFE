@@ -22,6 +22,9 @@ pub struct CommandInput {
     border_color: Option<String>,
     title: String,
     background_color: Option<String>,
+    text_color: Option<String>,          // Input text color
+    cursor_fg_color: Option<String>,     // Cursor foreground color
+    cursor_bg_color: Option<String>,     // Cursor background color
     completion_candidates: Vec<String>,  // Current completion candidates
     completion_index: Option<usize>,     // Index of current completion
     completion_prefix: Option<String>,   // Original text before completion started
@@ -42,6 +45,9 @@ impl CommandInput {
             border_color: None,
             title: "Command".to_string(),
             background_color: None,
+            text_color: None,          // Will use global default
+            cursor_fg_color: None,     // Default: black
+            cursor_bg_color: None,     // Default: white
             completion_candidates: Vec::new(),
             completion_index: None,
             completion_prefix: None,
@@ -65,6 +71,15 @@ impl CommandInput {
 
     pub fn set_background_color(&mut self, color: Option<String>) {
         self.background_color = color;
+    }
+
+    pub fn set_text_color(&mut self, color: Option<String>) {
+        self.text_color = color;
+    }
+
+    pub fn set_cursor_colors(&mut self, fg: Option<String>, bg: Option<String>) {
+        self.cursor_fg_color = fg;
+        self.cursor_bg_color = bg;
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -439,13 +454,26 @@ impl CommandInput {
         let cursor_char = visible_chars.get(visible_cursor_pos).copied().unwrap_or(' ');
         let after_cursor: String = visible_chars.iter().skip(visible_cursor_pos + 1).collect();
 
+        // Get text color (default to white if not set)
+        let text_color = self.text_color.as_ref()
+            .and_then(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
+
+        // Get cursor colors
+        let cursor_fg = self.cursor_fg_color.as_ref()
+            .and_then(|c| Self::parse_color(c))
+            .unwrap_or(Color::Black);
+        let cursor_bg = self.cursor_bg_color.as_ref()
+            .and_then(|c| Self::parse_color(c))
+            .unwrap_or(Color::White);
+
         let line = Line::from(vec![
-            Span::raw(before_cursor),
+            Span::styled(before_cursor, Style::default().fg(text_color)),
             Span::styled(
                 cursor_char.to_string(),
-                Style::default().bg(Color::White).fg(Color::Black),
+                Style::default().bg(cursor_bg).fg(cursor_fg),
             ),
-            Span::raw(after_cursor),
+            Span::styled(after_cursor, Style::default().fg(text_color)),
         ]);
 
         let paragraph = Paragraph::new(line);
