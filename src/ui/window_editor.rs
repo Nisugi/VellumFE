@@ -98,6 +98,7 @@ fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
         "inventory" => vec!["inventory"],
         "room" => vec!["room"],
         "map" => vec!["local_map"],
+        "spells" => vec!["spells"],
         "command_input" => vec!["command_input"],
         _ => vec!["custom"],
     }
@@ -225,6 +226,7 @@ impl WindowEditor {
                 "inventory".to_string(),
                 "room".to_string(),
                 "map".to_string(),
+                "spells".to_string(),
                 "command_input".to_string(),
                 "spacer".to_string(),
             ],

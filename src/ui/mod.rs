@@ -32,6 +32,7 @@ mod uicolors_browser;
 mod inventory_window;
 mod room_window;
 mod map_widget;
+mod spells_window;
 
 #[allow(unused_imports)]
 pub use text_window::{TextWindow, StyledText, SpanType, LinkData, LineSegments, TextSegment};
@@ -79,6 +80,7 @@ pub use uicolors_browser::{UIColorsBrowser, UIColorEditor, UIColorEntry, UIColor
 pub use inventory_window::InventoryWindow;
 pub use room_window::RoomWindow;
 pub use map_widget::MapWidget;
+pub use spells_window::SpellsWindow;
 
 use ratatui::{
     layout::Rect,

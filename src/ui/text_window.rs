@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Paragraph, Widget},
+    widgets::{Block, BorderType, Clear, Paragraph, Widget},
 };
 use std::collections::VecDeque;
 use regex::Regex;
@@ -1188,6 +1188,9 @@ impl TextWindow {
         selection_bg_color: &str,
         window_index: usize,
     ) {
+        // Clear the area to prevent bleed-through from windows behind
+        Clear.render(area, buf);
+
         // Update width for wrapping - only subtract for borders if they're shown
         let border_padding = if self.show_border { 2 } else { 0 };
         let inner_width = area.width.saturating_sub(border_padding);

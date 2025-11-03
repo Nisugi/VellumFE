@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use std::collections::HashMap;
-use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer, InventoryWindow, RoomWindow, MapWidget};
+use super::{TextWindow, TabbedTextWindow, TabBarPosition, ProgressBar, Countdown, Indicator, Compass, InjuryDoll, Hands, Hand, HandType, Dashboard, DashboardLayout, StyledText, Targets, Players, Spacer, InventoryWindow, RoomWindow, MapWidget, SpellsWindow};
 use super::active_effects;
 use ratatui::buffer::Buffer;
 
@@ -24,6 +24,7 @@ pub enum Widget {
     Inventory(InventoryWindow),
     Room(RoomWindow),
     Map(MapWidget),
+    Spells(SpellsWindow),
 }
 
 impl Widget {
@@ -69,6 +70,9 @@ impl Widget {
                 use ratatui::widgets::Widget as RatatuiWidget;
                 RatatuiWidget::render(&*w, area, buf);
             }
+            Widget::Spells(w) => {
+                w.render(area, buf);
+            }
         }
     }
 
@@ -93,6 +97,7 @@ impl Widget {
             Widget::Tabbed(w) => w.scroll_up(lines),
             Widget::Inventory(w) => w.scroll_up(lines),
             Widget::Room(w) => w.scroll_up(lines),
+            Widget::Spells(w) => w.scroll_up(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_up();
@@ -120,6 +125,7 @@ impl Widget {
             Widget::Tabbed(w) => w.scroll_down(lines),
             Widget::Inventory(w) => w.scroll_down(lines),
             Widget::Room(w) => w.scroll_down(lines),
+            Widget::Spells(w) => w.scroll_down(lines),
             Widget::ActiveEffects(w) => {
                 for _ in 0..lines {
                     w.scroll_down();
@@ -147,6 +153,7 @@ impl Widget {
             Widget::Tabbed(w) => w.update_inner_width(width),
             Widget::Inventory(w) => w.update_inner_size(width, 0), // Height will be set during layout
             Widget::Room(w) => w.update_inner_size(width, 0), // Height will be set during layout
+            Widget::Spells(w) => w.update_inner_size(width, 0), // Height will be set during layout
             Widget::Spacer(_) => {},
             _ => {}
         }
@@ -171,6 +178,7 @@ impl Widget {
             Widget::Spacer(w) => w.set_border_config(show_border, border_style, border_color),
             Widget::Inventory(_) => {}, // Inventory uses its own border management
             Widget::Room(_) => {}, // Room uses its own border management
+            Widget::Spells(_) => {}, // Spells uses its own border management
             Widget::Map(w) => w.set_border(show_border), // Map uses simple border flag
         }
     }
@@ -235,6 +243,7 @@ impl Widget {
             Widget::Spacer(_) => {},
             Widget::Inventory(_) => {}, // Inventory doesn't support custom border sides
             Widget::Room(_) => {}, // Room doesn't support custom border sides
+            Widget::Spells(_) => {}, // Spells doesn't support custom border sides
             Widget::Map(_) => {}, // Map doesn't support custom border sides
         }
     }
@@ -259,6 +268,7 @@ impl Widget {
             Widget::Inventory(w) => w.set_title(title),
             Widget::Room(w) => w.set_title(title),
             Widget::Map(w) => w.set_title(title),
+            Widget::Spells(w) => w.set_title(title),
         }
     }
 
@@ -478,6 +488,8 @@ impl Widget {
         match self {
             Widget::Text(w) => w.clear(),
             Widget::Tabbed(w) => w.clear_all(),
+            Widget::Inventory(w) => w.clear(),
+            Widget::Spells(w) => w.clear(),
             _ => {
                 // Other widget types don't have text to clear
             }
@@ -930,6 +942,23 @@ impl WindowManager {
                     }
                     Widget::Map(map)
                 }
+                "spells" => {
+                    let mut spells = SpellsWindow::new(title.clone());
+                    spells.set_show_border(config.show_border);
+                    if let Some(ref border_style) = config.border_style {
+                        use crate::ui::spells_window::BorderStyleType;
+                        let style = match border_style.as_str() {
+                            "double" => BorderStyleType::Double,
+                            "rounded" => BorderStyleType::Rounded,
+                            "thick" => BorderStyleType::Thick,
+                            "none" => BorderStyleType::None,
+                            _ => BorderStyleType::Single,
+                        };
+                        spells.set_border_style(style);
+                    }
+                    spells.set_border_color(config.border_color.clone());
+                    Widget::Spells(spells)
+                }
                 _ => {
                     // Default to text window
                     let mut text_window = TextWindow::new(&title, config.buffer_size)
@@ -1107,10 +1136,11 @@ impl WindowManager {
     pub fn update_widths(&mut self, layouts: &HashMap<String, Rect>) {
         for (name, window) in &mut self.windows {
             if let Some(rect) = layouts.get(name) {
-                // For inventory and room windows, update both width and height
+                // For inventory, room, and spells windows, update both width and height
                 match window {
                     Widget::Inventory(w) => w.update_inner_size(rect.width, rect.height),
                     Widget::Room(w) => w.update_inner_size(rect.width, rect.height),
+                    Widget::Spells(w) => w.update_inner_size(rect.width, rect.height),
                     _ => window.set_width(rect.width.saturating_sub(2)), // Account for borders for other widgets
                 }
             }
@@ -1475,6 +1505,23 @@ impl WindowManager {
                             map.set_title(title_override.clone());
                         }
                         Widget::Map(map)
+                    }
+                    "spells" => {
+                        use crate::ui::spells_window::BorderStyleType;
+                        let mut spells = SpellsWindow::new(title.clone());
+                        spells.set_show_border(config.show_border);
+                        if let Some(ref border_style) = config.border_style {
+                            let style = match border_style.as_str() {
+                                "double" => BorderStyleType::Double,
+                                "rounded" => BorderStyleType::Rounded,
+                                "thick" => BorderStyleType::Thick,
+                                "none" => BorderStyleType::None,
+                                _ => BorderStyleType::Single,
+                            };
+                            spells.set_border_style(style);
+                        }
+                        spells.set_border_color(config.border_color.clone());
+                        Widget::Spells(spells)
                     }
                     _ => {
                         // Default to text window

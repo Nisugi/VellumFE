@@ -1,4 +1,4 @@
-use ratatui::{buffer::Buffer, layout::Rect, widgets::Block, widgets::Widget};
+use ratatui::{buffer::Buffer, layout::Rect, widgets::Block, widgets::Clear, widgets::Widget};
 use super::progress_bar::ProgressBar;
 use std::collections::HashMap;
 
@@ -149,6 +149,9 @@ impl ScrollableContainer {
         if area.width < 3 || area.height < 1 {
             return;
         }
+
+        // Clear the area to prevent bleed-through from windows behind
+        Clear.render(area, buf);
 
         // Determine which borders to show
         let borders = if self.show_border {

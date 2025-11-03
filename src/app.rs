@@ -639,6 +639,9 @@ impl App {
                     // This case shouldn't normally be reached since room content comes through <compDef> tags
                     room_window.add_text(text);
                 }
+                Widget::Spells(spells_window) => {
+                    spells_window.add_text(text.content, text.fg, text.bg, text.bold, text.span_type, text.link_data);
+                }
                 _ => {
                     // Other widget types don't support text
                 }
@@ -672,6 +675,9 @@ impl App {
                 }
                 Widget::Room(room_window) => {
                     room_window.finish_line();
+                }
+                Widget::Spells(spells_window) => {
+                    spells_window.finish_line();
                 }
                 _ => {
                     // Other widget types don't support text
@@ -2727,7 +2733,18 @@ impl App {
                 if windows.is_empty() {
                     self.add_system_message("No windows");
                 } else {
-                    self.add_system_message(&format!("Windows: {}", windows.join(", ")));
+                    self.add_system_message(&format!("*** Windows: {} ***", windows.join(", ")));
+
+                    // Show stream mappings
+                    let mut stream_list: Vec<(String, String)> = self.window_manager.stream_map.iter()
+                        .map(|(s, w)| (s.clone(), w.clone()))
+                        .collect();
+                    stream_list.sort_by_key(|(stream, _)| stream.clone());
+
+                    self.add_system_message("Stream mappings:");
+                    for (stream, window) in stream_list {
+                        self.add_system_message(&format!("  {} -> {}", stream, window));
+                    }
                 }
             }
             "templates" | "availablewindows" => {
@@ -3888,6 +3905,42 @@ impl App {
         }
 
         Ok(())
+    }
+
+    /// Execute a command directly from a coord (for links with coord attribute like spells)
+    fn execute_command_from_coord(&mut self, coord: &str, exist_id: &str, noun: &str, command_tx: &mpsc::UnboundedSender<String>) {
+        if self.cmdlist.is_none() {
+            self.add_system_message("Cannot execute command: cmdlist not loaded");
+            return;
+        }
+
+        tracing::info!("Executing command from coord: {} (exist_id: {}, noun: {})", coord, exist_id, noun);
+
+        if let Some(ref cmdlist) = self.cmdlist {
+            if let Some(entry) = cmdlist.get(coord) {
+                // Skip _dialog commands
+                if entry.command.starts_with("_dialog") {
+                    tracing::debug!("Skipping _dialog command: {}", entry.command);
+                    self.add_system_message("This action opens a dialog (not yet supported)");
+                    return;
+                }
+
+                // Format command (substitute # with exist_id, @ with noun)
+                let command = entry.command
+                    .replace("#", exist_id)
+                    .replace("@", noun);
+
+                tracing::info!("Executing command from coord: '{}'", command);
+
+                // Send the command directly
+                if let Err(e) = command_tx.send(command) {
+                    self.add_system_message(&format!("Failed to send command: {}", e));
+                }
+            } else {
+                tracing::warn!("Coord {} not found in cmdlist", coord);
+                self.add_system_message(&format!("No menu entry found for this action (coord: {})", coord));
+            }
+        }
     }
 
     /// Handle menu response from server
@@ -7170,6 +7223,7 @@ impl App {
                                         Text(&'a crate::ui::TextWindow),
                                         Room(&'a crate::ui::RoomWindow, bool), // room_window, has_border
                                         Inventory(&'a crate::ui::InventoryWindow, bool), // inventory_window, has_border
+                                        Spells(&'a crate::ui::SpellsWindow, bool), // spells_window, has_border
                                     }
 
                                     let (window_type, adjusted_rect) = match widget {
@@ -7185,6 +7239,12 @@ impl App {
                                                 .map(|w| w.show_border)
                                                 .unwrap_or(false);
                                             (Some(WindowType::Inventory(inv, has_border)), *rect)
+                                        }
+                                        Widget::Spells(spells) => {
+                                            let has_border = self.layout.windows.get(idx)
+                                                .map(|w| w.show_border)
+                                                .unwrap_or(false);
+                                            (Some(WindowType::Spells(spells, has_border)), *rect)
                                         }
                                         Widget::Tabbed(tabbed) => {
                                             // For tabbed windows, get the active tab's text window
@@ -7239,6 +7299,10 @@ impl App {
                                                 debug!("Mouse down on inventory window '{}' at ({}, {})", name, mouse.column, mouse.row);
                                                 Self::link_at_position_inventory(inventory_window, mouse.column, mouse.row, adjusted_rect, has_border)
                                             }
+                                            WindowType::Spells(spells_window, has_border) => {
+                                                debug!("Mouse down on spells window '{}' at ({}, {})", name, mouse.column, mouse.row);
+                                                Self::link_at_position_spells(spells_window, mouse.column, mouse.row, adjusted_rect, has_border)
+                                            }
                                         };
 
                                         if let Some(link_data) = link_data {
@@ -7291,8 +7355,12 @@ impl App {
                                                     if let Err(e) = command_tx.send(command) {
                                                         self.add_system_message(&format!("Failed to send command: {}", e));
                                                     }
+                                                } else if let Some(ref coord) = link_data.coord {
+                                                    // Link with coord attribute (e.g., spells): Execute command directly
+                                                    debug!("Link with coord clicked: coord={}, exist_id={}, noun={}", coord, link_data.exist_id, link_data.noun);
+                                                    self.execute_command_from_coord(coord, &link_data.exist_id, &link_data.noun, command_tx);
                                                 } else {
-                                                    // Regular link: Request context menu
+                                                    // Regular link: Request context menu from server
                                                     if let Err(e) = self.request_menu(&link_data.exist_id, &link_data.noun, Some(command_tx)) {
                                                         self.add_system_message(&format!("Failed to request menu: {}", e));
                                                     } else {
@@ -8053,6 +8121,66 @@ impl App {
         None
     }
 
+    /// Find a link (by precise span) at a given mouse position in a spells window
+    fn link_at_position_spells(
+        spells_window: &crate::ui::SpellsWindow,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: ratatui::layout::Rect,
+        has_border: bool,
+    ) -> Option<crate::ui::LinkData> {
+        let border_offset = if has_border { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            tracing::debug!("Spells click out of bounds");
+            return None;
+        }
+
+        // Get lines from spells window (same as what's displayed)
+        let lines = spells_window.get_lines();
+
+        let line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        tracing::debug!("Spells click: line_idx={}, col_offset={}, lines={}", line_idx, col_offset, lines.len());
+
+        if line_idx >= lines.len() {
+            tracing::debug!("Spells click line_idx out of range");
+            return None;
+        }
+
+        let line = &lines[line_idx];
+        tracing::debug!("Spells click line has {} segments", line.len());
+        let mut col = 0usize;
+        for (seg_idx, seg) in line.iter().enumerate() {
+            let seg_len = seg.text.chars().count();
+            tracing::debug!("  Seg {}: text='{}' cols={}-{} has_link={}", seg_idx, seg.text, col, col + seg_len, seg.link_data.is_some());
+            if col_offset >= col && col_offset < col + seg_len {
+                // Inside this segment
+                if let Some(mut link) = seg.link_data.clone() {
+                    // For <d> tags without cmd attribute, populate text from segment
+                    // This ensures we capture the actual displayed text
+                    if link.text.is_empty() {
+                        link.text = seg.text.clone();
+                    }
+                    tracing::debug!("Found link in spells: noun={}", link.noun);
+                    return Some(link);
+                }
+                tracing::debug!("Clicked segment has no link");
+                return None;
+            }
+            col += seg_len;
+        }
+
+        tracing::debug!("No segment matched click position");
+        None
+    }
+
     fn handle_server_message(&mut self, msg: ServerMessage) {
         match msg {
             ServerMessage::Connected => {
@@ -8294,6 +8422,10 @@ impl App {
                             self.chunk_has_main_text = false;
                             self.chunk_has_silent_updates = false;
 
+                            // Reset stream to main - prompts always end stream contexts
+                            self.current_stream = "main".to_string();
+                            self.discard_current_stream = false;
+
                             // Show prompts with content (unless skipped)
                             if !text.trim().is_empty() && !should_skip {
                                 // Color each character in the prompt based on configuration
@@ -8334,7 +8466,6 @@ impl App {
                         }
                         ParsedElement::StreamPush { id } => {
                             // Switch to new stream
-                            // debug!("Pushing stream: {}", id);  // Commented out - too spammy
                             self.current_stream = id.clone();
 
                             // Check if a window exists for this stream
@@ -8378,8 +8509,6 @@ impl App {
                         }
                         ParsedElement::StreamPop => {
                             // Return to main stream
-                            // debug!("Popping stream, returning to main");  // Commented out - too spammy
-
                             // Process buffered stream content before popping
                             match self.current_stream.as_str() {
                                 "combat" => {
@@ -8749,6 +8878,16 @@ impl App {
                             self.window_manager.update_current_room(id.clone());
                         }
                         ParsedElement::StreamWindow { id, subtitle } => {
+                            // Push the stream (streamWindow acts like pushStream)
+                            self.current_stream = id.clone();
+
+                            // Check if a window exists for this stream
+                            if !self.window_manager.has_window_for_stream(&id) {
+                                self.discard_current_stream = true;
+                            } else {
+                                self.discard_current_stream = false;
+                            }
+
                             // Handle stream window updates
                             if id == "room" {
                                 if let Some(subtitle_text) = subtitle {
@@ -8766,13 +8905,17 @@ impl App {
                             self.handle_launch_url(&url);
                         }
                         ParsedElement::ClearStream { id } => {
-                            // <clearStream id='bounty'/> - clear the specified stream's window
+                            // <clearStream id='bounty'/> - clear the specified stream's window and set as current stream
                             if let Some(window_name) = self.window_manager.stream_map.get(&id).cloned() {
                                 if let Some(window) = self.window_manager.get_window(&window_name) {
                                     window.clear_text();
                                     debug!("Cleared stream '{}' window '{}'", id, window_name);
                                 }
                             }
+
+                            // Set this as the current stream so subsequent content goes here
+                            self.current_stream = id.clone();
+                            self.discard_current_stream = !self.window_manager.has_window_for_stream(&id);
                         }
                         ParsedElement::ClearDialogData { id } => {
                             // <dialogData id='MiniBounty' clear='t'> - clear the specified stream's window
