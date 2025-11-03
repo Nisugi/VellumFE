@@ -609,9 +609,9 @@ impl WindowManager {
                             config.border_color.clone(),
                         );
                     countdown.set_border_sides(config.border_sides.clone());
+                    // Countdown widgets use icon_color (first param of set_colors), not text_color
                     countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                     countdown.set_transparent_background(config.transparent_background);
-                    countdown.set_text_color(config.text_color.clone());
                     countdown.set_content_align(config.content_align.clone());
 
                     // Set countdown icon: use window-specific if set, otherwise global default
@@ -1154,9 +1154,9 @@ impl WindowManager {
                                 config.border_color.clone(),
                             );
                         countdown.set_border_sides(config.border_sides.clone());
+                        // Countdown widgets use icon_color (first param of set_colors), not text_color
                         countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                         countdown.set_transparent_background(config.transparent_background);
-                        countdown.set_text_color(config.text_color.clone());
                         countdown.set_content_align(config.content_align.clone());
 
                         // Set countdown icon: use window-specific if set, otherwise global default
@@ -1601,9 +1601,9 @@ impl WindowManager {
                             progress.set_content_align(config.content_align.clone());
                         }
                         Widget::Countdown(countdown) => {
+                            // Countdown widgets use icon_color (first param of set_colors), not text_color
                             countdown.set_colors(config.bar_fill.clone(), config.bar_background.clone());
                             countdown.set_transparent_background(config.transparent_background);
-                            countdown.set_text_color(config.text_color.clone());
                             countdown.set_content_align(config.content_align.clone());
                             if let Some(ref icon_str) = config.countdown_icon {
                                 if let Some(icon_char) = icon_str.chars().next() {

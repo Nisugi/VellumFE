@@ -256,7 +256,11 @@ impl WindowEditor {
             compass_inactive_color_input: Self::create_textarea(10),
             progress_id_input: Self::create_textarea(18),
             countdown_id_input: Self::create_textarea(10),
-            countdown_icon_input: Self::create_textarea(10),
+            countdown_icon_input: {
+                let mut ta = Self::create_textarea(10);
+                ta.set_placeholder_text("\u{f0c8} (default)");
+                ta
+            },
             hand_icon_input: Self::create_textarea(10),
             tab_unread_prefix_input: Self::create_textarea(10),
             effect_default_color_input: Self::create_textarea(10),
@@ -1929,10 +1933,10 @@ impl WindowEditor {
             },
 
             "countdown" => {
-                // Bar Color (10 chars, left) | Icon (17 chars, right) - SWAPPED ORDER
-                Self::render_inline_textarea_with_spacing(self.focused_field, 34, "Bar Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf, config);
+                // Icon Color (10 chars, left) | Icon (17 chars, right) - SWAPPED ORDER
+                Self::render_inline_textarea_with_spacing(self.focused_field, 34, "Icon Color:", &mut self.bar_color_input, left_x, y, 10, 4, buf, config);
                 Self::render_inline_textarea_with_spacing(self.focused_field, 37, "Icon:", &mut self.countdown_icon_input, right_x, y, 17, 9, buf, config);
-                // Color preview for bar color
+                // Color preview for icon color
                 let bar_preview_x = left_x + 10 + 4 + 10 + 2;
                 self.render_color_preview(&self.bar_color_input.lines()[0].to_string(), bar_preview_x, y, buf, config);
                 y += 1;
