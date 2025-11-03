@@ -284,14 +284,6 @@ impl HighlightFormWidget {
                 }
                 None
             }
-            KeyCode::Delete if matches!(self.mode, FormMode::Edit(_)) => {
-                // Delete key in edit mode
-                if let FormMode::Edit(ref name) = self.mode {
-                    Some(FormResult::Delete { name: name.clone() })
-                } else {
-                    None
-                }
-            }
             KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(self.mode, FormMode::Edit(_)) => {
                 // Ctrl+D to delete in edit mode
                 if let FormMode::Edit(ref name) = self.mode {
@@ -299,6 +291,21 @@ impl HighlightFormWidget {
                 } else {
                     None
                 }
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+A to select all in current text field
+                let textarea = match self.focused_field {
+                    0 => &mut self.name,
+                    1 => &mut self.pattern,
+                    2 => &mut self.category,
+                    3 => &mut self.fg_color,
+                    4 => &mut self.bg_color,
+                    5 => &mut self.sound,
+                    6 => &mut self.sound_volume,
+                    _ => return None,
+                };
+                textarea.select_all();
+                None
             }
             _ => {
                 // Pass key to appropriate text field

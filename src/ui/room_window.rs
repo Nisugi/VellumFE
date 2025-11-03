@@ -43,6 +43,9 @@ pub struct RoomWindow {
     /// Window dimensions (updated during layout)
     inner_width: usize,
     inner_height: usize,
+
+    /// Link toggling
+    links_enabled: bool,
 }
 
 impl RoomWindow {
@@ -60,6 +63,7 @@ impl RoomWindow {
             scroll_offset: 0,
             inner_width: 80,
             inner_height: 20,
+            links_enabled: true,
         }
     }
 
@@ -92,13 +96,20 @@ impl RoomWindow {
             return;
         }
 
+        // Only include link data if links are enabled
+        let link_data = if self.links_enabled {
+            styled.link_data
+        } else {
+            None
+        };
+
         self.current_line.push(TextSegment {
             text: styled.content,
             fg: styled.fg,
             bg: styled.bg,
             bold: styled.bold,
             span_type: styled.span_type,
-            link_data: styled.link_data,
+            link_data,
         });
     }
 
@@ -338,6 +349,14 @@ impl RoomWindow {
     /// Scroll down by N lines
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
+    pub fn toggle_links(&mut self) {
+        self.links_enabled = !self.links_enabled;
+    }
+
+    pub fn get_links_enabled(&self) -> bool {
+        self.links_enabled
     }
 
     /// Scroll to bottom

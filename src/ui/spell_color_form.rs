@@ -104,6 +104,20 @@ impl SpellColorFormWidget {
             KeyCode::Esc => {
                 return Some(SpellColorFormResult::Cancel);
             }
+            KeyCode::Char('a') => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Ctrl+A to select all in current text field
+                    let textarea = match self.focused_field {
+                        0 => &mut self.spell_ids,
+                        1 => &mut self.bar_color,
+                        2 => &mut self.text_color,
+                        3 => &mut self.bg_color,
+                        _ => return None,
+                    };
+                    textarea.select_all();
+                    return None;
+                }
+            }
             KeyCode::Char('c') => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     return self.save();

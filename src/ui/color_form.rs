@@ -100,6 +100,17 @@ impl ColorForm {
             KeyCode::Esc => {
                 return Some(FormAction::Cancel);
             }
+            KeyCode::Char('a') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+A to select all in current text field
+                let textarea = match self.focused_field {
+                    0 => &mut self.name,
+                    1 => &mut self.color,
+                    2 => &mut self.category,
+                    _ => return None,
+                };
+                textarea.select_all();
+                return None;
+            }
             KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 return self.validate_and_save();
             }
@@ -128,6 +139,16 @@ impl ColorForm {
             KeyCode::Char(' ') if self.focused_field == 3 => {
                 // Space toggles favorite
                 self.favorite = !self.favorite;
+                return None;
+            }
+            KeyCode::Char('a') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+A to select all in current text field
+                match self.focused_field {
+                    0 => self.name.select_all(),
+                    1 => self.category.select_all(),
+                    2 => self.color.select_all(),
+                    _ => {}
+                }
                 return None;
             }
             _ => {

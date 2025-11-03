@@ -29,6 +29,7 @@ pub struct CommandInput {
     completion_index: Option<usize>,     // Index of current completion
     completion_prefix: Option<String>,   // Original text before completion started
     is_user_typed: bool,                 // True if current text was typed by user (not from history)
+    selection_start: Option<usize>,      // Start of selection (None if no selection)
 }
 
 impl CommandInput {
@@ -52,6 +53,7 @@ impl CommandInput {
             completion_index: None,
             completion_prefix: None,
             is_user_typed: false,
+            selection_start: None,
         }
     }
 
@@ -607,5 +609,34 @@ impl CommandInput {
 
         tracing::debug!("Saved {} commands to history", self.history.len());
         Ok(())
+    }
+
+    /// Select all text in the input
+    pub fn select_all(&mut self) {
+        if !self.input.is_empty() {
+            self.selection_start = Some(0);
+            self.cursor_pos = self.input.len();
+        }
+    }
+
+    /// Get the currently selected text (if any)
+    pub fn get_selected_text(&self) -> Option<String> {
+        if let Some(start) = self.selection_start {
+            let end = self.cursor_pos;
+            if start != end {
+                let (from, to) = if start < end {
+                    (start, end)
+                } else {
+                    (end, start)
+                };
+                return Some(self.input.chars().skip(from).take(to - from).collect());
+            }
+        }
+        None
+    }
+
+    /// Clear the current selection
+    pub fn clear_selection(&mut self) {
+        self.selection_start = None;
     }
 }

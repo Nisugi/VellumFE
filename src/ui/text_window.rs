@@ -102,6 +102,8 @@ pub struct TextWindow {
     // Aho-Corasick matcher for fast_parse patterns
     fast_matcher: Option<AhoCorasick>,
     // Maps Aho-Corasick match index -> highlight index
+    // Link toggling
+    links_enabled: bool,
     fast_pattern_map: Vec<usize>,
     // Recent links cache for click detection
     recent_links: VecDeque<LinkData>,
@@ -137,6 +139,7 @@ impl TextWindow {
             recent_links: VecDeque::new(),  // No recent links yet
             max_recent_links: 100,  // Keep last 100 links
             show_timestamps: false,  // Timestamps off by default
+            links_enabled: true,  // Links enabled by default
         }
     }
 
@@ -227,6 +230,14 @@ impl TextWindow {
         self.show_timestamps = show;
     }
 
+    pub fn toggle_links(&mut self) {
+        self.links_enabled = !self.links_enabled;
+    }
+
+    pub fn get_links_enabled(&self) -> bool {
+        self.links_enabled
+    }
+
     pub fn has_border(&self) -> bool {
         self.show_border
     }
@@ -248,34 +259,41 @@ impl TextWindow {
                 Modifier::empty()
             });
 
-        // Cache link data if present, accumulating text for the same exist_id
-        if let Some(ref link_data) = styled.link_data {
-            // Check if we already have this exist_id in the most recent entry
-            let should_append = if let Some(last) = self.recent_links.back_mut() {
-                if last.exist_id == link_data.exist_id {
-                    // Append to existing text (no debug log for appends - too spammy)
-                    last.text.push_str(&styled.content);
-                    true
+        // Only process links if links_enabled is true
+        let link_data = if self.links_enabled {
+            // Cache link data if present, accumulating text for the same exist_id
+            if let Some(ref link_data) = styled.link_data {
+                // Check if we already have this exist_id in the most recent entry
+                let should_append = if let Some(last) = self.recent_links.back_mut() {
+                    if last.exist_id == link_data.exist_id {
+                        // Append to existing text (no debug log for appends - too spammy)
+                        last.text.push_str(&styled.content);
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
-                }
-            } else {
-                false
-            };
+                };
 
-            if !should_append {
-                // New link - create new entry with this content as the text
-                let mut new_link = link_data.clone();
-                new_link.text = styled.content.clone();
-                self.recent_links.push_back(new_link);
-                if self.recent_links.len() > self.max_recent_links {
-                    self.recent_links.pop_front();
+                if !should_append {
+                    // New link - create new entry with this content as the text
+                    let mut new_link = link_data.clone();
+                    new_link.text = styled.content.clone();
+                    self.recent_links.push_back(new_link);
+                    if self.recent_links.len() > self.max_recent_links {
+                        self.recent_links.pop_front();
+                    }
                 }
             }
-        }
+            styled.link_data.clone()
+        } else {
+            // Links disabled - don't cache or include link data
+            None
+        };
 
         // Add this styled chunk to current line with semantic type and link metadata
-        self.current_line_spans.push((styled.content, style, styled.span_type, styled.link_data.clone()));
+        self.current_line_spans.push((styled.content, style, styled.span_type, link_data));
     }
 
     pub fn finish_line(&mut self, _width: u16) {
@@ -1387,6 +1405,14 @@ impl TextWindow {
         let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
         let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
         Some(Color::Rgb(r, g, b))
+    }
+
+    /// Clear all text from the buffer
+    pub fn clear(&mut self) {
+        self.logical_lines.clear();
+        self.current_line_spans.clear();
+        self.scroll_offset = 0;
+        self.wrapped_lines.clear();
     }
 }
 

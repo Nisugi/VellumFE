@@ -57,6 +57,7 @@ pub struct SettingsEditor {
     editing_index: Option<usize>,
     edit_buffer: String,
     category_filter: Option<String>,
+    select_all_pending: bool,  // Clear buffer on next char when true
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -75,6 +76,7 @@ impl SettingsEditor {
             editing_index: None,
             edit_buffer: String::new(),
             category_filter: None,
+            select_all_pending: false,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -91,6 +93,7 @@ impl SettingsEditor {
             editing_index: None,
             edit_buffer: String::new(),
             category_filter: None,
+            select_all_pending: false,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -209,6 +212,7 @@ impl SettingsEditor {
                 let buffer = item.value.to_display_string();
                 self.editing_index = Some(idx);
                 self.edit_buffer = buffer;
+                self.select_all_pending = false;
             }
         }
     }
@@ -288,6 +292,7 @@ impl SettingsEditor {
     pub fn cancel_edit(&mut self) {
         self.editing_index = None;
         self.edit_buffer.clear();
+        self.select_all_pending = false;
     }
 
     pub fn finish_edit(&mut self) -> Option<(usize, String)> {
@@ -295,6 +300,7 @@ impl SettingsEditor {
             let new_value = self.edit_buffer.clone();
             self.editing_index = None;
             self.edit_buffer.clear();
+            self.select_all_pending = false;
             return Some((idx, new_value));
         }
         None
@@ -302,6 +308,11 @@ impl SettingsEditor {
 
     pub fn handle_edit_input(&mut self, c: char) {
         if self.is_editing() {
+            if self.select_all_pending {
+                // Clear buffer on first char after select all
+                self.edit_buffer.clear();
+                self.select_all_pending = false;
+            }
             self.edit_buffer.push(c);
         }
     }
@@ -309,6 +320,19 @@ impl SettingsEditor {
     pub fn handle_edit_backspace(&mut self) {
         if self.is_editing() {
             self.edit_buffer.pop();
+        }
+    }
+
+    pub fn select_all(&mut self) {
+        // Mark that we want to replace the entire buffer on next character input
+        if self.is_editing() {
+            self.select_all_pending = true;
+        }
+    }
+
+    pub fn clear_edit_buffer(&mut self) {
+        if self.is_editing() {
+            self.edit_buffer.clear();
         }
     }
 

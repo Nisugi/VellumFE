@@ -177,6 +177,19 @@ impl KeybindFormWidget {
                     None
                 }
             }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+A to select all in current text field
+                match self.focused_field {
+                    2 => {
+                        self.key_combo.select_all();
+                    }
+                    3 if self.action_type == KeybindActionType::Macro => {
+                        self.macro_text.select_all();
+                    }
+                    _ => {}
+                }
+                None
+            }
             _ => {
                 // Pass to text inputs
                 use tui_textarea::Input;

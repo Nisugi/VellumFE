@@ -184,7 +184,7 @@ vellum-fe --port 8000 --character Zoleta --links true
 Main application loop and state management. Contains:
 - Event handling (keyboard, mouse)
 - Server message processing (delegates to parser)
-- Dot command handlers (`.createwindow`, `.savelayout`, etc.)
+- Dot command handlers (`.addwindow`, `.savelayout`, etc.)
 - Window focus management
 - Resize/move state tracking
 
@@ -508,7 +508,9 @@ title = "Local Map"
 
 ### Window Management
 - `.quit` - Exit application
-- `.createwindow <template>` - Create window from template
+- `.addwindow` / `.newwindow` - Open window editor to create new window
+- `.editwindow [name]` - Edit existing window (or select from list if no name given)
+- `.editinput` - Edit command input box
 - `.customwindow <name> <stream1,stream2,...>` - Create custom text window
 - `.deletewindow <name>` - Delete window
 - `.windows` / `.listwindows` - List active windows

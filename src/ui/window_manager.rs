@@ -472,6 +472,35 @@ impl Widget {
             None
         }
     }
+
+    /// Clear text from text windows and tabbed windows
+    pub fn clear_text(&mut self) {
+        match self {
+            Widget::Text(w) => w.clear(),
+            Widget::Tabbed(w) => w.clear_all(),
+            _ => {
+                // Other widget types don't have text to clear
+            }
+        }
+    }
+
+    pub fn toggle_links(&mut self) {
+        match self {
+            Widget::Text(w) => w.toggle_links(),
+            Widget::Room(w) => w.toggle_links(),
+            _ => {
+                // Other widget types don't have links
+            }
+        }
+    }
+
+    pub fn get_links_enabled(&self) -> bool {
+        match self {
+            Widget::Text(w) => w.get_links_enabled(),
+            Widget::Room(w) => w.get_links_enabled(),
+            _ => true,  // Default to enabled for widgets without links
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1405,6 +1434,48 @@ impl WindowManager {
                         );
                         Widget::Players(players)
                     }
+                    "inventory" => {
+                        use crate::ui::inventory_window::BorderStyleType;
+                        let mut inventory = InventoryWindow::new(title.clone());
+                        inventory.set_show_border(config.show_border);
+                        if let Some(ref border_style) = config.border_style {
+                            let style = match border_style.as_str() {
+                                "double" => BorderStyleType::Double,
+                                "rounded" => BorderStyleType::Rounded,
+                                "thick" => BorderStyleType::Thick,
+                                "none" => BorderStyleType::None,
+                                _ => BorderStyleType::Single,
+                            };
+                            inventory.set_border_style(style);
+                        }
+                        inventory.set_border_color(config.border_color.clone());
+                        Widget::Inventory(inventory)
+                    }
+                    "room" => {
+                        use crate::ui::room_window::BorderStyleType;
+                        let mut room = RoomWindow::new(title.clone());
+                        room.set_show_border(config.show_border);
+                        if let Some(ref border_style) = config.border_style {
+                            let style = match border_style.as_str() {
+                                "double" => BorderStyleType::Double,
+                                "rounded" => BorderStyleType::Rounded,
+                                "thick" => BorderStyleType::Thick,
+                                "none" => BorderStyleType::None,
+                                _ => BorderStyleType::Single,
+                            };
+                            room.set_border_style(style);
+                        }
+                        room.set_border_color(config.border_color.clone());
+                        Widget::Room(room)
+                    }
+                    "map" => {
+                        let mut map = MapWidget::new(title.clone());
+                        map.set_border(config.show_border);
+                        if let Some(ref title_override) = config.title {
+                            map.set_title(title_override.clone());
+                        }
+                        Widget::Map(map)
+                    }
                     _ => {
                         // Default to text window
                         let mut text_window = TextWindow::new(&title, config.buffer_size)
@@ -1441,6 +1512,14 @@ impl WindowManager {
             } else {
                 // Window exists - update its properties
                 if let Some(window) = self.windows.get_mut(&config.name) {
+                    // Update stream mappings for this window
+                    // First remove old mappings for this window
+                    self.stream_map.retain(|_, win| win != &config.name);
+                    // Then add new mappings
+                    for stream in &config.streams {
+                        self.stream_map.insert(stream.clone(), config.name.clone());
+                    }
+
                     window.set_border_config(
                         config.show_border,
                         config.border_style.clone(),

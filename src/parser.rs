@@ -60,6 +60,9 @@ pub enum ParsedElement {
     ClearStream {
         id: String,
     },
+    ClearDialogData {
+        id: String,
+    },
     RoomId {
         id: String,
     },
@@ -197,6 +200,15 @@ impl XmlParser {
             in_inv_tag: false,
             event_matchers,
         }
+    }
+
+    /// Update presets after loading new color config
+    pub fn update_presets(&mut self, preset_list: Vec<(String, Option<String>, Option<String>)>) {
+        let mut presets = HashMap::new();
+        for (id, fg, bg) in preset_list {
+            presets.insert(id, (fg, bg));
+        }
+        self.presets = presets;
     }
 
     pub fn parse_line(&mut self, line: &str) -> Vec<ParsedElement> {
@@ -570,8 +582,21 @@ impl XmlParser {
         // <dialogData id='Buffs'><progressBar id='115' value='74' text="Fasthr's Reward" time='03:06:54'/></dialogData>
         // <dialogData id='injuries'><image id='head' name='Injury2' .../></dialogData>
         // <dialogData id='injuries' clear='t'></dialogData>
+        // <dialogData id='MiniBounty' clear='t'></dialogData>
 
         if let Some(id) = Self::extract_attribute(tag, "id") {
+            // Check for clear='t' attribute - emit ClearDialogData for generic windows
+            // This handles clearing for windows like MiniBounty, and other text-based dialogData
+            if let Some(clear) = Self::extract_attribute(tag, "clear") {
+                if clear == "t" {
+                    // For injuries and active effects, we have specialized handling below
+                    // For everything else, emit a generic ClearDialogData event
+                    if id != "injuries" && id != "Active Spells" && id != "Buffs" && id != "Debuffs" && id != "Cooldowns" {
+                        elements.push(ParsedElement::ClearDialogData { id: id.clone() });
+                        tracing::debug!("Clearing dialogData window: {}", id);
+                    }
+                }
+            }
             // Handle Icon* status indicators
             if id.starts_with("Icon") {
                 let status = id.strip_prefix("Icon").unwrap_or(&id).to_lowercase();

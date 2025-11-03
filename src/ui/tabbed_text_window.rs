@@ -621,6 +621,13 @@ impl TabbedTextWindow {
         }
     }
 
+    /// Clear all text from all tabs
+    pub fn clear_all(&mut self) {
+        for tab in &mut self.tabs {
+            tab.window.clear();
+        }
+    }
+
     /// Go to next match in the active tab's text window
     pub fn next_match(&mut self) -> bool {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {

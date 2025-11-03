@@ -84,7 +84,7 @@ const DASHBOARD_LAYOUTS: &[&str] = &["horizontal", "vertical", "grid_2x2", "grid
 /// Get available templates for a widget type
 fn get_templates_for_widget_type(widget_type: &str) -> Vec<&'static str> {
     match widget_type {
-        "text" => vec!["thoughts", "speech", "familiar", "logons", "deaths", "arrivals", "ambients", "announcements", "loot", "custom"],
+        "text" => vec!["thoughts", "speech", "familiar", "logons", "deaths", "arrivals", "ambients", "announcements", "loot", "bounty", "custom"],
         "tabbed" => vec!["chat", "custom"],
         "progress" => vec!["health", "mana", "stamina", "spirit", "bloodpoints", "stance", "encumbrance", "mindstate", "custom"],
         "countdown" => vec!["roundtime", "casttime", "stuntime", "custom"],
@@ -1153,6 +1153,56 @@ impl WindowEditor {
                 self.update_status();
                 None
             },
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+A to select all in current text field
+                match self.focused_field {
+                    0 => self.name_input.select_all(),
+                    1 => self.title_input.select_all(),
+                    2 => self.row_input.select_all(),
+                    3 => self.col_input.select_all(),
+                    4 => self.rows_input.select_all(),
+                    5 => self.cols_input.select_all(),
+                    6 => self.min_rows_input.select_all(),
+                    7 => self.min_cols_input.select_all(),
+                    8 => self.max_rows_input.select_all(),
+                    9 => self.max_cols_input.select_all(),
+                    20 => self.border_color_input.select_all(),
+                    21 => self.bg_color_input.select_all(),
+                    22 => self.buffer_size_input.select_all(),
+                    23 => self.streams_input.select_all(),
+                    24 => self.text_color_input.select_all(),
+                    25 => self.bar_color_input.select_all(),
+                    27 => self.bar_bg_color_input.select_all(),
+                    29 => self.tab_unread_prefix_input.select_all(),
+                    30 => self.text_color_input.select_all(),
+                    31 => self.bar_color_input.select_all(),
+                    32 => self.bar_bg_color_input.select_all(),
+                    33 => self.progress_id_input.select_all(),
+                    34 => self.bar_color_input.select_all(),
+                    35 => self.bar_bg_color_input.select_all(),
+                    36 => self.countdown_id_input.select_all(),
+                    37 => self.countdown_icon_input.select_all(),
+                    38 => self.effect_default_color_input.select_all(),
+                    39 => self.text_color_input.select_all(),
+                    41 => self.compass_active_color_input.select_all(),
+                    42 => self.compass_inactive_color_input.select_all(),
+                    43 => self.text_color_input.select_all(),
+                    44 => self.hand_icon_input.select_all(),
+                    45 => self.compass_active_color_input.select_all(),
+                    46 => self.compass_inactive_color_input.select_all(),
+                    47 => self.hand_icon_input.select_all(),
+                    48 => self.text_color_input.select_all(),
+                    49 => self.bar_bg_color_input.select_all(),
+                    50 => self.compass_inactive_color_input.select_all(),
+                    51 => self.bar_color_input.select_all(),
+                    52 => self.compass_active_color_input.select_all(),
+                    53 => self.effect_default_color_input.select_all(),
+                    54 => self.progress_id_input.select_all(),
+                    57 => self.dashboard_spacing_input.select_all(),
+                    _ => {}
+                }
+                None
+            },
             _ => {
                 // Pass to text inputs
                 use tui_textarea::Input;
@@ -1276,7 +1326,7 @@ impl WindowEditor {
                         }
                         None
                     },
-                    KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                    KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if let Some(ref mut tabs) = self.current_window.tabs {
                             if self.tab_editor.selected_index < tabs.len() {
                                 tabs.remove(self.tab_editor.selected_index);
@@ -1330,6 +1380,15 @@ impl WindowEditor {
                     KeyCode::Char(' ') if self.tab_editor.focused_input == 2 => {
                         // Toggle show_timestamps checkbox
                         self.tab_editor.show_timestamps = !self.tab_editor.show_timestamps;
+                        None
+                    },
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Ctrl+A to select all in current text field
+                        if self.tab_editor.focused_input == 0 {
+                            self.tab_editor.tab_name_input.select_all();
+                        } else if self.tab_editor.focused_input == 1 {
+                            self.tab_editor.tab_stream_input.select_all();
+                        }
                         None
                     },
                     _ => {
@@ -1396,7 +1455,7 @@ impl WindowEditor {
                         self.indicator_editor.picker_selected_index = 0;
                         None
                     },
-                    KeyCode::Delete => {
+                    KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if let Some(ref mut indicators) = self.current_window.dashboard_indicators {
                             if self.indicator_editor.selected_index < indicators.len() {
                                 indicators.remove(self.indicator_editor.selected_index);

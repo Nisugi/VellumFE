@@ -233,7 +233,7 @@ impl ColorConfig {
 /// Helper functions for loading/saving highlights and keybinds
 impl Config {
     /// Load highlights from highlights.toml for a character
-    fn load_highlights(character: Option<&str>) -> Result<HashMap<String, HighlightPattern>> {
+    pub fn load_highlights(character: Option<&str>) -> Result<HashMap<String, HighlightPattern>> {
         let highlights_path = Self::highlights_path(character)?;
 
         if highlights_path.exists() {
@@ -259,7 +259,7 @@ impl Config {
     }
 
     /// Load keybinds from keybinds.toml for a character
-    fn load_keybinds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+    pub fn load_keybinds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
         let keybinds_path = Self::keybinds_path(character)?;
 
         if keybinds_path.exists() {
@@ -2683,6 +2683,51 @@ impl Config {
             numbers_only: false,
             ..Default::default()
             }),
+            "bounty" | "bounties" => Some(WindowDef {
+                name: "bounty".to_string(),
+                widget_type: "text".to_string(),
+                streams: vec!["bounty".to_string()],
+                row: default_row,
+                col: default_col,
+                rows: default_rows,
+                cols: default_cols,
+                buffer_size: 0,
+                show_border: true,
+                border_style: None,
+                border_color: None,
+            border_sides: None,
+                title: Some("Bounties".to_string()),
+            content_align: None,
+            background_color: None,
+                bar_fill: None,
+                bar_background: None,
+                text_color: None,
+                transparent_background: true,
+                locked: false,
+                indicator_colors: None,
+                dashboard_layout: None,
+                dashboard_indicators: None,
+                dashboard_spacing: None,
+                dashboard_hide_inactive: None,
+                visible_count: None,
+                effect_category: None,
+                tabs: None,
+                tab_bar_position: None,
+                tab_active_color: None,
+                tab_inactive_color: None,
+                tab_unread_color: None,
+                tab_unread_prefix: None,
+            hand_icon: None,
+            countdown_icon: None,
+            compass_active_color: None,
+            compass_inactive_color: None,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            numbers_only: false,
+            ..Default::default()
+            }),
             "health" | "hp" => Some(WindowDef {
                 name: "health".to_string(),
                 widget_type: "progress".to_string(),
@@ -3988,6 +4033,7 @@ impl Config {
             "ambients",
             "announcements",
             "loot",
+            "bounty",
             "health",
             "mana",
             "stamina",
@@ -4209,7 +4255,7 @@ impl Config {
 
     /// Get path to config.toml for a character
     /// Returns: ~/.vellum-fe/{character}/config.toml or ~/.vellum-fe/default/config.toml
-    fn config_path(character: Option<&str>) -> Result<PathBuf> {
+    pub fn config_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("config.toml"))
     }
 

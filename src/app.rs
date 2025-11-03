@@ -1,5 +1,5 @@
 use crate::cmdlist::CmdList;
-use crate::config::{Config, KeyAction, KeyBindAction, Layout, parse_key_string};
+use crate::config::{Config, ColorConfig, KeyAction, KeyBindAction, Layout, parse_key_string};
 use crate::network::{LichConnection, ServerMessage};
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
@@ -404,28 +404,7 @@ impl App {
         }
 
         // Build keybind map
-        let mut keybind_map = HashMap::new();
-        for (key_str, keybind_action) in &config.keybinds {
-            if let Some((key_code, modifiers)) = parse_key_string(key_str) {
-                let action = match keybind_action {
-                    KeyBindAction::Action(action_str) => {
-                        KeyAction::from_str(action_str)
-                    }
-                    KeyBindAction::Macro(macro_action) => {
-                        Some(KeyAction::SendMacro(macro_action.macro_text.clone()))
-                    }
-                };
-
-                if let Some(action) = action {
-                    keybind_map.insert((key_code, modifiers), action);
-                } else {
-                    tracing::warn!("Invalid keybind: {} -> {:?}", key_str, keybind_action);
-                }
-            } else {
-                tracing::warn!("Could not parse key string: {}", key_str);
-            }
-        }
-
+        let keybind_map = Self::build_keybind_map(&config.keybinds);
         debug!("Loaded {} keybindings", keybind_map.len());
 
         // Find command_input from windows array
@@ -3591,9 +3570,28 @@ impl App {
                     self.add_system_message("Failed to get current terminal size");
                 }
             }
+            "reload" => {
+                if parts.len() < 2 {
+                    // Reload everything
+                    self.reload_all();
+                } else {
+                    match parts[1] {
+                        "highlights" => self.reload_highlights(),
+                        "keybinds" => self.reload_keybinds(),
+                        "settings" => self.reload_settings(),
+                        "colors" => self.reload_colors(),
+                        "windows" => self.reload_windows(),
+                        _ => {
+                            self.add_system_message(&format!("Unknown reload category: {}", parts[1]));
+                            self.add_system_message("Usage: .reload [highlights|keybinds|settings|colors|windows]");
+                            self.add_system_message("       .reload (reload everything)");
+                        }
+                    }
+                }
+            }
             "help" | "h" | "?" => {
                 self.add_system_message("=== VellumFE Dot Commands ===");
-                self.add_system_message("Application: .quit, .menu, .settings, .help");
+                self.add_system_message("Application: .quit, .menu, .settings, .help, .reload [category]");
                 self.add_system_message("Layouts: .savelayout [name], .loadlayout [name], .layouts, .baseline, .resize");
                 self.add_system_message("Windows: .windows, .templates, .createwindow <template>, .customwindow <name> <streams>");
                 self.add_system_message("         .deletewindow <name>, .editwindow [name], .addwindow, .editinput");
@@ -3614,6 +3612,163 @@ impl App {
             _ => {
                 self.add_system_message(&format!("Unknown command: .{}", parts[0]));
                 self.add_system_message("Type .help for list of commands");
+            }
+        }
+    }
+
+    /// Build keybind map from keybinds config
+    fn build_keybind_map(keybinds: &HashMap<String, KeyBindAction>) -> HashMap<(KeyCode, KeyModifiers), KeyAction> {
+        let mut keybind_map = HashMap::new();
+        for (key_str, keybind_action) in keybinds {
+            if let Some((key_code, modifiers)) = parse_key_string(key_str) {
+                let action = match keybind_action {
+                    KeyBindAction::Action(action_str) => {
+                        KeyAction::from_str(action_str)
+                    }
+                    KeyBindAction::Macro(macro_action) => {
+                        Some(KeyAction::SendMacro(macro_action.macro_text.clone()))
+                    }
+                };
+
+                if let Some(action) = action {
+                    keybind_map.insert((key_code, modifiers), action);
+                } else {
+                    tracing::warn!("Invalid keybind: {} -> {:?}", key_str, keybind_action);
+                }
+            } else {
+                tracing::warn!("Could not parse key string: {}", key_str);
+            }
+        }
+        keybind_map
+    }
+
+    /// Reload all configuration from disk
+    fn reload_all(&mut self) {
+        self.add_system_message("Reloading all configuration...");
+        self.reload_highlights();
+        self.reload_keybinds();
+        self.reload_settings();
+        self.reload_colors();
+        self.reload_windows();
+        self.add_system_message("All configuration reloaded");
+    }
+
+    /// Reload highlights from disk
+    fn reload_highlights(&mut self) {
+        match Config::load_highlights(self.config.character.as_deref()) {
+            Ok(highlights) => {
+                self.config.highlights = highlights;
+                self.add_system_message("Highlights reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload highlights: {}", e));
+            }
+        }
+    }
+
+    /// Reload keybinds from disk
+    fn reload_keybinds(&mut self) {
+        match Config::load_keybinds(self.config.character.as_deref()) {
+            Ok(keybinds) => {
+                self.config.keybinds = keybinds;
+                // Rebuild keybind map
+                self.keybind_map = Self::build_keybind_map(&self.config.keybinds);
+                self.add_system_message("Keybinds reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload keybinds: {}", e));
+            }
+        }
+    }
+
+    /// Reload settings (UI, connection, sound) from disk
+    fn reload_settings(&mut self) {
+        let config_path = match Config::config_path(self.config.character.as_deref()) {
+            Ok(path) => path,
+            Err(e) => {
+                self.add_system_message(&format!("Failed to get config path: {}", e));
+                return;
+            }
+        };
+
+        match std::fs::read_to_string(&config_path) {
+            Ok(contents) => {
+                match toml::from_str::<Config>(&contents) {
+                    Ok(new_config) => {
+                        // Update only the settings sections, preserve character name
+                        self.config.connection = new_config.connection;
+                        self.config.ui = new_config.ui;
+                        self.config.sound = new_config.sound;
+                        self.config.event_patterns = new_config.event_patterns;
+                        self.config.layout_mappings = new_config.layout_mappings;
+
+                        // Update command input config
+                        self.update_command_input_config();
+
+                        self.add_system_message("Settings reloaded");
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to parse config: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to read config file: {}", e));
+            }
+        }
+    }
+
+    /// Reload colors (presets, spell colors, prompt colors, UI colors) from disk
+    fn reload_colors(&mut self) {
+        match ColorConfig::load(self.config.character.as_deref()) {
+            Ok(colors) => {
+                self.config.colors = colors;
+                // Update parser with new presets
+                let presets: Vec<(String, Option<String>, Option<String>)> = self.config
+                    .colors.presets
+                    .iter()
+                    .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
+                    .collect();
+                self.parser.update_presets(presets);
+                self.add_system_message("Colors reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload colors: {}", e));
+            }
+        }
+    }
+
+    /// Reload window layout from disk and resize to current terminal
+    /// Note: Text buffers will be cleared - new game output will continue streaming in
+    fn reload_windows(&mut self) {
+        // Determine which layout to reload (clone to avoid borrow issues)
+        let layout_name = self.base_layout_name.clone().unwrap_or_else(|| "default".to_string());
+
+        let layout_path = match Config::layout_path(&layout_name) {
+            Ok(path) => path,
+            Err(e) => {
+                self.add_system_message(&format!("Failed to get layout path: {}", e));
+                return;
+            }
+        };
+
+        match Layout::load_from_file(&layout_path) {
+            Ok(new_layout) => {
+                // Update layout
+                self.layout = new_layout.clone();
+                self.baseline_layout = Some(new_layout);
+
+                // Recreate window manager (this will clear text buffers)
+                self.update_window_manager_config();
+                self.update_command_input_config();
+
+                self.add_system_message(&format!("Windows reloaded from layout '{}' (buffers cleared)", layout_name));
+
+                // Automatically trigger resize to adjust to current terminal size
+                self.handle_dot_command(".resize", None);
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload windows: {}", e));
             }
         }
     }
@@ -4802,127 +4957,56 @@ impl App {
             }
         }
 
-        // In HighlightForm mode, handle in the form directly (except Ctrl+C to quit)
+        // In HighlightForm mode, handle in the form directly
         if self.input_mode == InputMode::HighlightForm {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the form
             return self.handle_highlight_form_input(key, modifiers);
         }
 
-        // In KeybindForm mode, handle in the form directly (except Ctrl+C to quit)
+        // In KeybindForm mode, handle in the form directly
         if self.input_mode == InputMode::KeybindForm {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the form
             return self.handle_keybind_form_input(key, modifiers);
         }
 
-        // In SettingsEditor mode, handle in the editor directly (except Ctrl+C to quit)
+        // In SettingsEditor mode, handle in the editor directly
         if self.input_mode == InputMode::SettingsEditor {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the editor
             return self.handle_settings_editor_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::HighlightBrowser {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the browser
             return self.handle_highlight_browser_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::KeybindBrowser {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the browser
             return self.handle_keybind_browser_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::ColorPaletteBrowser {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the browser
             return self.handle_color_palette_browser_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::ColorForm {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the form
             return self.handle_color_form_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::ColorBrowserFilter {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to filter input handler
             return self.handle_color_browser_filter_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::SpellColorBrowser {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the spell color browser
             return self.handle_spell_color_browser_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::SpellColorForm {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the spell color form
             return self.handle_spell_color_form_input(key, modifiers);
         }
 
         if self.input_mode == InputMode::UIColorsBrowser {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
-            // Everything else goes to the UI colors browser
             return self.handle_uicolors_browser_input(key, modifiers);
         }
 
 
-        // In WindowEditor mode, handle in the editor directly (except Ctrl+C to quit)
+        // In WindowEditor mode, handle in the editor directly
         if self.input_mode == InputMode::WindowEditor {
-            // Allow Ctrl+C to quit
-            if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                self.running = false;
-                return Ok(());
-            }
 
             // Convert crossterm KeyCode to ratatui::crossterm KeyCode
             use ratatui::crossterm::event as rt_event;
@@ -5075,14 +5159,24 @@ impl App {
 
         // Handle global keys first (work in any mode except HighlightForm)
         match (key, modifiers) {
-            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.running = false;
-                return Ok(());
-            }
             (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 // Enter search mode
                 self.input_mode = InputMode::Search;
                 self.search_input.clear();
+                return Ok(());
+            }
+            (KeyCode::Char('l'), KeyModifiers::ALT) => {
+                // Toggle links in focused window
+                let window_names = self.window_manager.get_window_names();
+                if self.focused_window_index < window_names.len() {
+                    let name = window_names[self.focused_window_index].clone();
+                    if let Some(window) = self.window_manager.get_window(&name) {
+                        window.toggle_links();
+                        let enabled = window.get_links_enabled();
+                        let status = if enabled { "enabled" } else { "disabled" };
+                        self.add_system_message(&format!("Links {} for window '{}'", status, name));
+                    }
+                }
                 return Ok(());
             }
             (KeyCode::Esc, _) => {
@@ -5446,6 +5540,12 @@ impl App {
                             // Not an enum or boolean, start editing current item
                             editor.start_edit();
                         }
+                    }
+                }
+                (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                    if editor.is_editing() {
+                        // Ctrl+A: Select all text in edit buffer
+                        editor.select_all();
                     }
                 }
                 (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
@@ -6452,6 +6552,26 @@ impl App {
         modifiers: KeyModifiers,
         command_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        // Handle command input specific shortcuts first (before keybinds)
+        match (key, modifiers) {
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+                // CTRL+A: Select all text in command input
+                self.command_input.select_all();
+                return Ok(());
+            }
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                // CTRL+C: Copy selected text from command input to clipboard
+                if let Some(text) = self.command_input.get_selected_text() {
+                    use arboard::Clipboard;
+                    if let Ok(mut clipboard) = Clipboard::new() {
+                        let _ = clipboard.set_text(text);
+                    }
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+
         // Debug: Log ALL key events to help diagnose numpad vs regular keys
         match key {
             KeyCode::Char(c) if matches!(c, '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '.' | '+' | '-' | '*' | '/') => {
@@ -8346,11 +8466,11 @@ impl App {
                             // Silently ignore progress bars without matching windows (e.g., health2 duplicate)
                         }
                         ParsedElement::Label { id, value } => {
-                            // Handle label elements like blood points
-                            // <label id='lblBPs' value='Blood Points: 100' />
-                            // Parse numeric value from the string and use it for progress
-
+                            // Labels are for progress bars and other indicators (MiniBounty is handled by parser as Text)
                             if let Some(window) = self.window_manager.get_window(&id) {
+                                // Regular label handling for blood points and other progress-bar style labels
+                                // <label id='lblBPs' value='Blood Points: 100' />
+
                                 // Try to extract a number from the value string
                                 // Match patterns like "Blood Points: 100" or just "100"
                                 let number = value.split_whitespace()
@@ -8367,9 +8487,6 @@ impl App {
                                     window.set_progress_with_text(0, 100, Some(value.clone()));
                                     tracing::debug!("Updated label '{}' with text '{}' (no value)", id, value);
                                 }
-                            } else {
-                                tracing::warn!("No window found for label id '{}' - available windows: {:?}",
-                                    id, self.window_manager.get_window_names());
                             }
                         }
                         ParsedElement::BloodPoints { value } => {
@@ -8577,11 +8694,13 @@ impl App {
                                             let parsed_content = self.parser.parse_line(&value);
 
                                             // Deduplicate room objects if this is the "room objs" component
-                                            let processed_content = if id == "room objs" {
-                                                Self::deduplicate_room_objects(parsed_content)
-                                            } else {
-                                                parsed_content
-                                            };
+                                            // DISABLED: Deduplication breaks apart bold formatting (articles, parentheticals)
+                                            let processed_content = parsed_content;
+                                            // let processed_content = if id == "room objs" {
+                                            //     Self::deduplicate_room_objects(parsed_content)
+                                            // } else {
+                                            //     parsed_content
+                                            // };
 
                                             // Add text elements to the room window
                                             for element in processed_content {
@@ -8645,6 +8764,25 @@ impl App {
                         ParsedElement::LaunchURL { url } => {
                             // Handle LaunchURL - open in browser
                             self.handle_launch_url(&url);
+                        }
+                        ParsedElement::ClearStream { id } => {
+                            // <clearStream id='bounty'/> - clear the specified stream's window
+                            if let Some(window_name) = self.window_manager.stream_map.get(&id).cloned() {
+                                if let Some(window) = self.window_manager.get_window(&window_name) {
+                                    window.clear_text();
+                                    debug!("Cleared stream '{}' window '{}'", id, window_name);
+                                }
+                            }
+                        }
+                        ParsedElement::ClearDialogData { id } => {
+                            // <dialogData id='MiniBounty' clear='t'> - clear the specified stream's window
+                            // Use stream_map to find which window is subscribed to this stream
+                            if let Some(window_name) = self.window_manager.stream_map.get(&id).cloned() {
+                                if let Some(window) = self.window_manager.get_window(&window_name) {
+                                    window.clear_text();
+                                    debug!("Cleared dialogData '{}' → window '{}'", id, window_name);
+                                }
+                            }
                         }
                         _ => {
                             // Other element types don't add visible content
