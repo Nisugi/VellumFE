@@ -169,7 +169,6 @@ tab_active_color = "-"
 tab_inactive_color = "-"
 tab_unread_color = "-"
 tab_unread_prefix = "* "
-text_color = "#ffffff"
 compass_active_color = "#00ff00"
 compass_inactive_color = "#333333"
 min_rows = 1
