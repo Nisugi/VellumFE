@@ -98,6 +98,7 @@ The `/wiki/` directory contains comprehensive documentation:
 
 - [Getting Started](wiki/Getting-Started.md) - Installation and first-time setup
 - [Configuration](wiki/Configuration.md) - Complete configuration reference
+- **[Keybindings Guide](KEYBINDINGS.md)** - Customize keyboard shortcuts and fix terminal compatibility issues
 - [Commands](wiki/Commands.md) - All dot commands documented
 - [Windows and Layouts](wiki/Windows-and-Layouts.md) - Window management guide
 - [Window Types](wiki/Window-Types.md) - All 40+ widget types

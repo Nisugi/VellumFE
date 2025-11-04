@@ -419,6 +419,16 @@ Window editor widget for creating/editing windows. Contains:
 - `defaults/config.toml` - Source defaults (embedded at compile time)
 - `defaults/layout.toml` - Source layout defaults (embedded at compile time)
 
+**Keybindings System:**
+- Fully customizable keybindings defined in config file
+- Default keybinds defined in `defaults/config.toml` under `[[keybinds]]` sections
+- Users can override in their own config files (`~/.vellum-fe/configs/`)
+- Terminal compatibility: If backspace doesn't work, users can remap it (see `KEYBINDINGS.md`)
+- Common issue: Some terminals (MobaXterm, PuTTY) send `Delete` for backspace key
+- Solution: Edit config and change `key = "backspace"` to `key = "delete"`
+- Debug key codes with `RUST_LOG=debug` and check `debug.log` for `KEY EVENT` lines
+- See `KEYBINDINGS.md` for complete documentation on customizing keys
+
 **Config Loading Priority:**
 1. `~/.vellum-fe/configs/<character>.toml` (if `--character` specified)
 2. `~/.vellum-fe/configs/default.toml`

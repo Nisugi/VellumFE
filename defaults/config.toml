@@ -28,6 +28,11 @@ enabled = true
 volume = 0.5
 cooldown_ms = 500
 
+# NOTE: Keybindings are configured in keybinds.toml (not here!)
+# See defaults/keybinds.toml or ~/.vellum-fe/{character}/keybinds.toml
+# Use .keybinds or .addkeybind commands to manage them
+# If backspace doesn't work, edit keybinds.toml and change "backspace" to "delete"
+
 [event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
 event_type = "stun"
