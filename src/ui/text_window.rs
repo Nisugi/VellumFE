@@ -407,39 +407,47 @@ impl TextWindow {
         // STEP 4: Apply highlight matches to char_styles with priority layering
         for (start, end, fg, bg, bold, color_entire_line) in matches {
             if color_entire_line {
-                // Whole line: highlight base → links → monsterbold
-                for (i, char_style) in char_styles.iter_mut().enumerate() {
-                    // Apply highlight as base
-                    if let Some(color) = fg {
-                        char_style.fg = Some(color);
-                    }
-                    if let Some(color) = bg {
-                        char_style.bg = Some(color);
-                    }
-                    if bold {
-                        char_style.bold = true;
-                    }
+                tracing::debug!("Applying color_entire_line highlight: fg={:?}, bg={:?}, bold={}", fg, bg, bold);
+                tracing::debug!("Line has {} chars, {} original spans", char_styles.len(), self.current_line_spans.len());
 
-                    // Links and monsterbold: preserve their foreground color on top of highlight background
-                    // This ensures links are always distinguishable while respecting highlight background
-                    let original_idx = i;
-                    let mut char_idx = 0;
-                    for (content, style, span_type, _link) in &self.current_line_spans {
-                        for _ch in content.chars() {
-                            if char_idx == original_idx {
-                                if *span_type == SpanType::Link || *span_type == SpanType::Monsterbold {
-                                    // Re-apply original foreground color for links/monsterbold
-                                    // But keep the highlight background color
-                                    char_style.fg = style.fg;
-                                    // Don't override bg - keep highlight background
-                                    char_style.bold = style.add_modifier.contains(Modifier::BOLD);
-                                }
-                                break;
-                            }
-                            char_idx += 1;
+                // Debug: show original spans
+                for (idx, (content, style, span_type, _link)) in self.current_line_spans.iter().enumerate() {
+                    tracing::debug!("  original_span[{}]: content='{}', fg={:?}, span_type={:?}",
+                                  idx, content, style.fg, span_type);
+                }
+
+                // Whole line: highlight base → links → monsterbold
+                for char_style in char_styles.iter_mut() {
+                    // For links/monsterbold: preserve original foreground, apply highlight background
+                    // For normal text: apply full highlight (fg + bg + bold)
+                    if char_style.span_type == SpanType::Link || char_style.span_type == SpanType::Monsterbold {
+                        // Keep original foreground color for links/monsterbold
+                        tracing::debug!("Preserving link/monsterbold fg color: {:?}, span_type={:?}",
+                                      char_style.fg, char_style.span_type);
+                        // Apply only highlight background
+                        if let Some(color) = bg {
+                            char_style.bg = Some(color);
+                        }
+                        // Keep original bold state for links
+                    } else {
+                        // Normal text: apply full highlight
+                        if let Some(color) = fg {
+                            char_style.fg = Some(color);
+                        }
+                        if let Some(color) = bg {
+                            char_style.bg = Some(color);
+                        }
+                        if bold {
+                            char_style.bold = true;
                         }
                     }
                 }
+
+                // Debug: show final char_styles after highlight+restore
+                for (i, cs) in char_styles.iter().enumerate().take(10) {
+                    tracing::debug!("char_styles[{}]: fg={:?}, bg={:?}, span_type={:?}", i, cs.fg, cs.bg, cs.span_type);
+                }
+
                 // Only apply first whole-line match
                 break;
             } else {
@@ -467,6 +475,8 @@ impl TextWindow {
                 char_links.push(link.clone());
             }
         }
+
+        tracing::debug!("STEP 5: Reconstructing spans from {} char_styles", char_styles.len());
 
         let mut new_spans: Vec<(String, Style, SpanType, Option<LinkData>)> = Vec::new();
         let full_text_chars: Vec<char> = full_text.chars().collect();
@@ -509,6 +519,13 @@ impl TextWindow {
             }
 
             new_spans.push((content, style, current_style.span_type, current_link));
+        }
+
+        // Debug: show final reconstructed spans
+        tracing::debug!("Final reconstructed {} spans:", new_spans.len());
+        for (idx, (content, style, span_type, _link)) in new_spans.iter().enumerate().take(5) {
+            tracing::debug!("  new_span[{}]: content='{}', fg={:?}, span_type={:?}",
+                          idx, content, style.fg, span_type);
         }
 
         // Replace current_line_spans with new layered spans
