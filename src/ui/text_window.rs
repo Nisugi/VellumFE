@@ -7,7 +7,7 @@ use ratatui::{
 };
 use std::collections::VecDeque;
 use regex::Regex;
-use aho_corasick::AhoCorasick;
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use crate::config::HighlightPattern;
 
 // Per-character style info for layering
@@ -169,9 +169,12 @@ impl TextWindow {
             })
             .collect();
 
-        // Build Aho-Corasick matcher for fast_parse patterns
+        // Build Aho-Corasick matcher for fast_parse patterns with whole-word matching only
         if !fast_patterns.is_empty() {
-            self.fast_matcher = AhoCorasick::new(&fast_patterns).ok();
+            self.fast_matcher = AhoCorasickBuilder::new()
+                .match_kind(MatchKind::Standard)  // Standard matching
+                .build(&fast_patterns)
+                .ok();
             self.fast_pattern_map = fast_map;
         } else {
             self.fast_matcher = None;
@@ -374,14 +377,39 @@ impl TextWindow {
         let mut matches: Vec<(usize, usize, Option<Color>, Option<Color>, bool, bool)> = Vec::new();
         // Format: (start, end, fg, bg, bold, color_entire_line)
 
-        // Try Aho-Corasick fast patterns
+        // Try Aho-Corasick fast patterns (with word boundary checking)
         if let Some(ref matcher) = self.fast_matcher {
             for mat in matcher.find_iter(&full_text) {
-                if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize()) {
-                    if let Some(highlight) = self.highlights.get(highlight_idx) {
-                        let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                        let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                        matches.push((mat.start(), mat.end(), fg, bg, highlight.bold, highlight.color_entire_line));
+                // Check word boundaries to prevent substring matches
+                // Note: mat.start()/end() return byte indices
+                let start = mat.start();
+                let end = mat.end();
+                let bytes = full_text.as_bytes();
+
+                // Check character before match
+                let is_word_start = start == 0 || {
+                    bytes.get(start - 1).map_or(true, |&b| {
+                        let c = b as char;
+                        !c.is_alphanumeric() && c != '_'
+                    })
+                };
+
+                // Check character after match
+                let is_word_end = end >= bytes.len() || {
+                    bytes.get(end).map_or(true, |&b| {
+                        let c = b as char;
+                        !c.is_alphanumeric() && c != '_'
+                    })
+                };
+
+                // Only match if both boundaries are satisfied (whole word match)
+                if is_word_start && is_word_end {
+                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize()) {
+                        if let Some(highlight) = self.highlights.get(highlight_idx) {
+                            let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                            let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                            matches.push((start, end, fg, bg, highlight.bold, highlight.color_entire_line));
+                        }
                     }
                 }
             }

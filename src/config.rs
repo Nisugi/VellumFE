@@ -4362,6 +4362,18 @@ impl Config {
         Ok(Self::config_dir()?.join("layouts"))
     }
 
+    /// Get the shared highlights directory (where .savehighlights saves to)
+    /// Returns: ~/.vellum-fe/highlights/
+    fn highlights_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("highlights"))
+    }
+
+    /// Get the shared keybinds directory (where .savekeybinds saves to)
+    /// Returns: ~/.vellum-fe/keybinds/
+    fn keybinds_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("keybinds"))
+    }
+
     /// Get the shared sounds directory
     /// Returns: ~/.vellum-fe/sounds/
     pub fn sounds_dir() -> Result<PathBuf> {
@@ -4424,6 +4436,116 @@ impl Config {
     pub fn layout_path(name: &str) -> Result<PathBuf> {
         let layouts_dir = Self::layouts_dir()?;
         Ok(layouts_dir.join(format!("{}.toml", name)))
+    }
+
+    /// List all saved highlight profiles
+    pub fn list_saved_highlights() -> Result<Vec<String>> {
+        let highlights_dir = Self::highlights_dir()?;
+
+        if !highlights_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut profiles = vec![];
+        for entry in fs::read_dir(highlights_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    profiles.push(name.to_string());
+                }
+            }
+        }
+
+        profiles.sort();
+        Ok(profiles)
+    }
+
+    /// Save current highlights to a named profile
+    /// Returns path to saved highlights
+    pub fn save_highlights_as(&self, name: &str) -> Result<PathBuf> {
+        let highlights_dir = Self::highlights_dir()?;
+        fs::create_dir_all(&highlights_dir)?;
+
+        let highlights_path = highlights_dir.join(format!("{}.toml", name));
+        let contents = toml::to_string_pretty(&self.highlights)
+            .context("Failed to serialize highlights")?;
+        fs::write(&highlights_path, contents)
+            .context("Failed to write highlights profile")?;
+
+        Ok(highlights_path)
+    }
+
+    /// Load highlights from a named profile
+    pub fn load_highlights_from(name: &str) -> Result<HashMap<String, HighlightPattern>> {
+        let highlights_dir = Self::highlights_dir()?;
+        let highlights_path = highlights_dir.join(format!("{}.toml", name));
+
+        if !highlights_path.exists() {
+            return Err(anyhow::anyhow!("Highlight profile '{}' not found", name));
+        }
+
+        let contents = fs::read_to_string(&highlights_path)
+            .context("Failed to read highlights profile")?;
+        let highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
+            .context("Failed to parse highlights profile")?;
+
+        Ok(highlights)
+    }
+
+    /// List all saved keybind profiles
+    pub fn list_saved_keybinds() -> Result<Vec<String>> {
+        let keybinds_dir = Self::keybinds_dir()?;
+
+        if !keybinds_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut profiles = vec![];
+        for entry in fs::read_dir(keybinds_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    profiles.push(name.to_string());
+                }
+            }
+        }
+
+        profiles.sort();
+        Ok(profiles)
+    }
+
+    /// Save current keybinds to a named profile
+    /// Returns path to saved keybinds
+    pub fn save_keybinds_as(&self, name: &str) -> Result<PathBuf> {
+        let keybinds_dir = Self::keybinds_dir()?;
+        fs::create_dir_all(&keybinds_dir)?;
+
+        let keybinds_path = keybinds_dir.join(format!("{}.toml", name));
+        let contents = toml::to_string_pretty(&self.keybinds)
+            .context("Failed to serialize keybinds")?;
+        fs::write(&keybinds_path, contents)
+            .context("Failed to write keybinds profile")?;
+
+        Ok(keybinds_path)
+    }
+
+    /// Load keybinds from a named profile
+    pub fn load_keybinds_from(name: &str) -> Result<HashMap<String, KeyBindAction>> {
+        let keybinds_dir = Self::keybinds_dir()?;
+        let keybinds_path = keybinds_dir.join(format!("{}.toml", name));
+
+        if !keybinds_path.exists() {
+            return Err(anyhow::anyhow!("Keybind profile '{}' not found", name));
+        }
+
+        let contents = fs::read_to_string(&keybinds_path)
+            .context("Failed to read keybinds profile")?;
+        let keybinds: HashMap<String, KeyBindAction> = toml::from_str(&contents)
+            .context("Failed to parse keybinds profile")?;
+
+        Ok(keybinds)
     }
 
     /// Resolve a spell ID to a color based on configured spell lists

@@ -2290,6 +2290,66 @@ impl App {
                     Err(e) => self.add_system_message(&format!("Failed to list layouts: {}", e)),
                 }
             }
+            "savehighlights" | "savehl" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match self.config.save_highlights_as(name) {
+                    Ok(_) => self.add_system_message(&format!("Highlights saved as '{}'", name)),
+                    Err(e) => self.add_system_message(&format!("Failed to save highlights: {}", e)),
+                }
+            }
+            "loadhighlights" | "loadhl" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match Config::load_highlights_from(name) {
+                    Ok(highlights) => {
+                        self.config.highlights = highlights;
+                        self.add_system_message(&format!("Highlights '{}' loaded", name));
+                        // Update window manager with new highlights
+                        self.update_window_manager_config();
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to load highlights: {}", e)),
+                }
+            }
+            "highlightprofiles" => {
+                match Config::list_saved_highlights() {
+                    Ok(profiles) => {
+                        if profiles.is_empty() {
+                            self.add_system_message("No saved highlight profiles");
+                        } else {
+                            self.add_system_message(&format!("Saved highlight profiles: {}", profiles.join(", ")));
+                        }
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to list highlight profiles: {}", e)),
+                }
+            }
+            "savekeybinds" | "savekb" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match self.config.save_keybinds_as(name) {
+                    Ok(_) => self.add_system_message(&format!("Keybinds saved as '{}'", name)),
+                    Err(e) => self.add_system_message(&format!("Failed to save keybinds: {}", e)),
+                }
+            }
+            "loadkeybinds" | "loadkb" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match Config::load_keybinds_from(name) {
+                    Ok(keybinds) => {
+                        self.config.keybinds = keybinds;
+                        self.add_system_message(&format!("Keybinds '{}' loaded", name));
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to load keybinds: {}", e)),
+                }
+            }
+            "keybindprofiles" => {
+                match Config::list_saved_keybinds() {
+                    Ok(profiles) => {
+                        if profiles.is_empty() {
+                            self.add_system_message("No saved keybind profiles");
+                        } else {
+                            self.add_system_message(&format!("Saved keybind profiles: {}", profiles.join(", ")));
+                        }
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to list keybind profiles: {}", e)),
+                }
+            }
             "customwindow" | "customwin" => {
                 if parts.len() < 3 {
                     self.add_system_message("Usage: .customwindow <name> <stream1,stream2,...>");
