@@ -195,6 +195,8 @@ MobaXterm may send different key codes than expected. Common issues:
 - Some Ctrl combinations might not work
 - Try Alt combinations as alternatives
 
+**Cursor jumping issue**: If you see MobaXterm's cursor jumping around the screen, set the cursor color to match your background in Settings → Terminal → Cursor color. This hides MobaXterm's cursor while keeping VellumFE's cursor visible.
+
 ### Finding Your Keybinds File
 ```bash
 # Linux/Mac

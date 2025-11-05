@@ -628,6 +628,13 @@ impl TabbedTextWindow {
         }
     }
 
+    /// Clear text from a specific stream's tab only
+    pub fn clear_stream(&mut self, stream: &str) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.stream == stream) {
+            tab.window.clear();
+        }
+    }
+
     /// Go to next match in the active tab's text window
     pub fn next_match(&mut self) -> bool {
         if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {

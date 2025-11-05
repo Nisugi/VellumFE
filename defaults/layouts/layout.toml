@@ -226,7 +226,6 @@ title = "Cast"
 content_align = "top-left"
 background_color = "-"
 bar_color = "#0000ff"
-text_color = "#0000ff"
 bar_background_color = "#000000"
 transparent_background = true
 locked = false

@@ -1,6 +1,21 @@
 # Terminal Compatibility Quick Fix
 
-## Backspace Not Working?
+## MobaXterm Issues
+
+### Cursor Jumping Around Screen
+
+**Problem**: You see two cursors - VellumFE's cursor stays in the command input (correct), but MobaXterm's cursor jumps around to different windows as they update.
+
+**Solution**: Set MobaXterm's cursor color to match your terminal background:
+1. Settings → Terminal → Default terminal color settings
+2. Set "Cursor color" to black (or whatever your background color is: `#350505` for maroon)
+3. Restart MobaXterm
+
+This makes MobaXterm's cursor invisible while keeping VellumFE's rendered cursor visible.
+
+**Why this happens**: MobaXterm uses a PuTTY-based terminal that doesn't properly respect ANSI cursor hide commands during rendering operations.
+
+### Backspace Not Working?
 
 If your backspace key doesn't work in VellumFE, this is a common terminal compatibility issue. Different terminals send different key codes.
 

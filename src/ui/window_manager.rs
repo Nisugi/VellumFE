@@ -496,6 +496,19 @@ impl Widget {
         }
     }
 
+    /// Clear text from a specific stream (for tabbed windows, clears only that tab)
+    pub fn clear_stream(&mut self, stream: &str) {
+        match self {
+            Widget::Text(w) => w.clear(),
+            Widget::Tabbed(w) => w.clear_stream(stream),
+            Widget::Inventory(w) => w.clear(),
+            Widget::Spells(w) => w.clear(),
+            _ => {
+                // Other widget types don't have text to clear
+            }
+        }
+    }
+
     pub fn toggle_links(&mut self) {
         match self {
             Widget::Text(w) => w.toggle_links(),
@@ -1625,8 +1638,6 @@ impl WindowManager {
                                             config.buffer_size,
                                             tab.show_timestamps.unwrap_or(false),
                                         );
-                                        // Map the new tab's stream
-                                        self.stream_map.insert(tab.stream.clone(), config.name.clone());
                                     }
                                 }
 
@@ -1640,6 +1651,12 @@ impl WindowManager {
 
                                 // Reorder tabs to match config order
                                 tabbed.reorder_tabs(&config_tab_names);
+
+                                // CRITICAL: Re-add ALL tab stream mappings, not just new ones
+                                // The stream_map was cleared at line 1564, so we need to restore ALL tab mappings
+                                for tab in tabs {
+                                    self.stream_map.insert(tab.stream.clone(), config.name.clone());
+                                }
                             }
                         }
                         Widget::Progress(progress) => {

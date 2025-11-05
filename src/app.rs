@@ -4451,6 +4451,7 @@ impl App {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
+        terminal.hide_cursor()?;
 
         tracing::info!("Terminal size: {}x{}", size.0, size.1);
 
@@ -8294,7 +8295,7 @@ impl App {
                 self.perf_stats.record_elements_parsed(elements.len() as u64);
 
                 // Check if this line has actual visible text in the main stream
-                // Accumulate this across the chunk (until we see a prompt)
+                // Accumulate this across chunks (until we see a prompt)
                 let has_main_text = elements.iter().any(|e| {
                     if let ParsedElement::Text { content, stream, .. } = e {
                         stream == "main" && !content.trim().is_empty()
@@ -8906,10 +8907,11 @@ impl App {
                         }
                         ParsedElement::ClearStream { id } => {
                             // <clearStream id='bounty'/> - clear the specified stream's window and set as current stream
+                            // For tabbed windows, this clears only the tab for this stream, not all tabs
                             if let Some(window_name) = self.window_manager.stream_map.get(&id).cloned() {
                                 if let Some(window) = self.window_manager.get_window(&window_name) {
-                                    window.clear_text();
-                                    debug!("Cleared stream '{}' window '{}'", id, window_name);
+                                    window.clear_stream(&id);
+                                    debug!("Cleared stream '{}' in window '{}'", id, window_name);
                                 }
                             }
 
@@ -8919,11 +8921,11 @@ impl App {
                         }
                         ParsedElement::ClearDialogData { id } => {
                             // <dialogData id='MiniBounty' clear='t'> - clear the specified stream's window
-                            // Use stream_map to find which window is subscribed to this stream
+                            // For tabbed windows, this clears only the tab for this stream, not all tabs
                             if let Some(window_name) = self.window_manager.stream_map.get(&id).cloned() {
                                 if let Some(window) = self.window_manager.get_window(&window_name) {
-                                    window.clear_text();
-                                    debug!("Cleared dialogData '{}' → window '{}'", id, window_name);
+                                    window.clear_stream(&id);
+                                    debug!("Cleared dialogData stream '{}' in window '{}'", id, window_name);
                                 }
                             }
                         }
