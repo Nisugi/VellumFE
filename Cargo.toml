@@ -1,6 +1,6 @@
 [package]
 name = "vellum-fe"
-version = "0.1.8-beta.1"
+version = "0.1.9-beta.1"
 edition = "2021"
 authors = ["VellumFE Contributors"]
 description = "A modern, high-performance terminal frontend for GemStone IV"

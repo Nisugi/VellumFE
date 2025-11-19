@@ -52,24 +52,67 @@ impl LichConnection {
                         break;
                     }
                     Ok(n) => {
-                        // Try to convert to UTF-8, log raw bytes if it fails
-                        match String::from_utf8(buf.clone()) {
+                        // Try to convert to UTF-8, filter out invalid bytes if it fails
+                        match String::from_utf8(buf) {
                             Ok(line) => {
                                 // Strip only the trailing newline, preserve blank lines
                                 let line = line.trim_end_matches(&['\r', '\n']);
                                 let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
                             }
                             Err(e) => {
-                                error!("Invalid UTF-8 received ({} bytes)", n);
-                                error!("Error: {}", e);
-                                error!("Raw bytes (hex): {}", buf.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
-                                error!("Raw bytes (escaped): {:?}", buf);
-                                // Use lossy conversion - replaces invalid sequences with �
-                                let lossy = String::from_utf8_lossy(&buf);
-                                error!("Lossy UTF-8: {:?}", lossy);
-                                // Send the lossy-converted text to UI
-                                let line = lossy.trim_end_matches(&['\r', '\n']);
-                                let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                                // Recover the buffer from the error
+                                let buf = e.into_bytes();
+
+                                // Collect invalid byte positions and values for logging
+                                let mut invalid_bytes = Vec::new();
+                                for (i, &byte) in buf.iter().enumerate() {
+                                    // Check if this byte would cause UTF-8 validation to fail
+                                    // Invalid bytes are typically 0x80-0x9F or 0xA0-0xFF when not part of valid UTF-8
+                                    if byte >= 0x80 && byte < 0xC0 {
+                                        // This is either a continuation byte or invalid single byte
+                                        // Check if it's part of a valid multi-byte sequence
+                                        let mut is_valid_continuation = false;
+                                        if i > 0 {
+                                            // Check if previous byte starts a multi-byte sequence
+                                            let prev = buf[i-1];
+                                            if prev >= 0xC0 && prev < 0xF8 {
+                                                is_valid_continuation = true;
+                                            }
+                                        }
+                                        if !is_valid_continuation {
+                                            invalid_bytes.push((i, byte));
+                                        }
+                                    }
+                                }
+
+                                debug!("Filtered {} invalid UTF-8 bytes from {} byte message", invalid_bytes.len(), n);
+                                if !invalid_bytes.is_empty() {
+                                    debug!("Invalid bytes: {}", invalid_bytes.iter().map(|(i, b)| format!("0x{:02x}@{}", b, i)).collect::<Vec<_>>().join(", "));
+                                }
+
+                                // Filter out invalid bytes - keep only valid UTF-8
+                                let cleaned: Vec<u8> = buf.iter()
+                                    .enumerate()
+                                    .filter(|(i, &b)| {
+                                        !invalid_bytes.iter().any(|(pos, _)| pos == i)
+                                    })
+                                    .map(|(_, &b)| b)
+                                    .collect();
+
+                                // Convert cleaned bytes to string
+                                match String::from_utf8(cleaned) {
+                                    Ok(line) => {
+                                        let line = line.trim_end_matches(&['\r', '\n']);
+                                        let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                                    }
+                                    Err(_) => {
+                                        // If still invalid after filtering, use lossy as fallback
+                                        debug!("Cleaned bytes still invalid, using lossy conversion");
+                                        let lossy = String::from_utf8_lossy(&buf);
+                                        let line = lossy.trim_end_matches(&['\r', '\n']);
+                                        let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                                    }
+                                }
                             }
                         }
                     }
