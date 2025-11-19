@@ -44,17 +44,34 @@ impl LichConnection {
         let server_tx_clone = server_tx.clone();
         let read_handle = tokio::spawn(async move {
             loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
+                let mut buf = Vec::new();
+                match reader.read_until(b'\n', &mut buf).await {
                     Ok(0) => {
                         info!("Connection closed by server");
                         let _ = server_tx_clone.send(ServerMessage::Disconnected);
                         break;
                     }
-                    Ok(_) => {
-                        // Strip only the trailing newline, preserve blank lines
-                        let line = line.trim_end_matches(&['\r', '\n']);
-                        let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                    Ok(n) => {
+                        // Try to convert to UTF-8, log raw bytes if it fails
+                        match String::from_utf8(buf.clone()) {
+                            Ok(line) => {
+                                // Strip only the trailing newline, preserve blank lines
+                                let line = line.trim_end_matches(&['\r', '\n']);
+                                let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                            }
+                            Err(e) => {
+                                error!("Invalid UTF-8 received ({} bytes)", n);
+                                error!("Error: {}", e);
+                                error!("Raw bytes (hex): {}", buf.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+                                error!("Raw bytes (escaped): {:?}", buf);
+                                // Use lossy conversion - replaces invalid sequences with �
+                                let lossy = String::from_utf8_lossy(&buf);
+                                error!("Lossy UTF-8: {:?}", lossy);
+                                // Send the lossy-converted text to UI
+                                let line = lossy.trim_end_matches(&['\r', '\n']);
+                                let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Error reading from server: {}", e);
