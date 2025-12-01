@@ -208,7 +208,8 @@ impl TerminalPosition {
     fn read_responses_unix() -> io::Result<(i32, i32, i32, i32)> {
         use std::os::unix::io::AsRawFd;
         use nix::sys::select::{select, FdSet};
-        use nix::sys::time::TimeVal;
+        use nix::sys::time::{TimeVal, TimeValLike};
+        use std::os::fd::{AsFd, BorrowedFd};
 
         let mut stdin = io::stdin();
         let fd = stdin.as_raw_fd();
@@ -219,9 +220,11 @@ impl TerminalPosition {
 
         while start.elapsed() < timeout && buffer.len() < 512 {
             let remaining = timeout.saturating_sub(start.elapsed());
-            let mut tv = TimeVal::milliseconds(remaining.as_millis() as i64);
+            let millis = remaining.as_millis() as i64;
+            let mut tv = TimeVal::new(millis / 1000, (millis % 1000) * 1000);
             let mut fds = FdSet::new();
-            fds.insert(fd);
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+            fds.insert(borrowed_fd);
 
             match select(fd + 1, Some(&mut fds), None, None, Some(&mut tv)) {
                 Ok(n) if n > 0 => {
