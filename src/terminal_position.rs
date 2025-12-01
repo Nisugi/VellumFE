@@ -222,8 +222,14 @@ impl TerminalPosition {
             let remaining = timeout.saturating_sub(start.elapsed());
             let millis = remaining.as_millis() as i64;
             let seconds = millis / 1000;
-            let microseconds = ((millis % 1000) * 1000) as i32;
+            let microseconds = (millis % 1000) * 1000;
+
+            // TimeVal signature differs by platform: (i64, i64) on Linux, (i64, i32) on macOS
+            #[cfg(target_os = "linux")]
             let mut tv = TimeVal::new(seconds, microseconds);
+            #[cfg(not(target_os = "linux"))]
+            let mut tv = TimeVal::new(seconds, microseconds as i32);
+
             let mut fds = FdSet::new();
             let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
             fds.insert(borrowed_fd);
