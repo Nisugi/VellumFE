@@ -146,6 +146,13 @@ pub struct XmlParser {
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>,  // Compiled regexes + patterns
+
+    // Squelch/ignore patterns
+    squelch_matcher: Option<aho_corasick::AhoCorasick>,  // Aho-Corasick for fast_parse squelch patterns
+    squelch_regexes: Vec<Regex>,  // Regex patterns for squelch
+    squelch_fast_map: Vec<usize>,  // Map fast_matcher result index back to pattern index
+    ignores_enabled: bool,  // Global toggle for squelch patterns
+    ignores_auto_disabled: bool,  // Track if we auto-disabled ignores (no patterns exist)
 }
 
 impl XmlParser {
@@ -199,7 +206,102 @@ impl XmlParser {
             current_menu_coords: Vec::new(),
             in_inv_tag: false,
             event_matchers,
+            squelch_matcher: None,
+            squelch_regexes: Vec::new(),
+            squelch_fast_map: Vec::new(),
+            ignores_enabled: false,
+            ignores_auto_disabled: false,
         }
+    }
+
+    /// Update squelch patterns from highlights config
+    pub fn update_squelch_patterns(
+        &mut self,
+        highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>,
+        user_enabled: bool,
+    ) {
+        use aho_corasick::AhoCorasickBuilder;
+
+        let mut fast_patterns = Vec::new();
+        let mut fast_map = Vec::new();
+        let mut regexes = Vec::new();
+
+        for (idx, (name, pattern)) in highlights.iter().enumerate() {
+            if !pattern.squelch {
+                continue; // Only process squelch patterns
+            }
+
+            tracing::debug!("Loading squelch pattern '{}': pattern='{}', fast_parse={}", name, pattern.pattern, pattern.fast_parse);
+
+            if pattern.fast_parse {
+                // Split pattern on | and add to Aho-Corasick
+                for literal in pattern.pattern.split('|') {
+                    let literal = literal.trim();
+                    if !literal.is_empty() {
+                        tracing::debug!("  Adding fast_parse literal: '{}'", literal);
+                        fast_patterns.push(literal.to_string());
+                        fast_map.push(idx);  // Map this pattern back to highlight index
+                    }
+                }
+            } else {
+                // Regular regex pattern
+                if let Ok(regex) = Regex::new(&pattern.pattern) {
+                    tracing::debug!("  Adding regex pattern: '{}'", pattern.pattern);
+                    regexes.push(regex);
+                }
+            }
+        }
+
+        // Build Aho-Corasick matcher for fast_parse squelch patterns
+        if !fast_patterns.is_empty() {
+            tracing::debug!("Building Aho-Corasick matcher with {} patterns", fast_patterns.len());
+            self.squelch_matcher = AhoCorasickBuilder::new()
+                .build(&fast_patterns)
+                .ok();
+            self.squelch_fast_map = fast_map;
+        } else {
+            self.squelch_matcher = None;
+            self.squelch_fast_map = Vec::new();
+        }
+
+        let regex_count = regexes.len();
+        self.squelch_regexes = regexes;
+
+        // Auto-toggle logic: automatically disable/enable based on pattern existence
+        let has_patterns = !fast_patterns.is_empty() || regex_count > 0;
+
+        if has_patterns {
+            // We have patterns!
+            if self.ignores_auto_disabled {
+                // We previously auto-disabled, now re-enable
+                self.ignores_enabled = true;
+                self.ignores_auto_disabled = false;
+                tracing::info!("Auto-enabling ignores (patterns now exist)");
+            } else {
+                // Respect user's choice
+                self.ignores_enabled = user_enabled;
+            }
+        } else {
+            // No patterns at all
+            if user_enabled {
+                // User wants it on, but we have no patterns - auto-disable
+                self.ignores_enabled = false;
+                self.ignores_auto_disabled = true;
+                tracing::debug!("Auto-disabling ignores (no patterns configured)");
+            } else {
+                // User has it off, keep it off
+                self.ignores_enabled = false;
+                self.ignores_auto_disabled = false;
+            }
+        }
+
+        tracing::debug!("Squelch patterns updated: {} fast patterns, {} regex patterns, ignores_enabled={}, auto_disabled={}",
+            fast_patterns.len(), regex_count, self.ignores_enabled, self.ignores_auto_disabled);
+    }
+
+    /// Clear auto-disabled flag (called when user manually toggles ignores)
+    pub fn clear_auto_disabled(&mut self) {
+        self.ignores_auto_disabled = false;
     }
 
     /// Update presets after loading new color config
@@ -287,6 +389,20 @@ impl XmlParser {
 
         // Flush any remaining text
         self.flush_text_with_events(text_buffer, &mut elements);
+
+        // Post-parse squelch check: only runs on lines with actual text content
+        if self.ignores_enabled {
+            let mut full_text = String::new();
+            for elem in &elements {
+                if let ParsedElement::Text { content, .. } = elem {
+                    full_text.push_str(content);
+                }
+            }
+            if !full_text.is_empty() && self.should_squelch_line(&full_text) {
+                tracing::debug!("Line squelched (post-parse): '{}'", full_text);
+                return Vec::new();
+            }
+        }
 
         elements
     }
@@ -1116,6 +1232,9 @@ impl XmlParser {
             return;
         }
 
+        // Note: Squelch checking happens after parsing in parse_line() by concatenating
+        // all Text element content fields, so we don't need to check here
+
         // Check if we should auto-exit inventory stream (two-face approach)
         // Inventory updates don't send <popStream/>, so we detect terminator lines
         if self.current_stream == "inv" {
@@ -1154,6 +1273,26 @@ impl XmlParser {
 
         // Add the text element itself
         elements.push(self.create_text_element(text));
+    }
+
+    /// Check if a line should be squelched (ignored) based on squelch patterns
+    /// Returns true if the line should be discarded
+    fn should_squelch_line(&self, text: &str) -> bool {
+        // Check Aho-Corasick fast_parse patterns first
+        if let Some(ref matcher) = self.squelch_matcher {
+            if matcher.is_match(text) {
+                return true;
+            }
+        }
+
+        // Check regex patterns
+        for regex in &self.squelch_regexes {
+            if regex.is_match(text) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check text against event patterns and return any matching events

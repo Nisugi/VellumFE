@@ -7,7 +7,6 @@ use crate::selection::SelectionState;
 use crate::sound::SoundPlayer;
 use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::{Context, Result};
-use regex::Regex;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
@@ -470,7 +469,11 @@ impl App {
             ),
             command_input,
             search_input: CommandInput::new(50),  // Smaller history for search
-            parser: XmlParser::with_presets(presets, config.event_patterns.clone()),
+            parser: {
+                let mut parser = XmlParser::with_presets(presets, config.event_patterns.clone());
+                parser.update_squelch_patterns(&config.highlights, config.ui.ignores_enabled);
+                parser
+            },
             keybind_map,
             config,
             layout,
@@ -3392,6 +3395,7 @@ impl App {
                         self.add_system_message(&format!("Failed to save config: {}", e));
                     } else {
                         self.window_manager.update_highlights(self.config.highlights.clone());
+                        self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
                         self.add_system_message(&format!("Highlight '{}' deleted", name));
                     }
                 } else {
@@ -3406,6 +3410,10 @@ impl App {
                 self.config.ui.ignores_enabled = !self.config.ui.ignores_enabled;
                 let status = if self.config.ui.ignores_enabled { "enabled" } else { "disabled" };
                 self.add_system_message(&format!("Ignores (squelch patterns) {}", status));
+                // Clear auto-disabled flag since user is taking manual control
+                self.parser.clear_auto_disabled();
+                // Update parser with new ignores_enabled state
+                self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
                 // Save config
                 if let Err(e) = self.config.save(None) {
                     self.add_system_message(&format!("Failed to save config: {}", e));
@@ -5467,6 +5475,8 @@ impl App {
                         } else {
                             // Reload highlights in window manager
                             self.window_manager.update_highlights(self.config.highlights.clone());
+                            // Update parser squelch patterns
+                            self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
                             self.add_system_message(&format!("Highlight '{}' saved", name));
                         }
 
@@ -8338,13 +8348,8 @@ impl App {
                     return;
                 }
 
-
-                // Check if line should be squelched (ignored) before parsing
-                if self.should_squelch_line(&line) {
-                    return; // Discard the line entirely
-                }
-
                 // Parse XML and add to window (with timing)
+                // Note: Squelch checking now happens in parser on plain text
                 let parse_start = std::time::Instant::now();
                 let elements = self.parser.parse_line(&line);
                 let parse_duration = parse_start.elapsed();
@@ -9025,41 +9030,6 @@ impl App {
 
     /// Check if a line should be squelched (ignored) based on highlight patterns with squelch=true
     /// Returns true if the line should be discarded
-    fn should_squelch_line(&self, line: &str) -> bool {
-        // Check if ignores are globally disabled
-        if !self.config.ui.ignores_enabled {
-            return false;
-        }
-
-        // Check each highlight pattern with squelch=true
-        for (_name, pattern) in &self.config.highlights {
-            if !pattern.squelch {
-                continue; // Skip patterns that aren't squelch patterns
-            }
-
-            // Check if pattern matches
-            if pattern.fast_parse {
-                // Fast parse: check for literal matches (pipe-delimited)
-                for literal in pattern.pattern.split('|') {
-                    let literal = literal.trim();
-                    if !literal.is_empty() && line.contains(literal) {
-                        tracing::debug!("Line squelched by fast_parse pattern '{}': '{}'", pattern.pattern, line);
-                        return true;
-                    }
-                }
-            } else {
-                // Regex pattern
-                if let Ok(regex) = Regex::new(&pattern.pattern) {
-                    if regex.is_match(line) {
-                        tracing::debug!("Line squelched by regex pattern '{}': '{}'", pattern.pattern, line);
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
 
     /// Process buffered inventory lines with diff optimization
     /// Only re-processes lines that changed from last update
