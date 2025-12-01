@@ -7,6 +7,7 @@ use crate::selection::SelectionState;
 use crate::sound::SoundPlayer;
 use crate::ui::{CommandInput, PerformanceStatsWidget, SpanType, StyledText, UiLayout, Widget, WindowManager, WindowConfig};
 use anyhow::{Context, Result};
+use regex::Regex;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
@@ -522,6 +523,21 @@ impl App {
             // Inventory buffer state initialized
             inventory_buffer_state: InventoryBufferState::new(),
         })
+    }
+
+    /// Apply saved terminal position if available in layout
+    /// This should be called BEFORE entering raw mode (i.e., before run())
+    pub fn apply_terminal_position(&self) {
+        if let Some(ref pos) = self.layout.terminal_position {
+            tracing::info!("Applying saved terminal position: {:?}", pos);
+            if let Err(e) = pos.apply() {
+                tracing::warn!("Failed to apply terminal position: {}", e);
+            } else {
+                tracing::debug!("Terminal position applied successfully");
+            }
+        } else {
+            tracing::debug!("No saved terminal position to apply");
+        }
     }
 
     /// Check if layout fits terminal and warn if not
@@ -1882,6 +1898,9 @@ impl App {
             if let (Some(base_width), Some(base_height)) = (baseline_layout.terminal_width, baseline_layout.terminal_height) {
                 // Check if size actually changed from baseline
                 if width != base_width || height != base_height {
+                    // Preserve any saved terminal position from current layout before we swap layouts
+                    let preserved_terminal_position = self.layout.terminal_position.clone();
+
                     let width_delta = width as i32 - base_width as i32;
                     let height_delta = height as i32 - base_height as i32;
 
@@ -1892,6 +1911,8 @@ impl App {
 
                     // Replace current layout with baseline layout (reset to original positions/sizes)
                     self.layout = baseline_layout.clone();
+                    // Restore preserved terminal position (so autosave keeps monitor/position info)
+                    self.layout.terminal_position = preserved_terminal_position;
 
                     // Apply proportional resize to layout
                     self.apply_proportional_resize2(width_delta, height_delta);
@@ -3381,6 +3402,15 @@ impl App {
                 // Open highlight browser
                 self.open_highlight_browser();
             }
+            "toggleignores" => {
+                self.config.ui.ignores_enabled = !self.config.ui.ignores_enabled;
+                let status = if self.config.ui.ignores_enabled { "enabled" } else { "disabled" };
+                self.add_system_message(&format!("Ignores (squelch patterns) {}", status));
+                // Save config
+                if let Err(e) = self.config.save(None) {
+                    self.add_system_message(&format!("Failed to save config: {}", e));
+                }
+            }
             "testhighlight" | "testhl" => {
                 if parts.len() < 3 {
                     self.add_system_message("Usage: .testhighlight <name> <text to test>");
@@ -3831,9 +3861,19 @@ impl App {
 
         match Layout::load_from_file(&layout_path) {
             Ok(new_layout) => {
+                // Preserve any existing terminal position info so autosave doesn't lose it
+                let preserved_terminal_position = self.layout.terminal_position.clone();
+
                 // Update layout
                 self.layout = new_layout.clone();
-                self.baseline_layout = Some(new_layout);
+                if self.layout.terminal_position.is_none() {
+                    self.layout.terminal_position = preserved_terminal_position.clone();
+                }
+                let mut baseline = new_layout;
+                if baseline.terminal_position.is_none() {
+                    baseline.terminal_position = preserved_terminal_position;
+                }
+                self.baseline_layout = Some(baseline);
 
                 // Recreate window manager (this will clear text buffers)
                 self.update_window_manager_config();
@@ -4887,6 +4927,18 @@ impl App {
         tracing::info!("Checking for character to auto-save layout: {:?}", self.config.character);
         if let Some(character) = self.config.character.as_ref() {
             let terminal_size = crossterm::terminal::size().ok();
+
+            // Query terminal position before cleanup
+            // This must be done before disabling raw mode and leaving alternate screen
+            let terminal_position = crate::terminal_position::TerminalPosition::query();
+            if terminal_position.is_some() {
+                tracing::debug!("Successfully queried terminal position for autosave");
+            } else {
+                tracing::debug!("Could not query terminal position (terminal may not support CSI t queries)");
+            }
+
+            // Add terminal position to layout (only for autosave, not regular saves)
+            self.layout.terminal_position = terminal_position;
 
             // Determine base layout name (clone to avoid borrow issues)
             let base_name = self.base_layout_name.clone()
@@ -8286,65 +8338,10 @@ impl App {
                     return;
                 }
 
-                // Inventory buffering logic - collect lines starting with "  " when buffering
-                if self.inventory_buffer_state.buffering {
-                    if line.starts_with("  ") {
-                        // Skip blank lines (just whitespace) - they're not inventory items
-                        if line.trim().is_empty() {
-                            return;
-                        }
 
-                        // Add line to buffer and skip normal processing
-                        self.inventory_buffer_state.add_line(line.to_string());
-                        return;
-                    } else if line.starts_with('[') {
-                        // Script echo (e.g., "[exec1]>gird", "[05]" from targetcount)
-                        // Pass through to main window, continue buffering - don't stop the inventory stream
-                        debug!("Inventory buffering: Script echo detected, passing through to main: '{}'", &line[..line.len().min(80)]);
-                    } else if line.contains('<') {
-                        // XML tags (e.g., targetcount updates: "<clearStream id="targetcount"/><pushStream id="targetcount"/>[ 0]<popStream/>")
-                        // Pass through to main window, continue buffering
-                        // These are system messages that shouldn't interrupt inventory
-                        debug!("Inventory buffering: XML tags detected, passing through to main: '{}'", &line[..line.len().min(80)]);
-                    } else if line.contains("targetcount") || line.contains("targetlist") ||
-                              line.contains("playercount") || line.contains("playerlist") ||
-                              line.contains("popStream") {
-                        // Stream-related content that should not end inventory buffering
-                        // Pass through to main window, continue buffering
-                        debug!("Inventory buffering: Stream operation detected ({}), passing through to main: '{}'",
-                               if line.contains("targetcount") { "targetcount" }
-                               else if line.contains("targetlist") { "targetlist" }
-                               else if line.contains("playercount") { "playercount" }
-                               else if line.contains("playerlist") { "playerlist" }
-                               else { "popStream" },
-                               &line[..line.len().min(80)]);
-                    } else {
-                        // *** INVENTORY STREAM INTERRUPTED ***
-                        // Line doesn't match any of the patterns that should be ignored during inventory buffering:
-                        //   - Not an inventory line (starts with "  ")
-                        //   - Not a script echo (starts with "[")
-                        //   - Not XML tags (contains "<")
-                        //   - Not a stream operation (targetcount, targetlist, playercount, playerlist, popStream)
-                        // This is an unexpected split - inventory stream ended prematurely
-                        tracing::warn!(
-                            "INVENTORY STREAM SPLIT: Expected inventory line (starts with '  ') but got: '{}' | \
-                            Buffered {} inventory lines before split | \
-                            Current stream: '{}' | \
-                            This line will go to main window instead of inventory",
-                            &line[..line.len().min(100)],
-                            self.inventory_buffer_state.current_buffer.len(),
-                            self.current_stream
-                        );
-
-                        self.inventory_buffer_state.stop_buffering();
-
-                        // Process the buffered inventory now
-                        if !self.inventory_buffer_state.current_buffer.is_empty() {
-                            self.process_inventory_buffer();
-                        }
-
-                        // The current line will be processed normally below (will go to main stream)
-                    }
+                // Check if line should be squelched (ignored) before parsing
+                if self.should_squelch_line(&line) {
+                    return; // Discard the line entirely
                 }
 
                 // Parse XML and add to window (with timing)
@@ -9026,6 +9023,44 @@ impl App {
         }
     }
 
+    /// Check if a line should be squelched (ignored) based on highlight patterns with squelch=true
+    /// Returns true if the line should be discarded
+    fn should_squelch_line(&self, line: &str) -> bool {
+        // Check if ignores are globally disabled
+        if !self.config.ui.ignores_enabled {
+            return false;
+        }
+
+        // Check each highlight pattern with squelch=true
+        for (_name, pattern) in &self.config.highlights {
+            if !pattern.squelch {
+                continue; // Skip patterns that aren't squelch patterns
+            }
+
+            // Check if pattern matches
+            if pattern.fast_parse {
+                // Fast parse: check for literal matches (pipe-delimited)
+                for literal in pattern.pattern.split('|') {
+                    let literal = literal.trim();
+                    if !literal.is_empty() && line.contains(literal) {
+                        tracing::debug!("Line squelched by fast_parse pattern '{}': '{}'", pattern.pattern, line);
+                        return true;
+                    }
+                }
+            } else {
+                // Regex pattern
+                if let Ok(regex) = Regex::new(&pattern.pattern) {
+                    if regex.is_match(line) {
+                        tracing::debug!("Line squelched by regex pattern '{}': '{}'", pattern.pattern, line);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Process buffered inventory lines with diff optimization
     /// Only re-processes lines that changed from last update
     fn process_inventory_buffer(&mut self) {
@@ -9151,6 +9186,7 @@ impl App {
             ".deletehighlight".to_string(), ".delhl".to_string(),
             ".listhighlights".to_string(), ".listhl".to_string(), ".highlights".to_string(),
             ".testhighlight".to_string(), ".testhl".to_string(),
+            ".toggleignores".to_string(),
             // Keybinds
             ".addkeybind".to_string(), ".addkey".to_string(),
             ".editkeybind".to_string(), ".editkey".to_string(),

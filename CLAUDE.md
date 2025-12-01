@@ -661,6 +661,21 @@ All popup editors (Settings, Highlights, Keybinds, Windows) follow the same patt
 - Once content fills window, reverts to normal top-aligned scrolling
 - Prevents jarring "filling from center" effect
 
+### Terminal Position Persistence
+- Terminal window position and size now saved with character-specific autosave layouts
+- Automatically restores terminal position when launching with `--character` flag
+- Supports multi-monitor and ultra-wide monitor setups
+- Cross-platform: Works on Windows, Linux, and macOS
+- Implementation:
+  - Position/size queried on app exit (before terminal cleanup)
+  - Saved to `~/.vellum-fe/<character>/layout.toml` as `terminal_position`
+  - Applied on startup before entering raw mode
+  - Uses ANSI escape sequences (CSI t) for xterm-compatible terminals
+  - Falls back to character-based sizing on Windows (pixel position not fully supported)
+- Benefits multi-boxing players who run multiple character terminals simultaneously
+- Each character can have a different terminal position/size for desktop layouts
+- See `src/terminal_position.rs` for implementation details
+
 ## Testing Tips
 
 - Use `.setprogress health 50 100` to manually test progress bars

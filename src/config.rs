@@ -612,6 +612,9 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
+    // Ignore/Squelch settings
+    #[serde(default = "default_ignores_enabled")]
+    pub ignores_enabled: bool,  // Global toggle for squelch patterns (default: true)
 }
 
 // CommandInputConfig removed - command_input is now a regular window in the windows array
@@ -632,6 +635,8 @@ pub struct Layout {
     pub terminal_height: Option<u16>,  // Designed terminal height (for resize calculations)
     #[serde(default)]
     pub base_layout: Option<String>,   // Reference to base layout (for auto layouts)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_position: Option<crate::terminal_position::TerminalPosition>,  // Terminal window position/size (autosave only)
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -696,6 +701,8 @@ pub struct HighlightPattern {
     pub color_entire_line: bool,  // If true, apply colors to entire line, not just matched text
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_parse: bool,  // If true, split pattern on | and use Aho-Corasick for literal matching
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub squelch: bool,  // If true, discard the entire line when pattern matches (ignores)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound: Option<String>,  // Sound file to play when pattern matches
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1110,6 +1117,10 @@ fn default_perf_stats_width() -> u16 {
 
 fn default_perf_stats_height() -> u16 {
     23
+}
+
+fn default_ignores_enabled() -> bool {
+    true
 }
 
 // default_command_input* functions removed - command_input is now in windows array
@@ -4585,6 +4596,7 @@ impl Default for Config {
                 perf_stats_y: default_perf_stats_y(),
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
+                ignores_enabled: default_ignores_enabled(),
             },
             highlights: HashMap::new(),  // Loaded from highlights.toml
             keybinds: HashMap::new(),  // Loaded from keybinds.toml

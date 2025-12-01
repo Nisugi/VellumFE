@@ -511,7 +511,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "881c5d0a13b2f1498e2306e82cbada78390e152d4b1378fb28a84f4dcd0dc4f3"
 dependencies = [
  "dispatch",
- "nix",
+ "nix 0.30.1",
  "windows-sys 0.61.2",
 ]
 
@@ -1143,6 +1143,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.9.4",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -2188,7 +2200,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vellum-fe"
-version = "0.1.1-beta.1"
+version = "0.1.9-beta.1"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2199,6 +2211,7 @@ dependencies = [
  "ctrlc",
  "dirs",
  "include_dir",
+ "nix 0.29.0",
  "open",
  "quick-xml",
  "rand",
@@ -2214,6 +2227,7 @@ dependencies = [
  "tracing-subscriber",
  "tui-textarea",
  "unicode-width 0.2.0",
+ "winapi",
 ]
 
 [[package]]

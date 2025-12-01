@@ -1116,6 +1116,38 @@ impl XmlParser {
             return;
         }
 
+        // Check if we should auto-exit inventory stream (two-face approach)
+        // Inventory updates don't send <popStream/>, so we detect terminator lines
+        if self.current_stream == "inv" {
+            const INV_TERMINATORS: &[&str] = &[
+                "You pick up",
+                "You drop",
+                "You retrieve",
+                "You sheathe",
+                "You draw",
+                "You put",
+                "You remove",
+                "You wear",
+                "You hang",
+                "You attach",
+                "You slide",
+                "You sling",
+            ];
+
+            // Check if this line terminates the inventory stream
+            for terminator in INV_TERMINATORS {
+                if text.trim_start().starts_with(terminator) {
+                    tracing::debug!(
+                        "Detected inventory terminator: '{}' - switching to main stream",
+                        terminator
+                    );
+                    self.current_stream = "main".to_string();
+                    elements.push(ParsedElement::StreamPop);
+                    break;
+                }
+            }
+        }
+
         // Check for event patterns on the text
         let event_elements = self.check_event_patterns(&text);
         elements.extend(event_elements);

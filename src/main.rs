@@ -8,6 +8,7 @@ mod parser;
 mod performance;
 mod selection;
 mod sound;
+mod terminal_position;
 mod ui;
 
 use anyhow::Result;
@@ -121,6 +122,9 @@ async fn main() -> Result<()> {
 
     // Auto-shrink layout if terminal is smaller than designed size
     app.check_and_auto_resize()?;
+
+    // Apply saved terminal position if available (before entering raw mode)
+    app.apply_terminal_position();
 
     app.run().await?;
 

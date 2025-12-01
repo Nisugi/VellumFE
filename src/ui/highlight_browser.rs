@@ -15,6 +15,7 @@ pub struct HighlightEntry {
     pub fg: Option<String>,
     pub bg: Option<String>,
     pub has_sound: bool,
+    pub squelch: bool,
 }
 
 pub struct HighlightBrowser {
@@ -42,6 +43,7 @@ impl HighlightBrowser {
                 fg: pattern.fg.clone(),
                 bg: pattern.bg.clone(),
                 has_sound: pattern.sound.is_some(),
+                squelch: pattern.squelch,
             })
             .collect();
 
@@ -360,8 +362,9 @@ impl HighlightBrowser {
             };
 
             let sound_indicator = if entry.has_sound { " ♫" } else { "" };
-            let name_with_sound = format!("   {}{}", entry.name, sound_indicator);
-            for (i, ch) in name_with_sound.chars().enumerate() {
+            let squelch_indicator = if entry.squelch { " ✖" } else { "" };
+            let name_with_indicators = format!("   {}{}{}", entry.name, sound_indicator, squelch_indicator);
+            for (i, ch) in name_with_indicators.chars().enumerate() {
                 let col = x + 13 + i as u16;
                 if col < x + width - 1 {
                     buf[(col, current_y)].set_char(ch).set_style(name_style);

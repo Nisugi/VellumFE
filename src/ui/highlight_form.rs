@@ -38,9 +38,10 @@ pub struct HighlightFormWidget {
     bold: bool,
     color_entire_line: bool,
     fast_parse: bool,
+    squelch: bool,
 
     // Form state
-    focused_field: usize,          // 0-9: which field has focus (0-6 text, 7-9 checkboxes)
+    focused_field: usize,          // 0-10: which field has focus (0-6 text, 7-10 checkboxes)
     status_message: String,
     pattern_error: Option<String>,
     mode: FormMode,
@@ -128,6 +129,7 @@ impl HighlightFormWidget {
             bold: false,
             color_entire_line: false,
             fast_parse: false,
+            squelch: false,
             focused_field: 0,
             status_message: "Ready".to_string(),
             pattern_error: None,
@@ -187,6 +189,7 @@ impl HighlightFormWidget {
         form.bold = pattern.bold;
         form.color_entire_line = pattern.color_entire_line;
         form.fast_parse = pattern.fast_parse;
+        form.squelch = pattern.squelch;
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -199,13 +202,13 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 10;
+        self.focused_field = (self.focused_field + 1) % 11;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            9
+            10
         } else {
             self.focused_field - 1
         };
@@ -274,12 +277,13 @@ impl HighlightFormWidget {
                 // Ctrl+S to save
                 self.try_save()
             }
-            KeyCode::Char(' ') | KeyCode::Enter if (7..=9).contains(&self.focused_field) => {
-                // Toggle checkboxes (fields 7-9)
+            KeyCode::Char(' ') | KeyCode::Enter if (7..=10).contains(&self.focused_field) => {
+                // Toggle checkboxes (fields 7-10)
                 match self.focused_field {
                     7 => self.bold = !self.bold,
                     8 => self.color_entire_line = !self.color_entire_line,
                     9 => self.fast_parse = !self.fast_parse,
+                    10 => self.squelch = !self.squelch,
                     _ => {}
                 }
                 None
@@ -431,6 +435,7 @@ impl HighlightFormWidget {
             bold: self.bold,
             color_entire_line: self.color_entire_line,
             fast_parse: self.fast_parse,
+            squelch: self.squelch,
             sound,
             sound_volume,
         };
@@ -444,7 +449,7 @@ impl HighlightFormWidget {
     /// Render the form as a draggable popup
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, config: &crate::config::Config) {
         let width = 62;
-        let height = 20; // Reduced from 40 to fit style guide pattern
+        let height = 21; // Increased to accommodate squelch checkbox
 
         // Center popup initially
         if self.popup_x == 0 && self.popup_y == 0 {
@@ -620,6 +625,16 @@ impl HighlightFormWidget {
         for (i, ch) in fp_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 9 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
         }
+        current_y += 1;
+
+        self.render_checkbox(10, "Squelch", self.squelch, x + 2, current_y);
+        buf[(x + 2, current_y)].set_char('[').set_fg(if self.focused_field == 10 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 3, current_y)].set_char(if self.squelch { '✓' } else { ' ' }).set_fg(if self.focused_field == 10 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 4, current_y)].set_char(']').set_fg(if self.focused_field == 10 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        let sq_label = " Squelch (ignore entire line)";
+        for (i, ch) in sq_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 10 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        }
     }
 
     fn render_text_row(focused_field: usize, field_id: usize, label: &str, textarea: &mut TextArea, hint: &str, x: u16, y: u16, input_x: u16, input_width: u16, bg: Color, buf: &mut Buffer) {
@@ -742,7 +757,7 @@ impl HighlightFormWidget {
     /// Handle mouse events for dragging
     pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
         let popup_width = 62;
-        let popup_height = 20;
+        let popup_height = 21;
 
         let popup_area = Rect {
             x: self.popup_x,
