@@ -221,7 +221,9 @@ impl TerminalPosition {
         while start.elapsed() < timeout && buffer.len() < 512 {
             let remaining = timeout.saturating_sub(start.elapsed());
             let millis = remaining.as_millis() as i64;
-            let mut tv = TimeVal::new(millis / 1000, (millis % 1000) * 1000);
+            let seconds = millis / 1000;
+            let microseconds = ((millis % 1000) * 1000) as i32;
+            let mut tv = TimeVal::new(seconds, microseconds);
             let mut fds = FdSet::new();
             let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
             fds.insert(borrowed_fd);
