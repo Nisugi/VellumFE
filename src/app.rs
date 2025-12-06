@@ -427,11 +427,17 @@ impl App {
         }
         command_input.set_background_color(cmd_window.background_color.clone());
 
-        // Initialize sound player (skip if --nosound flag is set)
+        // Initialize sound player (skip if --nosound flag or config.sound.disabled)
         eprintln!("[INIT {:>6}ms] Sound player init starting...", init_timer.elapsed().as_millis());
-        let sound_player = if nosound {
-            tracing::info!("[INIT] Sound system disabled via --nosound flag");
-            eprintln!("[INIT {:>6}ms] Sound player SKIPPED (--nosound)", init_timer.elapsed().as_millis());
+        let skip_sound = nosound || config.sound.disabled;
+        let sound_player = if skip_sound {
+            if nosound {
+                tracing::info!("[INIT] Sound system disabled via --nosound flag");
+                eprintln!("[INIT {:>6}ms] Sound player SKIPPED (--nosound)", init_timer.elapsed().as_millis());
+            } else {
+                tracing::info!("[INIT] Sound system disabled via config (sound.disabled = true)");
+                eprintln!("[INIT {:>6}ms] Sound player SKIPPED (config)", init_timer.elapsed().as_millis());
+            }
             None
         } else {
             match SoundPlayer::new(

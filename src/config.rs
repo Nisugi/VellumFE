@@ -797,6 +797,8 @@ pub struct SoundConfig {
     pub volume: f32,  // Master volume (0.0 to 1.0)
     #[serde(default = "default_sound_cooldown")]
     pub cooldown_ms: u64,  // Cooldown between same sound plays (milliseconds)
+    #[serde(default)]
+    pub disabled: bool,  // Skip sound system initialization entirely (for systems without audio)
 }
 
 fn default_sound_enabled() -> bool {
@@ -817,6 +819,7 @@ impl Default for SoundConfig {
             enabled: default_sound_enabled(),
             volume: default_sound_volume(),
             cooldown_ms: default_sound_cooldown(),
+            disabled: false,
         }
     }
 }
