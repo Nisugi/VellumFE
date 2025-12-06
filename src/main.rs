@@ -41,6 +41,10 @@ struct Args {
     #[arg(long, default_value = "false")]
     nomusic: bool,
 
+    /// Disable sound system entirely (skips audio initialization)
+    #[arg(long, default_value = "false")]
+    nosound: bool,
+
     /// Validate a layout file against multiple sizes and exit
     #[arg(long, value_name = "PATH", required = false)]
     validate_layout: Option<String>,
@@ -148,7 +152,7 @@ async fn main() -> Result<()> {
     // Create and run the application
     eprintln!("[{:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
     tracing::info!("[STARTUP {:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
-    let mut app = App::new(config, args.nomusic)?;
+    let mut app = App::new(config, args.nomusic, args.nosound)?;
     eprintln!("[{:>6}ms] App created", startup_timer.elapsed().as_millis());
     tracing::info!("[STARTUP {:>6}ms] App created", startup_timer.elapsed().as_millis());
 
