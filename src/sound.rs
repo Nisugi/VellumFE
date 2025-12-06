@@ -20,24 +20,6 @@ pub struct SoundPlayer {
 impl SoundPlayer {
     /// Create a new sound player
     pub fn new(enabled: bool, volume: f32, cooldown_ms: u64) -> Result<Self> {
-        use rodio::cpal::traits::{HostTrait, DeviceTrait};
-
-        // Quick check for audio device before attempting full init
-        // This prevents long hangs on systems with no audio hardware
-        let host = rodio::cpal::default_host();
-        let device = host.default_output_device();
-        if device.is_none() {
-            warn!("No audio output device found - sound disabled");
-            anyhow::bail!("No audio output device available");
-        }
-
-        // Log the device we're using
-        if let Some(ref d) = device {
-            if let Ok(name) = d.name() {
-                debug!("Using audio device: {}", name);
-            }
-        }
-
         let (stream, stream_handle) = OutputStream::try_default()?;
 
         Ok(Self {

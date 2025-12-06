@@ -60,12 +60,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let startup_timer = std::time::Instant::now();
-    eprintln!("[{:>6}ms] Starting VellumFE...", startup_timer.elapsed().as_millis());
-
     // Parse command-line arguments
     let args = Args::parse();
-    eprintln!("[{:>6}ms] Args parsed", startup_timer.elapsed().as_millis());
 
     // Check if config migration is needed (before logging setup, since paths might change)
     let config_dir = Config::config_dir()?;
@@ -102,13 +98,9 @@ async fn main() -> Result<()> {
         .with_writer(file)
         .with_ansi(false)
         .init();
-    eprintln!("[{:>6}ms] Logging initialized", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Logging initialized", startup_timer.elapsed().as_millis());
 
     // Load configuration (with character override if specified)
     let config = Config::load_with_options(args.character.as_deref(), args.port)?;
-    eprintln!("[{:>6}ms] Config loaded", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Config loaded", startup_timer.elapsed().as_millis());
 
     // Layout validation mode
     if let Some(layout_path) = args.validate_layout.as_ref() {
@@ -150,24 +142,14 @@ async fn main() -> Result<()> {
     }
 
     // Create and run the application
-    eprintln!("[{:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
     let mut app = App::new(config, args.nomusic, args.nosound)?;
-    eprintln!("[{:>6}ms] App created", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] App created", startup_timer.elapsed().as_millis());
 
     // Auto-shrink layout if terminal is smaller than designed size
     app.check_and_auto_resize()?;
-    eprintln!("[{:>6}ms] Auto-resize checked", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Auto-resize checked", startup_timer.elapsed().as_millis());
 
     // Apply saved terminal position if available (before entering raw mode)
     app.apply_terminal_position();
-    eprintln!("[{:>6}ms] Terminal position applied", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Terminal position applied", startup_timer.elapsed().as_millis());
 
-    eprintln!("[{:>6}ms] Starting UI...", startup_timer.elapsed().as_millis());
-    tracing::info!("[STARTUP {:>6}ms] Starting UI...", startup_timer.elapsed().as_millis());
     app.run().await?;
 
     Ok(())

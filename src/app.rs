@@ -262,8 +262,6 @@ enum ResizeEdge {
 
 impl App {
     pub fn new(mut config: Config, nomusic: bool, nosound: bool) -> Result<Self> {
-        let init_timer = std::time::Instant::now();
-
         // Override startup_music if --nomusic flag is set
         if nomusic {
             config.ui.startup_music = false;
@@ -284,8 +282,7 @@ impl App {
 
         // Priority: auto_<character>.toml → <character>.toml → layout mapping → default.toml → embedded default
         let (mut layout, base_layout_name) = Layout::load_with_terminal_size(config.character.as_deref(), terminal_size)?;
-        info!("[INIT {:>6}ms] Layout loaded ({} windows, base: {:?})", init_timer.elapsed().as_millis(), layout.windows.len(), base_layout_name);
-        eprintln!("[INIT {:>6}ms] Layout loaded", init_timer.elapsed().as_millis());
+        info!("Loaded layout with {} windows (base: {:?})", layout.windows.len(), base_layout_name);
 
         // Resolve color names to hex codes (including converting "-" to None)
         for window in &mut layout.windows {
@@ -406,8 +403,6 @@ impl App {
         // Build keybind map
         let keybind_map = Self::build_keybind_map(&config.keybinds);
         debug!("Loaded {} keybindings", keybind_map.len());
-        info!("[INIT {:>6}ms] Window configs built", init_timer.elapsed().as_millis());
-        eprintln!("[INIT {:>6}ms] Window configs built", init_timer.elapsed().as_millis());
 
         // Find command_input from windows array
         let cmd_window = layout.windows.iter()
@@ -428,15 +423,12 @@ impl App {
         command_input.set_background_color(cmd_window.background_color.clone());
 
         // Initialize sound player (skip if --nosound flag or config.sound.disabled)
-        eprintln!("[INIT {:>6}ms] Sound player init starting...", init_timer.elapsed().as_millis());
         let skip_sound = nosound || config.sound.disabled;
         let sound_player = if skip_sound {
             if nosound {
-                tracing::info!("[INIT] Sound system disabled via --nosound flag");
-                eprintln!("[INIT {:>6}ms] Sound player SKIPPED (--nosound)", init_timer.elapsed().as_millis());
+                info!("Sound system disabled via --nosound flag");
             } else {
-                tracing::info!("[INIT] Sound system disabled via config (sound.disabled = true)");
-                eprintln!("[INIT {:>6}ms] Sound player SKIPPED (config)", init_timer.elapsed().as_millis());
+                info!("Sound system disabled via config (sound.disabled = true)");
             }
             None
         } else {
@@ -450,17 +442,14 @@ impl App {
                     if let Err(e) = crate::sound::ensure_sounds_directory() {
                         tracing::warn!("Failed to create sounds directory: {}", e);
                     }
-                    eprintln!("[INIT {:>6}ms] Sound player initialized", init_timer.elapsed().as_millis());
                     Some(player)
                 }
                 Err(e) => {
                     tracing::warn!("Failed to initialize sound player: {}", e);
-                    eprintln!("[INIT {:>6}ms] Sound player FAILED: {}", init_timer.elapsed().as_millis(), e);
                     None
                 }
             }
         };
-        info!("[INIT {:>6}ms] Sound player done", init_timer.elapsed().as_millis());
 
         // Load command history
         if let Err(e) = command_input.load_history(config.character.as_deref()) {
@@ -478,14 +467,12 @@ impl App {
                 None
             }
         };
-        eprintln!("[INIT {:>6}ms] CmdList loaded", init_timer.elapsed().as_millis());
 
         let window_manager = WindowManager::new(
             window_configs,
             config.highlights.clone(),
             config.ui.countdown_icon.clone(),
         );
-        eprintln!("[INIT {:>6}ms] WindowManager created", init_timer.elapsed().as_millis());
 
         Ok(Self {
             window_manager,
