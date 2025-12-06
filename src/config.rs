@@ -233,19 +233,46 @@ impl ColorConfig {
 /// Helper functions for loading/saving highlights and keybinds
 impl Config {
     /// Load highlights from highlights.toml for a character
-    pub fn load_highlights(character: Option<&str>) -> Result<HashMap<String, HighlightPattern>> {
-        let highlights_path = Self::highlights_path(character)?;
+    /// Load common highlights shared across all characters
+    /// Returns: HashMap of common highlights (empty if file doesn't exist)
+    pub fn load_common_highlights() -> Result<HashMap<String, HighlightPattern>> {
+        let common_path = Self::common_highlights_path()?;
 
+        if common_path.exists() {
+            let contents = fs::read_to_string(&common_path)
+                .context("Failed to read common highlights.toml")?;
+            let highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
+                .context("Failed to parse common highlights.toml")?;
+            Ok(highlights)
+        } else {
+            Ok(HashMap::new())
+        }
+    }
+
+    /// Load highlights for a character, merging common highlights with character-specific ones
+    /// Character-specific highlights override common highlights with the same name
+    pub fn load_highlights(character: Option<&str>) -> Result<HashMap<String, HighlightPattern>> {
+        // Start with common highlights
+        let mut highlights = Self::load_common_highlights().unwrap_or_default();
+
+        // Load character-specific highlights
+        let highlights_path = Self::highlights_path(character)?;
         if highlights_path.exists() {
             let contents = fs::read_to_string(&highlights_path)
                 .context("Failed to read highlights.toml")?;
-            let highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
+            let char_highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
                 .context("Failed to parse highlights.toml")?;
-            Ok(highlights)
+
+            // Merge: character-specific overrides common
+            highlights.extend(char_highlights);
         } else {
-            // Return defaults from embedded file
-            Ok(toml::from_str(DEFAULT_HIGHLIGHTS).unwrap_or_default())
+            // If no character-specific file, merge with defaults
+            let defaults: HashMap<String, HighlightPattern> = toml::from_str(DEFAULT_HIGHLIGHTS)
+                .unwrap_or_default();
+            highlights.extend(defaults);
         }
+
+        Ok(highlights)
     }
 
     /// Save highlights to highlights.toml for a character
@@ -255,6 +282,25 @@ impl Config {
             .context("Failed to serialize highlights")?;
         fs::write(&highlights_path, contents)
             .context("Failed to write highlights.toml")?;
+        Ok(())
+    }
+
+    /// Save a single highlight to common highlights file
+    pub fn save_common_highlight(name: &str, pattern: &HighlightPattern) -> Result<()> {
+        let common_path = Self::common_highlights_path()?;
+
+        // Load existing common highlights
+        let mut common_highlights = Self::load_common_highlights().unwrap_or_default();
+
+        // Add/update the highlight
+        common_highlights.insert(name.to_string(), pattern.clone());
+
+        // Save back to file
+        let contents = toml::to_string_pretty(&common_highlights)
+            .context("Failed to serialize common highlights")?;
+        fs::write(&common_path, contents)
+            .context("Failed to write common highlights.toml")?;
+
         Ok(())
     }
 
@@ -4340,29 +4386,27 @@ impl Config {
     }
 
     /// Get the profile directory for a character (or "default" if none)
-    /// Returns: ~/.vellum-fe/{character}/ or ~/.vellum-fe/default/
+    /// Returns: ~/.vellum-fe/profiles/{character}/ or ~/.vellum-fe/profiles/default/
     fn profile_dir(character: Option<&str>) -> Result<PathBuf> {
-        let home = dirs::home_dir()
-            .context("Could not find home directory")?;
         let profile_name = character.unwrap_or("default");
-        Ok(home.join(".vellum-fe").join(profile_name))
+        Ok(Self::config_dir()?.join("profiles").join(profile_name))
     }
 
     /// Get the base vellum-fe directory (~/.vellum-fe/)
-    fn config_dir() -> Result<PathBuf> {
+    pub fn config_dir() -> Result<PathBuf> {
         let home = dirs::home_dir()
             .context("Could not find home directory")?;
         Ok(home.join(".vellum-fe"))
     }
 
     /// Get path to config.toml for a character
-    /// Returns: ~/.vellum-fe/{character}/config.toml or ~/.vellum-fe/default/config.toml
+    /// Returns: ~/.vellum-fe/profiles/{character}/config.toml or ~/.vellum-fe/profiles/default/config.toml
     pub fn config_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("config.toml"))
     }
 
     /// Get path to colors.toml for a character
-    /// Returns: ~/.vellum-fe/{character}/colors.toml
+    /// Returns: ~/.vellum-fe/profiles/{character}/colors.toml
     pub fn colors_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("colors.toml"))
     }
@@ -4374,49 +4418,59 @@ impl Config {
     }
 
     /// Get the shared highlights directory (where .savehighlights saves to)
-    /// Returns: ~/.vellum-fe/highlights/
+    /// Returns: ~/.vellum-fe/presets/highlights/
     fn highlights_dir() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("highlights"))
+        Ok(Self::config_dir()?.join("presets").join("highlights"))
     }
 
     /// Get the shared keybinds directory (where .savekeybinds saves to)
-    /// Returns: ~/.vellum-fe/keybinds/
+    /// Returns: ~/.vellum-fe/presets/keybinds/
     fn keybinds_dir() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("keybinds"))
+        Ok(Self::config_dir()?.join("presets").join("keybinds"))
     }
 
     /// Get the shared sounds directory
-    /// Returns: ~/.vellum-fe/sounds/
+    /// Returns: ~/.vellum-fe/global/sounds/
     pub fn sounds_dir() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("sounds"))
+        Ok(Self::config_dir()?.join("global").join("sounds"))
     }
 
     /// Get path to debug log for a character
-    /// Returns: ~/.vellum-fe/{character}/debug.log
+    /// Returns: ~/.vellum-fe/profiles/{character}/debug.log
     pub fn get_log_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("debug.log"))
     }
 
     /// Get path to command history for a character
-    /// Returns: ~/.vellum-fe/{character}/history.txt
+    /// Returns: ~/.vellum-fe/profiles/{character}/history.txt
     pub fn history_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("history.txt"))
     }
 
     /// Get path to cmdlist1.xml (single source of truth)
-    /// Returns: ~/.vellum-fe/cmdlist1.xml
+    /// Returns: ~/.vellum-fe/global/cmdlist1.xml
     pub fn cmdlist_path() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("cmdlist1.xml"))
+        Ok(Self::config_dir()?.join("global").join("cmdlist1.xml"))
     }
 
     /// Get path to highlights.toml for a character
-    /// Returns: ~/.vellum-fe/{character}/highlights.toml
+    /// Returns: ~/.vellum-fe/profiles/{character}/highlights.toml
     pub fn highlights_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("highlights.toml"))
     }
 
+    /// Get path to global highlights shared across all characters
+    /// Returns: ~/.vellum-fe/global/highlights.toml
+    pub fn common_highlights_path() -> Result<PathBuf> {
+        let global_dir = Self::config_dir()?.join("global");
+        if !global_dir.exists() {
+            fs::create_dir_all(&global_dir)?;
+        }
+        Ok(global_dir.join("highlights.toml"))
+    }
+
     /// Get path to keybinds.toml for a character
-    /// Returns: ~/.vellum-fe/{character}/keybinds.toml
+    /// Returns: ~/.vellum-fe/profiles/{character}/keybinds.toml
     pub fn keybinds_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("keybinds.toml"))
     }

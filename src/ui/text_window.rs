@@ -432,6 +432,11 @@ impl TextWindow {
             }
         }
 
+        // STEP 3.5: Sort matches by length (longer first, shorter last)
+        // This ensures more specific (shorter) patterns override less specific (longer) ones
+        // Example: "Jimmy jams another jingle" (long) applied first, then "Jimmy" (short) overrides it
+        matches.sort_by_key(|(start, end, _, _, _, _)| std::cmp::Reverse(end - start));
+
         // STEP 4: Apply highlight matches to char_styles with priority layering
         for (start, end, fg, bg, bold, color_entire_line) in matches {
             if color_entire_line {

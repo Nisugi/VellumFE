@@ -177,6 +177,7 @@ pub struct App {
     discard_current_stream: bool, // If true, discard text because no window exists for current stream
     chunk_has_main_text: bool, // Track if current chunk (since last prompt) has main stream text
     chunk_has_silent_updates: bool, // Track if current chunk has silent updates (buffs, vitals, etc.)
+    last_prompt_text: Option<String>, // Track the last prompt text shown (prevents consecutive identical prompts)
     server_time_offset: i64, // Offset between server time and local time (server_time - local_time) - used for countdown calculations to avoid clock drift
     focused_window_index: usize, // Index of currently focused window for scrolling
     resize_state: Option<ResizeState>, // Track active resize operation
@@ -482,6 +483,7 @@ impl App {
             discard_current_stream: false,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
+            last_prompt_text: None,
             server_time_offset: 0, // No offset until first prompt
             focused_window_index: 0, // Start with first window focused
             resize_state: None, // No active resize initially
@@ -5454,7 +5456,7 @@ impl App {
             if let Some(result) = form.handle_key(key_event) {
                 use crate::ui::FormResult;
                 match result {
-                    FormResult::Save { name, mut pattern } => {
+                    FormResult::Save { name, mut pattern, save_as_common } => {
                         // Resolve color names to hex for fg/bg before saving
                         let is_hex = |s: &str| -> bool { s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit()) };
                         if let Some(ref fg) = pattern.fg.clone() {
@@ -5468,16 +5470,31 @@ impl App {
                             }
                         }
 
-                        // Save to config
-                        self.config.highlights.insert(name.clone(), pattern);
-                        if let Err(e) = self.config.save(None) {
-                            self.add_system_message(&format!("Failed to save highlight: {}", e));
+                        if save_as_common {
+                            // Save to common highlights file
+                            if let Err(e) = Config::save_common_highlight(&name, &pattern) {
+                                self.add_system_message(&format!("Failed to save common highlight: {}", e));
+                            } else {
+                                // Reload all highlights (common + character-specific)
+                                if let Ok(highlights) = Config::load_highlights(self.config.connection.character.as_deref()) {
+                                    self.config.highlights = highlights;
+                                    self.window_manager.update_highlights(self.config.highlights.clone());
+                                    self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
+                                }
+                                self.add_system_message(&format!("Common highlight '{}' saved", name));
+                            }
                         } else {
-                            // Reload highlights in window manager
-                            self.window_manager.update_highlights(self.config.highlights.clone());
-                            // Update parser squelch patterns
-                            self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
-                            self.add_system_message(&format!("Highlight '{}' saved", name));
+                            // Save to character-specific config
+                            self.config.highlights.insert(name.clone(), pattern);
+                            if let Err(e) = self.config.save(None) {
+                                self.add_system_message(&format!("Failed to save highlight: {}", e));
+                            } else {
+                                // Reload highlights in window manager
+                                self.window_manager.update_highlights(self.config.highlights.clone());
+                                // Update parser squelch patterns
+                                self.parser.update_squelch_patterns(&self.config.highlights, self.config.ui.ignores_enabled);
+                                self.add_system_message(&format!("Highlight '{}' saved", name));
+                            }
                         }
 
                         // Close form
@@ -8468,6 +8485,9 @@ impl App {
                                             span_type,
                                             link_data,
                                         });
+
+                                        // Clear last prompt tracking when actual text is displayed
+                                        self.last_prompt_text = None;
                                     }
                                 }
                             }
@@ -8475,10 +8495,18 @@ impl App {
                         ParsedElement::Prompt { text, .. } => {
                             // Decide whether to show this prompt based on the entire chunk
                             // Skip if: chunk had ONLY silent updates (no main text)
-                            let should_skip = self.chunk_has_silent_updates && !self.chunk_has_main_text;
+                            let should_skip_silent = self.chunk_has_silent_updates && !self.chunk_has_main_text;
 
-                            if should_skip {
+                            // Skip if: prompt text is identical to the last prompt shown (prevents consecutive identical prompts)
+                            let should_skip_duplicate = self.last_prompt_text.as_ref().map_or(false, |last| last.as_str() == text);
+
+                            let should_skip = should_skip_silent || should_skip_duplicate;
+
+                            if should_skip_silent {
                                 debug!("Skipping prompt '{}' - chunk had only silent updates", text);
+                            }
+                            if should_skip_duplicate {
+                                debug!("Skipping prompt '{}' - identical to last prompt", text);
                             }
 
                             // Reset chunk tracking for next chunk
@@ -8518,6 +8546,17 @@ impl App {
                                         span_type: SpanType::Normal,
                             link_data: None,
                                     });
+                                }
+
+                                // Track this prompt to prevent consecutive duplicates
+                                self.last_prompt_text = Some(text.clone());
+                            } else {
+                                // If skipped, clear the last prompt tracking so next different prompt will show
+                                if should_skip_silent {
+                                    // Keep last_prompt_text if skipped due to silent updates (roundtime ticks, etc.)
+                                    self.last_prompt_text = Some(text.clone());
+                                } else if should_skip_duplicate {
+                                    // Already a duplicate, keep the tracking
                                 }
                             }
 

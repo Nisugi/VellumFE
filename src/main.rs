@@ -3,6 +3,7 @@ mod validator;
 mod cmdlist;
 mod config;
 mod map_data;
+mod migration;
 mod network;
 mod parser;
 mod performance;
@@ -16,6 +17,7 @@ use app::App;
 use clap::Parser;
 use config::Config;
 use std::fs::OpenOptions;
+use std::io::Write;
 use tracing_subscriber;
 
 /// VellumFE - A modern, high-performance terminal frontend for GemStone IV
@@ -54,8 +56,30 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let startup_timer = std::time::Instant::now();
+    eprintln!("[{:>6}ms] Starting VellumFE...", startup_timer.elapsed().as_millis());
+
     // Parse command-line arguments
     let args = Args::parse();
+    eprintln!("[{:>6}ms] Args parsed", startup_timer.elapsed().as_millis());
+
+    // Check if config migration is needed (before logging setup, since paths might change)
+    let config_dir = Config::config_dir()?;
+    if migration::Migration::needs_migration(&config_dir)? {
+        println!("\n════════════════════════════════════════════════════════════════");
+        println!("  VellumFE Config Migration");
+        println!("════════════════════════════════════════════════════════════════\n");
+        println!("Your config directory structure needs to be updated.");
+        println!("This will reorganize files for better organization.\n");
+
+        migration::Migration::run(config_dir)?;
+
+        println!("\n════════════════════════════════════════════════════════════════\n");
+        print!("Press Enter to continue...");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+    }
 
     // Initialize logging to character-specific file instead of stderr to not mess up TUI
     let log_file = Config::get_log_path(args.character.as_deref())?;
@@ -74,9 +98,13 @@ async fn main() -> Result<()> {
         .with_writer(file)
         .with_ansi(false)
         .init();
+    eprintln!("[{:>6}ms] Logging initialized", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Logging initialized", startup_timer.elapsed().as_millis());
 
     // Load configuration (with character override if specified)
     let config = Config::load_with_options(args.character.as_deref(), args.port)?;
+    eprintln!("[{:>6}ms] Config loaded", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Config loaded", startup_timer.elapsed().as_millis());
 
     // Layout validation mode
     if let Some(layout_path) = args.validate_layout.as_ref() {
@@ -118,14 +146,24 @@ async fn main() -> Result<()> {
     }
 
     // Create and run the application
+    eprintln!("[{:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Creating App...", startup_timer.elapsed().as_millis());
     let mut app = App::new(config, args.nomusic)?;
+    eprintln!("[{:>6}ms] App created", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] App created", startup_timer.elapsed().as_millis());
 
     // Auto-shrink layout if terminal is smaller than designed size
     app.check_and_auto_resize()?;
+    eprintln!("[{:>6}ms] Auto-resize checked", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Auto-resize checked", startup_timer.elapsed().as_millis());
 
     // Apply saved terminal position if available (before entering raw mode)
     app.apply_terminal_position();
+    eprintln!("[{:>6}ms] Terminal position applied", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Terminal position applied", startup_timer.elapsed().as_millis());
 
+    eprintln!("[{:>6}ms] Starting UI...", startup_timer.elapsed().as_millis());
+    tracing::info!("[STARTUP {:>6}ms] Starting UI...", startup_timer.elapsed().as_millis());
     app.run().await?;
 
     Ok(())

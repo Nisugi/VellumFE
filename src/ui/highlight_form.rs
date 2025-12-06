@@ -18,7 +18,7 @@ pub enum FormMode {
 /// Result of form submission
 #[derive(Debug, Clone)]
 pub enum FormResult {
-    Save { name: String, pattern: HighlightPattern },
+    Save { name: String, pattern: HighlightPattern, save_as_common: bool },
     Delete { name: String },
     Cancel,
 }
@@ -39,9 +39,10 @@ pub struct HighlightFormWidget {
     color_entire_line: bool,
     fast_parse: bool,
     squelch: bool,
+    save_as_common: bool,
 
     // Form state
-    focused_field: usize,          // 0-10: which field has focus (0-6 text, 7-10 checkboxes)
+    focused_field: usize,          // 0-11: which field has focus (0-6 text, 7-11 checkboxes)
     status_message: String,
     pattern_error: Option<String>,
     mode: FormMode,
@@ -130,6 +131,7 @@ impl HighlightFormWidget {
             color_entire_line: false,
             fast_parse: false,
             squelch: false,
+            save_as_common: false,
             focused_field: 0,
             status_message: "Ready".to_string(),
             pattern_error: None,
@@ -202,13 +204,13 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 11;
+        self.focused_field = (self.focused_field + 1) % 12;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            10
+            11
         } else {
             self.focused_field - 1
         };
@@ -277,13 +279,14 @@ impl HighlightFormWidget {
                 // Ctrl+S to save
                 self.try_save()
             }
-            KeyCode::Char(' ') | KeyCode::Enter if (7..=10).contains(&self.focused_field) => {
-                // Toggle checkboxes (fields 7-10)
+            KeyCode::Char(' ') | KeyCode::Enter if (7..=11).contains(&self.focused_field) => {
+                // Toggle checkboxes (fields 7-11)
                 match self.focused_field {
                     7 => self.bold = !self.bold,
                     8 => self.color_entire_line = !self.color_entire_line,
                     9 => self.fast_parse = !self.fast_parse,
                     10 => self.squelch = !self.squelch,
+                    11 => self.save_as_common = !self.save_as_common,
                     _ => {}
                 }
                 None
@@ -443,6 +446,7 @@ impl HighlightFormWidget {
         Some(FormResult::Save {
             name: name.to_string(),
             pattern,
+            save_as_common: self.save_as_common,
         })
     }
 
@@ -634,6 +638,16 @@ impl HighlightFormWidget {
         let sq_label = " Squelch (ignore entire line)";
         for (i, ch) in sq_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 10 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        }
+        current_y += 1;
+
+        self.render_checkbox(11, "Save as common", self.save_as_common, x + 2, current_y);
+        buf[(x + 2, current_y)].set_char('[').set_fg(if self.focused_field == 11 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 3, current_y)].set_char(if self.save_as_common { '✓' } else { ' ' }).set_fg(if self.focused_field == 11 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        buf[(x + 4, current_y)].set_char(']').set_fg(if self.focused_field == 11 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
+        let common_label = " Save as common (shared across all characters)";
+        for (i, ch) in common_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)].set_char(ch).set_fg(if self.focused_field == 11 { Color::Rgb(255, 215, 0) } else { Color::Cyan }).set_bg(Color::Black);
         }
     }
 
