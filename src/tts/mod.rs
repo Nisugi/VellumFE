@@ -11,14 +11,14 @@
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use tts::{Tts, UtteranceId};
+use tts::Tts;
 
 /// Events sent from TTS callbacks to the main event loop
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TtsEvent {
-    UtteranceStarted(UtteranceId),
-    UtteranceEnded(UtteranceId),
-    UtteranceStopped(UtteranceId),
+    UtteranceStarted,
+    UtteranceEnded,
+    UtteranceStopped,
 }
 
 /// Priority levels for speech events
@@ -52,7 +52,6 @@ pub struct TtsManager {
     current_index: Option<usize>,
 
     /// Current utterance being spoken (for callback correlation)
-    current_utterance_id: Option<UtteranceId>,
 
     /// Is TTS globally muted?
     muted: bool,
@@ -89,7 +88,6 @@ impl TtsManager {
             engine: None,
             queue: VecDeque::new(),
             current_index: None,
-            current_utterance_id: None,
             muted: false,
             enabled,
             rate,
@@ -142,8 +140,8 @@ impl TtsManager {
 
             // Set up callback for auto-play
             let tx = self.event_tx.clone();
-            tts.on_utterance_end(Some(Box::new(move |id| {
-                let _ = tx.send(TtsEvent::UtteranceEnded(id));
+            tts.on_utterance_end(Some(Box::new(move |_id| {
+                let _ = tx.send(TtsEvent::UtteranceEnded);
             })))?;
 
             self.engine = Some(tts);
@@ -343,13 +341,12 @@ impl TtsManager {
                     let _ = engine.stop();
                 }
 
-                // Speak and track the UtteranceId
+                // Speak the text
                 match engine.speak(&entry.text, false)? {
-                    Some(utterance_id) => {
+                    Some(_) => {
                         entry.spoken = true;
                         self.current_index = Some(index);
-                        self.current_utterance_id = Some(utterance_id);
-                        tracing::debug!("Speaking utterance {:?} at index {}", utterance_id, index);
+                        tracing::debug!("Speaking at index {}", index);
                     }
                     None => {
                         tracing::warn!("TTS speak() returned no UtteranceId");
@@ -471,8 +468,4 @@ impl TtsManager {
         self.event_rx.try_recv()
     }
 
-    /// Check if the given UtteranceId matches the current utterance
-    pub fn is_current_utterance(&self, id: UtteranceId) -> bool {
-        self.current_utterance_id.as_ref() == Some(&id)
-    }
 }

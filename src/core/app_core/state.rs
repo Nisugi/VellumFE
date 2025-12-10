@@ -331,18 +331,14 @@ impl AppCore {
             match self.tts_manager.try_recv_event() {
                 Ok(event) => {
                     match event {
-                        crate::tts::TtsEvent::UtteranceEnded(id) => {
-                            // Check if this was the current utterance
-                            if self.tts_manager.is_current_utterance(id) {
-                                tracing::debug!("Utterance {:?} ended (manual control - no auto-play)", id);
-                                // Auto-play disabled - user has full manual control with Ctrl+Alt+Left/Right/Up
-                            }
+                        crate::tts::TtsEvent::UtteranceEnded => {
+                            tracing::debug!("Utterance ended");
                         }
-                        crate::tts::TtsEvent::UtteranceStarted(id) => {
-                            tracing::debug!("Utterance {:?} started", id);
+                        crate::tts::TtsEvent::UtteranceStarted => {
+                            tracing::debug!("Utterance started");
                         }
-                        crate::tts::TtsEvent::UtteranceStopped(id) => {
-                            tracing::debug!("Utterance {:?} stopped", id);
+                        crate::tts::TtsEvent::UtteranceStopped => {
+                            tracing::debug!("Utterance stopped");
                         }
                     }
                 }
