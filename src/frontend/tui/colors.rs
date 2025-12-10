@@ -19,6 +19,15 @@ pub fn get_global_color_mode() -> ColorMode {
     GLOBAL_COLOR_MODE.with(|m| m.get())
 }
 
+/// Convert raw RGB values to ratatui Color, respecting global color mode
+/// This is the central function that ALL RGB -> ratatui::Color conversions should use
+pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
+    match get_global_color_mode() {
+        ColorMode::Direct => ratatui::style::Color::Rgb(r, g, b),
+        ColorMode::Slot => ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b)),
+    }
+}
+
 /// Parse a hex color string like "#RRGGBB" into ratatui Color
 /// Respects the global color mode setting
 pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {

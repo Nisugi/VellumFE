@@ -173,8 +173,9 @@ pub fn to_crossterm_key_event(event: &KeyEvent) -> ct::KeyEvent {
 // ============================================================================
 
 /// Convert frontend-agnostic Color to ratatui Color
+/// Respects global color mode (Direct = true color RGB, Slot = 256-color indexed)
 pub fn to_ratatui_color(color: Color) -> ratatui_style::Color {
-    ratatui_style::Color::Rgb(color.r, color.g, color.b)
+    super::colors::rgb_to_ratatui_color(color.r, color.g, color.b)
 }
 
 /// Convert ratatui Color to frontend-agnostic Color
@@ -224,7 +225,7 @@ pub fn named_to_ratatui(color: NamedColor) -> ratatui_style::Color {
         NamedColor::LightMagenta => ratatui_style::Color::LightMagenta,
         NamedColor::LightCyan => ratatui_style::Color::LightCyan,
         NamedColor::White => ratatui_style::Color::White,
-        NamedColor::Rgb(r, g, b) => ratatui_style::Color::Rgb(r, g, b),
+        NamedColor::Rgb(r, g, b) => super::colors::rgb_to_ratatui_color(r, g, b),
         NamedColor::Indexed(idx) => ratatui_style::Color::Indexed(idx),
         NamedColor::Reset => ratatui_style::Color::Reset,
     }
