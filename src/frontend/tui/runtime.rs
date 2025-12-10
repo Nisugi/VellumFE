@@ -43,6 +43,12 @@ async fn async_run(
     // This ensures ALL color parsing respects the mode from config
     super::colors::set_global_color_mode(app_core.config.ui.color_mode);
 
+    // Initialize palette lookup for Slot mode
+    // This builds the hex→slot mapping from color_palette entries
+    if app_core.config.ui.color_mode == crate::config::ColorMode::Slot {
+        super::colors::init_palette_lookup(&app_core.config.colors.color_palette);
+    }
+
     // Create TUI frontend
     let mut frontend = TuiFrontend::new()?;
     // Ensure frontend theme cache matches whatever layout/theme AppCore activated

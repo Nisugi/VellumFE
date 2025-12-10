@@ -1,10 +1,13 @@
 use anyhow::Result;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use crate::config::ColorMode;
 
 // Global color mode - thread-local so it's set once at startup and used everywhere
 thread_local! {
     static GLOBAL_COLOR_MODE: Cell<ColorMode> = const { Cell::new(ColorMode::Direct) };
+    // Palette lookup: hex color (lowercase, with #) → slot number
+    static PALETTE_LOOKUP: RefCell<HashMap<String, u8>> = RefCell::new(HashMap::new());
 }
 
 /// Set the global color mode for all color parsing
@@ -19,12 +22,64 @@ pub fn get_global_color_mode() -> ColorMode {
     GLOBAL_COLOR_MODE.with(|m| m.get())
 }
 
+/// Initialize the palette lookup from config
+///
+/// This builds a HashMap from hex color → slot number for all palette colors
+/// that have a slot assignment. Call this once at startup when color_mode is Slot.
+pub fn init_palette_lookup(palette: &[crate::config::PaletteColor]) {
+    PALETTE_LOOKUP.with(|lookup| {
+        let mut map = lookup.borrow_mut();
+        map.clear();
+
+        for color in palette {
+            if let Some(slot) = color.slot {
+                // Normalize hex to lowercase with #
+                let hex = color.color.trim();
+                let normalized = if hex.starts_with('#') {
+                    hex.to_lowercase()
+                } else {
+                    format!("#{}", hex.to_lowercase())
+                };
+                map.insert(normalized, slot);
+            }
+        }
+
+        tracing::info!("Initialized palette lookup with {} color mappings", map.len());
+    });
+}
+
+/// Look up hex color in palette, returning slot number if found
+fn lookup_hex_to_slot(hex: &str) -> Option<u8> {
+    // Normalize hex to lowercase with #
+    let normalized = if hex.starts_with('#') {
+        hex.to_lowercase()
+    } else {
+        format!("#{}", hex.to_lowercase())
+    };
+
+    PALETTE_LOOKUP.with(|lookup| {
+        lookup.borrow().get(&normalized).copied()
+    })
+}
+
 /// Convert raw RGB values to ratatui Color
-/// Always returns Color::Rgb - Slot mode conversion requires a different approach (not yet implemented)
+///
+/// In Direct mode: Returns Color::Rgb for true color terminals
+/// In Slot mode: Looks up the color in the palette map first, falls back to nearest slot
 pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
-    // TODO: For Slot mode, we need to intercept at the terminal output level,
-    // not at the color creation level. ratatui/crossterm need to emit indexed colors.
-    ratatui::style::Color::Rgb(r, g, b)
+    match get_global_color_mode() {
+        ColorMode::Direct => ratatui::style::Color::Rgb(r, g, b),
+        ColorMode::Slot => {
+            // First try palette lookup
+            let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
+            if let Some(slot) = lookup_hex_to_slot(&hex) {
+                ratatui::style::Color::Indexed(slot)
+            } else {
+                // Fall back to nearest slot calculation
+                ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))
+            }
+        }
+    }
 }
 
 /// Parse a hex color string like "#RRGGBB" into ratatui Color
