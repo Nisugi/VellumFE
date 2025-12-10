@@ -305,9 +305,15 @@ impl TuiFrontend {
 
         for palette_color in palette {
             if let Some(slot) = palette_color.slot {
-                // Parse hex color to RGB
-                if let Ok(color) = colors::parse_hex_color(&palette_color.color) {
-                    if let ratatui::style::Color::Rgb(r, g, b) = color {
+                // Parse hex color to RGB directly - bypass mode-aware conversion
+                // (parse_hex_color returns Indexed in Slot mode, breaking the Rgb match)
+                let hex = palette_color.color.trim().trim_start_matches('#');
+                if hex.len() == 6 {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        u8::from_str_radix(&hex[0..2], 16),
+                        u8::from_str_radix(&hex[2..4], 16),
+                        u8::from_str_radix(&hex[4..6], 16),
+                    ) {
                         // OSC 4 format: ESC]4;<slot>;rgb:<rr>/<gg>/<bb>BEL
                         let seq = format!(
                             "\x1b]4;{};rgb:{:02x}/{:02x}/{:02x}\x07",
