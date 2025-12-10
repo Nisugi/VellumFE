@@ -1,0 +1,705 @@
+<!DOCTYPE HTML>
+<html lang="en" class="coal sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Browser &amp; Editors - VellumFE Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Comprehensive documentation for VellumFE, a modern multi-frontend client for GemStone IV">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-2459343d.css">
+        <link rel="stylesheet" href="../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "coal";
+            const default_dark_theme = "coal";
+            window.path_to_searchindex_js = "../searchindex-ad3aee19.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-25e7f624.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('coal')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">VellumFE Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/nisugi/vellum-fe" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/nisugi/vellum-fe/edit/master/book/src/src/architecture/browser-editors.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="browser--editor-system"><a class="header" href="#browser--editor-system">Browser &amp; Editor System</a></h1>
+<p>VellumFE provides interactive popup interfaces for browsing and editing configuration without leaving the application.</p>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>The browser/editor system includes:</p>
+<ul>
+<li><strong>Browsers</strong> - Read-only lists with selection (highlights, keybinds, colors)</li>
+<li><strong>Editors</strong> - Forms for creating/modifying configuration</li>
+<li><strong>Window Editor</strong> - Complex form for widget configuration</li>
+</ul>
+<h2 id="architecture"><a class="header" href="#architecture">Architecture</a></h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        User Interface                           │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
+│  │   Browser    │  │    Editor    │  │    WindowEditor       │ │
+│  │  (List View) │  │  (Form View) │  │  (Complex Form)       │ │
+│  └──────────────┘  └──────────────┘  └───────────────────────┘ │
+├─────────────────────────────────────────────────────────────────┤
+│                        Widget Traits                            │
+│  ┌───────────┐ ┌───────────┐ ┌──────────┐ ┌────────────────┐   │
+│  │ Navigable │ │ Selectable│ │ Saveable │ │ TextEditable   │   │
+│  └───────────┘ └───────────┘ └──────────┘ └────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="widget-traits"><a class="header" href="#widget-traits">Widget Traits</a></h2>
+<p>All browsers and editors implement behavior traits.</p>
+<h3 id="navigable"><a class="header" href="#navigable">Navigable</a></h3>
+<p>For list navigation:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait Navigable {
+    fn navigate_up(&amp;mut self);      // Move selection up
+    fn navigate_down(&amp;mut self);    // Move selection down
+    fn page_up(&amp;mut self);          // Move up ~10 items
+    fn page_down(&amp;mut self);        // Move down ~10 items
+    fn home(&amp;mut self) {}           // Move to first (optional)
+    fn end(&amp;mut self) {}            // Move to last (optional)
+}
+<span class="boring">}</span></code></pre>
+<h3 id="selectable"><a class="header" href="#selectable">Selectable</a></h3>
+<p>For selecting items:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait Selectable {
+    fn get_selected(&amp;self) -&gt; Option&lt;String&gt;;
+    fn delete_selected(&amp;mut self) -&gt; Option&lt;String&gt;;
+}
+<span class="boring">}</span></code></pre>
+<h3 id="texteditable"><a class="header" href="#texteditable">TextEditable</a></h3>
+<p>For text input fields:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait TextEditable {
+    fn get_focused_field(&amp;self) -&gt; Option&lt;&amp;TextArea&lt;'static&gt;&gt;;
+    fn get_focused_field_mut(&amp;mut self) -&gt; Option&lt;&amp;mut TextArea&lt;'static&gt;&gt;;
+    fn select_all(&amp;mut self);           // Ctrl+A
+    fn copy_to_clipboard(&amp;self);        // Ctrl+C
+    fn cut_to_clipboard(&amp;mut self);     // Ctrl+X
+    fn paste_from_clipboard(&amp;mut self); // Ctrl+V
+}
+<span class="boring">}</span></code></pre>
+<h3 id="fieldnavigable"><a class="header" href="#fieldnavigable">FieldNavigable</a></h3>
+<p>For form field navigation:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait FieldNavigable {
+    fn next_field(&amp;mut self);       // Tab
+    fn previous_field(&amp;mut self);   // Shift+Tab
+    fn field_count(&amp;self) -&gt; usize;
+    fn current_field(&amp;self) -&gt; usize;
+}
+<span class="boring">}</span></code></pre>
+<h3 id="saveable"><a class="header" href="#saveable">Saveable</a></h3>
+<p>For forms that persist data:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait Saveable {
+    type SaveResult;
+    fn try_save(&amp;mut self) -&gt; Option&lt;Self::SaveResult&gt;;
+    fn is_modified(&amp;self) -&gt; bool;
+}
+<span class="boring">}</span></code></pre>
+<h3 id="toggleable--cyclable"><a class="header" href="#toggleable--cyclable">Toggleable / Cyclable</a></h3>
+<p>For boolean and enum fields:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait Toggleable {
+    fn toggle_focused(&amp;mut self) -&gt; Option&lt;bool&gt;;
+}
+
+pub trait Cyclable {
+    fn cycle_forward(&amp;mut self);   // Space/Down
+    fn cycle_backward(&amp;mut self);  // Up
+}
+<span class="boring">}</span></code></pre>
+<h2 id="browser-types"><a class="header" href="#browser-types">Browser Types</a></h2>
+<h3 id="highlightbrowser"><a class="header" href="#highlightbrowser">HighlightBrowser</a></h3>
+<p>Browse configured text highlights.</p>
+<p><strong>Command</strong>: <code>.highlights</code></p>
+<p><strong>Features</strong>:</p>
+<ul>
+<li>Sorted by category, then name</li>
+<li>Color preview with sample text</li>
+<li>Category filtering</li>
+<li>Shows squelch status</li>
+<li>Shows sound indicator</li>
+<li>Shows redirect info</li>
+</ul>
+<pre><code>┌─ Highlights ────────────────────────────────────────┐
+│                                                     │
+│ ═══ Combat ═══                                      │
+│ &gt; critical_hit    "critical hit"   [█████]          │
+│   damage_taken    "strikes you"    [█████]          │
+│   damage_dealt    "You hit"        [█████]          │
+│                                                     │
+│ ═══ Chat ═══                                        │
+│   speech          "^\\w+ says"     [█████]          │
+│   whisper         "whispers"       [█████] ♪        │
+│                                                     │
+│ [Enter] Edit  [Delete] Remove  [Escape] Close       │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="keybindbrowser"><a class="header" href="#keybindbrowser">KeybindBrowser</a></h3>
+<p>Browse configured keybinds.</p>
+<p><strong>Command</strong>: <code>.keybinds</code></p>
+<p><strong>Features</strong>:</p>
+<ul>
+<li>Grouped by type (Actions, Macros)</li>
+<li>Shows key combo and action</li>
+<li>Columnar layout</li>
+</ul>
+<pre><code>┌─ Keybinds ──────────────────────────────────────────┐
+│                                                     │
+│ ═══ Actions ═══                                     │
+│ &gt; Ctrl+L         layout_editor                      │
+│   Ctrl+H         highlight_browser                  │
+│   F1             help                               │
+│                                                     │
+│ ═══ Macros ═══                                      │
+│   Ctrl+1         "attack target"                    │
+│   Ctrl+2         "stance defensive"                 │
+│                                                     │
+│ [Enter] Edit  [Delete] Remove  [Escape] Close       │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="colorpalettebrowser"><a class="header" href="#colorpalettebrowser">ColorPaletteBrowser</a></h3>
+<p>Browse named color palette.</p>
+<p><strong>Command</strong>: <code>.colors</code></p>
+<p><strong>Features</strong>:</p>
+<ul>
+<li>Grouped by color category</li>
+<li>Visual color swatches</li>
+<li>Hex code display</li>
+</ul>
+<pre><code>┌─ Color Palette ─────────────────────────────────────┐
+│                                                     │
+│ ═══ Red ═══                                         │
+│ &gt; ██ red         #FF0000                            │
+│   ██ crimson     #DC143C                            │
+│   ██ darkred     #8B0000                            │
+│                                                     │
+│ ═══ Green ═══                                       │
+│   ██ green       #00FF00                            │
+│   ██ forestgreen #228B22                            │
+│                                                     │
+│ [Escape] Close                                      │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="spellcolorbrowser"><a class="header" href="#spellcolorbrowser">SpellColorBrowser</a></h3>
+<p>Browse spell-specific colors.</p>
+<p><strong>Command</strong>: <code>.spellcolors</code></p>
+<p><strong>Features</strong>:</p>
+<ul>
+<li>Spell number to color mapping</li>
+<li>Color preview bars</li>
+<li>Add/edit/delete support</li>
+</ul>
+<h3 id="themebrowser"><a class="header" href="#themebrowser">ThemeBrowser</a></h3>
+<p>Browse available themes.</p>
+<p><strong>Command</strong>: <code>.themes</code></p>
+<p><strong>Features</strong>:</p>
+<ul>
+<li>List saved theme profiles</li>
+<li>Preview theme colors</li>
+<li>Apply/save themes</li>
+</ul>
+<h2 id="window-editor"><a class="header" href="#window-editor">Window Editor</a></h2>
+<p>The WindowEditor provides comprehensive widget configuration.</p>
+<p><strong>Command</strong>: <code>.window &lt;widget_name&gt;</code></p>
+<h3 id="field-categories"><a class="header" href="#field-categories">Field Categories</a></h3>
+<p><strong>Geometry</strong>:</p>
+<ul>
+<li><code>row</code>, <code>col</code> - Position</li>
+<li><code>rows</code>, <code>cols</code> - Size</li>
+<li><code>min_rows</code>, <code>min_cols</code> - Minimum size</li>
+<li><code>max_rows</code>, <code>max_cols</code> - Maximum size</li>
+</ul>
+<p><strong>Appearance</strong>:</p>
+<ul>
+<li><code>title</code> - Window title</li>
+<li><code>show_title</code> - Toggle title display</li>
+<li><code>title_position</code> - Title placement</li>
+<li><code>bg_color</code> - Background color</li>
+<li><code>text_color</code> - Text color</li>
+<li><code>transparent_bg</code> - Use terminal background</li>
+</ul>
+<p><strong>Borders</strong>:</p>
+<ul>
+<li><code>show_border</code> - Enable borders</li>
+<li><code>border_style</code> - Style (plain, rounded, double)</li>
+<li><code>border_color</code> - Border color</li>
+<li><code>border_top/bottom/left/right</code> - Individual sides</li>
+</ul>
+<p><strong>Content</strong>:</p>
+<ul>
+<li><code>streams</code> - Stream IDs for text widgets</li>
+<li><code>buffer_size</code> - Max line count</li>
+<li><code>wordwrap</code> - Enable word wrapping</li>
+<li><code>timestamps</code> - Show timestamps</li>
+<li><code>content_align</code> - Text alignment</li>
+</ul>
+<h3 id="widget-specific-fields"><a class="header" href="#widget-specific-fields">Widget-Specific Fields</a></h3>
+<p><strong>Tabbed Text</strong>:</p>
+<ul>
+<li><code>tab_bar_position</code> - Top or bottom</li>
+<li><code>tab_active_color</code> - Active tab color</li>
+<li><code>tab_inactive_color</code> - Inactive tab color</li>
+</ul>
+<p><strong>Compass</strong>:</p>
+<ul>
+<li><code>compass_active_color</code> - Available direction color</li>
+<li><code>compass_inactive_color</code> - Unavailable direction color</li>
+</ul>
+<p><strong>Progress Bars</strong>:</p>
+<ul>
+<li><code>progress_label</code> - Bar label</li>
+<li><code>progress_color</code> - Bar fill color</li>
+</ul>
+<p><strong>Dashboard</strong>:</p>
+<ul>
+<li><code>dashboard_layout</code> - Horizontal or vertical</li>
+<li><code>dashboard_spacing</code> - Item spacing</li>
+</ul>
+<h2 id="common-browser-features"><a class="header" href="#common-browser-features">Common Browser Features</a></h2>
+<h3 id="popup-dragging"><a class="header" href="#popup-dragging">Popup Dragging</a></h3>
+<p>All browsers support dragging by the title bar:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub fn handle_mouse(
+    &amp;mut self,
+    mouse_col: u16,
+    mouse_row: u16,
+    mouse_down: bool,
+    area: Rect,
+) -&gt; bool {
+    let on_title_bar = mouse_row == self.popup_y
+        &amp;&amp; mouse_col &gt; self.popup_x
+        &amp;&amp; mouse_col &lt; self.popup_x + popup_width - 1;
+
+    if mouse_down &amp;&amp; on_title_bar &amp;&amp; !self.is_dragging {
+        self.is_dragging = true;
+        self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
+        self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
+        return true;
+    }
+    // ...
+}
+<span class="boring">}</span></code></pre>
+<h3 id="scroll-with-category-headers"><a class="header" href="#scroll-with-category-headers">Scroll with Category Headers</a></h3>
+<p>Browsers with categories handle scrolling with sticky headers for context.</p>
+<h2 id="menu-keybinds"><a class="header" href="#menu-keybinds">Menu Keybinds</a></h2>
+<p>Common keybinds for browsers and editors:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Action</th><th>Context</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Up/k</code></td><td>Navigate up</td><td>All browsers</td></tr>
+<tr><td><code>Down/j</code></td><td>Navigate down</td><td>All browsers</td></tr>
+<tr><td><code>PageUp</code></td><td>Page up</td><td>All browsers</td></tr>
+<tr><td><code>PageDown</code></td><td>Page down</td><td>All browsers</td></tr>
+<tr><td><code>Enter</code></td><td>Select/confirm</td><td>Browsers → Editor</td></tr>
+<tr><td><code>Escape</code></td><td>Close/cancel</td><td>All</td></tr>
+<tr><td><code>Tab</code></td><td>Next field</td><td>Editors</td></tr>
+<tr><td><code>Shift+Tab</code></td><td>Previous field</td><td>Editors</td></tr>
+<tr><td><code>Space</code></td><td>Toggle/cycle</td><td>Toggleable/Cyclable</td></tr>
+<tr><td><code>Delete</code></td><td>Delete selected</td><td>Selectable</td></tr>
+<tr><td><code>Ctrl+S</code></td><td>Save</td><td>Saveable</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="form-validation"><a class="header" href="#form-validation">Form Validation</a></h2>
+<p>Editors validate input before saving:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl Saveable for HighlightForm {
+    type SaveResult = HighlightPattern;
+
+    fn try_save(&amp;mut self) -&gt; Option&lt;Self::SaveResult&gt; {
+        // Validate required fields
+        let name = self.name_field.lines()[0].trim();
+        if name.is_empty() {
+            self.error_message = Some("Name is required".to_string());
+            return None;
+        }
+
+        // Validate pattern syntax
+        let pattern = self.pattern_field.lines()[0].trim();
+        if let Err(e) = regex::Regex::new(pattern) {
+            self.error_message = Some(format!("Invalid regex: {}", e));
+            return None;
+        }
+
+        // Build result
+        Some(HighlightPattern {
+            name: name.to_string(),
+            pattern: pattern.to_string(),
+            // ...
+        })
+    }
+}
+<span class="boring">}</span></code></pre>
+<h2 id="integration-points"><a class="header" href="#integration-points">Integration Points</a></h2>
+<h3 id="commands"><a class="header" href="#commands">Commands</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Browser/Editor</th><th>Function</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.highlights</code></td><td>HighlightBrowser</td><td>Browse highlights</td></tr>
+<tr><td><code>.highlight &lt;name&gt;</code></td><td>HighlightForm</td><td>Edit highlight</td></tr>
+<tr><td><code>.addhighlight</code></td><td>HighlightForm</td><td>Add highlight</td></tr>
+<tr><td><code>.keybinds</code></td><td>KeybindBrowser</td><td>Browse keybinds</td></tr>
+<tr><td><code>.keybind &lt;key&gt;</code></td><td>KeybindForm</td><td>Edit keybind</td></tr>
+<tr><td><code>.addkeybind</code></td><td>KeybindForm</td><td>Add keybind</td></tr>
+<tr><td><code>.colors</code></td><td>ColorPaletteBrowser</td><td>Browse palette</td></tr>
+<tr><td><code>.spellcolors</code></td><td>SpellColorBrowser</td><td>Browse spell colors</td></tr>
+<tr><td><code>.themes</code></td><td>ThemeBrowser</td><td>Browse themes</td></tr>
+<tr><td><code>.window &lt;name&gt;</code></td><td>WindowEditor</td><td>Edit widget</td></tr>
+<tr><td><code>.layout</code></td><td>LayoutEditor</td><td>Edit layout</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="ui-state"><a class="header" href="#ui-state">UI State</a></h3>
+<p>Browsers are tracked in <code>MenuState</code>:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum MenuState {
+    None,
+    HighlightBrowser(HighlightBrowser),
+    HighlightForm(HighlightForm),
+    KeybindBrowser(KeybindBrowser),
+    KeybindForm(KeybindForm),
+    ColorPaletteBrowser(ColorPaletteBrowser),
+    SpellColorBrowser(SpellColorBrowser),
+    ThemeBrowser(ThemeBrowser),
+    WindowEditor(WindowEditor),
+    // ...
+}
+<span class="boring">}</span></code></pre>
+<h2 id="creating-a-new-browser"><a class="header" href="#creating-a-new-browser">Creating a New Browser</a></h2>
+<h3 id="1-define-entry-structure"><a class="header" href="#1-define-entry-structure">1. Define Entry Structure</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Clone)]
+pub struct MyEntry {
+    pub id: String,
+    pub name: String,
+    pub value: String,
+}
+<span class="boring">}</span></code></pre>
+<h3 id="2-create-browser-struct"><a class="header" href="#2-create-browser-struct">2. Create Browser Struct</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct MyBrowser {
+    entries: Vec&lt;MyEntry&gt;,
+    selected_index: usize,
+    scroll_offset: usize,
+
+    // Popup dragging
+    pub popup_x: u16,
+    pub popup_y: u16,
+    pub is_dragging: bool,
+    pub drag_offset_x: u16,
+    pub drag_offset_y: u16,
+}
+<span class="boring">}</span></code></pre>
+<h3 id="3-implement-traits"><a class="header" href="#3-implement-traits">3. Implement Traits</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl Navigable for MyBrowser {
+    fn navigate_up(&amp;mut self) {
+        if self.selected_index &gt; 0 {
+            self.selected_index -= 1;
+            self.adjust_scroll();
+        }
+    }
+    // ...
+}
+
+impl Selectable for MyBrowser {
+    fn get_selected(&amp;self) -&gt; Option&lt;String&gt; {
+        self.entries.get(self.selected_index).map(|e| e.id.clone())
+    }
+    // ...
+}
+<span class="boring">}</span></code></pre>
+<h3 id="4-implement-widget-rendering"><a class="header" href="#4-implement-widget-rendering">4. Implement Widget Rendering</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>impl Widget for &amp;MyBrowser {
+    fn render(self, area: Rect, buf: &amp;mut Buffer) {
+        // Clear popup area
+        Clear.render(area, buf);
+
+        // Draw border and title
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" My Browser ");
+        block.render(area, buf);
+
+        // Render entries with selection highlighting
+        for (idx, entry) in self.visible_entries().enumerate() {
+            let style = if idx == self.selected_index {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            // ... render entry
+        }
+    }
+}
+<span class="boring">}</span></code></pre>
+<h3 id="5-register-command"><a class="header" href="#5-register-command">5. Register Command</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>".mybrowser" =&gt; {
+    let browser = MyBrowser::new(&amp;config.my_data);
+    app.ui_state.menu_state = MenuState::MyBrowser(browser);
+}
+<span class="boring">}</span></code></pre>
+<h2 id="see-also"><a class="header" href="#see-also">See Also</a></h2>
+<ul>
+<li><a href="../reference/cli-options.html">Commands</a> - All browser commands</li>
+<li><a href="../configuration/keybinds-toml.html">Keybinds Configuration</a> - Browser keybinds</li>
+<li><a href="../configuration/highlights-toml.html">Highlights Configuration</a> - Highlight editing</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../architecture/theme-system.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../architecture/performance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../architecture/theme-system.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../architecture/performance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-c2a407aa.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

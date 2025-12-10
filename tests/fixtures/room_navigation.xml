@@ -1,0 +1,12 @@
+<nav rm='7503251'/>
+<streamWindow id='main' title='Story' subtitle=" - Town Square Central" location='center' target='drop'/>
+<streamWindow id='room' title='Room' subtitle=" - Town Square Central" location='center' target='drop' ifClosed='' resident='true'/>
+<clearStream id='room'/>
+<pushStream id='room'/>
+<compDef id='room desc'>This is the heart of the main square of Ta'Vaalor.</compDef>
+<compDef id='room objs'>You also see <pushBold/>a <a exist="240632" noun="guard">town guard</a><popBold/>.</compDef>
+<compDef id='room players'>Also here: <a exist="123456" noun="Player">Player</a></compDef>
+<compDef id='room exits'>Obvious paths: <d>north</d>, <d>northeast</d>, <d>east</d>, <d>southeast</d>, <d>south</d>, <d>southwest</d>, <d>west</d>, <d>northwest</d></compDef>
+<popStream id='room'/>
+<compass><dir value="n"/><dir value="ne"/><dir value="e"/><dir value="se"/><dir value="s"/><dir value="sw"/><dir value="w"/><dir value="nw"/></compass>
+<prompt time="1759307114">&gt;</prompt>

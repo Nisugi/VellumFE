@@ -2,6 +2,23 @@
 # This file contains all highlight patterns
 # Editable via .addhl/.highlights commands
 
+# Test highlight - should be very visible
+[test_obvious]
+pattern = "Obvious"
+fg = "#00ff00"
+bg = "#ff0000"
+bold = true
+fast_parse = true
+category = "Testing"
+
+# Exits highlight
+[exits]
+pattern = "exits:"
+fg = "#00ffff"
+bold = true
+fast_parse = true
+category = "Room"
+
 # Example highlights - customize these for your gameplay
 [friends]
 pattern = "Mandrill|Monolis|Chiora|Exdeo|Kawhi|Aldhelm"
@@ -17,3 +34,27 @@ bg = "#8b0000"
 bold = true
 fast_parse = true
 category = "Players"
+
+# ===== SQUELCH PATTERNS (Ignore/Filter Lines) =====
+# These patterns will completely hide matching lines from view.
+# Use squelch = true to enable filtering for a pattern.
+# Global toggle: ignores_enabled in config (or .toggleignores command)
+
+# Squelch ambient/environmental spam
+[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls|rustles softly"
+fast_parse = true
+squelch = true
+category = "Squelch"
+
+# Squelch arrival/departure spam (adjust as needed)
+[arrival_spam]
+pattern = "^[A-Z][a-z]+ (arrives|departs|went|comes|goes)"
+squelch = true
+category = "Squelch"
+
+# Squelch energy recovery messages
+[energy_spam]
+pattern = "^You feel fully energized again\\.$"
+squelch = true
+category = "Squelch"

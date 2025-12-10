@@ -1,0 +1,873 @@
+<!DOCTYPE HTML>
+<html lang="en" class="coal sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Roleplay Setup - VellumFE Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Comprehensive documentation for VellumFE, a modern multi-frontend client for GemStone IV">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-2459343d.css">
+        <link rel="stylesheet" href="../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "coal";
+            const default_dark_theme = "coal";
+            window.path_to_searchindex_js = "../searchindex-ad3aee19.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-25e7f624.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('coal')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">VellumFE Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/nisugi/vellum-fe" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/nisugi/vellum-fe/edit/master/book/src/src/tutorials/roleplay-setup.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="roleplay-setup"><a class="header" href="#roleplay-setup">Roleplay Setup</a></h1>
+<p>Create an immersive layout focused on storytelling and social interaction.</p>
+<h2 id="goal"><a class="header" href="#goal">Goal</a></h2>
+<p>Build a roleplay-focused layout with:</p>
+<ul>
+<li>Maximum text visibility for story immersion</li>
+<li>Organized chat channels</li>
+<li>Minimal HUD elements</li>
+<li>Easy social command access</li>
+<li>Atmospheric preservation</li>
+</ul>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li>Completed <a href="./your-first-layout.html">Your First Layout</a></li>
+<li>Interest in roleplay and social gameplay</li>
+<li>Basic emote familiarity</li>
+</ul>
+<h2 id="design-philosophy"><a class="header" href="#design-philosophy">Design Philosophy</a></h2>
+<p>Roleplay layouts prioritize:</p>
+<ol>
+<li><strong>Immersion</strong> - Large text areas, minimal UI chrome</li>
+<li><strong>Readability</strong> - Clear text, comfortable spacing</li>
+<li><strong>Organization</strong> - Separate IC (In-Character) and OOC (Out-Of-Character)</li>
+<li><strong>Quick Social</strong> - Fast access to emotes and speech</li>
+</ol>
+<h2 id="layout-overview"><a class="header" href="#layout-overview">Layout Overview</a></h2>
+<pre><code>┌────────────────────────────────────────────────────────────┐
+│ [Room Name]                                                │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│                                                            │
+│                    Main Story Text                         │
+│              (room descriptions, actions)                  │
+│                                                            │
+│                                                            │
+│                                                            │
+├──────────────────────────────────┬─────────────────────────┤
+│     Speech &amp; Thoughts            │    ESP/OOC Chat         │
+│     (IC communication)           │    (group chat)         │
+├──────────────────────────────────┴─────────────────────────┤
+│ &gt; [command input]                                          │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="step-1-create-the-layout"><a class="header" href="#step-1-create-the-layout">Step 1: Create the Layout</a></h2>
+<p>Create <code>~/.vellum-fe/layout.toml</code>:</p>
+<pre><code class="language-toml"># Roleplay Layout - Immersive Storytelling
+# Maximizes text space, organizes communication channels
+
+# ═══════════════════════════════════════════════════════════
+# TOP - Room Title Bar (Minimal)
+# ═══════════════════════════════════════════════════════════
+
+[[widgets]]
+type = "room"
+name = "room_title"
+x = 0
+y = 0
+width = 100
+height = 3
+show_exits = false
+show_creatures = false
+show_players = false
+title_only = true
+
+# ═══════════════════════════════════════════════════════════
+# MAIN AREA - Story Text (Largest Widget)
+# ═══════════════════════════════════════════════════════════
+
+[[widgets]]
+type = "text"
+name = "story"
+title = ""
+x = 0
+y = 3
+width = 100
+height = 55
+streams = ["main", "room"]
+scrollback = 10000
+auto_scroll = true
+border = false
+padding = 1
+
+# ═══════════════════════════════════════════════════════════
+# BOTTOM LEFT - In-Character Communication
+# ═══════════════════════════════════════════════════════════
+
+[[widgets]]
+type = "text"
+name = "speech"
+title = "Speech"
+x = 0
+y = 59
+width = 55
+height = 31
+streams = ["speech", "whisper"]
+scrollback = 2000
+auto_scroll = true
+border_color = "blue"
+
+# ═══════════════════════════════════════════════════════════
+# BOTTOM RIGHT - Out-Of-Character / ESP
+# ═══════════════════════════════════════════════════════════
+
+[[widgets]]
+type = "text"
+name = "thoughts"
+title = "ESP/OOC"
+x = 56
+y = 59
+width = 44
+height = 31
+streams = ["thoughts", "group"]
+scrollback = 1000
+auto_scroll = true
+border_color = "cyan"
+
+# ═══════════════════════════════════════════════════════════
+# COMMAND INPUT
+# ═══════════════════════════════════════════════════════════
+
+[[widgets]]
+type = "command_input"
+name = "input"
+x = 0
+y = 91
+width = 100
+height = 9
+history_size = 500
+prompt = "› "
+</code></pre>
+<h2 id="step-2-immersive-theme"><a class="header" href="#step-2-immersive-theme">Step 2: Immersive Theme</a></h2>
+<p>Create <code>~/.vellum-fe/colors.toml</code>:</p>
+<pre><code class="language-toml">[theme]
+name = "Parchment"
+
+# Background - soft, easy on eyes
+background = "#1a1814"     # Dark parchment
+
+# Text colors - warm and readable
+text = "#d4c5a9"           # Cream text
+text_dim = "#8b7355"       # Muted brown
+
+# UI elements - unobtrusive
+border = "#3d3428"         # Dark border
+border_focused = "#5c4a32" # Focused border
+
+# Speech colors - distinguishable but not harsh
+speech = "#87ceeb"         # Sky blue (say)
+whisper = "#da70d6"        # Orchid (whisper)
+thoughts = "#98fb98"       # Pale green (thoughts)
+shout = "#ffa500"          # Orange (shout)
+
+# Room descriptions - slightly brighter
+room_name = "#ffd700"      # Gold
+room_desc = "#d4c5a9"      # Cream
+
+# Player names
+player = "#ffffff"         # White
+npc = "#daa520"            # Goldenrod
+
+# Emotes and actions
+emote = "#b8860b"          # Dark goldenrod
+
+# Minimal status (if shown)
+health = "#8fbc8f"         # Dark sea green
+mana = "#6495ed"           # Cornflower blue
+</code></pre>
+<h2 id="step-3-roleplay-keybinds"><a class="header" href="#step-3-roleplay-keybinds">Step 3: Roleplay Keybinds</a></h2>
+<p>Create <code>~/.vellum-fe/keybinds.toml</code>:</p>
+<pre><code class="language-toml"># ═══════════════════════════════════════════════════════════
+# SPEECH SHORTCUTS
+# ═══════════════════════════════════════════════════════════
+
+# Quick say (most common)
+[keybinds."enter"]
+action = "submit_input"
+
+# Say with prompt
+[keybinds."ctrl+s"]
+macro = "say $input"
+
+# Whisper
+[keybinds."ctrl+w"]
+macro = "whisper $input"
+
+# Ask
+[keybinds."ctrl+a"]
+macro = "ask $input"
+
+# Exclaim
+[keybinds."ctrl+e"]
+macro = "exclaim $input"
+
+# ═══════════════════════════════════════════════════════════
+# ESP/THOUGHTS
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."ctrl+t"]
+macro = "think $input"
+
+[keybinds."ctrl+g"]
+macro = "think [group] $input"
+
+# ═══════════════════════════════════════════════════════════
+# COMMON EMOTES - Function Keys
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."f1"]
+macro = "smile"
+
+[keybinds."f2"]
+macro = "nod"
+
+[keybinds."f3"]
+macro = "bow"
+
+[keybinds."f4"]
+macro = "wave"
+
+[keybinds."f5"]
+macro = "laugh"
+
+[keybinds."f6"]
+macro = "grin"
+
+[keybinds."f7"]
+macro = "sigh"
+
+[keybinds."f8"]
+macro = "shrug"
+
+# Targeted emotes
+[keybinds."shift+f1"]
+macro = "smile $input"
+
+[keybinds."shift+f2"]
+macro = "nod $input"
+
+[keybinds."shift+f3"]
+macro = "bow $input"
+
+[keybinds."shift+f4"]
+macro = "wave $input"
+
+# ═══════════════════════════════════════════════════════════
+# ACTIONS AND POSES
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."ctrl+1"]
+macro = "act $input"
+
+[keybinds."ctrl+2"]
+macro = "pose $input"
+
+[keybinds."ctrl+3"]
+macro = "emote $input"
+
+# ═══════════════════════════════════════════════════════════
+# MOVEMENT (Unobtrusive)
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."numpad8"]
+macro = "go north"
+
+[keybinds."numpad2"]
+macro = "go south"
+
+[keybinds."numpad4"]
+macro = "go west"
+
+[keybinds."numpad6"]
+macro = "go east"
+
+[keybinds."numpad7"]
+macro = "go northwest"
+
+[keybinds."numpad9"]
+macro = "go northeast"
+
+[keybinds."numpad1"]
+macro = "go southwest"
+
+[keybinds."numpad3"]
+macro = "go southeast"
+
+[keybinds."numpad5"]
+macro = "go out"
+
+# ═══════════════════════════════════════════════════════════
+# LOOK AROUND
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."ctrl+l"]
+macro = "look"
+
+[keybinds."ctrl+shift+l"]
+macro = "look $input"
+
+# ═══════════════════════════════════════════════════════════
+# WINDOW NAVIGATION
+# ═══════════════════════════════════════════════════════════
+
+[keybinds."page_up"]
+action = "scroll_up"
+
+[keybinds."page_down"]
+action = "scroll_down"
+
+[keybinds."home"]
+action = "scroll_top"
+
+[keybinds."end"]
+action = "scroll_bottom"
+
+[keybinds."tab"]
+action = "next_widget"
+
+[keybinds."escape"]
+action = "focus_input"
+
+# Quick focus to specific windows
+[keybinds."alt+1"]
+action = "focus_widget"
+widget = "story"
+
+[keybinds."alt+2"]
+action = "focus_widget"
+widget = "speech"
+
+[keybinds."alt+3"]
+action = "focus_widget"
+widget = "thoughts"
+</code></pre>
+<h2 id="step-4-immersive-highlights"><a class="header" href="#step-4-immersive-highlights">Step 4: Immersive Highlights</a></h2>
+<p>Add to <code>~/.vellum-fe/highlights.toml</code>:</p>
+<pre><code class="language-toml"># ═══════════════════════════════════════════════════════════
+# SPEECH PATTERNS
+# ═══════════════════════════════════════════════════════════
+
+# Someone says
+[[highlights]]
+pattern = '(\\w+) says?, "'
+fg = "#87ceeb"
+
+# Someone whispers
+[[highlights]]
+pattern = "(\\w+) whispers,"
+fg = "#da70d6"
+
+# Someone asks
+[[highlights]]
+pattern = "(\\w+) asks?,"
+fg = "#87ceeb"
+
+# Someone exclaims
+[[highlights]]
+pattern = "(\\w+) exclaims?,"
+fg = "#ffa500"
+
+# Quoted speech
+[[highlights]]
+pattern = '"[^"]*"'
+fg = "#ffffff"
+bold = false
+
+# ═══════════════════════════════════════════════════════════
+# EMOTES AND ACTIONS
+# ═══════════════════════════════════════════════════════════
+
+# Emotes (verbs at start of line after name)
+[[highlights]]
+pattern = "^\\w+ (smiles|nods|bows|waves|laughs|grins|sighs|shrugs)"
+fg = "#b8860b"
+
+# ═══════════════════════════════════════════════════════════
+# ROOM ELEMENTS
+# ═══════════════════════════════════════════════════════════
+
+# Room name (usually in brackets or emphasized)
+[[highlights]]
+pattern = "^\\[.*\\]$"
+fg = "#ffd700"
+bold = true
+
+# Obvious exits
+[[highlights]]
+pattern = "Obvious (exits|paths):"
+fg = "#8b7355"
+
+# ═══════════════════════════════════════════════════════════
+# PLAYER NAMES
+# ═══════════════════════════════════════════════════════════
+
+# Capital names (likely players)
+[[highlights]]
+pattern = "\\b[A-Z][a-z]{2,}\\b"
+fg = "#ffffff"
+
+# ═══════════════════════════════════════════════════════════
+# OBJECTS AND ITEMS (Subtle)
+# ═══════════════════════════════════════════════════════════
+
+[[highlights]]
+pattern = "(a|an|the|some) [a-z]+ [a-z]+"
+fg = "#d4c5a9"
+
+# ═══════════════════════════════════════════════════════════
+# ESP/THOUGHTS
+# ═══════════════════════════════════════════════════════════
+
+[[highlights]]
+pattern = "\\[.*?\\]:"
+fg = "#98fb98"
+
+# ═══════════════════════════════════════════════════════════
+# TIME AND ATMOSPHERE
+# ═══════════════════════════════════════════════════════════
+
+[[highlights]]
+pattern = "(?i)(dawn|morning|noon|afternoon|dusk|evening|night|midnight)"
+fg = "#6495ed"
+italic = true
+
+[[highlights]]
+pattern = "(?i)(rain|snow|fog|mist|wind|storm|clear|cloudy)"
+fg = "#6495ed"
+italic = true
+</code></pre>
+<h2 id="step-5-social-command-list"><a class="header" href="#step-5-social-command-list">Step 5: Social Command List</a></h2>
+<p>Add to <code>~/.vellum-fe/cmdlist.toml</code>:</p>
+<pre><code class="language-toml"># ═══════════════════════════════════════════════════════════
+# PLAYERS - Social Context
+# ═══════════════════════════════════════════════════════════
+
+[[cmdlist]]
+category = "player"
+noun = "^[A-Z][a-z]+$"
+match_mode = "regex"
+commands = [
+    "look",
+    "---",
+    "Greet&gt;smile {noun},bow {noun},wave {noun},nod {noun}",
+    "Say&gt;say (to {noun}) {input},whisper {noun} {input},ask {noun} {input}",
+    "---",
+    "appraise"
+]
+priority = 50
+
+# ═══════════════════════════════════════════════════════════
+# ITEMS - RP Context
+# ═══════════════════════════════════════════════════════════
+
+[[cmdlist]]
+category = "item"
+noun = ".*"
+match_mode = "regex"
+commands = [
+    "look",
+    "get",
+    "touch",
+    "smell",
+    "taste",
+    "---",
+    "show:show my {noun} to {input}",
+    "give:give my {noun} to {input}"
+]
+priority = 10
+
+# ═══════════════════════════════════════════════════════════
+# FURNITURE AND SCENERY
+# ═══════════════════════════════════════════════════════════
+
+[[cmdlist]]
+category = "furniture"
+noun = "(?i)(chair|bench|stool|table|bed|couch|throne)"
+match_mode = "regex"
+commands = [
+    "look",
+    "sit on",
+    "stand",
+    "lean on"
+]
+priority = 30
+</code></pre>
+<h2 id="step-6-optional---minimal-status"><a class="header" href="#step-6-optional---minimal-status">Step 6: Optional - Minimal Status</a></h2>
+<p>If you want some status without breaking immersion:</p>
+<pre><code class="language-toml"># Add to layout.toml - minimalist status bar
+
+[[widgets]]
+type = "progress"
+name = "health"
+x = 0
+y = 56
+width = 50
+height = 2
+data_source = "vitals.health"
+color = "health"
+show_text = false
+border = false
+
+[[widgets]]
+type = "progress"
+name = "mana"
+x = 50
+y = 56
+width = 50
+height = 2
+data_source = "vitals.mana"
+color = "mana"
+show_text = false
+border = false
+</code></pre>
+<p>This adds thin, borderless bars between story and chat.</p>
+<h2 id="testing-your-setup"><a class="header" href="#testing-your-setup">Testing Your Setup</a></h2>
+<h3 id="roleplay-flow-test"><a class="header" href="#roleplay-flow-test">Roleplay Flow Test</a></h3>
+<ol>
+<li>
+<p><strong>Text Visibility</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Room descriptions fill story window</li>
+<li><input disabled="" type="checkbox"> Text is comfortable to read</li>
+<li><input disabled="" type="checkbox"> Scrolling works smoothly</li>
+</ul>
+</li>
+<li>
+<p><strong>Communication</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Speech appears in speech window</li>
+<li><input disabled="" type="checkbox"> ESP/thoughts in separate window</li>
+<li><input disabled="" type="checkbox"> Colors distinguish speakers</li>
+</ul>
+</li>
+<li>
+<p><strong>Quick Actions</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> F1-F8 emotes work</li>
+<li><input disabled="" type="checkbox"> Ctrl+S opens say prompt</li>
+<li><input disabled="" type="checkbox"> Movement numpad works</li>
+</ul>
+</li>
+<li>
+<p><strong>Immersion</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> UI doesn’t distract</li>
+<li><input disabled="" type="checkbox"> Colors are comfortable</li>
+<li><input disabled="" type="checkbox"> Layout feels spacious</li>
+</ul>
+</li>
+</ol>
+<h3 id="social-interaction-test"><a class="header" href="#social-interaction-test">Social Interaction Test</a></h3>
+<ol>
+<li>Go to a social area (town square)</li>
+<li>Use F1 to smile</li>
+<li>Use Ctrl+S to say something</li>
+<li>Check speech appears in correct window</li>
+<li>Verify ESP goes to thoughts window</li>
+</ol>
+<h2 id="customization-ideas"><a class="header" href="#customization-ideas">Customization Ideas</a></h2>
+<h3 id="faction-based-themes"><a class="header" href="#faction-based-themes">Faction-Based Themes</a></h3>
+<p>Create themes matching your character’s background:</p>
+<p><strong>Elven Theme</strong>:</p>
+<pre><code class="language-toml">background = "#0a1510"
+text = "#c0d890"
+border = "#2a4530"
+</code></pre>
+<p><strong>Dark Theme</strong>:</p>
+<pre><code class="language-toml">background = "#0d0d0d"
+text = "#b0b0b0"
+border = "#1a1a1a"
+</code></pre>
+<h3 id="event-specific-layouts"><a class="header" href="#event-specific-layouts">Event-Specific Layouts</a></h3>
+<p>For large events, expand thoughts window:</p>
+<pre><code class="language-toml"># Event layout - larger ESP
+[[widgets]]
+type = "text"
+name = "thoughts"
+x = 0
+y = 60
+width = 100
+height = 30
+streams = ["thoughts", "group"]
+</code></pre>
+<h3 id="character-macros"><a class="header" href="#character-macros">Character Macros</a></h3>
+<p>Pre-written character expressions:</p>
+<pre><code class="language-toml">[keybinds."ctrl+shift+1"]
+macro = "emote adjusts their cloak with practiced ease"
+
+[keybinds."ctrl+shift+2"]
+macro = "emote glances around thoughtfully"
+
+[keybinds."ctrl+shift+3"]
+macro = "emote inclines their head in greeting"
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="text-too-dense"><a class="header" href="#text-too-dense">Text Too Dense</a></h3>
+<p>Increase padding:</p>
+<pre><code class="language-toml">padding = 2
+</code></pre>
+<p>Or add line spacing if supported.</p>
+<h3 id="cant-see-whos-speaking"><a class="header" href="#cant-see-whos-speaking">Can’t See Who’s Speaking</a></h3>
+<p>Adjust highlight patterns to catch speaker names before quotes.</p>
+<h3 id="esp-flooding-main-window"><a class="header" href="#esp-flooding-main-window">ESP Flooding Main Window</a></h3>
+<p>Verify stream separation:</p>
+<ul>
+<li>Story: <code>["main", "room"]</code></li>
+<li>Speech: <code>["speech", "whisper"]</code></li>
+<li>Thoughts: <code>["thoughts", "group"]</code></li>
+</ul>
+<h3 id="emotes-going-to-wrong-window"><a class="header" href="#emotes-going-to-wrong-window">Emotes Going to Wrong Window</a></h3>
+<p>Emotes typically go to “main” stream. If you want them separate, check parser configuration.</p>
+<h2 id="see-also"><a class="header" href="#see-also">See Also</a></h2>
+<ul>
+<li><a href="../widgets/text-windows.html">Text Windows</a></li>
+<li><a href="../customization/creating-themes.html">Creating Themes</a></li>
+<li><a href="../customization/highlight-patterns.html">Highlight Patterns</a></li>
+<li><a href="../automation/macros.html">Macros</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/merchant-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/minimal-layout.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/merchant-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/minimal-layout.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-c2a407aa.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

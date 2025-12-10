@@ -1,0 +1,4 @@
+<streamWindow id="main" title="Story" location="center" target="drop"/>
+<clearStream id="thoughts"/><pushStream id="thoughts"/>Thoughts line<popStream/>
+<clearStream id="speech"/><pushStream id="speech"/>Speech line<popStream/>
+<prompt time="1759294806">&gt;</prompt>

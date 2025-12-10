@@ -1,0 +1,16 @@
+<castTime value='1759294804'/>A haze of black mist gathers around you as you prepare Camouflage...
+<spell>Camouflage (608)</spell>
+<prompt time="1759294804">C&gt;</prompt>
+<indicator id="IconHIDDEN" visible="y"/>
+<dialogData id='minivitals'>
+  <progressBar id='mana' value='28' text='mana 136/481' left='25%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>
+You swing your sword at the orc!
+<roundTime value='5'/>
+<prompt time="1759294810">R&gt;</prompt>
+<dialogData id='minivitals'>
+  <progressBar id='health' value='85' text='health 280/326' left='0%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>
+<dialogData id='minivitals'>
+  <progressBar id='stamina' value='95' text='stamina 223/235' left='50%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>

@@ -1,0 +1,3 @@
+<streamWindow id="Spells" title="Spells" location="center" target="drop"/>
+<clearStream id="Spells"/><pushStream id="Spells"/>Spell listing<popStream/>
+<prompt time="1759294815">&gt;</prompt>

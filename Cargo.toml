@@ -1,66 +1,69 @@
 [package]
 name = "vellum-fe"
-version = "0.1.9-beta.5"
+version = "0.1.0"
 edition = "2021"
-authors = ["VellumFE Contributors"]
-description = "A modern, high-performance terminal frontend for GemStone IV"
-license = "MIT OR Apache-2.0"
-default-run = "vellum-fe"
+authors = ["Nisugi"]
+description = "Modern, high-performance multi-frontend (TUI/GUI) client for GemStone IV"
+
+[[bin]]
+name = "vellum-fe"
+path = "src/main.rs"
 
 [dependencies]
-# TUI framework
+# Core async runtime
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+# Terminal UI
 ratatui = "0.29"
-# Using PR #1013 for numpad key support on Windows
 crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"] }
-# Text input widget
 tui-textarea = "0.7"
 
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+# GUI (future)
+# egui = "0.29"
+# eframe = "0.29"
 
-# XML parsing
-quick-xml = "0.37"
-
-# Configuration
-serde = { version = "1.0", features = ["derive"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
-serde_json = "1.0"
+dirs = "5"
 
 # Text processing
-regex = "1.11"
-aho-corasick = "1.1"
-unicode-width = "0.2"
+regex = "1"
+aho-corasick = "1"  # Fast literal string matching for highlights
+quick-xml = "0.36"  # XML parsing
+include_dir = "0.7"  # Embed default config files
+rpassword = "7"
+openssl = "0.10"
+vcpkg = "0.2"
 
-# Utilities
-anyhow = "1.0"
-thiserror = "2.0"
-dirs = "5.0"
-clap = { version = "4.5", features = ["derive"] }
-include_dir = "0.7"
-chrono = "0.4"
+# Sound (optional)
+rodio = { version = "0.19", optional = true }
+
+# TTS - Text-to-speech (always included)
+tts = "0.26"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Signal handling
-ctrlc = "3.4"
+# CLI
+clap = { version = "4", features = ["derive"] }
 
-# Random number generation
-rand = "0.8"
+# Time handling
+chrono = "0.4"
 
-# Audio playback
-rodio = "0.19"
+# Clipboard
+arboard = "3"
+base64 = "0.22.1"
+sysinfo = "0.30"
 
-# Clipboard support
-arboard = "3.4"
+[features]
+default = ["sound"]
+sound = ["dep:rodio"]
 
-# Open URLs in default browser
-open = "5.0"
-
-# Platform-specific dependencies for terminal position queries
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["wincon", "winnt", "winuser", "handleapi"] }
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["poll"] }
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

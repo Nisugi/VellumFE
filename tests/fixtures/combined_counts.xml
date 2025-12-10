@@ -1,0 +1,4 @@
+<clearStream id="targetcount"/><pushStream id="targetcount"/>[01]<popStream/>
+<clearStream id="playercount"/><pushStream id="playercount"/>[02]<popStream/>
+<clearStream id="playerlist"/><pushStream id="playerlist"/>Alice<popStream/>
+<clearStream id="combat"/><pushStream id="combat"/>An orc appears.<popStream/>

@@ -1,0 +1,11 @@
+<nav rm="7503441"/>
+<streamWindow id="room" title="Room" subtitle=" - Angargreft, Pits of the Dead" location="center" target="drop" ifClosed='' resident='true'/>
+<clearStream id="room"/>
+<pushStream id="room"/>
+<compDef id='room desc'>Cracks spiderweb across the uneven stone of the ceiling.</compDef>
+<compDef id='room objs'></compDef>
+<compDef id='room players'></compDef>
+<compDef id='room exits'>Obvious exits: <d>south</d>, <d>west</d></compDef>
+<popStream id="room"/>
+<compass><dir value="s"/><dir value="w"/></compass>
+<prompt time="1759294802">&gt;</prompt>

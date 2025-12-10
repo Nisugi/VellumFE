@@ -1,0 +1,2 @@
+<dialogData id='Cooldowns'><progressBar id='c123' value='10' text='Sigil of Escape' time='00:01:00'/></dialogData>
+<dialogData id='Cooldowns' clear='t'></dialogData>

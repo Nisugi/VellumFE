@@ -1,0 +1,25 @@
+<indicator id="IconKNEELING" visible="n"/>
+<indicator id="IconPRONE" visible="n"/>
+<indicator id="IconSITTING" visible="n"/>
+<indicator id="IconSTANDING" visible="y"/>
+<indicator id="IconSTUNNED" visible="n"/>
+<indicator id="IconHIDDEN" visible="n"/>
+<indicator id="IconINVISIBLE" visible="n"/>
+<indicator id="IconDEAD" visible="n"/>
+<indicator id="IconWEBBED" visible="n"/>
+<indicator id="IconJOINED" visible="n"/>
+<spell>None</spell>
+<left exist="535703555" noun="sword">slim short sword</left>
+<right exist="535703554" noun="baselard">gleaming steel baselard</right>
+<dialogData id='minivitals'>
+  <progressBar id='health' value='99' text='health 325/326' left='0%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>
+<dialogData id='minivitals'>
+  <progressBar id='mana' value='100' text='mana 481/481' left='25%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>
+<dialogData id='minivitals'>
+  <progressBar id='stamina' value='100' text='stamina 235/235' left='50%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>
+<dialogData id='minivitals'>
+  <progressBar id='spirit' value='100' text='spirit 10/10' left='75%' customText='t' top='0%' width='25%' height='100%'/>
+</dialogData>

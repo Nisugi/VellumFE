@@ -1,0 +1,3 @@
+<clearStream id='speech'/><pushStream id='speech'/>speech line 1<popStream/>
+<clearStream id='trash'/><pushStream id='trash'/>trash line 1<popStream/>
+<prompt time='1759294807'>&gt;</prompt>

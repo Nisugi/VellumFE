@@ -1,31 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/shawn/.profanity-rs/**)",
-      "Read(//c/Gemstone/ProfanityFE-master/hilite/**)",
-      "Read(//c/Gemstone/ProfanityFE-master/ui/**)",
+      "Bash(cargo test:*)",
       "Bash(cargo build:*)",
-      "Bash(tasklist)",
-      "Bash(findstr:*)",
-      "Bash(git checkout:*)",
-      "Bash(taskkill:*)",
-      "Bash(dir \"C:\\Gemstone\\profanity-next\")",
-      "Bash(del \"C:\\Users\\shawn\\.profanity-rs\\debug.log\")",
-      "Read(//c/Gemstone/ProfanityFE-master/**)",
-      "Read(//c/Gemstone/Lich5/lib/common/**)",
-      "Bash(dir \"C:\\Ruby4Lich5\\Lich5\\logs\\GSIV-Zoleta\\2025\\10\" /B /O-D)",
-      "Read(//c/Ruby4Lich5/Lich5/logs/GSIV-Zoleta/2025/10/**)",
-      "Bash(cat:*)",
-      "Read(//c/Ruby4Lich5/Lich5/scripts/**)",
-      "Read(//c/Users/shawn/.vellum-fe/**)",
-      "Read(//c/Gemstone/SIMU/Wrayth/settings/GS4/**)",
-      "Bash(dir:*)",
-      "Bash(powershell:*)",
-      "Bash(del \"c:\\Gemstone\\VellumFE\\src\\ui\\window_editor_v3.rs\")",
       "Bash(cargo check:*)",
-      "Bash(1)"
-    ],
-    "deny": [],
-    "ask": []
+      "Bash(powershell -Command \"(Get-Content ''c:\\Gemstone\\Projects\\vellum-fe\\src\\main.rs'').Count\")",
+      "Bash(grep:*)",
+      "Bash(\"c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\input_handlers_temp.rs\")",
+      "Bash(powershell -Command \"(Get-Content ''c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\mod.rs'').Count\")"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "context7"
+  ],
+  "_meta": {
+    "description": "User-specific Claude Code settings (gitignored - never commit)",
+    "created_at": "2025-11-21T12:45:16.888233Z",
+    "note": "Edit this file to customize your local development environment"
   }
 }

@@ -1,0 +1,2 @@
+<clearStream id="playercount"/><pushStream id="playercount"/>[02]<popStream/>
+<clearStream id="playerlist"/><pushStream id="playerlist"/><b>Alice</b>, Bob<popStream/>

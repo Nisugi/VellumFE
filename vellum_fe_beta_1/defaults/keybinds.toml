@@ -1,0 +1,106 @@
+# VellumFE Keybind Configuration
+# This file contains all keyboard bindings
+# Editable via .addkeybind/.keybinds commands or directly in this file
+#
+# TERMINAL COMPATIBILITY NOTE:
+# If backspace doesn't work, your terminal may be sending "delete" instead.
+# Try changing the line below from:
+#   backspace = "cursor_backspace"
+# to:
+#   delete = "cursor_backspace"
+#
+# To find what key code your terminal sends, run with RUST_LOG=debug
+# and check ~/.vellum-fe/debug.log for "KEY EVENT" lines
+#
+# Available actions:
+#   send_command, cursor_left, cursor_right, cursor_word_left, cursor_word_right,
+#   cursor_home, cursor_end, cursor_backspace, cursor_delete,
+#   previous_command, next_command, send_last_command, send_second_last_command,
+#   switch_current_window, scroll_current_window_up_one, scroll_current_window_down_one,
+#   scroll_current_window_up_page, scroll_current_window_down_page,
+#   start_search, next_search_match, prev_search_match, clear_search,
+#   toggle_performance_stats
+
+# Basic command input navigation
+right = "cursor_right"
+left = "cursor_left"
+up = "previous_command"
+down = "next_command"
+home = "cursor_home"
+end = "cursor_end"
+backspace = "cursor_backspace"  # Change to "delete" if backspace doesn't work
+delete = "cursor_delete"
+enter = "send_command"
+tab = "switch_current_window"
+
+# Word movement
+"ctrl+left" = "cursor_word_left"
+"ctrl+right" = "cursor_word_right"
+"ctrl+w" = "cursor_delete"  # Delete word
+
+# Command history shortcuts
+"ctrl+r" = "send_last_command"  # Repeat last command
+"ctrl+t" = "send_second_last_command"  # Repeat second-to-last command
+
+# Window scrolling
+page_up = "scroll_current_window_up_page"
+page_down = "scroll_current_window_down_page"
+"alt+page_up" = "scroll_current_window_up_one"
+"alt+page_down" = "scroll_current_window_down_one"
+
+# Search
+"ctrl+f" = "start_search"
+f3 = "next_search_match"  # Find next
+"shift+f3" = "prev_search_match"  # Find previous
+esc = "clear_search"  # Exit search mode
+"ctrl+page_up" = "prev_search_match"  # Alternative binding
+"ctrl+page_down" = "next_search_match"  # Alternative binding
+
+# Performance stats
+f12 = "toggle_performance_stats"
+
+# Numpad movement macros
+[num_1]
+macro_text = "sw\r"
+
+[num_2]
+macro_text = "s\r"
+
+[num_3]
+macro_text = "se\r"
+
+[num_4]
+macro_text = "w\r"
+
+[num_5]
+macro_text = "out\r"
+
+[num_6]
+macro_text = "e\r"
+
+[num_7]
+macro_text = "nw\r"
+
+[num_8]
+macro_text = "n\r"
+
+[num_9]
+macro_text = "ne\r"
+
+[num_0]
+macro_text = "down\r"
+
+["num_."]
+macro_text = "up\r"
+
+["num_+"]
+macro_text = "look\r"
+
+["num_-"]
+macro_text = "info\r"
+
+["num_*"]
+macro_text = "exp\r"
+
+["num_/"]
+macro_text = "health\r"

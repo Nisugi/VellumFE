@@ -1,0 +1,7 @@
+<clearStream id="room"/><pushStream id="room"/>
+<compDef id="room desc">Room description here.</compDef>
+<compDef id="room objs">You also see a rat.</compDef>
+<compDef id="room players">PlayerOne</compDef>
+<compDef id="room exits">Obvious exits: north</compDef>
+<popStream id="room"/>
+<prompt time="1759294808">&gt;</prompt>

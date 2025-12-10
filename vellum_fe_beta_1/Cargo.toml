@@ -1,0 +1,66 @@
+[package]
+name = "vellum-fe"
+version = "0.1.9-beta.5"
+edition = "2021"
+authors = ["VellumFE Contributors"]
+description = "A modern, high-performance terminal frontend for GemStone IV"
+license = "MIT OR Apache-2.0"
+default-run = "vellum-fe"
+
+[dependencies]
+# TUI framework
+ratatui = "0.29"
+# Using PR #1013 for numpad key support on Windows
+crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"] }
+# Text input widget
+tui-textarea = "0.7"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# XML parsing
+quick-xml = "0.37"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+serde_json = "1.0"
+
+# Text processing
+regex = "1.11"
+aho-corasick = "1.1"
+unicode-width = "0.2"
+
+# Utilities
+anyhow = "1.0"
+thiserror = "2.0"
+dirs = "5.0"
+clap = { version = "4.5", features = ["derive"] }
+include_dir = "0.7"
+chrono = "0.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Signal handling
+ctrlc = "3.4"
+
+# Random number generation
+rand = "0.8"
+
+# Audio playback
+rodio = "0.19"
+
+# Clipboard support
+arboard = "3.4"
+
+# Open URLs in default browser
+open = "5.0"
+
+# Platform-specific dependencies for terminal position queries
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["wincon", "winnt", "winuser", "handleapi"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["poll"] }

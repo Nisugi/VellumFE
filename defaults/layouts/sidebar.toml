@@ -1,139 +1,304 @@
-terminal_width = 102
-terminal_height = 54
+terminal_width = 122
+terminal_height = 64
 base_layout = "sidebar"
+theme = "solarized-dark"
 
 [[windows]]
-name = "main"
 widget_type = "text"
-streams = ["main"]
-row = 0
-col = 19
-rows = 43
-cols = 85
-buffer_size = 10000
+name = "main"
+row = 10
+col = 20
+rows = 40
+cols = 102
 show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
 border_color = "-"
+show_title = false
+title_position = "top-left"
 background_color = "-"
-bar_color = "-"
-bar_background_color = "-"
-transparent_background = true
-locked = false
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
 text_color = "-"
-compass_active_color = "-"
-compass_inactive_color = "-"
-numbers_only = false
+transparent_background = false
+locked = false
+visible = true
+streams = ["main"]
+buffer_size = 10000
+wordwrap = true
+show_timestamps = false
 
 [[windows]]
-name = "command_input"
 widget_type = "command_input"
-streams = []
-row = 53
-col = 19
+name = "command_input"
+row = 63
+col = 20
 rows = 1
-cols = 83
-buffer_size = 100
-show_border = false
+cols = 102
+show_border = true
 border_style = "single"
-border_color = "#808080"
-content_align = "center"
-background_color = "#350505"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 3
-min_cols = 20
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "compass"
-widget_type = "compass"
-streams = []
-row = 51
-col = 11
-rows = 3
-cols = 7
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Exits"
-content_align = "center"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title_position = "top-left"
 background_color = "-"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-max_rows = 3
-min_cols = 7
-max_cols = 7
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "injuries"
-widget_type = "injury_doll"
-streams = []
-row = 48
-col = 0
-rows = 6
-cols = 8
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Injuries"
-content_align = "center-left"
-background_color = "-"
-bar_color = "-"
-bar_background_color = "-"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
 text_color = "-"
-compass_active_color = "-"
-compass_inactive_color = "-"
-min_rows = 6
-max_rows = 6
-min_cols = 8
-max_cols = 8
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+visible = true
+prompt_icon = "#"
+
+[[windows]]
+widget_type = "tabbedtext"
+name = "chat"
+row = 51
+col = 20
+rows = 12
+cols = 102
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Chat"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+visible = true
+buffer_size = 5000
+tab_bar_position = "top"
+tab_separator = true
+
+[[windows.tabs]]
+name = "Thoughts"
+streams = ["thoughts"]
+show_timestamps = true
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Speech"
+streams = ["speech"]
+show_timestamps = true
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Announcements"
+streams = ["announcements"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Loot"
+streams = ["loot"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Ambients"
+streams = ["ambients"]
+show_timestamps = true
+ignore_activity = true
+
+[[windows]]
+widget_type = "text"
+name = "speech"
+row = 41
+col = 35
+rows = 10
+cols = 40
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Speech"
+title_position = "top-left"
+background_color = "-"
+text_color = "#FFD700"
+transparent_background = false
+locked = false
+visible = false
+streams = ["speech"]
+buffer_size = 1000
+wordwrap = true
+show_timestamps = false
+
+[[windows]]
+widget_type = "progress"
+name = "health"
+row = 55
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Health"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "health"
+label = "Health"
+color = "#6e0202"
 numbers_only = false
-injury_default_color = "#333333"
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "mana"
+row = 54
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Mana"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "mana"
+label = "Mana"
+color = "#08086d"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "stamina"
+row = 53
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Stamina"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "stamina"
+label = "Stamina"
+color = "#bd7b00"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "spirit"
+row = 52
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Spirit"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "spirit"
+label = "Spirit"
+color = "#6e727c"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "injury_doll"
+name = "injuries"
+row = 57
+col = 0
+rows = 7
+cols = 10
+show_border = true
+border_style = "single"
+border_sides = [
+    "bottom",
+    "left",
+]
+border_color = "-"
+show_title = false
+title = "Injuries"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 7
+max_rows = 7
+min_cols = 10
+max_cols = 10
+visible = true
+content_align = "top-right"
 injury1_color = "#aa5500"
 injury2_color = "#ff8800"
 injury3_color = "#ff0000"
@@ -142,833 +307,617 @@ scar2_color = "#777777"
 scar3_color = "#555555"
 
 [[windows]]
-name = "casttime"
-widget_type = "countdown"
-streams = []
-row = 49
-col = 11
-rows = 1
-cols = 6
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Cast"
-content_align = "center"
-background_color = "-"
-bar_color = "#0000ff"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 6
-max_cols = 6
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "stuntime"
-widget_type = "countdown"
-streams = []
-row = 48
-col = 11
-rows = 1
-cols = 6
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Stun"
-content_align = "center"
-background_color = "-"
-bar_color = "#ffff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 6
-max_cols = 6
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "roundtime"
-widget_type = "countdown"
-streams = []
-row = 50
-col = 11
-rows = 1
-cols = 7
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "RT"
-content_align = "center"
-background_color = "#000000"
-bar_color = "#ff0000"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 7
-max_cols = 7
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "spellhand"
-widget_type = "spellhand"
-streams = []
-row = 52
-col = 74
-rows = 1
-cols = 28
-buffer_size = 100
+widget_type = "compass"
+name = "compass"
+row = 60
+col = 10
+rows = 4
+cols = 10
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_sides = [
+    "bottom",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Compass"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 4
+max_rows = 4
+min_cols = 10
+max_cols = 10
+visible = true
+content_align = "bottom-center"
+active_color = "#00FF00"
+inactive_color = "#333333"
+
+[[windows]]
+widget_type = "dashboard"
+name = "dashboard"
+row = 56
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
 border_sides = [
     "left",
     "right",
 ]
-title = "Spell"
-content_align = "center"
-background_color = "-"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-hand_icon = "S:"
-text_color = "#666666"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "lefthand"
-widget_type = "lefthand"
-streams = []
-row = 52
-col = 19
-rows = 1
-cols = 27
-buffer_size = 100
-show_border = true
-border_style = "single"
-border_color = "#808080"
-border_sides = ["left"]
-title = "Left Hand"
-content_align = "center"
-background_color = "-"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-hand_icon = "L:"
-text_color = "#909090"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "righthand"
-widget_type = "righthand"
-streams = []
-row = 52
-col = 46
-rows = 1
-cols = 28
-buffer_size = 100
-show_border = true
-border_style = "single"
-border_color = "#808080"
-border_sides = ["left"]
-title = "Right Hand"
-content_align = "center"
-background_color = "-"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-hand_icon = "R:"
-text_color = "#666666"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "health"
-widget_type = "progress"
-streams = []
-row = 47
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Health"
-content_align = "center"
-background_color = "#000000"
-bar_color = "#6e0202"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "mana"
-widget_type = "progress"
-streams = []
-row = 46
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Mana"
-content_align = "center"
-background_color = "-"
-bar_color = "#08086d"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "stamina"
-widget_type = "progress"
-streams = []
-row = 45
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Stamina"
-content_align = "center"
-background_color = "-"
-bar_color = "#bd7b00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "spirit"
-widget_type = "progress"
-streams = []
-row = 44
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Spirit"
-content_align = "center"
-background_color = "-"
-bar_color = "#6e727c"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "encumlevel"
-widget_type = "progress"
-streams = []
-row = 42
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Encumbrance"
-content_align = "center"
-background_color = "-"
-bar_color = "#006400"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "pbarStance"
-widget_type = "progress"
-streams = []
-row = 43
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Stance"
-content_align = "center"
-background_color = "#000000"
-bar_color = "#000080"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "mindState"
-widget_type = "progress"
-streams = []
-row = 41
-col = 0
-rows = 1
-cols = 19
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
-title = "Mind"
-content_align = "center"
-background_color = "-"
-bar_color = "#008b8b"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 1
-max_rows = 1
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "status_dashboard"
-widget_type = "dashboard"
-streams = []
-row = 49
-col = 9
-rows = 6
-cols = 1
-buffer_size = 100
-show_border = false
-border_style = "single"
-border_color = "#808080"
+border_color = "-"
+show_title = false
 title = "Status"
-content_align = "center"
+title_position = "top-left"
 background_color = "-"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
+text_color = "-"
+transparent_background = false
 locked = false
-dashboard_layout = "vertical"
-dashboard_spacing = 0
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-numbers_only = false
-effect_default_color = "#ffffff"
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+dashboard_layout = "horizontal"
+dashboard_spacing = 1
+dashboard_hide_inactive = true
 
 [[windows.dashboard_indicators]]
 id = "poisoned"
-icon = ""
+icon = "?"
 colors = [
     "#000000",
     "#00ff00",
 ]
 
-[[windows.dashboard_indicators]]
-id = "diseased"
-icon = ""
-colors = [
-    "#000000",
-    "#8b4513",
-]
-
-[[windows.dashboard_indicators]]
-id = "bleeding"
-icon = ""
-colors = [
-    "#000000",
-    "#ff0000",
-]
-
-[[windows.dashboard_indicators]]
-id = "stunned"
-icon = ""
-colors = [
-    "#000000",
-    "#ffff00",
-]
-
-[[windows.dashboard_indicators]]
-id = "webbed"
-icon = "󰯊"
-colors = [
-    "#000000",
-    "#cccccc",
-]
-
 [[windows]]
-name = "players"
-widget_type = "entity"
-streams = [
-    "playercount",
-    "playerlist",
-]
-row = 36
-col = 0
-rows = 3
-cols = 19
-buffer_size = 100
+widget_type = "countdown"
+name = "roundtime"
+row = 58
+col = 10
+rows = 1
+cols = 10
 show_border = true
 border_style = "single"
-border_color = "#808080"
-title = "Players"
-content_align = "top-left"
-background_color = "#000000"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "targets"
-widget_type = "entity"
-streams = [
-    "targetcount",
-    "combat",
-]
-row = 31
-col = 0
-rows = 5
-cols = 19
-buffer_size = 100
-show_border = true
-border_style = "single"
-border_color = "#808080"
-title = "Targets"
-content_align = "top-left"
-background_color = "#000000"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
-locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows]]
-name = "debuffs"
-widget_type = "active_effects"
-streams = []
-row = 26
-col = 0
-rows = 5
-cols = 19
-buffer_size = 100
-show_border = true
-border_style = "single"
-border_color = "#808080"
-title = "Debuffs"
-content_align = "top-left"
+border_sides = ["right"]
+border_color = "-"
+show_title = false
+title = "RT"
+title_position = "top-left"
 background_color = "-"
-bar_color = "#FF4040"
-bar_background_color = "#333333"
-transparent_background = true
+text_color = "#FF0000"
+transparent_background = false
 locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-visible_count = 3
-effect_category = "Debuffs"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+visible = true
+id = "roundtime"
+icon = ""
+color = "#FF0000"
 
 [[windows]]
-name = "cooldowns"
-widget_type = "active_effects"
-streams = []
-row = 21
-col = 0
-rows = 5
-cols = 19
-buffer_size = 100
+widget_type = "countdown"
+name = "casttime"
+row = 59
+col = 10
+rows = 1
+cols = 10
 show_border = true
 border_style = "single"
-border_color = "#808080"
-title = "Cooldowns"
-content_align = "top-left"
+border_sides = ["right"]
+border_color = "-"
+show_title = false
+title = "Cast"
+title_position = "top-left"
 background_color = "-"
-bar_color = "#FFB040"
-bar_background_color = "#333333"
-transparent_background = true
+text_color = "#00BFFF"
+transparent_background = false
 locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-visible_count = 3
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+visible = true
+id = "casttime"
+icon = ""
+color = "#00BFFF"
 
 [[windows]]
-name = "buffs"
-widget_type = "active_effects"
-streams = []
-row = 13
-col = 0
-rows = 8
-cols = 19
-buffer_size = 100
+widget_type = "countdown"
+name = "stuntime"
+row = 57
+col = 10
+rows = 1
+cols = 10
 show_border = true
 border_style = "single"
-border_color = "#808080"
-title = "Buffs"
-content_align = "top-left"
-background_color = "#"
-bar_color = "#40FF40"
-bar_background_color = "#333333"
-transparent_background = true
+border_sides = ["right"]
+border_color = "-"
+show_title = false
+title = "Stun"
+title_position = "top-left"
+background_color = "-"
+text_color = "#FFFF00"
+transparent_background = false
 locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-visible_count = 5
-effect_category = "Buffs"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
+min_rows = 1
+max_rows = 1
+min_cols = 10
+max_cols = 10
+visible = true
+id = "stuntime"
+icon = ""
+color = "#FFFF00"
+
+[[windows]]
+widget_type = "progress"
+name = "pbarStance"
+row = 51
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Stance"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "pbarStance"
+label = "Stance"
+color = "#000080"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "encumlevel"
+row = 50
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Encumbrance"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "encumlevel"
+label = "Encumbrance"
+color = "#006400"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "mindState"
+row = 49
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Mind"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+id = "mindState"
+label = "Mind"
+color = "#008b8b"
+numbers_only = false
+current_only = false
+
+[[windows]]
+widget_type = "progress"
+name = "lblBPs"
+row = 47
+col = 0
+rows = 2
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Status"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
 min_rows = 2
-min_cols = 19
-max_cols = 19
+max_rows = 2
+min_cols = 20
+max_cols = 20
+visible = true
+id = "lblBPs"
+label = "Blood Points"
+color = "#451349"
 numbers_only = false
-effect_default_color = "#ffffff"
+current_only = false
 
 [[windows]]
-name = "active_spells"
+widget_type = "room"
+name = "room"
+row = 0
+col = 20
+rows = 10
+cols = 102
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Room"
+title_position = "bottom-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 5
+visible = true
+buffer_size = 0
+show_desc = true
+show_objs = true
+show_players = true
+show_exits = true
+show_name = false
+
+[[windows]]
+widget_type = "players"
+name = "players"
+row = 46
+col = 0
+rows = 1
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Players"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+max_cols = 20
+visible = true
+entity_id = "playercount"
+
+[[windows]]
+widget_type = "targets"
+name = "targets"
+row = 39
+col = 0
+rows = 7
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Targets"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 4
+min_cols = 20
+max_cols = 20
+visible = true
+entity_id = "targetcount"
+
+[[windows]]
 widget_type = "active_effects"
-streams = []
+name = "debuffs"
+row = 34
+col = 0
+rows = 5
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Debuffs"
+title_position = "top-left"
+background_color = "-"
+text_color = "#FF0000"
+transparent_background = false
+locked = false
+min_rows = 5
+max_rows = 5
+min_cols = 20
+max_cols = 20
+visible = true
+category = "Debuffs"
+
+[[windows]]
+widget_type = "active_effects"
+name = "cooldowns"
+row = 29
+col = 0
+rows = 5
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Cooldowns"
+title_position = "top-left"
+background_color = "-"
+text_color = "#FFA500"
+transparent_background = false
+locked = false
+min_rows = 5
+max_rows = 5
+min_cols = 20
+max_cols = 20
+visible = true
+category = "Cooldowns"
+
+[[windows]]
+widget_type = "active_effects"
+name = "buffs"
+row = 19
+col = 0
+rows = 10
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Buffs"
+title_position = "top-left"
+background_color = "-"
+text_color = "#00FF00"
+transparent_background = false
+locked = false
+min_rows = 10
+max_rows = 10
+min_cols = 20
+max_cols = 20
+visible = true
+category = "Buffs"
+
+[[windows]]
+widget_type = "hand"
+name = "left"
+row = 50
+col = 20
+rows = 1
+cols = 34
+show_border = true
+border_style = "single"
+border_sides = ["left"]
+border_color = "-"
+show_title = false
+title = "Left Hand"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+visible = true
+icon = "L:"
+
+[[windows]]
+widget_type = "hand"
+name = "right"
+row = 50
+col = 54
+rows = 1
+cols = 34
+show_border = true
+border_style = "single"
+border_sides = ["left"]
+border_color = "-"
+show_title = false
+title = "Right Hand"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+visible = true
+icon = "R:"
+
+[[windows]]
+widget_type = "hand"
+name = "spell"
+row = 50
+col = 88
+rows = 1
+cols = 34
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Spell"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+visible = true
+icon = "S:"
+
+[[windows]]
+widget_type = "active_effects"
+name = "active_spells"
+row = 9
+col = 0
+rows = 10
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Active Spells"
+title_position = "top-left"
+background_color = "-"
+text_color = "#00BFFF"
+transparent_background = false
+locked = false
+min_cols = 20
+max_cols = 20
+visible = true
+category = "ActiveSpells"
+
+[[windows]]
+widget_type = "text"
+name = "bounty"
 row = 0
 col = 0
-rows = 13
-cols = 19
-buffer_size = 100
+rows = 9
+cols = 20
 show_border = true
 border_style = "single"
-border_color = "#808080"
-title = "Active Spells"
-content_align = "top-left"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Bounties"
+title_position = "top-left"
 background_color = "-"
-bar_color = "#4080FF"
-bar_background_color = "#333333"
-transparent_background = true
+text_color = "#FFD700"
+transparent_background = false
 locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "ActiveSpells"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-min_rows = 3
-min_cols = 19
-max_cols = 19
-numbers_only = false
-effect_default_color = "#ffffff"
+min_cols = 20
+max_cols = 20
+visible = true
+streams = ["bounty"]
+buffer_size = 0
+wordwrap = true
+show_timestamps = false
 
 [[windows]]
-name = "chat"
-widget_type = "tabbed"
-streams = []
-row = 43
-col = 19
-rows = 9
-cols = 85
-buffer_size = 5000
-show_border = false
-border_color = "#808080"
-content_align = "top-left"
-background_color = "#000000"
-bar_color = "#00ff00"
-bar_background_color = "#333333"
-transparent_background = true
+widget_type = "countdown"
+name = "countdown_custom"
+row = 4
+col = 0
+rows = 3
+cols = 20
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Custom"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
 locked = false
-dashboard_layout = "horizontal"
-dashboard_hide_inactive = false
-effect_category = "Cooldowns"
-tab_bar_position = "top"
-tab_active_color = "-"
-tab_inactive_color = "-"
-tab_unread_color = "-"
-tab_unread_prefix = "* "
-text_color = "#ffffff"
-compass_active_color = "#00ff00"
-compass_inactive_color = "#333333"
-numbers_only = false
-effect_default_color = "#ffffff"
-
-[[windows.tabs]]
-name = "Thoughts"
-stream = "thoughts"
-
-[[windows.tabs]]
-name = "Speech"
-stream = "speech"
-
-[[windows.tabs]]
-name = "Announcements"
-stream = "announcements"
-
-[[windows.tabs]]
-name = "Loot"
-stream = "loot"
-
-[[windows.tabs]]
-name = "Ambients"
-stream = "ambients"
+visible = false
+id = "roundtime"
+icon = ""

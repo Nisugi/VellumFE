@@ -1,0 +1,19 @@
+# VellumFE Highlight Configuration
+# This file contains all highlight patterns
+# Editable via .addhl/.highlights commands
+
+# Example highlights - customize these for your gameplay
+[friends]
+pattern = "Mandrill|Monolis|Chiora|Exdeo|Kawhi|Aldhelm"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
+
+[enemies]
+pattern = "Sihtric|Ehria|Ayvain|Deddalus|Daluthas"
+fg = "#ffffff"
+bg = "#8b0000"
+bold = true
+fast_parse = true
+category = "Players"

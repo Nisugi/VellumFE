@@ -19,8 +19,69 @@
 #   switch_current_window, scroll_current_window_up_one, scroll_current_window_down_one,
 #   scroll_current_window_up_page, scroll_current_window_down_page,
 #   start_search, next_search_match, prev_search_match, clear_search,
-#   toggle_performance_stats
+#   toggle_performance_stats,
+#   tts_next, tts_previous, tts_pause_resume, tts_mute_toggle
 
+# ═══════════════════════════════════════════════════════════════════════════
+# GLOBAL KEYBINDS (Always active, highest priority)
+# ═══════════════════════════════════════════════════════════════════════════
+# These keybinds work in all modes and cannot be overridden by user keybinds.
+# Change these to customize your global shortcuts.
+
+[global]
+quit = "ctrl+c"                    # Exit VellumFE
+start_search = "ctrl+f"            # Open search mode
+next_search_match = "ctrl+pagedown"  # Jump to next search result
+prev_search_match = "ctrl+pageup"    # Jump to previous search result
+close_window = "esc"               # Close dialogs, exit modes
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MENU KEYBINDS (Active when in menus, forms, browsers, or editors)
+# ═══════════════════════════════════════════════════════════════════════════
+# These keybinds provide unified navigation across all widgets.
+# They have lower priority than global keybinds but higher than user keybinds.
+
+[menu]
+# Navigation
+navigate_up = "up"
+navigate_down = "down"
+navigate_left = "left"
+navigate_right = "right"
+page_up = "pageup"
+page_down = "pagedown"
+home = "home"
+end = "end"
+
+# Field navigation (forms/editors)
+next_field = "tab"
+previous_field = "shift+tab"
+
+# Actions
+select = "enter"              # Select item, toggle checkbox, activate
+cancel = "esc"                # Close widget, cancel action
+save = "ctrl+s"               # Save changes (case-insensitive)
+delete = "delete"             # Delete selected item
+toggle = "space"              # Toggle boolean/checkbox
+
+# List management (browsers)
+add = "a"                     # Add new item
+edit = "e"                    # Edit selected item
+move_up = "shift+up"          # Move item up in list
+move_down = "shift+down"      # Move item down in list
+
+# Dropdown/enum cycling
+cycle_forward = "right"       # Cycle dropdown/enum forward
+cycle_backward = "left"       # Cycle dropdown/enum backward
+
+# Filter toggle (browsers with filtering)
+toggle_filter = "f"           # Toggle category filter
+
+# ═══════════════════════════════════════════════════════════════════════════
+# USER KEYBINDS (Game mode only)
+# ═══════════════════════════════════════════════════════════════════════════
+# These keybinds only work when you're not in a menu, form, or browser.
+
+[user]
 # Basic command input navigation
 right = "cursor_right"
 left = "cursor_left"
@@ -59,48 +120,32 @@ esc = "clear_search"  # Exit search mode
 # Performance stats
 f12 = "toggle_performance_stats"
 
-# Numpad movement macros
-[num_1]
-macro_text = "sw\r"
+# Text-to-Speech (Accessibility)
+# Ctrl+Alt combinations avoid terminal interception
+# Also set enabled = true in [tts] section of config.toml
+"ctrl+alt+left" = "tts_previous"       # Previous message (sequential, includes read)
+"ctrl+alt+right" = "tts_next"          # Next message (sequential, includes read)
+"ctrl+alt+up" = "tts_next_unread"      # Skip to next unread message
+"ctrl+alt+down" = "tts_stop"           # Stop current speech
+f7 = "tts_increase_volume"             # Increase TTS volume by 0.2
+f8 = "tts_decrease_volume"             # Decrease TTS volume by 0.2
+f9 = "tts_increase_rate"               # Increase TTS speech rate by 0.5
+f10 = "tts_decrease_rate"              # Decrease TTS speech rate by 0.5
+f11 = "tts_mute_toggle"                # Toggle TTS mute (stops speech, prevents new speech)
 
-[num_2]
-macro_text = "s\r"
-
-[num_3]
-macro_text = "se\r"
-
-[num_4]
-macro_text = "w\r"
-
-[num_5]
-macro_text = "out\r"
-
-[num_6]
-macro_text = "e\r"
-
-[num_7]
-macro_text = "nw\r"
-
-[num_8]
-macro_text = "n\r"
-
-[num_9]
-macro_text = "ne\r"
-
-[num_0]
-macro_text = "down\r"
-
-["num_."]
-macro_text = "up\r"
-
-["num_+"]
-macro_text = "look\r"
-
-["num_-"]
-macro_text = "info\r"
-
-["num_*"]
-macro_text = "exp\r"
-
-["num_/"]
-macro_text = "health\r"
+# Numpad movement macros (inline table syntax required for HashMap deserialization)
+num_1 = { macro_text = "sw\r" }
+num_2 = { macro_text = "s\r" }
+num_3 = { macro_text = "se\r" }
+num_4 = { macro_text = "w\r" }
+num_5 = { macro_text = "out\r" }
+num_6 = { macro_text = "e\r" }
+num_7 = { macro_text = "nw\r" }
+num_8 = { macro_text = "n\r" }
+num_9 = { macro_text = "ne\r" }
+num_0 = { macro_text = "down\r" }
+"num_." = { macro_text = "up\r" }
+"num_+" = { macro_text = "look\r" }
+"num_-" = { macro_text = "info\r" }
+"num_*" = { macro_text = "exp\r" }
+"num_/" = { macro_text = "health\r" }

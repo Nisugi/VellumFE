@@ -1,0 +1,3 @@
+<progressBar id="pbarStance" value="75" text="defensive (75%)" />
+<progressBar id="health" value="99" max="150" text="health 99/150" />
+<progressBar id="fooCustom" value="5" text="foo 5/10" />

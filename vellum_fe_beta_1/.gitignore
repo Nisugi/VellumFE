@@ -1,0 +1,30 @@
+/target
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+debug.log
+
+# Config (user-specific)
+.profanity-rs/
+
+# Wiki sync temporary directory
+.wiki-repo/
+.claude/settings.local.json
+
+# Map editor and data files (temp/working files only)
+map_editor.html
+mapdb.json
+temp_map*.json
+map_coordinates_from_csv.json

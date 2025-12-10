@@ -1,0 +1,4 @@
+<clearStream id="combat"/><pushStream id="combat"/>
+You are now targeting <pushBold/>an <a exist="534103532" noun="valravn">eyeless black valravn</a><popBold/>.
+<component id='room objs'>  You also see<b> <pushBold/>a <a exist="530764504" noun="panther">hulking semi-melanistic panther</a><popBold/></b>,<b> <pushBold/>an <a exist="534103532" noun="valravn">eyeless black valravn</a><popBold/></b> (stunned) and a <a exist="534097161" noun="wand">silver wand</a>.</component>
+<popStream/>

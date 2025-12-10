@@ -28,6 +28,18 @@ enabled = true
 volume = 0.5
 cooldown_ms = 500
 
+# Text-to-Speech (Accessibility)
+# Enable this for screen-reader support via native TTS engines
+# Controls: Ctrl+Shift+N (next), Ctrl+Shift+P (previous), Ctrl+Shift+M (mute toggle)
+[tts]
+enabled = false          # Set to true to enable TTS
+voice = ""               # Leave empty for system default voice
+rate = 1.0               # Speech rate (0.5 = slow, 1.0 = normal, 2.0 = fast)
+volume = 1.0             # Volume (0.0 = silent, 1.0 = full)
+speak_thoughts = true    # Speak focused thoughts
+speak_whispers = true    # Speak whispers/speech
+speak_main = false       # Speak main window text (can be overwhelming)
+
 # NOTE: Keybindings are configured in keybinds.toml (not here!)
 # See defaults/keybinds.toml or ~/.vellum-fe/{character}/keybinds.toml
 # Use .keybinds or .addkeybind commands to manage them

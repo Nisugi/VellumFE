@@ -1,172 +1,236 @@
-mod app;
-mod validator;
+//! VellumFE - Multi-frontend GemStone IV client
+//!
+//! Supports both TUI (ratatui) and GUI (egui) frontends with shared core logic.
+
+mod clipboard;
 mod cmdlist;
 mod config;
-mod map_data;
-mod migration;
+mod core;
+mod data;
+mod frontend;
 mod network;
 mod parser;
 mod performance;
 mod selection;
 mod sound;
-mod terminal_position;
-mod ui;
+mod theme;
+mod tts;
 
-use anyhow::Result;
-use app::App;
-use clap::Parser;
-use config::Config;
-use std::fs::OpenOptions;
-use std::io::Write;
-use tracing_subscriber;
+use anyhow::{bail, Result};
+use clap::{Parser as ClapParser, Subcommand};
+use std::path::PathBuf;
 
-/// VellumFE - A modern, high-performance terminal frontend for GemStone IV
-#[derive(Parser, Debug)]
+#[derive(ClapParser)]
 #[command(name = "vellum-fe")]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Port to connect to (Lich detached mode port)
-    #[arg(short, long, default_value = "8000")]
-    port: u16,
+#[command(about = "Multi-frontend GemStone IV client", long_about = None)]
+struct Cli {
+    /// Configuration file path
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
 
-    /// Character name / config file to load (loads ./config/<character>.toml or default.toml)
+    /// Frontend to use
+    #[arg(short, long, default_value = "tui")]
+    frontend: FrontendType,
+
+    /// Port number to connect to (default: 8000)
     #[arg(short, long)]
+    port: Option<u16>,
+
+    /// Character name (used for character-specific settings and direct connection login)
+    #[arg(long)]
     character: Option<String>,
 
-    /// Enable link highlighting (required for proper game feed with clickable links)
-    #[arg(long, default_value = "false")]
+    /// Custom data directory (default: ~/.vellum-fe)
+    /// Can also be set via VELLUM_FE_DIR environment variable
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+
+    /// Connect directly without Lich
+    #[arg(long)]
+    direct: bool,
+
+    /// Account name for direct connections
+    #[arg(long, requires = "direct")]
+    account: Option<String>,
+
+    /// Password for direct connections (omit to be prompted securely)
+    #[arg(long, requires = "direct")]
+    password: Option<String>,
+
+    /// Game world for direct connections (prime, platinum, shattered)
+    #[arg(long, value_enum, requires = "direct")]
+    game: Option<DirectGameArg>,
+
+    /// Enable clickable links in the interface
+    #[arg(long)]
     links: bool,
 
-    /// Disable startup music on connection
-    #[arg(long, default_value = "false")]
+    /// Disable startup music
+    #[arg(long)]
     nomusic: bool,
 
-    /// Disable sound system entirely (skips audio initialization)
-    #[arg(long, default_value = "false")]
-    nosound: bool,
+    /// Color rendering mode: direct (true color RGB) or slot (256-color palette)
+    #[arg(long, value_enum)]
+    color_mode: Option<config::ColorMode>,
 
-    /// Validate a layout file against multiple sizes and exit
-    #[arg(long, value_name = "PATH", required = false)]
-    validate_layout: Option<String>,
+    /// Setup terminal palette on startup using .setpalette (use with --color-mode slot)
+    #[arg(long)]
+    setup_palette: bool,
 
-    /// Baseline terminal size for validation (e.g., 120x40). Defaults to layout's designed size or 120x40.
-    #[arg(long, value_name = "WxH", required = false)]
-    baseline: Option<String>,
-
-    /// Comma-separated list of sizes to test (e.g., 80x24,100x30,140x40)
-    #[arg(long, value_name = "WxH[,WxH...]", required = false)]
-    sizes: Option<String>,
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse command-line arguments
-    let args = Args::parse();
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum FrontendType {
+    Tui,
+    Gui,
+}
 
-    // Check if config migration is needed (before logging setup, since paths might change)
-    let config_dir = Config::config_dir()?;
-    if migration::Migration::needs_migration(&config_dir)? {
-        println!("\n════════════════════════════════════════════════════════════════");
-        println!("  VellumFE Config Migration");
-        println!("════════════════════════════════════════════════════════════════\n");
-        println!("Your config directory structure needs to be updated.");
-        println!("This will reorganize files for better organization.\n");
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum DirectGameArg {
+    Prime,
+    Platinum,
+    Shattered,
+}
 
-        migration::Migration::run(config_dir)?;
-
-        println!("\n════════════════════════════════════════════════════════════════\n");
-        print!("Press Enter to continue...");
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
+impl DirectGameArg {
+    fn code(self) -> &'static str {
+        match self {
+            DirectGameArg::Prime => "GS3",
+            DirectGameArg::Platinum => "GSX",
+            DirectGameArg::Shattered => "GSF",
+        }
     }
+}
 
-    // Initialize logging to character-specific file instead of stderr to not mess up TUI
-    let log_file = Config::get_log_path(args.character.as_deref())?;
+#[derive(Subcommand)]
+enum Commands {
+    /// Validate layout configuration
+    ValidateLayout {
+        /// Layout file to validate
+        #[arg(value_name = "FILE")]
+        layout: Option<PathBuf>,
+    },
+}
 
-    if let Some(parent) = log_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let file = OpenOptions::new()
+fn main() -> Result<()> {
+    // Initialize logging to file (use RUST_LOG env var to control level, e.g. RUST_LOG=debug)
+    // TUI apps can't log to stdout, so we write to a file
+    let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_file)?;
+        .open("vellum-fe.log")?;
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_writer(file)
-        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+        )
+        .with_writer(std::sync::Mutex::new(log_file))
+        .with_ansi(false) // No color codes in log file
         .init();
 
-    // Load configuration (with character override if specified)
-    let config = Config::load_with_options(args.character.as_deref(), args.port)?;
+    // Parse CLI arguments
+    let cli = Cli::parse();
 
-    // Layout validation mode
-    if let Some(layout_path) = args.validate_layout.as_ref() {
-        // Parse sizes
-        let sizes = parse_sizes_arg(args.sizes.as_deref());
-
-        // Determine baseline
-        let baseline = if let Some(b) = args.baseline.as_deref() {
-            parse_size(b).unwrap_or((120, 40))
-        } else {
-            // Try to load layout to read designed size; else default
-            let lp = std::path::Path::new(layout_path);
-            let layout = config::Layout::load_from_file(lp).ok();
-            if let Some(l) = layout {
-                let w = l.terminal_width.unwrap_or(120);
-                let h = l.terminal_height.unwrap_or(40);
-                (w, h)
-            } else {
-                (120, 40)
-            }
-        };
-
-        let results = crate::validator::validate_layout_path(std::path::Path::new(layout_path), baseline, &sizes)?;
-        let mut total_errors = 0usize;
-        println!("Layout validation for {} (baseline {}x{}):", layout_path, baseline.0, baseline.1);
-        for r in &results {
-            if r.issues.is_empty() {
-                println!("- {}x{}: OK", r.width, r.height);
-            } else {
-                println!("- {}x{}:", r.width, r.height);
-                for issue in &r.issues {
-                    let kind = match issue.kind { crate::validator::IssueKind::Error => "ERR", crate::validator::IssueKind::Warning => "WARN" };
-                    println!("    {} [{}] {}", kind, issue.window, issue.message);
-                    if matches!(issue.kind, crate::validator::IssueKind::Error) { total_errors += 1; }
-                }
-            }
-        }
-        if total_errors > 0 { std::process::exit(2); } else { return Ok(()); }
+    if cli.direct && matches!(cli.frontend, FrontendType::Gui) {
+        bail!("Direct mode is currently only supported with the TUI frontend");
     }
 
-    // Create and run the application
-    let mut app = App::new(config, args.nomusic, args.nosound)?;
+    // Handle subcommands
+    if let Some(command) = cli.command {
+        match command {
+            Commands::ValidateLayout { layout } => {
+                // Load the layout file
+                let layout_result = if let Some(path) = layout {
+                    println!("Validating layout file: {:?}", path);
+                    config::Layout::load_from_file(&path)
+                } else {
+                    println!("Validating default layout");
+                    config::Layout::load(cli.character.as_deref())
+                };
 
-    // Auto-shrink layout if terminal is smaller than designed size
-    app.check_and_auto_resize()?;
+                match layout_result {
+                    Ok(layout) => {
+                        if let Err(e) = layout.validate_and_print() {
+                            eprintln!("✗ Validation failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("✗ Failed to load layout: {}", e);
+                        std::process::exit(1);
+                    }
+                }
 
-    // Apply saved terminal position if available (before entering raw mode)
-    app.apply_terminal_position();
+                return Ok(());
+            }
+        }
+    }
 
-    app.run().await?;
+    // Set custom data directory if specified (via CLI or environment variable)
+    if let Some(data_dir) = &cli.data_dir {
+        std::env::set_var("VELLUM_FE_DIR", data_dir);
+        tracing::info!("Using custom data directory: {:?}", data_dir);
+    } else if let Ok(env_dir) = std::env::var("VELLUM_FE_DIR") {
+        tracing::info!("Using data directory from VELLUM_FE_DIR: {}", env_dir);
+    }
+
+    // Load configuration
+    let port = cli.port.unwrap_or(8000);
+    let character = cli.character.as_deref();
+    let mut config = if let Some(config_path) = &cli.config {
+        config::Config::load_from_path(config_path, character, port)?
+    } else {
+        config::Config::load_with_options(character, port)?
+    };
+
+    // Apply CLI flag overrides
+    if cli.nomusic {
+        config.ui.startup_music = false;
+    }
+    if let Some(mode) = cli.color_mode {
+        config.ui.color_mode = mode;
+    }
+    // Note: --links flag is reserved for future clickable links feature
+    // Currently no-op but prevents argument errors
+    let _links_enabled = cli.links;
+    // Store setup_palette flag for frontend to use after initialization
+    let setup_palette = cli.setup_palette;
+
+    // Build direct connection config if enabled
+    let direct_config = network::DirectConnectConfig::from_cli(
+        cli.direct,
+        cli.account.clone(),
+        cli.password.clone(),
+        cli.character.clone(),
+        cli.character.clone(),
+        cli.game.map(|g| g.code()),
+        &config,
+    )?;
+
+    // Run appropriate frontend
+    let character = cli.character.clone();
+    match cli.frontend {
+        FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette)?,
+        FrontendType::Gui => run_gui(config)?,
+    }
 
     Ok(())
 }
 
-fn parse_sizes_arg(arg: Option<&str>) -> Vec<(u16, u16)> {
-    let default = vec![(80, 24), (100, 30), (120, 40), (140, 40), (160, 50)];
-    match arg {
-        None => default,
-        Some(s) if s.trim().is_empty() => default,
-        Some(s) => s.split(',').filter_map(|p| parse_size(p.trim())).collect::<Vec<_>>()
-    }
-}
+/// Run GUI frontend
+fn run_gui(config: config::Config) -> Result<()> {
+    use core::AppCore;
+    use frontend::EguiApp;
 
-fn parse_size(s: &str) -> Option<(u16, u16)> {
-    let (w, h) = s.split_once('x')?;
-    let w = w.parse::<u16>().ok()?;
-    let h = h.parse::<u16>().ok()?;
-    Some((w, h))
+    // Create core application state
+    let app_core = AppCore::new(config)?;
+
+    // Create and run GUI
+    let app = EguiApp::new(app_core);
+    app.run()?;
+
+    Ok(())
 }
