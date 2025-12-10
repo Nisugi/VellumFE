@@ -83,7 +83,7 @@ pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
 }
 
 /// Parse a hex color string like "#RRGGBB" into ratatui Color
-/// Always returns Color::Rgb for maximum compatibility - use parse_hex_color_with_mode for explicit control
+/// Respects global color mode: returns Indexed in Slot mode, Rgb in Direct mode
 pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let hex = hex.trim_start_matches('#');
 
@@ -95,8 +95,8 @@ pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let g = u8::from_str_radix(&hex[2..4], 16)?;
     let b = u8::from_str_radix(&hex[4..6], 16)?;
 
-    // Always return RGB - Slot mode conversion happens at render time via crossterm_bridge
-    Ok(ratatui::style::Color::Rgb(r, g, b))
+    // Use mode-aware conversion
+    Ok(rgb_to_ratatui_color(r, g, b))
 }
 
 /// Parse a hex color string with color mode awareness
