@@ -4,11 +4,10 @@
 //! autocomplete for both dot-commands and window names.
 
 use crate::frontend::tui::{
-    colors::parse_color_to_ratatui_with_mode,
     crossterm_bridge,
     title_position::{self, TitlePosition},
 };
-use crate::config::{BorderSides, ColorMode};
+use crate::config::BorderSides;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -46,7 +45,6 @@ pub struct CommandInput {
     completion_prefix: Option<String>,  // Original text before completion started
     is_user_typed: bool,                // True if current text was typed by user (not from history)
     selection_start: Option<usize>,     // Start of selection (None if no selection)
-    color_mode: ColorMode,              // Color mode for terminal compatibility
 }
 
 impl CommandInput {
@@ -76,12 +74,7 @@ impl CommandInput {
             completion_prefix: None,
             is_user_typed: false,
             selection_start: None,
-            color_mode: ColorMode::Direct, // Default to true color
         }
-    }
-
-    pub fn set_color_mode(&mut self, mode: ColorMode) {
-        self.color_mode = mode;
     }
 
     pub fn set_min_command_length(&mut self, min_length: usize) {
@@ -258,9 +251,9 @@ impl CommandInput {
             .unwrap_or(self.input.len())
     }
 
-    /// Parse color string (hex or named) using centralized parser with color mode
+    /// Parse color string (hex or named) using centralized parser
     fn parse_color(&self, color_str: &str) -> Option<Color> {
-        parse_color_to_ratatui_with_mode(color_str, self.color_mode)
+        super::colors::parse_color_to_ratatui(color_str)
     }
 
     pub fn clear(&mut self) {

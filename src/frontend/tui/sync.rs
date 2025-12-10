@@ -314,9 +314,6 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                     .or_else(|| normalize_color(&base.text_color))
                     .or_else(|| color_to_hex_string(&theme.text_primary));
                 cmd_input.set_prompt_icon_color(prompt_icon_color);
-
-                // Set color mode for terminal compatibility
-                cmd_input.set_color_mode(app_core.config.ui.color_mode);
             }
         }
     }

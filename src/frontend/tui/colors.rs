@@ -19,17 +19,16 @@ pub fn get_global_color_mode() -> ColorMode {
     GLOBAL_COLOR_MODE.with(|m| m.get())
 }
 
-/// Convert raw RGB values to ratatui Color, respecting global color mode
-/// This is the central function that ALL RGB -> ratatui::Color conversions should use
+/// Convert raw RGB values to ratatui Color
+/// Always returns Color::Rgb - Slot mode conversion requires a different approach (not yet implemented)
 pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
-    match get_global_color_mode() {
-        ColorMode::Direct => ratatui::style::Color::Rgb(r, g, b),
-        ColorMode::Slot => ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b)),
-    }
+    // TODO: For Slot mode, we need to intercept at the terminal output level,
+    // not at the color creation level. ratatui/crossterm need to emit indexed colors.
+    ratatui::style::Color::Rgb(r, g, b)
 }
 
 /// Parse a hex color string like "#RRGGBB" into ratatui Color
-/// Respects the global color mode setting
+/// Always returns Color::Rgb for maximum compatibility - use parse_hex_color_with_mode for explicit control
 pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let hex = hex.trim_start_matches('#');
 
@@ -41,10 +40,8 @@ pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let g = u8::from_str_radix(&hex[2..4], 16)?;
     let b = u8::from_str_radix(&hex[4..6], 16)?;
 
-    match get_global_color_mode() {
-        ColorMode::Direct => Ok(ratatui::style::Color::Rgb(r, g, b)),
-        ColorMode::Slot => Ok(ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))),
-    }
+    // Always return RGB - Slot mode conversion happens at render time via crossterm_bridge
+    Ok(ratatui::style::Color::Rgb(r, g, b))
 }
 
 /// Parse a hex color string with color mode awareness
