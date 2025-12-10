@@ -1,7 +1,26 @@
 use anyhow::Result;
+use std::cell::Cell;
 use crate::config::ColorMode;
 
+// Global color mode - thread-local so it's set once at startup and used everywhere
+thread_local! {
+    static GLOBAL_COLOR_MODE: Cell<ColorMode> = const { Cell::new(ColorMode::Direct) };
+}
+
+/// Set the global color mode for all color parsing
+/// Call this once at frontend startup with the config value
+pub fn set_global_color_mode(mode: ColorMode) {
+    GLOBAL_COLOR_MODE.with(|m| m.set(mode));
+    tracing::info!("Global color mode set to {:?}", mode);
+}
+
+/// Get the current global color mode
+pub fn get_global_color_mode() -> ColorMode {
+    GLOBAL_COLOR_MODE.with(|m| m.get())
+}
+
 /// Parse a hex color string like "#RRGGBB" into ratatui Color
+/// Respects the global color mode setting
 pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let hex = hex.trim_start_matches('#');
 
@@ -13,7 +32,10 @@ pub fn parse_hex_color(hex: &str) -> Result<ratatui::style::Color> {
     let g = u8::from_str_radix(&hex[2..4], 16)?;
     let b = u8::from_str_radix(&hex[4..6], 16)?;
 
-    Ok(ratatui::style::Color::Rgb(r, g, b))
+    match get_global_color_mode() {
+        ColorMode::Direct => Ok(ratatui::style::Color::Rgb(r, g, b)),
+        ColorMode::Slot => Ok(ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))),
+    }
 }
 
 /// Parse a hex color string with color mode awareness
@@ -290,8 +312,17 @@ pub fn parse_color_flexible(input: &str) -> Option<String> {
 
 /// Parse a color string to ratatui Color
 /// Supports hex codes and standard color names
+/// Respects the global color mode setting
 pub fn parse_color_to_ratatui(input: &str) -> Option<ratatui::style::Color> {
+    // parse_hex_color now respects global color mode automatically
     parse_color_flexible(input).and_then(|hex| parse_hex_color(&hex).ok())
+}
+
+/// Parse a color string to ratatui Color with color mode awareness
+/// In Direct mode: returns Color::Rgb for true color terminals
+/// In Slot mode: returns Color::Indexed for 256-color terminals (like macOS Terminal.app)
+pub fn parse_color_to_ratatui_with_mode(input: &str, mode: ColorMode) -> Option<ratatui::style::Color> {
+    parse_color_flexible(input).and_then(|hex| parse_hex_color_with_mode(&hex, mode).ok())
 }
 
 #[derive(Clone)]

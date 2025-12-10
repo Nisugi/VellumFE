@@ -8,6 +8,7 @@ mod config;
 mod core;
 mod data;
 mod frontend;
+mod migrate;
 mod network;
 mod parser;
 mod performance;
@@ -112,6 +113,25 @@ enum Commands {
         #[arg(value_name = "FILE")]
         layout: Option<PathBuf>,
     },
+
+    /// Migrate old VellumFE layouts to current format
+    MigrateLayout {
+        /// Source directory containing old layout files
+        #[arg(long, value_name = "DIR")]
+        src: PathBuf,
+
+        /// Output directory for migrated layouts (default: <src>/migrated)
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+
+        /// Show what would be done without making changes
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Print detailed progress information
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -160,6 +180,56 @@ fn main() -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("✗ Failed to load layout: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+
+                return Ok(());
+            }
+
+            Commands::MigrateLayout { src, out, dry_run, verbose } => {
+                // Default output to <src>/migrated if not specified
+                let out_dir = out.unwrap_or_else(|| src.join("migrated"));
+
+                println!("VellumFE Layout Migration");
+                println!("=========================");
+                println!("Source:      {}", src.display());
+                println!("Destination: {}", out_dir.display());
+                if dry_run {
+                    println!("Mode:        DRY RUN (no changes will be made)");
+                }
+                println!();
+
+                let options = migrate::MigrateOptions {
+                    src,
+                    out: out_dir,
+                    dry_run,
+                    verbose,
+                };
+
+                match migrate::run_migration(&options) {
+                    Ok(result) => {
+                        println!();
+                        println!("Migration Complete");
+                        println!("------------------");
+                        println!("  Converted: {}", result.succeeded);
+                        println!("  Skipped:   {} (already current format)", result.skipped);
+                        println!("  Failed:    {}", result.failed);
+
+                        if !result.errors.is_empty() && verbose {
+                            println!();
+                            println!("Errors:");
+                            for err in &result.errors {
+                                println!("  - {}", err);
+                            }
+                        }
+
+                        if result.failed > 0 {
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("✗ Migration failed: {}", e);
                         std::process::exit(1);
                     }
                 }

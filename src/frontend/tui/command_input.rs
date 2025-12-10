@@ -4,11 +4,11 @@
 //! autocomplete for both dot-commands and window names.
 
 use crate::frontend::tui::{
-    colors::parse_color_to_ratatui,
+    colors::parse_color_to_ratatui_with_mode,
     crossterm_bridge,
     title_position::{self, TitlePosition},
 };
-use crate::config::BorderSides;
+use crate::config::{BorderSides, ColorMode};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -46,6 +46,7 @@ pub struct CommandInput {
     completion_prefix: Option<String>,  // Original text before completion started
     is_user_typed: bool,                // True if current text was typed by user (not from history)
     selection_start: Option<usize>,     // Start of selection (None if no selection)
+    color_mode: ColorMode,              // Color mode for terminal compatibility
 }
 
 impl CommandInput {
@@ -75,7 +76,12 @@ impl CommandInput {
             completion_prefix: None,
             is_user_typed: false,
             selection_start: None,
+            color_mode: ColorMode::Direct, // Default to true color
         }
+    }
+
+    pub fn set_color_mode(&mut self, mode: ColorMode) {
+        self.color_mode = mode;
     }
 
     pub fn set_min_command_length(&mut self, min_length: usize) {
@@ -252,9 +258,9 @@ impl CommandInput {
             .unwrap_or(self.input.len())
     }
 
-    /// Parse color string (hex or named) using centralized parser
-    fn parse_color(color_str: &str) -> Option<Color> {
-        parse_color_to_ratatui(color_str)
+    /// Parse color string (hex or named) using centralized parser with color mode
+    fn parse_color(&self, color_str: &str) -> Option<Color> {
+        parse_color_to_ratatui_with_mode(color_str, self.color_mode)
     }
 
     pub fn clear(&mut self) {
@@ -384,14 +390,14 @@ impl CommandInput {
 
         let mut border_style = Style::default();
         if let Some(color_str) = &self.border_color {
-            if let Some(color) = Self::parse_color(color_str) {
+            if let Some(color) = self.parse_color(color_str) {
                 border_style = border_style.fg(color);
             }
         }
 
         // Fill background if explicitly set (do this BEFORE rendering block so it covers entire area)
         if let Some(ref color_hex) = self.background_color {
-            if let Some(bg_color) = Self::parse_color(color_hex) {
+            if let Some(bg_color) = self.parse_color(color_hex) {
                 for row in 0..area.height {
                     for col in 0..area.width {
                         let x = area.x + col;
@@ -437,7 +443,7 @@ impl CommandInput {
         let text_color = self
             .text_color
             .as_ref()
-            .and_then(|c| Self::parse_color(c))
+            .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::White);
         let icon_text = self
             .prompt_icon
@@ -454,7 +460,7 @@ impl CommandInput {
                 let icon_color = self
                     .prompt_icon_color
                     .as_ref()
-                    .and_then(|c| Self::parse_color(c))
+                    .and_then(|c| self.parse_color(c))
                     .unwrap_or(text_color);
                 buf.set_string(
                     inner.x,
@@ -537,12 +543,12 @@ impl CommandInput {
         let cursor_fg = self
             .cursor_fg_color
             .as_ref()
-            .and_then(|c| Self::parse_color(c))
+            .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::Black);
         let cursor_bg = self
             .cursor_bg_color
             .as_ref()
-            .and_then(|c| Self::parse_color(c))
+            .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::White);
 
         let line = Line::from(vec![

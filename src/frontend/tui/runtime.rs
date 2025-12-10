@@ -39,6 +39,10 @@ async fn async_run(
     // Create core application state
     let mut app_core = AppCore::new(config)?;
 
+    // Set global color mode BEFORE creating frontend or any widgets
+    // This ensures ALL color parsing respects the mode from config
+    super::colors::set_global_color_mode(app_core.config.ui.color_mode);
+
     // Create TUI frontend
     let mut frontend = TuiFrontend::new()?;
     // Ensure frontend theme cache matches whatever layout/theme AppCore activated
