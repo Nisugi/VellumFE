@@ -252,7 +252,7 @@ impl SpellColorFormWidget {
         } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
-            Color::Rgb(53, 5, 5) // Fallback to maroon
+            Color::Reset // Fallback to terminal default
         };
 
         // Clear the popup area to prevent bleed-through
@@ -403,7 +403,7 @@ impl SpellColorFormWidget {
         let label_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
-            Style::default().fg(Color::Rgb(100, 149, 237))
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
         };
         let label_span = Span::styled(label, label_style);
         let label_area = Rect {
@@ -452,7 +452,7 @@ impl SpellColorFormWidget {
         let label_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
-            Style::default().fg(Color::Rgb(100, 149, 237))
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
         };
         let label_span = Span::styled(label, label_style);
         let label_area = Rect {
@@ -498,14 +498,8 @@ impl SpellColorFormWidget {
     }
 
     fn parse_hex_color(hex: &str) -> Option<Color> {
-        if hex.starts_with('#') && hex.len() == 7 {
-            let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
-            Some(Color::Rgb(r, g, b))
-        } else {
-            None
-        }
+        // Use centralized mode-aware color parser
+        super::colors::parse_color_to_ratatui(hex)
     }
 }
 

@@ -40,7 +40,7 @@ impl ProgressBar {
             border_style: None,
             border_color: None,
             border_sides: crate::config::BorderSides::default(),
-            bar_fill: Some(Color::Rgb(0, 255, 0)), // Green by default
+            bar_fill: Some(super::colors::rgb_to_ratatui_color(0, 255, 0)), // Green by default
             bar_background: None,
             window_background: None,
             transparent_background: true,

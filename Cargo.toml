@@ -36,7 +36,8 @@ quick-xml = "0.36"  # XML parsing
 include_dir = "0.7"  # Embed default config files
 rpassword = "7"
 # openssl = "0.10"
-openssl = { version = "0.10", features = ["vendored"] }
+# openssl = "0.10"  # For local builds
+openssl = { version = "0.10", features = ["vendored"] }  # For CI builds
 
 # Sound (optional)
 rodio = { version = "0.19", optional = true }

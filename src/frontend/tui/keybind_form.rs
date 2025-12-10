@@ -500,12 +500,12 @@ impl KeybindFormWidget {
         let mut current_y = y + 2;
 
         // Parse textarea background color from config
-        let maroon = if config.colors.ui.textarea_background == "-" {
+        let textarea_bg = if config.colors.ui.textarea_background == "-" {
             Color::Reset
         } else if let Some(color) = Self::parse_hex_color(&config.colors.ui.textarea_background) {
             color
         } else {
-            Color::Rgb(64, 0, 0) // Fallback to dark maroon
+            Color::Reset // Fallback to terminal default
         };
 
         // Row 2: Type (radio buttons) - Fields 0 and 1
@@ -575,7 +575,7 @@ impl KeybindFormWidget {
             current_y,
             key_input_start,
             37,
-            maroon,
+            textarea_bg,
             buf,
             theme,
         );
@@ -590,7 +590,7 @@ impl KeybindFormWidget {
                     current_y,
                     action_input_start,
                     37,
-                    maroon,
+                    textarea_bg,
                     buf,
                     theme,
                 );
@@ -607,7 +607,7 @@ impl KeybindFormWidget {
                     current_y,
                     macro_input_start,
                     37,
-                    maroon,
+                    textarea_bg,
                     buf,
                     theme,
                 );
@@ -751,14 +751,8 @@ impl KeybindFormWidget {
 
     /// Parse hex color string to ratatui Color
     fn parse_hex_color(hex: &str) -> Option<Color> {
-        if hex.starts_with('#') && hex.len() == 7 {
-            let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
-            Some(Color::Rgb(r, g, b))
-        } else {
-            None
-        }
+        // Use centralized mode-aware color parser
+        super::colors::parse_color_to_ratatui(hex)
     }
 
     /// Navigate to a specific action section (for keybind browser integration)

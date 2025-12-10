@@ -468,7 +468,7 @@ impl SettingsEditor {
                 }
                 if let Some(cell) = buf.cell_mut((x, popup_area.y)) {
                     cell.set_char(ch);
-                    cell.set_fg(Color::Rgb(100, 149, 237));
+                    cell.set_fg(super::colors::rgb_to_ratatui_color(100, 149, 237));
                     cell.set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                 }
             }
@@ -652,7 +652,7 @@ impl SettingsEditor {
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
-                .fg(Color::Rgb(100, 149, 237))
+                .fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
                 .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
         };
 

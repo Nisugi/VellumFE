@@ -459,7 +459,7 @@ impl ColorForm {
         let label_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
-            Style::default().fg(Color::Rgb(100, 149, 237))
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
         };
         let label_span = Span::styled(label, label_style);
         let label_area = Rect {
@@ -516,7 +516,7 @@ impl ColorForm {
         let label_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
-            Style::default().fg(Color::Rgb(100, 149, 237))
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
         };
         let label_span = Span::styled(label, label_style);
         let label_area = Rect {
@@ -585,7 +585,7 @@ impl ColorForm {
         let label_style = if is_focused {
             Style::default().fg(Color::Yellow)
         } else {
-            Style::default().fg(Color::Rgb(100, 149, 237))
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
         };
         let label_span = Span::styled(label, label_style);
         let label_area = Rect {
@@ -605,14 +605,8 @@ impl ColorForm {
 
     /// Parse hex color string to ratatui Color
     fn parse_hex_color(hex: &str) -> Option<Color> {
-        if hex.starts_with('#') && hex.len() == 7 {
-            let r = u8::from_str_radix(&hex[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&hex[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&hex[5..7], 16).ok()?;
-            Some(Color::Rgb(r, g, b))
-        } else {
-            None
-        }
+        // Use centralized mode-aware color parser
+        super::colors::parse_color_to_ratatui(hex)
     }
 
     /// Get the original name if in edit mode
