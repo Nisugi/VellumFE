@@ -10,9 +10,7 @@ use crate::frontend::tui::TuiFrontend;
 use anyhow::Result;
 
 fn close_all_menus(ui_state: &mut crate::data::ui_state::UiState) {
-    ui_state.popup_menu = None;
-    ui_state.submenu = None;
-    ui_state.nested_submenu = None;
+    ui_state.close_all_menus();
 }
 
 /// Handle menu action commands
@@ -79,8 +77,7 @@ pub fn handle_menu_action(
         app_core.show_window(window_name, width, height);
 
         // Close menus
-        app_core.ui_state.popup_menu = None;
-        app_core.ui_state.submenu = None;
+        app_core.ui_state.close_all_menus();
         app_core.ui_state.input_mode = InputMode::Normal;
         app_core.needs_render = true;
     } else if let Some(window_name) = command.strip_prefix("action:hidewindow:") {
@@ -89,36 +86,35 @@ pub fn handle_menu_action(
     } else {
         match command {
             "action:addwindow" => {
-                // Close submenu if it exists
+                // Get parent position for new submenu
                 let parent_pos = app_core
                     .ui_state
-                    .popup_menu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
                 // Show widget category picker as submenu (allows Esc to go back)
                 let items = app_core.build_add_window_menu();
-                app_core.ui_state.submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
-                app_core.ui_state.nested_submenu = None;
+                if !items.is_empty() {
+                    app_core.ui_state.push_menu(
+                        PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                    );
+                }
                 app_core.ui_state.input_mode = InputMode::Menu;
             }
             "action:hidewindow" => {
-                // Close submenu if it exists
+                // Get parent position for new submenu
                 let parent_pos = app_core
                     .ui_state
-                    .popup_menu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
                 // Show category-based picker for hiding as submenu
                 let items = app_core.build_hide_window_menu();
-                app_core.ui_state.submenu = if items.is_empty() {
-                    None
-                } else {
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)))
-                };
-                app_core.ui_state.nested_submenu = None;
+                if !items.is_empty() {
+                    app_core.ui_state.push_menu(
+                        PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                    );
+                }
                 app_core.ui_state.input_mode = InputMode::Menu;
             }
             "action:listwindows" => {
@@ -126,7 +122,7 @@ pub fn handle_menu_action(
                 app_core.send_command(".windows".to_string())?;
 
                 // Close menu and return to normal mode
-                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.close_all_menus();
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
             }
@@ -160,9 +156,7 @@ pub fn handle_menu_action(
                 app_core.send_command(".windows".to_string())?;
 
                 // Close menu and return to normal mode
-                app_core.ui_state.popup_menu = None;
-                app_core.ui_state.submenu = None;
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.close_all_menus();
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
             }
@@ -285,18 +279,16 @@ pub fn handle_menu_action(
             "action:editwindow" => {
                 let parent_pos = app_core
                     .ui_state
-                    .popup_menu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
                 // Show category-based picker for editing as submenu
                 let items = app_core.build_edit_window_menu();
-                app_core.ui_state.submenu = if items.is_empty() {
-                    None
-                } else {
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)))
-                };
-                app_core.ui_state.nested_submenu = None;
+                if !items.is_empty() {
+                    app_core.ui_state.push_menu(
+                        PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                    );
+                }
                 app_core.ui_state.input_mode = InputMode::Menu;
             }
             "action:nexttab" => {

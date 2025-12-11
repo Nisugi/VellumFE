@@ -192,8 +192,8 @@ impl TuiFrontend {
                 if app_core.ui_state.input_mode == InputMode::Menu {
                     let mut clicked_item = None;
 
-                    // Check popup menu first (top layer)
-                    if let Some(ref menu) = app_core.ui_state.popup_menu {
+                    // Check the current (deepest) menu for clicks
+                    if let Some(ref menu) = app_core.ui_state.current_menu() {
                         let pos = menu.get_position();
                         let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
                         let menu_width = menu
@@ -224,7 +224,7 @@ impl TuiFrontend {
                         if let Some(submenu_name) = command.strip_prefix("menu:") {
                             // Config menu submenu
                             tracing::debug!("Clicked config submenu: {}", submenu_name);
-                            app_core.ui_state.popup_menu = None;
+                            app_core.ui_state.close_all_menus();
                             app_core.ui_state.input_mode = InputMode::Normal;
                         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
                             // Context menu or .menu submenu
@@ -241,26 +241,25 @@ impl TuiFrontend {
                             if !items.is_empty() {
                                 let position = app_core
                                     .ui_state
-                                    .popup_menu
-                                    .as_ref()
+                                    .current_menu()
                                     .map(|m| m.get_position())
                                     .unwrap_or((40, 12));
                                 let submenu_pos = (position.0 + 2, position.1);
-                                app_core.ui_state.submenu =
-                                    Some(crate::data::ui_state::PopupMenu::new(
+                                app_core.ui_state.push_menu(
+                                    crate::data::ui_state::PopupMenu::new(
                                         items,
                                         submenu_pos,
-                                    ));
+                                    )
+                                );
                                 tracing::info!(
-                                    "Opened submenu: {}",
-                                    category
+                                    "Opened submenu: {} (depth {})",
+                                    category,
+                                    app_core.ui_state.menu_depth()
                                 );
                             }
                         } else if !command.is_empty() {
                             // Close menu first
-                            app_core.ui_state.popup_menu = None;
-                            app_core.ui_state.submenu = None;
-                            app_core.ui_state.nested_submenu = None;
+                            app_core.ui_state.close_all_menus();
                             app_core.ui_state.input_mode = InputMode::Normal;
 
                             // Check if this is an internal action or game command
@@ -279,10 +278,8 @@ impl TuiFrontend {
                         }
                         app_core.needs_render = true;
                     } else {
-                        // Click outside menu - close it
-                        app_core.ui_state.popup_menu = None;
-                        app_core.ui_state.submenu = None;
-                        app_core.ui_state.nested_submenu = None;
+                        // Click outside menu - close all menus
+                        app_core.ui_state.close_all_menus();
                         app_core.ui_state.input_mode = InputMode::Normal;
                         app_core.needs_render = true;
                     }
@@ -1918,51 +1915,40 @@ impl TuiFrontend {
 
         match code {
             KeyCode::Esc => {
-                if app_core.ui_state.nested_submenu.is_some() {
-                    // Close the deepest level first
-                    app_core.ui_state.nested_submenu = None;
-                } else if app_core.ui_state.submenu.is_some() {
-                    app_core.ui_state.submenu = None;
+                // Close one level at a time
+                if app_core.ui_state.menu_stack.len() > 1 {
+                    app_core.ui_state.pop_menu();
                 } else {
                     // Close all menus and return to normal mode
-                    app_core.ui_state.popup_menu = None;
-                    app_core.ui_state.submenu = None;
-                    app_core.ui_state.nested_submenu = None;
+                    app_core.ui_state.close_all_menus();
                     app_core.ui_state.input_mode = InputMode::Normal;
                 }
                 app_core.needs_render = true;
             }
             KeyCode::Tab | KeyCode::Down => {
-                if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
-                    nested.select_next();
-                } else if let Some(ref mut submenu) = app_core.ui_state.submenu {
-                    submenu.select_next();
-                } else if let Some(ref mut menu) = app_core.ui_state.popup_menu {
+                // Navigate in the current (deepest) menu
+                if let Some(ref mut menu) = app_core.ui_state.current_menu_mut() {
                     menu.select_next();
                 }
                 app_core.needs_render = true;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
-                    nested.select_prev();
-                } else if let Some(ref mut submenu) = app_core.ui_state.submenu {
-                    submenu.select_prev();
-                } else if let Some(ref mut menu) = app_core.ui_state.popup_menu {
+                // Navigate in the current (deepest) menu
+                if let Some(ref mut menu) = app_core.ui_state.current_menu_mut() {
                     menu.select_prev();
                 }
                 app_core.needs_render = true;
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                // Choose the deepest open menu
-                let menu_to_use = if app_core.ui_state.nested_submenu.is_some() {
-                    &app_core.ui_state.nested_submenu
-                } else if app_core.ui_state.submenu.is_some() {
-                    &app_core.ui_state.submenu
-                } else {
-                    &app_core.ui_state.popup_menu
-                };
-
-                if let Some(menu) = menu_to_use {
+            KeyCode::Left => {
+                // Go back one level (but not from main menu)
+                if app_core.ui_state.menu_stack.len() > 1 {
+                    app_core.ui_state.pop_menu();
+                    app_core.needs_render = true;
+                }
+            }
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right => {
+                // Use the current (deepest) menu
+                if let Some(menu) = app_core.ui_state.current_menu() {
                     if let Some(item) = menu.selected_item() {
                         let command = item.command.clone();
                         tracing::info!("Menu command selected: {}", command);
@@ -1995,12 +1981,14 @@ impl TuiFrontend {
                 "hidewindow" => app_core.build_hide_window_menu(),
                 "editwindow" => app_core.build_edit_window_menu(),
                 _ => {
-                    app_core.ui_state.popup_menu = None;
+                    app_core.ui_state.close_all_menus();
                     app_core.ui_state.input_mode = InputMode::Normal;
                     return Ok(None);
                 }
             };
-            app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (40, 12)));
+            // Replace current menu stack with new menu
+            app_core.ui_state.close_all_menus();
+            app_core.ui_state.push_menu(PopupMenu::new(items, (40, 12)));
             app_core.needs_render = true;
         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
             let items = app_core.build_submenu(category);
@@ -2015,33 +2003,29 @@ impl TuiFrontend {
             if !items.is_empty() {
                 let position = app_core
                     .ui_state
-                    .popup_menu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
                     .unwrap_or((40, 12));
                 let submenu_pos = (position.0 + 2, position.1);
-                app_core.ui_state.submenu = Some(PopupMenu::new(items, submenu_pos));
-                tracing::info!("Opened submenu: {}", category);
+                app_core.ui_state.push_menu(PopupMenu::new(items, submenu_pos));
+                tracing::info!("Opened submenu: {} (depth {})", category, app_core.ui_state.menu_depth());
             } else {
-                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.close_all_menus();
                 app_core.ui_state.input_mode = InputMode::Normal;
             }
             app_core.needs_render = true;
         } else if let Some(category_str) = command.strip_prefix("__SUBMENU_ADD__") {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_add_window_category_menu(&category);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_INDICATORS" {
@@ -2051,53 +2035,43 @@ impl TuiFrontend {
                 .cloned()
                 .unwrap_or_default();
             let items = app_core.build_indicator_add_menu(&templates);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .nested_submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if let Some(category_str) = command.strip_prefix("__SUBMENU_HIDE__") {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_hide_window_category_menu(&category);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if let Some(category_str) = command.strip_prefix("__SUBMENU_EDIT__") {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_edit_window_category_menu(&category);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_HIDE_INDICATORS" {
@@ -2109,19 +2083,15 @@ impl TuiFrontend {
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .nested_submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_EDIT_INDICATORS" {
@@ -2133,27 +2103,21 @@ impl TuiFrontend {
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_edit_menu(&indicators);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+            if !items.is_empty() {
                 let parent_pos = app_core
                     .ui_state
-                    .nested_submenu
-                    .as_ref()
+                    .current_menu()
                     .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                app_core.ui_state.push_menu(
+                    PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1))
+                );
             }
             app_core.needs_render = true;
         } else if command == "__INDICATOR_EDITOR" {
             self.indicator_template_editor =
                 Some(crate::frontend::tui::indicator_template_editor::IndicatorTemplateEditor::new());
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.ui_state.input_mode = crate::data::ui_state::InputMode::IndicatorTemplateEditor;
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
@@ -2172,8 +2136,7 @@ impl TuiFrontend {
             editor.set_name(&candidate);
 
             self.window_editor = Some(editor);
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.ui_state.input_mode = InputMode::WindowEditor;
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__ADD__") {
@@ -2214,9 +2177,7 @@ impl TuiFrontend {
                     tracing::error!("Failed to add window '{}': {}", window_name, e);
                 }
             }
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__HIDE__") {
             match app_core.layout.hide_window(window_name) {
@@ -2232,8 +2193,8 @@ impl TuiFrontend {
                     tracing::error!("Failed to hide window '{}': {}", window_name, e);
                 }
             }
-            // Keep parent menus open so Esc can back up
-            app_core.ui_state.nested_submenu = None;
+            // Keep parent menus open so Esc can back up - pop only this level
+            app_core.ui_state.pop_menu();
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__EDIT__") {
             if let Some(window_def) = app_core.layout.get_window(window_name) {
@@ -2246,9 +2207,7 @@ impl TuiFrontend {
                 app_core.add_system_message(&format!("Window '{}' not found", window_name));
                 tracing::warn!("Window '{}' not found in layout", window_name);
             }
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.needs_render = true;
         } else {
             // Internal action commands should manage menus themselves
@@ -2261,9 +2220,7 @@ impl TuiFrontend {
                 app_core.needs_render = true;
             } else {
                 // Game command or empty selection: close menus
-                app_core.ui_state.popup_menu = None;
-                app_core.ui_state.submenu = None;
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.close_all_menus();
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
 
@@ -2295,7 +2252,7 @@ impl TuiFrontend {
             "Other" => Ok(WidgetCategory::Other),
             _ => {
                 tracing::warn!("Unknown widget category: {}", category_str);
-                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.close_all_menus();
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
                 Ok(WidgetCategory::Other)

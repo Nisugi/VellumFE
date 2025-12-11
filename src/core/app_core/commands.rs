@@ -286,7 +286,8 @@ impl AppCore {
 
                 // Create popup menu at center of screen
                 // Position will be adjusted by frontend based on actual terminal size
-                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
+                self.ui_state.close_all_menus();
+                self.ui_state.push_menu(crate::data::ui_state::PopupMenu::new(
                     items,
                     (40, 12), // Default center position
                 ));

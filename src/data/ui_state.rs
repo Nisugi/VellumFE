@@ -28,14 +28,9 @@ pub struct UiState {
     pub search_input: String,
     pub search_cursor: usize,
 
-    /// Popup menu state (main menu or level 1)
-    pub popup_menu: Option<PopupMenu>,
-
-    /// Submenu (level 2) - shown when clicking category in popup_menu
-    pub submenu: Option<PopupMenu>,
-
-    /// Nested submenu (level 3) - shown when clicking subcategory in submenu
-    pub nested_submenu: Option<PopupMenu>,
+    /// Menu stack - supports unlimited menu depth
+    /// Index 0 = main menu, 1 = submenu, 2+ = nested submenus
+    pub menu_stack: Vec<PopupMenu>,
 
     /// Status bar text
     pub status_text: String,
@@ -157,9 +152,7 @@ impl UiState {
             input_mode: InputMode::Normal,
             search_input: String::new(),
             search_cursor: 0,
-            popup_menu: None,
-            submenu: None,
-            nested_submenu: None,
+            menu_stack: Vec::new(),
             status_text: String::from("Ready"),
             mouse_drag: None,
             selection_state: None,
@@ -282,6 +275,53 @@ impl UiState {
         let name = self.focused_window.clone();
         name.as_ref().and_then(|n| self.windows.get_mut(n))
     }
+
+    // ==================== Menu Stack Methods ====================
+
+    /// Push a new menu onto the stack (opens a submenu)
+    pub fn push_menu(&mut self, menu: PopupMenu) {
+        self.menu_stack.push(menu);
+    }
+
+    /// Pop the top menu from the stack (closes current submenu)
+    pub fn pop_menu(&mut self) -> Option<PopupMenu> {
+        self.menu_stack.pop()
+    }
+
+    /// Close all menus
+    pub fn close_all_menus(&mut self) {
+        self.menu_stack.clear();
+    }
+
+    /// Get the current menu depth (0 = no menu, 1 = main menu, 2+ = submenus)
+    pub fn menu_depth(&self) -> usize {
+        self.menu_stack.len()
+    }
+
+    /// Get the current (deepest) menu
+    pub fn current_menu(&self) -> Option<&PopupMenu> {
+        self.menu_stack.last()
+    }
+
+    /// Get the current (deepest) menu mutably
+    pub fn current_menu_mut(&mut self) -> Option<&mut PopupMenu> {
+        self.menu_stack.last_mut()
+    }
+
+    /// Check if any menu is open
+    pub fn has_menu(&self) -> bool {
+        !self.menu_stack.is_empty()
+    }
+
+    /// Get menu at specific level (0 = main, 1 = first submenu, etc.)
+    pub fn menu_at_level(&self, level: usize) -> Option<&PopupMenu> {
+        self.menu_stack.get(level)
+    }
+
+    /// Get mutable menu at specific level
+    pub fn menu_at_level_mut(&mut self, level: usize) -> Option<&mut PopupMenu> {
+        self.menu_stack.get_mut(level)
+    }
 }
 
 impl Default for UiState {
@@ -380,9 +420,7 @@ mod tests {
         assert_eq!(state.input_mode, InputMode::Normal);
         assert!(state.search_input.is_empty());
         assert_eq!(state.search_cursor, 0);
-        assert!(state.popup_menu.is_none());
-        assert!(state.submenu.is_none());
-        assert!(state.nested_submenu.is_none());
+        assert!(state.menu_stack.is_empty());
         assert_eq!(state.status_text, "Ready");
         assert!(state.mouse_drag.is_none());
         assert!(state.selection_state.is_none());

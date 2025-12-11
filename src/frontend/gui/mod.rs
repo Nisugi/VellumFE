@@ -3,6 +3,7 @@
 //! This module implements the GUI frontend using egui/eframe.
 //! It provides a native windowed interface with moveable/resizable widgets.
 
+mod input;
 mod runtime;
 mod widgets;
 mod window_manager;
@@ -18,6 +19,30 @@ use anyhow::Result;
 use eframe::egui;
 use tokio::sync::mpsc;
 use window_manager::WindowManager;
+
+/// Parse widget category from debug string representation
+/// This converts strings like "Other" to WidgetCategory::Other
+fn parse_widget_category(s: &str) -> Option<crate::config::WidgetCategory> {
+    match s {
+        "ActiveEffects" => Some(crate::config::WidgetCategory::ActiveEffects),
+        "Countdown" => Some(crate::config::WidgetCategory::Countdown),
+        "Entity" => Some(crate::config::WidgetCategory::Entity),
+        "Hand" => Some(crate::config::WidgetCategory::Hand),
+        "Other" => Some(crate::config::WidgetCategory::Other),
+        "ProgressBar" => Some(crate::config::WidgetCategory::ProgressBar),
+        "Status" => Some(crate::config::WidgetCategory::Status),
+        "TextWindow" => Some(crate::config::WidgetCategory::TextWindow),
+        _ => None,
+    }
+}
+
+/// Check if an action command opens a submenu (should NOT close menu)
+fn action_opens_submenu(command: &str) -> bool {
+    matches!(
+        command,
+        "action:addwindow" | "action:hidewindow" | "action:editwindow"
+    )
+}
 
 /// Link drag state for Ctrl+drag operations
 #[derive(Clone, Debug)]
@@ -66,6 +91,9 @@ pub struct EguiApp {
 
     /// Request focus on command input (set after menu close, link click, etc.)
     request_command_focus: bool,
+
+    /// Skip menu Enter key for one frame (prevents Enter from .menu command opening submenu)
+    skip_menu_enter_frames: u8,
 }
 
 impl EguiApp {
@@ -88,6 +116,7 @@ impl EguiApp {
             hovered_link: HoveredLink::default(),
             last_link_click_pos: None,
             request_command_focus: false,
+            skip_menu_enter_frames: 0,
         }
     }
 
@@ -114,6 +143,7 @@ impl EguiApp {
             hovered_link: HoveredLink::default(),
             last_link_click_pos: None,
             request_command_focus: false,
+            skip_menu_enter_frames: 0,
         }
     }
 
@@ -144,7 +174,7 @@ impl EguiApp {
                 .with_inner_size([1280.0, 800.0])
                 .with_min_inner_size([800.0, 600.0])
                 .with_title("VellumFE"),
-            persist_window: false,  // Don't persist window position/size
+            persist_window: true,  // Persist main window position/size
             ..Default::default()
         };
 
@@ -152,8 +182,7 @@ impl EguiApp {
             "VellumFE",
             options,
             Box::new(|cc| {
-                // Note: Memory persistence is disabled via persist_window: false in NativeOptions
-                // and by not providing a storage backend
+                // Main window position/size is persisted via persist_window: true
                 configure_style(&cc.egui_ctx);
                 Ok(Box::new(self))
             }),
@@ -189,14 +218,45 @@ impl EguiApp {
 
     /// Send a command to the server
     fn send_command(&mut self, command: String) {
-        if let Some(ref tx) = self.command_tx {
-            // Add to history
-            if !command.is_empty() {
-                self.command_history.push(command.clone());
-                self.history_index = None;
+        let trimmed = command.trim();
+
+        // Add to history (even for dot commands)
+        if !trimmed.is_empty() {
+            self.command_history.push(trimmed.to_string());
+            self.history_index = None;
+        }
+
+        // Check for dot commands - handle locally via AppCore
+        if trimmed.starts_with('.') {
+            tracing::info!("Processing dot command: {}", trimmed);
+            // Check if menu was open before command
+            let had_menu = self.app_core.ui_state.has_menu();
+
+            // Process through AppCore which handles dot commands
+            match self.app_core.send_command(trimmed.to_string()) {
+                Ok(response) => {
+                    // AppCore may return action commands like "action:addwindow"
+                    if response.starts_with("action:") {
+                        tracing::info!("Dot command returned action: {}", response);
+                        self.handle_action_command(&response);
+                    }
+                    // Other responses (like empty string) are already handled by AppCore
+                }
+                Err(e) => {
+                    tracing::error!("Dot command error: {}", e);
+                }
             }
 
-            // Send to server
+            // If menu was just opened by this command, skip Enter for 2 frames
+            // This prevents the Enter key from .menu immediately opening a submenu
+            if !had_menu && self.app_core.ui_state.has_menu() {
+                self.skip_menu_enter_frames = 2;
+            }
+            return;
+        }
+
+        // Regular command - send to server
+        if let Some(ref tx) = self.command_tx {
             if let Err(e) = tx.send(command) {
                 tracing::error!("Failed to send command: {}", e);
             }
@@ -252,6 +312,30 @@ impl EguiApp {
         widgets::TextWindowResponse::default()
     }
 
+    /// Render a tabbed text window widget
+    fn render_tabbed_text_window(&self, ui: &mut egui::Ui, window_name: &str) -> widgets::TabbedTextWindowResponse {
+        if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
+            if let WindowContent::TabbedText(content) = &window.content {
+                return widgets::render_tabbed_text_window(ui, content, window_name);
+            }
+        }
+        // Fallback for windows without content
+        ui.weak("Waiting for data...");
+        widgets::TabbedTextWindowResponse::default()
+    }
+
+    /// Render an active effects window widget (buffs, debuffs, cooldowns, active spells)
+    fn render_active_effects_window(&self, ui: &mut egui::Ui, window_name: &str) {
+        if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
+            if let WindowContent::ActiveEffects(content) = &window.content {
+                widgets::render_active_effects(ui, content, window_name);
+                return;
+            }
+        }
+        // Fallback for windows without content
+        ui.weak("Waiting for data...");
+    }
+
     /// Handle a link click - delegates to AppCore for centralized logic
     fn handle_link_click(&mut self, link_data: &LinkData, click_pos: egui::Pos2) {
         // Store pixel position for GUI popup placement (in case _menu is sent)
@@ -281,6 +365,169 @@ impl EguiApp {
 
         tracing::info!("Link drag ended: {}", command.trim());
         self.send_command(command);
+    }
+
+    /// Handle action commands (action:addwindow, action:showwindow:name, etc.)
+    /// Returns true if the command was handled as an action, false otherwise
+    fn handle_action_command(&mut self, command: &str) -> bool {
+        // Handle action:showwindow:<name>
+        if let Some(window_name) = command.strip_prefix("action:showwindow:") {
+            tracing::info!("Action: show window '{}'", window_name);
+            // Show window from layout template (use 0,0 for terminal size - GUI uses pixels)
+            self.app_core.show_window(window_name, 0, 0);
+            // Close menus
+            self.app_core.ui_state.close_all_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.request_command_focus = true;
+            return true;
+        }
+
+        // Handle action:hidewindow:<name>
+        if let Some(window_name) = command.strip_prefix("action:hidewindow:") {
+            tracing::info!("Action: hide window '{}'", window_name);
+            self.app_core.hide_window(window_name);
+            // Close menus
+            self.app_core.ui_state.close_all_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.request_command_focus = true;
+            return true;
+        }
+
+        // Handle action:createwindow:<type> - create window from template
+        if let Some(widget_type) = command.strip_prefix("action:createwindow:") {
+            tracing::info!("Action: create window of type '{}'", widget_type);
+            // For GUI, we create the window at a default position
+            // In the future, could open a dialog to let user configure
+            if let Some(template) = crate::config::Config::get_window_template(widget_type) {
+                self.app_core.add_new_window(&template, 0, 0);
+                // Initialize in window manager using get_or_create
+                let name = template.name().to_string();
+                let base = template.base();
+                // Convert from terminal chars to approximate pixels (8px per char width, 18px height)
+                let pixel_x = base.col as f32 * 8.0;
+                let pixel_y = base.row as f32 * 18.0;
+                let pixel_w = base.cols as f32 * 8.0;
+                let pixel_h = base.rows as f32 * 18.0;
+                let state = self.window_manager.get_or_create(&name);
+                state.position = [pixel_x, pixel_y];
+                state.size = [pixel_w, pixel_h];
+                state.visible = true;
+            }
+            // Close menus
+            self.app_core.ui_state.close_all_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.request_command_focus = true;
+            return true;
+        }
+
+        // Handle __SUBMENU_ADD__<category> commands - open widget category submenu
+        if let Some(category_str) = command.strip_prefix("__SUBMENU_ADD__") {
+            tracing::info!("Action: open widget category submenu '{}'", category_str);
+            if let Some(category) = parse_widget_category(category_str) {
+                let items = self.app_core.build_add_window_category_menu(&category);
+                if !items.is_empty() {
+                    // Push submenu with the category's widgets
+                    self.app_core.ui_state.push_menu(
+                        crate::data::ui_state::PopupMenu::new(items, (0, 0))
+                    );
+                    tracing::info!("Opened widget category submenu: {:?}", category);
+                }
+            }
+            return true;
+        }
+
+        // Handle generic __SUBMENU__<category> commands - open config submenu
+        if let Some(category) = command.strip_prefix("__SUBMENU__") {
+            tracing::info!("Action: open submenu '{}'", category);
+            // Try build_submenu first, then menu_categories
+            let items = self.app_core.build_submenu(category);
+            let items = if !items.is_empty() {
+                items
+            } else if let Some(cached_items) = self.app_core.menu_categories.get(category) {
+                cached_items.clone()
+            } else {
+                Vec::new()
+            };
+
+            if !items.is_empty() {
+                self.app_core.ui_state.push_menu(
+                    crate::data::ui_state::PopupMenu::new(items, (0, 0))
+                );
+                tracing::info!("Opened submenu: {}", category);
+            }
+            return true;
+        }
+
+        // Handle __ADD__<template> commands from menu selection
+        if let Some(template_name) = command.strip_prefix("__ADD__") {
+            tracing::info!("Action: add window from template '{}'", template_name);
+
+            // Get the window template and add using core (syncs to ui_state.windows)
+            if let Some(template) = crate::config::Config::get_window_template(template_name) {
+                // Add window using core - this syncs to ui_state.windows
+                self.app_core.add_new_window(&template, 0, 0);
+
+                // Initialize in window manager for GUI pixel positioning
+                let base = template.base();
+                let pixel_x = base.col as f32 * 8.0;
+                let pixel_y = base.row as f32 * 18.0;
+                let pixel_w = base.cols as f32 * 8.0;
+                let pixel_h = base.rows as f32 * 18.0;
+                let state = self.window_manager.get_or_create(template.name());
+                state.position = [pixel_x, pixel_y];
+                state.size = [pixel_w, pixel_h];
+                state.visible = true;
+
+                tracing::info!("Added window '{}' from template", template_name);
+            } else {
+                tracing::warn!("Unknown window template: {}", template_name);
+            }
+
+            // Close menus
+            self.app_core.ui_state.close_all_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.request_command_focus = true;
+            return true;
+        }
+
+        // Handle exact action commands
+        match command {
+            "action:addwindow" => {
+                tracing::info!("Action: open add window picker");
+                // Build the widget category menu and push as new menu level
+                let items = self.app_core.build_add_window_menu();
+                if !items.is_empty() {
+                    self.app_core.ui_state.push_menu(
+                        crate::data::ui_state::PopupMenu::new(items, (0, 0))
+                    );
+                    self.app_core.ui_state.input_mode = InputMode::Menu;
+                }
+                true
+            }
+            "action:hidewindow" => {
+                tracing::info!("Action: open hide window picker");
+                // Build the hide window menu and push as new menu level
+                let items = self.app_core.build_hide_window_menu();
+                if !items.is_empty() {
+                    self.app_core.ui_state.push_menu(
+                        crate::data::ui_state::PopupMenu::new(items, (0, 0))
+                    );
+                    self.app_core.ui_state.input_mode = InputMode::Menu;
+                }
+                true
+            }
+            "action:listwindows" | "action:windows" => {
+                tracing::info!("Action: list windows");
+                // Execute the .windows command locally
+                let _ = self.app_core.send_command(".windows".to_string());
+                // Close menus
+                self.app_core.ui_state.close_all_menus();
+                self.app_core.ui_state.input_mode = InputMode::Normal;
+                self.request_command_focus = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Render a progress bar widget (health, mana, stamina, etc.)
@@ -368,6 +615,160 @@ impl EguiApp {
         }
     }
 
+    /// Sync room data from app_core.room_components to WindowContent::Room
+    /// This is the GUI equivalent of TUI's sync_room_windows
+    fn sync_room_data(&mut self) {
+        use crate::data::widget::{RoomContent, StyledLine};
+
+        // Only sync if room data has changed
+        if !self.app_core.room_window_dirty {
+            return;
+        }
+
+        // Find all room-type windows
+        let room_windows: Vec<String> = self
+            .app_core
+            .ui_state
+            .windows
+            .iter()
+            .filter(|(_, state)| matches!(state.widget_type, WidgetType::Room))
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        if room_windows.is_empty() {
+            // No room windows to sync to, but clear dirty flag anyway
+            self.app_core.room_window_dirty = false;
+            return;
+        }
+
+        // Build RoomContent from room_components
+        // Keys: "room desc", "room objs", "room players", "room exits"
+        let description: Vec<StyledLine> = self
+            .app_core
+            .room_components
+            .get("room desc")
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| StyledLine {
+                        segments: segments.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Extract plain text from objects, players, exits
+        // These are stored as styled text but we need Vec<String>
+        let objects: Vec<String> = self
+            .app_core
+            .room_components
+            .get("room objs")
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| {
+                        segments
+                            .iter()
+                            .map(|seg| seg.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("")
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let players: Vec<String> = self
+            .app_core
+            .room_components
+            .get("room players")
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| {
+                        segments
+                            .iter()
+                            .map(|seg| seg.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("")
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let exits: Vec<String> = self
+            .app_core
+            .room_components
+            .get("room exits")
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| {
+                        segments
+                            .iter()
+                            .map(|seg| seg.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("")
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Build room name/title from subtitle and IDs
+        let name = self.build_room_title();
+
+        let room_content = RoomContent {
+            name,
+            description,
+            exits,
+            players,
+            objects,
+        };
+
+        // Update all room windows with the new content
+        for window_name in room_windows {
+            if let Some(window_state) = self.app_core.ui_state.windows.get_mut(&window_name) {
+                window_state.content = WindowContent::Room(room_content.clone());
+            }
+        }
+
+        // Clear dirty flag
+        self.app_core.room_window_dirty = false;
+    }
+
+    /// Build room window title from room data (same as TUI)
+    fn build_room_title(&self) -> String {
+        let subtitle = &self.app_core.room_subtitle;
+        let lich_id = &self.app_core.lich_room_id;
+        let nav_id = &self.app_core.nav_room_id;
+
+        if let Some(ref subtitle_text) = subtitle {
+            if let Some(ref lich) = lich_id {
+                if let Some(ref nav) = nav_id {
+                    format!("[{} - {}] (u{})", subtitle_text, lich, nav)
+                } else {
+                    format!("[{} - {}]", subtitle_text, lich)
+                }
+            } else if let Some(ref nav) = nav_id {
+                format!("[{}] (u{})", subtitle_text, nav)
+            } else {
+                format!("[{}]", subtitle_text)
+            }
+        } else if let Some(ref lich) = lich_id {
+            if let Some(ref nav) = nav_id {
+                format!("[{}] (u{})", lich, nav)
+            } else {
+                format!("[{}]", lich)
+            }
+        } else if let Some(ref nav) = nav_id {
+            format!("(u{})", nav)
+        } else {
+            String::new()
+        }
+    }
+
     /// Render indicator widget (status icons)
     fn render_indicator_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
@@ -395,48 +796,59 @@ impl EguiApp {
         }
     }
 
+    /// Render room window widget with description, objects, players, and exits
+    /// Returns RoomWindowResponse with any link interactions
+    fn render_room_window(
+        &self,
+        ui: &mut egui::Ui,
+        window_name: &str,
+    ) -> widgets::RoomWindowResponse {
+        if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
+            if let WindowContent::Room(content) = &window.content {
+                // TODO: Add component visibility state to GUI window manager
+                // For now, show all components by default
+                let visibility = widgets::RoomComponentVisibility::default();
+                return widgets::render_room_window(ui, content, &visibility, window_name);
+            }
+        }
+        // Fallback for windows without room content
+        ui.weak("Waiting for room data...");
+        widgets::RoomWindowResponse::default()
+    }
+
     /// Render a generic placeholder for unsupported widget types
     fn render_placeholder_window(&self, ui: &mut egui::Ui, widget_type: &WidgetType) {
         ui.weak(format!("{:?} widget", widget_type));
     }
 
-    /// Render popup menu if visible
+    /// Render popup menu if visible (stack-based for unlimited depth)
     /// Returns the command to execute if a menu item was clicked
     fn render_popup_menu(&mut self, ctx: &egui::Context) -> Option<String> {
-        // Check if there's a popup menu to render
-        if self.app_core.ui_state.popup_menu.is_none() {
+        // Check if there's any menu to render
+        if self.app_core.ui_state.menu_stack.is_empty() {
             return None;
         }
 
         // Track what to return
         let mut result_command: Option<String> = None;
-        let mut should_close = false;
-        let mut submenu_to_open: Option<String> = None;
-        let mut nested_submenu_to_open: Option<String> = None;
+        let mut should_close_all = false;
+        let mut submenu_to_open: Option<(usize, String)> = None; // (level, command)
 
         // Track all menu rectangles for click-outside detection and positioning
         let mut all_menu_rects: Vec<egui::Rect> = Vec::new();
-        // Track menu widths for dynamic submenu positioning (with slight overlap)
         const MENU_OVERLAP: f32 = 2.0;
 
-        // Determine which menu level is "active" for keyboard navigation
-        // Priority: nested_submenu > submenu > popup_menu
-        let active_menu_level = if self.app_core.ui_state.nested_submenu.is_some() {
-            2
-        } else if self.app_core.ui_state.submenu.is_some() {
-            1
-        } else {
-            0
-        };
+        // Active level is the deepest menu (last in stack)
+        let active_level = self.app_core.ui_state.menu_stack.len() - 1;
 
         // Use stored pixel position for main menu, or fallback to center of screen
-        let main_menu_pos = self.last_link_click_pos.unwrap_or_else(|| {
+        let base_pos = self.last_link_click_pos.unwrap_or_else(|| {
             let rect = ctx.available_rect();
             egui::pos2(rect.width() / 2.0, rect.height() / 2.0)
         });
 
         // Handle keyboard input for menu navigation
-        let (key_up, key_down, key_enter, key_escape, key_left, key_right) = ctx.input(|i| {
+        let (key_up, key_down, mut key_enter, key_escape, key_left, mut key_right) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowUp),
                 i.key_pressed(egui::Key::ArrowDown),
@@ -447,238 +859,94 @@ impl EguiApp {
             )
         });
 
+        // Skip Enter/Right keys for a few frames after menu opens
+        if self.skip_menu_enter_frames > 0 {
+            self.skip_menu_enter_frames -= 1;
+            key_enter = false;
+            key_right = false;
+            tracing::debug!("Skipping menu Enter/Right key (frames remaining: {})", self.skip_menu_enter_frames);
+        }
+
+        // Handle Escape - close one level at a time
         if key_escape {
-            // Escape closes nested first, then submenu, then main menu
-            if self.app_core.ui_state.nested_submenu.is_some() {
-                self.app_core.ui_state.nested_submenu = None;
-            } else if self.app_core.ui_state.submenu.is_some() {
-                self.app_core.ui_state.submenu = None;
-            } else {
-                should_close = true;
+            self.app_core.ui_state.pop_menu();
+            if self.app_core.ui_state.menu_stack.is_empty() {
+                self.app_core.ui_state.input_mode = InputMode::Normal;
+                self.request_command_focus = true;
             }
+            return None; // Consume the escape
         }
 
-        if key_left {
-            // Left arrow closes the deepest submenu
-            if self.app_core.ui_state.nested_submenu.is_some() {
-                self.app_core.ui_state.nested_submenu = None;
-            } else if self.app_core.ui_state.submenu.is_some() {
-                self.app_core.ui_state.submenu = None;
-            }
+        // Handle Left arrow - go back one level (but not from main menu)
+        if key_left && self.app_core.ui_state.menu_stack.len() > 1 {
+            self.app_core.ui_state.pop_menu();
+            return None; // Consume the left arrow
         }
 
-        // Render main popup menu (level 0)
-        if let Some(ref popup_menu) = self.app_core.ui_state.popup_menu.clone() {
-            let items = &popup_menu.items;
-            let selected = popup_menu.selected;
+        // Track if keyboard navigation was used this frame
+        let keyboard_nav_used = key_up || key_down;
 
-            // Handle keyboard for this menu level
-            if active_menu_level == 0 {
-                if key_up && !items.is_empty() {
-                    let new_sel = if selected == 0 { items.len() - 1 } else { selected - 1 };
-                    if let Some(menu) = self.app_core.ui_state.popup_menu.as_mut() {
-                        menu.selected = new_sel;
-                    }
-                }
-                if key_down && !items.is_empty() {
-                    let new_sel = (selected + 1) % items.len();
-                    if let Some(menu) = self.app_core.ui_state.popup_menu.as_mut() {
-                        menu.selected = new_sel;
-                    }
-                }
-                if key_enter || key_right {
-                    if let Some(item) = items.get(selected) {
-                        if !item.disabled && !item.command.is_empty() {
-                            if item.command.starts_with("__SUBMENU__") {
-                                submenu_to_open = Some(item.command.clone());
-                            } else {
-                                result_command = Some(item.command.clone());
-                                should_close = true;
-                            }
-                        }
-                    }
-                }
-            }
+        // Clone menu stack for iteration (needed because we'll mutate during render)
+        let menu_count = self.app_core.ui_state.menu_stack.len();
 
-            let area_response = egui::Area::new(egui::Id::new("popup_menu"))
-                .fixed_pos(main_menu_pos)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::popup(ui.style())
-                        .show(ui, |ui| {
-                            // Menu width is dynamic based on content
-                            for (idx, item) in items.iter().enumerate() {
-                                let is_selected = idx == selected;
-                                let is_disabled = item.disabled;
+        // Render each menu level
+        for level in 0..menu_count {
+            // Clone the menu data we need for this level
+            let (items, selected) = {
+                let menu = &self.app_core.ui_state.menu_stack[level];
+                (menu.items.clone(), menu.selected)
+            };
 
-                                let text = if is_disabled {
-                                    egui::RichText::new(&item.text).weak()
-                                } else if is_selected {
-                                    egui::RichText::new(&item.text)
-                                        .background_color(egui::Color32::from_rgb(60, 80, 120))
-                                } else {
-                                    egui::RichText::new(&item.text)
-                                };
-
-                                let response = ui.add(
-                                    egui::Label::new(text)
-                                        .sense(if is_disabled { egui::Sense::hover() } else { egui::Sense::click() })
-                                );
-
-                                if response.hovered() && !is_disabled {
-                                    if let Some(menu) = self.app_core.ui_state.popup_menu.as_mut() {
-                                        menu.selected = idx;
-                                    }
-                                }
-
-                                if response.clicked() && !is_disabled && !item.command.is_empty() {
-                                    if item.command.starts_with("__SUBMENU__") {
-                                        submenu_to_open = Some(item.command.clone());
-                                    } else {
-                                        result_command = Some(item.command.clone());
-                                        should_close = true;
-                                    }
-                                }
-                            }
-                        });
-                });
-
-            all_menu_rects.push(area_response.response.rect);
-        }
-
-        // Render submenu (level 1) if present
-        if let Some(ref submenu) = self.app_core.ui_state.submenu.clone() {
-            let items = &submenu.items;
-            let selected = submenu.selected;
-
-            // Position submenu to the right of main menu (use actual width with overlap)
-            let main_menu_width = all_menu_rects.first()
-                .map(|r| r.width())
-                .unwrap_or(100.0);
-            let submenu_pos = egui::pos2(
-                main_menu_pos.x + main_menu_width - MENU_OVERLAP,
-                main_menu_pos.y,
-            );
-
-            // Handle keyboard for this menu level
-            if active_menu_level == 1 {
-                if key_up && !items.is_empty() {
-                    let new_sel = if selected == 0 { items.len() - 1 } else { selected - 1 };
-                    if let Some(menu) = self.app_core.ui_state.submenu.as_mut() {
-                        menu.selected = new_sel;
-                    }
-                }
-                if key_down && !items.is_empty() {
-                    let new_sel = (selected + 1) % items.len();
-                    if let Some(menu) = self.app_core.ui_state.submenu.as_mut() {
-                        menu.selected = new_sel;
-                    }
-                }
-                if key_enter || key_right {
-                    if let Some(item) = items.get(selected) {
-                        if !item.disabled && !item.command.is_empty() {
-                            if item.command.starts_with("__SUBMENU__") {
-                                nested_submenu_to_open = Some(item.command.clone());
-                            } else {
-                                result_command = Some(item.command.clone());
-                                should_close = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            let area_response = egui::Area::new(egui::Id::new("popup_submenu"))
-                .fixed_pos(submenu_pos)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::popup(ui.style())
-                        .show(ui, |ui| {
-                            // Menu width is dynamic based on content
-                            for (idx, item) in items.iter().enumerate() {
-                                let is_selected = idx == selected;
-                                let is_disabled = item.disabled;
-
-                                let text = if is_disabled {
-                                    egui::RichText::new(&item.text).weak()
-                                } else if is_selected {
-                                    egui::RichText::new(&item.text)
-                                        .background_color(egui::Color32::from_rgb(60, 80, 120))
-                                } else {
-                                    egui::RichText::new(&item.text)
-                                };
-
-                                let response = ui.add(
-                                    egui::Label::new(text)
-                                        .sense(if is_disabled { egui::Sense::hover() } else { egui::Sense::click() })
-                                );
-
-                                if response.hovered() && !is_disabled {
-                                    if let Some(menu) = self.app_core.ui_state.submenu.as_mut() {
-                                        menu.selected = idx;
-                                    }
-                                }
-
-                                if response.clicked() && !is_disabled && !item.command.is_empty() {
-                                    if item.command.starts_with("__SUBMENU__") {
-                                        nested_submenu_to_open = Some(item.command.clone());
-                                    } else {
-                                        result_command = Some(item.command.clone());
-                                        should_close = true;
-                                    }
-                                }
-                            }
-                        });
-                });
-
-            all_menu_rects.push(area_response.response.rect);
-        }
-
-        // Render nested submenu (level 2) if present
-        if let Some(ref nested_submenu) = self.app_core.ui_state.nested_submenu.clone() {
-            let items = &nested_submenu.items;
-            let selected = nested_submenu.selected;
-
-            // Position nested submenu to the right of submenu (use actual widths with overlap)
-            let total_width: f32 = all_menu_rects.iter()
+            // Calculate position: stack horizontally with slight overlap
+            let x_offset: f32 = all_menu_rects.iter()
                 .map(|r| r.width() - MENU_OVERLAP)
                 .sum();
-            let nested_pos = egui::pos2(
-                main_menu_pos.x + total_width,
-                main_menu_pos.y,
-            );
+            let menu_pos = egui::pos2(base_pos.x + x_offset, base_pos.y);
 
-            // Handle keyboard for this menu level
-            if active_menu_level == 2 {
+            // Handle keyboard only for the active (deepest) level
+            if level == active_level {
+                // Up/Down navigation
                 if key_up && !items.is_empty() {
                     let new_sel = if selected == 0 { items.len() - 1 } else { selected - 1 };
-                    if let Some(menu) = self.app_core.ui_state.nested_submenu.as_mut() {
+                    if let Some(menu) = self.app_core.ui_state.menu_at_level_mut(level) {
                         menu.selected = new_sel;
                     }
                 }
                 if key_down && !items.is_empty() {
                     let new_sel = (selected + 1) % items.len();
-                    if let Some(menu) = self.app_core.ui_state.nested_submenu.as_mut() {
+                    if let Some(menu) = self.app_core.ui_state.menu_at_level_mut(level) {
                         menu.selected = new_sel;
                     }
                 }
-                if key_enter {
-                    if let Some(item) = items.get(selected) {
+
+                // Enter/Right to select current item
+                if key_enter || key_right {
+                    // Re-read selection after up/down processing
+                    let current_sel = self.app_core.ui_state.menu_at_level(level)
+                        .map(|m| m.selected)
+                        .unwrap_or(selected);
+                    if let Some(item) = items.get(current_sel) {
                         if !item.disabled && !item.command.is_empty() {
-                            result_command = Some(item.command.clone());
-                            should_close = true;
+                            if item.command.starts_with("__SUBMENU")
+                               || action_opens_submenu(&item.command)
+                            {
+                                submenu_to_open = Some((level, item.command.clone()));
+                            } else {
+                                result_command = Some(item.command.clone());
+                                should_close_all = true;
+                            }
                         }
                     }
                 }
             }
 
-            let area_response = egui::Area::new(egui::Id::new("popup_nested_submenu"))
-                .fixed_pos(nested_pos)
+            // Render the menu for this level
+            let area_response = egui::Area::new(egui::Id::new(format!("menu_level_{}", level)))
+                .fixed_pos(menu_pos)
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style())
                         .show(ui, |ui| {
-                            // Menu width is dynamic based on content
                             for (idx, item) in items.iter().enumerate() {
                                 let is_selected = idx == selected;
                                 let is_disabled = item.disabled;
@@ -694,18 +962,29 @@ impl EguiApp {
 
                                 let response = ui.add(
                                     egui::Label::new(text)
+                                        .wrap_mode(egui::TextWrapMode::Extend)
                                         .sense(if is_disabled { egui::Sense::hover() } else { egui::Sense::click() })
                                 );
 
-                                if response.hovered() && !is_disabled {
-                                    if let Some(menu) = self.app_core.ui_state.nested_submenu.as_mut() {
+                                // Only update selection on hover if keyboard wasn't used this frame
+                                // and this is the active level
+                                if response.hovered() && !is_disabled && !keyboard_nav_used && level == active_level {
+                                    if let Some(menu) = self.app_core.ui_state.menu_at_level_mut(level) {
                                         menu.selected = idx;
                                     }
                                 }
 
+                                // Handle click
                                 if response.clicked() && !is_disabled && !item.command.is_empty() {
-                                    result_command = Some(item.command.clone());
-                                    should_close = true;
+                                    tracing::debug!("Menu click at level {}: command='{}'", level, &item.command);
+                                    if item.command.starts_with("__SUBMENU")
+                                       || action_opens_submenu(&item.command)
+                                    {
+                                        submenu_to_open = Some((level, item.command.clone()));
+                                    } else {
+                                        result_command = Some(item.command.clone());
+                                        should_close_all = true;
+                                    }
                                 }
                             }
                         });
@@ -724,64 +1003,149 @@ impl EguiApp {
         });
 
         if clicked_outside {
-            should_close = true;
+            should_close_all = true;
         }
 
-        // Open submenu if requested
-        if let Some(submenu_cmd) = submenu_to_open {
-            if let Some(category) = submenu_cmd.strip_prefix("__SUBMENU__") {
-                // Close any existing nested submenu
-                self.app_core.ui_state.nested_submenu = None;
+        // Process submenu opening
+        if let Some((level, cmd)) = submenu_to_open {
+            tracing::debug!("Opening submenu at level {}: {}", level, cmd);
 
-                // Try build_submenu first (for config menus), then menu_categories
-                let items = self.app_core.build_submenu(category);
-                let items = if !items.is_empty() {
-                    items
-                } else if let Some(cached_items) = self.app_core.menu_categories.get(category) {
-                    cached_items.clone()
-                } else {
-                    Vec::new()
-                };
-
-                if !items.is_empty() {
-                    self.app_core.ui_state.submenu =
-                        Some(crate::data::ui_state::PopupMenu::new(items, (0, 0)));
-                    tracing::info!("Opened submenu: {}", category);
+            if let Some(new_items) = self.build_menu_items_for_command(&cmd) {
+                // Close any menus deeper than current level
+                while self.app_core.ui_state.menu_stack.len() > level + 1 {
+                    self.app_core.ui_state.pop_menu();
                 }
+                // Push new submenu
+                self.app_core.ui_state.push_menu(
+                    crate::data::ui_state::PopupMenu::new(new_items, (0, 0))
+                );
+                tracing::info!("Opened submenu (now at depth {})", self.app_core.ui_state.menu_depth());
             }
         }
 
-        // Open nested submenu if requested
-        if let Some(nested_cmd) = nested_submenu_to_open {
-            if let Some(category) = nested_cmd.strip_prefix("__SUBMENU__") {
-                // Try build_submenu first, then menu_categories
-                let items = self.app_core.build_submenu(category);
-                let items = if !items.is_empty() {
-                    items
-                } else if let Some(cached_items) = self.app_core.menu_categories.get(category) {
-                    cached_items.clone()
-                } else {
-                    Vec::new()
-                };
-
-                if !items.is_empty() {
-                    self.app_core.ui_state.nested_submenu =
-                        Some(crate::data::ui_state::PopupMenu::new(items, (0, 0)));
-                    tracing::info!("Opened nested submenu: {}", category);
-                }
-            }
-        }
-
-        // Handle close
-        if should_close {
-            self.app_core.ui_state.popup_menu = None;
-            self.app_core.ui_state.submenu = None;
-            self.app_core.ui_state.nested_submenu = None;
+        // Handle close all
+        if should_close_all {
+            self.app_core.ui_state.close_all_menus();
             self.app_core.ui_state.input_mode = InputMode::Normal;
-            self.request_command_focus = true; // Return focus to command input
+            self.request_command_focus = true;
+        }
+
+        // Debug: Log what we're returning
+        if result_command.is_some() {
+            tracing::debug!(
+                "render_popup_menu returning: result_command={:?}, should_close_all={}",
+                result_command, should_close_all
+            );
         }
 
         result_command
+    }
+
+    /// Build menu items for a command (submenu or action)
+    /// Returns None if the command doesn't produce menu items
+    fn build_menu_items_for_command(&self, cmd: &str) -> Option<Vec<crate::data::ui_state::PopupMenuItem>> {
+        // Handle action commands that open submenus
+        if let Some(action_cmd) = cmd.strip_prefix("action:") {
+            match action_cmd {
+                "addwindow" => {
+                    let items = self.app_core.build_add_window_menu();
+                    if !items.is_empty() { return Some(items); }
+                }
+                "hidewindow" => {
+                    let items = self.app_core.build_hide_window_menu();
+                    if !items.is_empty() { return Some(items); }
+                }
+                "editwindow" => {
+                    let items = self.app_core.build_edit_window_menu();
+                    if !items.is_empty() { return Some(items); }
+                }
+                _ => {
+                    tracing::warn!("Unknown action command: {}", action_cmd);
+                }
+            }
+            return None;
+        }
+
+        // Handle widget category submenu (e.g., __SUBMENU_ADD__Hand)
+        if let Some(category_str) = cmd.strip_prefix("__SUBMENU_ADD__") {
+            if let Some(category) = parse_widget_category(category_str) {
+                let items = self.app_core.build_add_window_category_menu(&category);
+                if !items.is_empty() {
+                    tracing::info!("Built widget category submenu: {:?}", category);
+                    return Some(items);
+                }
+            }
+            return None;
+        }
+
+        // Handle generic submenu (e.g., __SUBMENU__Windows)
+        if let Some(category) = cmd.strip_prefix("__SUBMENU__") {
+            // Try build_submenu first (for config menus), then menu_categories
+            let items = self.app_core.build_submenu(category);
+            let items = if !items.is_empty() {
+                items
+            } else if let Some(cached_items) = self.app_core.menu_categories.get(category) {
+                cached_items.clone()
+            } else {
+                Vec::new()
+            };
+
+            if !items.is_empty() {
+                tracing::info!("Built submenu: {}", category);
+                return Some(items);
+            }
+        }
+
+        None
+    }
+
+    /// Handle keybinds from egui input
+    /// Returns commands to send to server (from macros)
+    fn handle_keybinds(&mut self, ctx: &egui::Context) -> Vec<String> {
+        let mut commands = Vec::new();
+
+        // Get all key events from this frame
+        let key_events = input::get_key_events(ctx);
+
+        for key_event in key_events {
+            // First check if this key has a binding
+            if let Some(action) = self.app_core.keybind_map.get(&key_event) {
+                let action = action.clone(); // Clone to avoid borrow issues
+
+                // Skip keybind processing if:
+                // 1. We're in Menu mode (popup menus handle their own input)
+                // 2. We're in Search mode (search handles its own input)
+                // This allows normal mode keybinds to work
+                if self.app_core.ui_state.input_mode == InputMode::Menu
+                    || self.app_core.ui_state.input_mode == InputMode::Search
+                {
+                    continue;
+                }
+
+                // Check for special keybinds that need GUI-level handling
+                // (e.g., quit, which needs to close the window)
+                let key_str = input::key_event_to_keybind_string(&key_event);
+                if key_str == self.app_core.config.global_keybinds.quit {
+                    // Request close - egui will handle this
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    continue;
+                }
+
+                // Execute the keybind action via AppCore
+                match self.app_core.execute_keybind_action(&action) {
+                    Ok(cmds) => {
+                        commands.extend(cmds);
+                    }
+                    Err(e) => {
+                        tracing::error!("Error executing keybind action: {}", e);
+                    }
+                }
+
+                tracing::debug!("Processed keybind: {} -> {:?}", key_str, action);
+            }
+        }
+
+        commands
     }
 }
 
@@ -789,6 +1153,15 @@ impl eframe::App for EguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll for server messages
         self.poll_server_messages();
+
+        // Sync room data from room_components to WindowContent::Room
+        self.sync_room_data();
+
+        // Handle keybinds (before UI rendering to ensure immediate response)
+        let keybind_commands = self.handle_keybinds(ctx);
+        for cmd in keybind_commands {
+            self.send_command(cmd);
+        }
 
         // Background panel
         egui::CentralPanel::default().show(ctx, |_ui| {});
@@ -849,7 +1222,7 @@ impl eframe::App for EguiApp {
                 .default_size(default_size)
                 .default_open(true)
                 .resizable(true)
-                .collapsible(false)
+                .collapsible(true)
                 .title_bar(show_title_bar)
                 .movable(show_title_bar); // Only draggable when title bar visible
 
@@ -920,6 +1293,11 @@ impl eframe::App for EguiApp {
                                         .hint_text("Enter command..."),
                                 );
 
+                                // Surrender focus when popup menu is open so arrow keys work for menu navigation
+                                if self.app_core.ui_state.has_menu() {
+                                    response.surrender_focus();
+                                }
+
                                 // Auto-focus if requested (after menu close, content click, etc.)
                                 // Only focus if in Normal mode (not during priority windows like WindowEditor)
                                 if self.request_command_focus {
@@ -951,18 +1329,49 @@ impl eframe::App for EguiApp {
                                 }
                             });
                         }
+                        WidgetType::Room => {
+                            let response = self.render_room_window(ui, &name);
+                            if let Some(link) = response.clicked_link {
+                                let pos = ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or_default());
+                                link_clicked = Some((link, pos));
+                            }
+                            if let Some(link) = response.drag_started {
+                                link_drag_start = Some(link);
+                            }
+                            if let Some(link) = response.hovered_link {
+                                link_hovered = Some(link);
+                            }
+                        }
+                        WidgetType::TabbedText => {
+                            let response = self.render_tabbed_text_window(ui, &name);
+                            if let Some(link) = response.clicked_link {
+                                let pos = ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or_default());
+                                link_clicked = Some((link, pos));
+                            }
+                            if let Some(link) = response.drag_started {
+                                link_drag_start = Some(link);
+                            }
+                            if let Some(link) = response.hovered_link {
+                                link_hovered = Some(link);
+                            }
+                        }
+                        WidgetType::ActiveEffects => {
+                            self.render_active_effects_window(ui, &name);
+                        }
                         _ => self.render_placeholder_window(ui, &widget_type),
                     }
 
                     // Check for left-click on non-interactive content area to focus command input
                     // Only if no link was clicked in this frame
-                    let primary_clicked_in_content = ui.ctx().input(|i| {
-                        i.pointer.primary_clicked()
-                            && i.pointer.interact_pos()
+                    // Use primary_released() with latest_pos() for more reliable detection
+                    // (primary_clicked() may not fire if ScrollArea consumed the press for scrolling)
+                    let primary_released_in_content = ui.ctx().input(|i| {
+                        i.pointer.primary_released()
+                            && i.pointer.latest_pos()
                                 .map(|pos| content_rect.contains(pos))
                                 .unwrap_or(false)
                     });
-                    if primary_clicked_in_content && link_clicked.is_none() {
+                    if primary_released_in_content && link_clicked.is_none() {
                         should_focus_command = true;
                     }
 
@@ -1048,18 +1457,24 @@ impl eframe::App for EguiApp {
                     }
 
                     // Alt+drag detection for window movement (works even with hidden title bar)
+                    // IMPORTANT: Only create the interaction when Alt is held, otherwise it steals
+                    // mouse events from links and other interactive elements
                     let mut window_drag_delta: Option<egui::Vec2> = None;
-                    let content_drag_response = ui.interact(
-                        content_rect,
-                        ui.id().with("alt_drag"),
-                        egui::Sense::drag(),
-                    );
-                    if content_drag_response.dragged() && ui.ctx().input(|i| i.modifiers.alt) {
-                        window_drag_delta = Some(content_drag_response.drag_delta());
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                    } else if content_drag_response.hovered() && ui.ctx().input(|i| i.modifiers.alt) {
-                        // Show move cursor when Alt is held over content (before drag starts)
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                    let alt_held = ui.ctx().input(|i| i.modifiers.alt);
+
+                    if alt_held {
+                        let content_drag_response = ui.interact(
+                            content_rect,
+                            ui.id().with("alt_drag"),
+                            egui::Sense::drag(),
+                        );
+                        if content_drag_response.dragged() {
+                            window_drag_delta = Some(content_drag_response.drag_delta());
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                        } else if content_drag_response.hovered() {
+                            // Show move cursor when Alt is held over content (before drag starts)
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                        }
                     }
 
                     // Return tuple: (toggle_title_bar, clicked_link, drag_started, hovered_link, focus_command, window_drag_delta)
@@ -1144,11 +1559,28 @@ impl eframe::App for EguiApp {
         }
 
         // Render popup menu (if visible) and handle any command from it
-        // Note: __SUBMENU__ commands are handled internally by render_popup_menu
+        // Note: __SUBMENU__ commands SHOULD be handled internally by render_popup_menu,
+        // but we add a safety check here in case they leak through
         if let Some(command) = self.render_popup_menu(ctx) {
-            // Regular command - send to server
             tracing::info!("Menu command selected: {}", command);
-            self.send_command(format!("{}\n", command));
+            // Check if it's an action command (handled locally)
+            if command.starts_with("action:") {
+                self.handle_action_command(&command);
+            } else if command.starts_with("__SUBMENU__")
+                || command.starts_with("__SUBMENU_ADD__")
+                || command.starts_with("__ADD__")
+            {
+                // These are internal menu navigation commands that should NOT be sent to server
+                // If we get here, it means render_popup_menu failed to handle them internally
+                tracing::warn!(
+                    "Internal menu command leaked through render_popup_menu: {}. Handling in update().",
+                    command
+                );
+                self.handle_action_command(&command);
+            } else {
+                // Regular command - send to server
+                self.send_command(format!("{}\n", command));
+            }
         }
 
         // Request repaint to keep polling for messages
@@ -1184,4 +1616,3 @@ fn configure_style(ctx: &egui::Context) {
 
     ctx.set_style(style);
 }
-

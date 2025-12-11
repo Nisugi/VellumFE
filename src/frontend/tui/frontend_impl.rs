@@ -394,11 +394,11 @@ impl Frontend for TuiFrontend {
                 }
             }
 
-            // Render popup menu if active
-            if let Some(ref popup_menu) = app_core.ui_state.popup_menu {
+            // Render all menu levels from the stack
+            for menu in &app_core.ui_state.menu_stack {
                 // Convert from ui_state::PopupMenu to rendering popup_menu::PopupMenu
                 // Filter out disabled items
-                let menu_items: Vec<popup_menu::MenuItem> = popup_menu
+                let menu_items: Vec<popup_menu::MenuItem> = menu
                     .items
                     .iter()
                     .filter(|item| !item.disabled)
@@ -410,52 +410,10 @@ impl Frontend for TuiFrontend {
 
                 let render_menu = popup_menu::PopupMenu::with_selected(
                     menu_items,
-                    popup_menu.position,
-                    popup_menu.selected,
+                    menu.position,
+                    menu.selected,
                 );
                 render_menu.render(screen_area, f.buffer_mut(), &theme);
-            }
-
-            // Render submenu if active (level 2)
-            if let Some(ref submenu) = app_core.ui_state.submenu {
-                // Filter out disabled items
-                let menu_items: Vec<popup_menu::MenuItem> = submenu
-                    .items
-                    .iter()
-                    .filter(|item| !item.disabled)
-                    .map(|item| popup_menu::MenuItem {
-                        text: item.text.clone(),
-                        command: item.command.clone(),
-                    })
-                    .collect();
-
-                let render_submenu = popup_menu::PopupMenu::with_selected(
-                    menu_items,
-                    submenu.position,
-                    submenu.selected,
-                );
-                render_submenu.render(screen_area, f.buffer_mut(), &theme);
-            }
-
-            // Render nested submenu if active (level 3)
-            if let Some(ref nested_submenu) = app_core.ui_state.nested_submenu {
-                // Filter out disabled items
-                let menu_items: Vec<popup_menu::MenuItem> = nested_submenu
-                    .items
-                    .iter()
-                    .filter(|item| !item.disabled)
-                    .map(|item| popup_menu::MenuItem {
-                        text: item.text.clone(),
-                        command: item.command.clone(),
-                    })
-                    .collect();
-
-                let render_nested = popup_menu::PopupMenu::with_selected(
-                    menu_items,
-                    nested_submenu.position,
-                    nested_submenu.selected,
-                );
-                render_nested.render(screen_area, f.buffer_mut(), &theme);
             }
 
             // Render browsers and forms if active

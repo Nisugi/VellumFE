@@ -611,6 +611,11 @@ impl AppCore {
             window_def.widget_type()
         );
 
+        // Add window to layout so it appears in "Hide/Edit" menus and filters from "Add" menu
+        if let Err(e) = self.layout.add_window(window_def.name()) {
+            tracing::error!("Failed to add window '{}' to layout: {}", window_def.name(), e);
+        }
+
         // Use exact position from window definition
         let base = window_def.base();
         let position = WindowPosition {
@@ -2001,16 +2006,17 @@ impl AppCore {
     }
 
     /// Build windows submenu
+    /// Uses action commands directly to enable proper submenu handling in GUI
     pub fn build_windows_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Add window >".to_string(),
-                command: ".addwindow".to_string(),
+                command: "action:addwindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
                 text: "Edit window >".to_string(),
-                command: ".editwindow".to_string(),
+                command: "action:editwindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
@@ -2020,12 +2026,12 @@ impl AppCore {
             },
             crate::data::ui_state::PopupMenuItem {
                 text: "Hide window >".to_string(),
-                command: ".hidewindow".to_string(),
+                command: "action:hidewindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
-                text: "List windows >".to_string(),
-                command: ".windows".to_string(),
+                text: "List windows".to_string(),
+                command: "action:listwindows".to_string(),
                 disabled: false,
             },
         ]
@@ -2298,13 +2304,13 @@ impl AppCore {
         // Create popup menu at last click position (or centered)
         let position = self.last_link_click_pos.unwrap_or((40, 12));
 
-        self.ui_state.popup_menu =
-            Some(crate::data::ui_state::PopupMenu::new(menu_items, position));
+        self.ui_state.close_all_menus();
+        self.ui_state.push_menu(crate::data::ui_state::PopupMenu::new(menu_items, position));
         self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
 
         tracing::info!(
             "Created context menu with {} items",
-            self.ui_state.popup_menu.as_ref().unwrap().get_items().len()
+            self.ui_state.current_menu().map(|m| m.get_items().len()).unwrap_or(0)
         );
     }
 
@@ -2561,7 +2567,7 @@ impl AppCore {
             .into_iter()
             .map(
                 |(category, _templates)| crate::data::ui_state::PopupMenuItem {
-                    text: category.display_name().to_string(),
+                    text: format!("{} >", category.display_name()),
                     command: format!("__SUBMENU_ADD__{:?}", category),
                     disabled: false,
                 },
