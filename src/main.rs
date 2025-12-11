@@ -154,9 +154,7 @@ fn main() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    if cli.direct && matches!(cli.frontend, FrontendType::Gui) {
-        bail!("Direct mode is currently only supported with the TUI frontend");
-    }
+    // Note: Direct mode now supported in both TUI and GUI frontends
 
     // Handle subcommands
     if let Some(command) = cli.command {
@@ -284,23 +282,8 @@ fn main() -> Result<()> {
     let character = cli.character.clone();
     match cli.frontend {
         FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette)?,
-        FrontendType::Gui => run_gui(config)?,
+        FrontendType::Gui => frontend::gui::run(config, character, direct_config)?,
     }
-
-    Ok(())
-}
-
-/// Run GUI frontend
-fn run_gui(config: config::Config) -> Result<()> {
-    use core::AppCore;
-    use frontend::EguiApp;
-
-    // Create core application state
-    let app_core = AppCore::new(config)?;
-
-    // Create and run GUI
-    let app = EguiApp::new(app_core);
-    app.run()?;
 
     Ok(())
 }

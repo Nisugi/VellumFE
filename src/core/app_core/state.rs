@@ -2170,6 +2170,10 @@ impl AppCore {
         }
 
         // Build final menu with categories
+        // Categories follow pattern: "Prefix_name" where:
+        // - Categories with same prefix (parts[0]) are grouped together
+        // - The "main" category has parts[1] == parts[0] (case-insensitive), e.g., "Roleplay_roleplay"
+        // - Other categories become nested submenus, e.g., "Roleplay_swear" -> "swear >" within Roleplay
         let mut menu_items = Vec::new();
         let mut sorted_cats: Vec<_> = categories.keys().cloned().collect();
 
@@ -2184,31 +2188,110 @@ impl AppCore {
             }
         });
 
+        // Group categories by their prefix (parts[0])
+        // e.g., "Roleplay_roleplay" and "Roleplay_swear" both have prefix "Roleplay"
+        let mut prefix_groups: HashMap<String, Vec<String>> = HashMap::new();
+
+        for cat in &sorted_cats {
+            if cat == "0" || !cat.contains('_') {
+                continue; // Handle these separately
+            }
+
+            let parts: Vec<&str> = cat.split('_').collect();
+            if parts.len() >= 2 {
+                let prefix = parts[0].to_lowercase();
+                prefix_groups.entry(prefix).or_default().push(cat.clone());
+            }
+        }
+
+        // Track which prefix groups we've already added to main menu
+        let mut added_prefixes: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         // Add items to menu
         for cat in &sorted_cats {
             let items = categories.get(cat).unwrap();
 
-            // Categories with _ become submenus (except "0")
-            if cat.contains('_') && cat != "0" {
-                // Cache submenu items
-                self.menu_categories.insert(cat.clone(), items.clone());
-
-                // Add submenu entry to main menu
-                let cat_name = cat.split('_').nth(1).unwrap_or(cat).replace('-', " ");
-                let cat_name = cat_name
-                    .chars()
-                    .next()
-                    .map(|c| c.to_uppercase().to_string())
-                    .unwrap_or_default()
-                    + &cat_name[1..];
-                menu_items.push(crate::data::ui_state::PopupMenuItem {
-                    text: format!("{} >", cat_name),
-                    command: format!("__SUBMENU__{}", cat),
-                    disabled: false,
-                });
-            } else {
+            if cat == "0" || !cat.contains('_') {
                 // Add items directly to main menu
                 menu_items.extend(items.clone());
+                continue;
+            }
+
+            let parts: Vec<&str> = cat.split('_').collect();
+            if parts.len() < 2 {
+                menu_items.extend(items.clone());
+                continue;
+            }
+
+            let prefix = parts[0].to_lowercase();
+            let name = parts[1].to_lowercase(); // Category name for display
+
+            // Check if this is the "main" category for this prefix
+            // Categories are formatted as "NUMBER_name" (e.g., "5_roleplay", "5_swear")
+            // The "main" category is the first one alphabetically in its prefix group
+            let is_main = if let Some(group) = prefix_groups.get(&prefix) {
+                // First entry in the sorted group is the "main" category
+                group.first().map(|first| first == cat).unwrap_or(false)
+            } else {
+                false
+            };
+
+            if is_main {
+                // This is the main submenu for this prefix
+                // Build submenu items: direct items + nested submenu entries for other categories in group
+                let mut submenu_items = items.clone();
+
+                // Find all other categories in this prefix group (these become nested submenus)
+                if let Some(group_cats) = prefix_groups.get(&prefix) {
+                    for nested_cat in group_cats {
+                        let nested_parts: Vec<&str> = nested_cat.split('_').collect();
+                        if nested_parts.len() >= 2 {
+                            let nested_name = nested_parts[1].to_lowercase();
+                            // Skip the main category itself (compare names, not prefix)
+                            if nested_cat == cat {
+                                continue;
+                            }
+
+                            // This is a nested category - add a submenu entry (lowercase)
+                            // Strip parent category prefix if present (e.g., "roleplay swear" -> "swear")
+                            let mut display_name = nested_name.replace('-', " ");
+                            if display_name.starts_with(&name) {
+                                display_name = display_name[name.len()..].trim_start().to_string();
+                            }
+
+                            // Cache the nested items
+                            if let Some(nested_items) = categories.get(nested_cat) {
+                                self.menu_categories.insert(nested_cat.clone(), nested_items.clone());
+                            }
+
+                            submenu_items.push(crate::data::ui_state::PopupMenuItem {
+                                text: format!("{} >", display_name),
+                                command: format!("__SUBMENU__{}", nested_cat),
+                                disabled: false,
+                            });
+                        }
+                    }
+                }
+
+                // Cache the combined submenu
+                self.menu_categories.insert(cat.clone(), submenu_items);
+
+                // Add submenu entry to main menu (only once per prefix)
+                // Use the category NAME for display (e.g., "roleplay"), not the prefix number
+                if !added_prefixes.contains(&prefix) {
+                    added_prefixes.insert(prefix.clone());
+
+                    let display_name = name.replace('-', " ");
+
+                    menu_items.push(crate::data::ui_state::PopupMenuItem {
+                        text: format!("{} >", display_name),
+                        command: format!("__SUBMENU__{}", cat),
+                        disabled: false,
+                    });
+                }
+            } else {
+                // This is a nested submenu - just cache it (will be added by the main category)
+                self.menu_categories.insert(cat.clone(), items.clone());
             }
         }
 
@@ -2281,6 +2364,69 @@ impl AppCore {
 
         // Return command to send to server
         format!("_menu #{} {}\n", exist_id, counter)
+    }
+
+    /// Handle a link click - determines the appropriate command to send
+    /// This centralizes link click logic for both TUI and GUI frontends
+    ///
+    /// Priority:
+    /// 1. coord attribute → look up command in cmdlist, execute directly
+    /// 2. _direct_ exist_id → send noun/text as direct command
+    /// 3. Regular link → request context menu via _menu command
+    ///
+    /// Returns the command string to send to the server
+    pub fn handle_link_click(
+        &mut self,
+        link_data: &crate::data::LinkData,
+        click_pos: (u16, u16),
+    ) -> String {
+        // Priority 1: Link has coord attribute - look up command in cmdlist
+        if let Some(ref coord) = link_data.coord {
+            if let Some(ref cmdlist) = self.cmdlist {
+                if let Some(entry) = cmdlist.get(coord) {
+                    // Substitute placeholders: @ = noun, # = #exist_id
+                    let cmd = crate::cmdlist::CmdList::substitute_command(
+                        &entry.command,
+                        &link_data.noun,
+                        &link_data.exist_id,
+                        None, // No secondary noun for direct clicks
+                    );
+                    tracing::info!(
+                        "Direct command from coord {}: {} -> {}",
+                        coord,
+                        entry.command,
+                        cmd
+                    );
+                    return format!("{}\n", cmd);
+                } else {
+                    tracing::warn!(
+                        "Coord {} not found in cmdlist, falling back to _menu",
+                        coord
+                    );
+                }
+            } else {
+                tracing::warn!("No cmdlist loaded, falling back to _menu");
+            }
+        }
+
+        // Priority 2: <d> tag with _direct_ marker - send noun/text directly
+        if link_data.exist_id == "_direct_" {
+            let command = if !link_data.noun.is_empty() {
+                format!("{}\n", link_data.noun)
+            } else {
+                format!("{}\n", link_data.text)
+            };
+            tracing::info!("Direct command (<d> tag): {}", command.trim());
+            return command;
+        }
+
+        // Priority 3: Regular <a> tag - request context menu
+        tracing::info!(
+            "Requesting _menu for '{}' (exist_id: {})",
+            link_data.noun,
+            link_data.exist_id
+        );
+        self.request_menu(link_data.exist_id.clone(), link_data.noun.clone(), click_pos)
     }
 
     /// Mark layout as modified and show reminder (once per session)

@@ -624,35 +624,12 @@ impl TuiFrontend {
                     let dy = (*y as i16 - pending_click.click_pos.1 as i16).abs();
 
                     if dx <= 2 && dy <= 2 {
-                        // Handle <d> tags differently (direct commands vs context menus)
-                        if pending_click.link_data.exist_id == "_direct_" {
-                            // <d> tag: Send text/noun as direct command
-                            let command = if !pending_click.link_data.noun.is_empty() {
-                                format!("{}\n", pending_click.link_data.noun)
-                            // Use cmd attribute
-                            } else {
-                                format!("{}\n", pending_click.link_data.text)
-                                // Use text content
-                            };
-                            tracing::info!(
-                                "Executing <d> direct command: {}",
-                                command.trim()
-                            );
-                            command_to_send = Some(command);
-                        } else {
-                            // Regular <a> tag: Request context menu
-                            let command = app_core.request_menu(
-                                pending_click.link_data.exist_id.clone(),
-                                pending_click.link_data.noun.clone(),
-                                pending_click.click_pos,
-                            );
-                            tracing::info!(
-                                "Sending _menu command for '{}' (exist_id: {})",
-                                pending_click.link_data.noun,
-                                pending_click.link_data.exist_id
-                            );
-                            command_to_send = Some(command);
-                        }
+                        // Use centralized AppCore method for consistent link click handling
+                        let command = app_core.handle_link_click(
+                            &pending_click.link_data,
+                            pending_click.click_pos,
+                        );
+                        command_to_send = Some(command);
                     } else {
                         tracing::debug!(
                             "Link click cancelled - dragged {} pixels",
