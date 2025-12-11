@@ -948,10 +948,125 @@ pub struct HandWidgetData {
     pub text_color: Option<String>,
 }
 
+/// Active effects display style
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ActiveEffectsStyle {
+    Overlay,      // Text overlaid on progress bar (most compact)
+    Separate,     // Text row, then bar row (original)
+    ThinBar,      // Text row with thin 2px bar below
+    SideIndicator,// Colored bar on left edge
+    Minimal,      // Text only, no bars
+}
+
+/// Timer position in active effects display
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TimerPosition {
+    Left,   // Timer on left side
+    Right,  // Timer on right side (default)
+    Inline, // Timer inline after name like "Spell (2:30)"
+}
+
 /// Active effects widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveEffectsWidgetData {
     pub category: String, // "Buffs", "Debuffs", "Cooldowns", "ActiveSpells"
+
+    /// Display style
+    #[serde(default = "default_effects_style")]
+    pub style: ActiveEffectsStyle,
+
+    /// Bar height in pixels (for overlay/separate styles)
+    #[serde(default = "default_effects_bar_height")]
+    pub bar_height: f32,
+
+    /// Bar opacity (0.0-1.0)
+    #[serde(default = "default_effects_bar_opacity")]
+    pub bar_opacity: f32,
+
+    /// Bar corner rounding
+    #[serde(default = "default_effects_bar_rounding")]
+    pub bar_rounding: f32,
+
+    /// Text size
+    #[serde(default = "default_effects_text_size")]
+    pub text_size: f32,
+
+    /// Show countdown timer
+    #[serde(default = "default_effects_show_timer")]
+    pub show_timer: bool,
+
+    /// Show percentage (e.g., "75%")
+    #[serde(default)]
+    pub show_percentage: bool,
+
+    /// Timer position
+    #[serde(default = "default_effects_timer_position")]
+    pub timer_position: TimerPosition,
+
+    /// Spacing between items
+    #[serde(default = "default_effects_spacing")]
+    pub spacing: f32,
+
+    /// Auto-adjust text contrast
+    #[serde(default = "default_effects_auto_contrast")]
+    pub auto_contrast: bool,
+
+    /// Text shadow for readability
+    #[serde(default = "default_effects_text_shadow")]
+    pub text_shadow: bool,
+
+    /// Outline text
+    #[serde(default)]
+    pub outline_text: bool,
+
+    /// Animate bar changes
+    #[serde(default)]
+    pub animate_changes: bool,
+
+    /// Pulse when expiring
+    #[serde(default)]
+    pub pulse_expiring: bool,
+
+    /// Expiring threshold (seconds)
+    #[serde(default = "default_effects_expiring_threshold")]
+    pub expiring_threshold: u32,
+}
+
+// Default functions for ActiveEffectsWidgetData
+fn default_effects_style() -> ActiveEffectsStyle {
+    ActiveEffectsStyle::Overlay
+}
+fn default_effects_bar_height() -> f32 {
+    18.0
+}
+fn default_effects_bar_opacity() -> f32 {
+    0.85
+}
+fn default_effects_bar_rounding() -> f32 {
+    2.0
+}
+fn default_effects_text_size() -> f32 {
+    14.0
+}
+fn default_effects_show_timer() -> bool {
+    true
+}
+fn default_effects_timer_position() -> TimerPosition {
+    TimerPosition::Right
+}
+fn default_effects_spacing() -> f32 {
+    2.0
+}
+fn default_effects_auto_contrast() -> bool {
+    true
+}
+fn default_effects_text_shadow() -> bool {
+    true
+}
+fn default_effects_expiring_threshold() -> u32 {
+    30
 }
 
 /// Performance widget specific data
@@ -2315,7 +2430,7 @@ impl Config {
                     show_objs: true,
                     show_players: true,
                     show_exits: true,
-                    show_name: false,
+                    show_name: true,
                 },
             }),
 
@@ -2912,6 +3027,21 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: "Buffs".to_string(),
+                    style: default_effects_style(),
+                    bar_height: default_effects_bar_height(),
+                    bar_opacity: default_effects_bar_opacity(),
+                    bar_rounding: default_effects_bar_rounding(),
+                    text_size: default_effects_text_size(),
+                    show_timer: default_effects_show_timer(),
+                    show_percentage: false,
+                    timer_position: default_effects_timer_position(),
+                    spacing: default_effects_spacing(),
+                    auto_contrast: default_effects_auto_contrast(),
+                    text_shadow: default_effects_text_shadow(),
+                    outline_text: false,
+                    animate_changes: false,
+                    pulse_expiring: false,
+                    expiring_threshold: default_effects_expiring_threshold(),
                 },
             }),
 
@@ -2927,6 +3057,21 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: "Debuffs".to_string(),
+                    style: default_effects_style(),
+                    bar_height: default_effects_bar_height(),
+                    bar_opacity: default_effects_bar_opacity(),
+                    bar_rounding: default_effects_bar_rounding(),
+                    text_size: default_effects_text_size(),
+                    show_timer: default_effects_show_timer(),
+                    show_percentage: false,
+                    timer_position: default_effects_timer_position(),
+                    spacing: default_effects_spacing(),
+                    auto_contrast: default_effects_auto_contrast(),
+                    text_shadow: default_effects_text_shadow(),
+                    outline_text: false,
+                    animate_changes: false,
+                    pulse_expiring: false,
+                    expiring_threshold: default_effects_expiring_threshold(),
                 },
             }),
 
@@ -2942,6 +3087,21 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: "Cooldowns".to_string(),
+                    style: default_effects_style(),
+                    bar_height: default_effects_bar_height(),
+                    bar_opacity: default_effects_bar_opacity(),
+                    bar_rounding: default_effects_bar_rounding(),
+                    text_size: default_effects_text_size(),
+                    show_timer: default_effects_show_timer(),
+                    show_percentage: false,
+                    timer_position: default_effects_timer_position(),
+                    spacing: default_effects_spacing(),
+                    auto_contrast: default_effects_auto_contrast(),
+                    text_shadow: default_effects_text_shadow(),
+                    outline_text: false,
+                    animate_changes: false,
+                    pulse_expiring: false,
+                    expiring_threshold: default_effects_expiring_threshold(),
                 },
             }),
 
@@ -2957,6 +3117,21 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: "ActiveSpells".to_string(),
+                    style: default_effects_style(),
+                    bar_height: default_effects_bar_height(),
+                    bar_opacity: default_effects_bar_opacity(),
+                    bar_rounding: default_effects_bar_rounding(),
+                    text_size: default_effects_text_size(),
+                    show_timer: default_effects_show_timer(),
+                    show_percentage: false,
+                    timer_position: default_effects_timer_position(),
+                    spacing: default_effects_spacing(),
+                    auto_contrast: default_effects_auto_contrast(),
+                    text_shadow: default_effects_text_shadow(),
+                    outline_text: false,
+                    animate_changes: false,
+                    pulse_expiring: false,
+                    expiring_threshold: default_effects_expiring_threshold(),
                 },
             }),
 
@@ -2971,6 +3146,21 @@ impl Config {
                 },
                 data: ActiveEffectsWidgetData {
                     category: String::new(),
+                    style: default_effects_style(),
+                    bar_height: default_effects_bar_height(),
+                    bar_opacity: default_effects_bar_opacity(),
+                    bar_rounding: default_effects_bar_rounding(),
+                    text_size: default_effects_text_size(),
+                    show_timer: default_effects_show_timer(),
+                    show_percentage: false,
+                    timer_position: default_effects_timer_position(),
+                    spacing: default_effects_spacing(),
+                    auto_contrast: default_effects_auto_contrast(),
+                    text_shadow: default_effects_text_shadow(),
+                    outline_text: false,
+                    animate_changes: false,
+                    pulse_expiring: false,
+                    expiring_threshold: default_effects_expiring_threshold(),
                 },
             }),
 

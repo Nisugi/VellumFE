@@ -328,7 +328,42 @@ impl EguiApp {
     fn render_active_effects_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::ActiveEffects(content) = &window.content {
-                widgets::render_active_effects(ui, content, window_name);
+                // Try to get config from layout
+                if let Some(config_from_layout) = self
+                    .app_core
+                    .layout
+                    .get_window(window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::ActiveEffects { data, .. } = w {
+                            Some(data)
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    widgets::render_active_effects(ui, content, config_from_layout, window_name);
+                } else {
+                    // Use defaults if not in layout
+                    let default_config = crate::config::ActiveEffectsWidgetData {
+                        category: content.category.clone(),
+                        style: crate::config::ActiveEffectsStyle::Overlay,
+                        bar_height: 18.0,
+                        bar_opacity: 0.85,
+                        bar_rounding: 2.0,
+                        text_size: 14.0,
+                        show_timer: true,
+                        show_percentage: false,
+                        timer_position: crate::config::TimerPosition::Right,
+                        spacing: 2.0,
+                        auto_contrast: true,
+                        text_shadow: true,
+                        outline_text: false,
+                        animate_changes: false,
+                        pulse_expiring: false,
+                        expiring_threshold: 30,
+                    };
+                    widgets::render_active_effects(ui, content, &default_config, window_name);
+                }
                 return;
             }
         }
