@@ -5,10 +5,14 @@
 
 mod input;
 mod runtime;
+mod theme_integration;
 mod widgets;
+mod window_editor;
 mod window_manager;
 
 pub use runtime::run;
+use theme_integration::app_theme_to_visuals;
+use widgets::parse_hex_to_color32;
 
 use crate::core::AppCore;
 use crate::data::ui_state::InputMode;
@@ -17,7 +21,9 @@ use crate::data::window::{WidgetType, WindowContent};
 use crate::network::ServerMessage;
 use anyhow::Result;
 use eframe::egui;
+use std::collections::HashMap;
 use tokio::sync::mpsc;
+use window_editor::GuiWindowEditor;
 use window_manager::WindowManager;
 
 /// Parse widget category from debug string representation
@@ -54,6 +60,29 @@ struct LinkDragState {
 #[derive(Clone, Debug, Default)]
 struct HoveredLink {
     link_data: Option<LinkData>,
+}
+
+/// Cached texture data for an injury doll window
+struct InjuryTextureCache {
+    /// egui texture handle (retained for rendering)
+    silhouette: egui::TextureHandle,
+    /// Numbered marker texture (if using Numbers style)
+    #[allow(dead_code)] // Reserved for future numbered marker feature
+    markers: Option<egui::TextureHandle>,
+    /// Original image dimensions (pre-scaling)
+    original_size: (u32, u32),
+    /// Last modification time of image file (for reload detection)
+    #[allow(dead_code)] // Reserved for future hot-reload feature
+    last_modified: Option<std::time::SystemTime>,
+    /// Currently loaded image path (for profile change detection)
+    loaded_image_path: String,
+
+    // Phase 5: Multi-layer overlay textures
+    /// Overlay layer textures (e.g., nervous_system, nerves_greyscale)
+    /// Key: overlay name from config
+    overlay_textures: std::collections::HashMap<String, egui::TextureHandle>,
+    /// Rank indicator textures (rank1, rank2, rank3, nerves)
+    rank_textures: Option<(egui::TextureHandle, egui::TextureHandle, egui::TextureHandle, egui::TextureHandle)>,
 }
 
 /// Main GUI application struct
@@ -94,6 +123,21 @@ pub struct EguiApp {
 
     /// Skip menu Enter key for one frame (prevents Enter from .menu command opening submenu)
     skip_menu_enter_frames: u8,
+
+    /// Open window editor panels (window_name → editor state)
+    window_editors: HashMap<String, GuiWindowEditor>,
+
+    /// Current theme ID (e.g., "dracula", "gruvbox-dark")
+    current_theme_id: String,
+
+    /// Cached theme (avoid HashMap lookup on hot path)
+    cached_theme: crate::theme::AppTheme,
+
+    /// Texture cache for injury doll images (window_name → texture data)
+    injury_textures: HashMap<String, InjuryTextureCache>,
+
+    /// GUI state for tabbed text windows (window_name → tab state)
+    tabbed_text_states: HashMap<String, widgets::GuiTabbedTextState>,
 }
 
 impl EguiApp {
@@ -102,6 +146,10 @@ impl EguiApp {
         let mut window_manager = WindowManager::new();
         // Initialize window manager with positions from app_core
         Self::init_window_manager(&app_core, &mut window_manager);
+
+        // Load initial theme
+        let current_theme_id = app_core.config.active_theme.clone();
+        let cached_theme = app_core.config.get_theme();
 
         Self {
             app_core,
@@ -117,6 +165,11 @@ impl EguiApp {
             last_link_click_pos: None,
             request_command_focus: false,
             skip_menu_enter_frames: 0,
+            window_editors: HashMap::new(),
+            current_theme_id,
+            cached_theme,
+            injury_textures: HashMap::new(),
+            tabbed_text_states: HashMap::new(),
         }
     }
 
@@ -129,6 +182,10 @@ impl EguiApp {
         let mut window_manager = WindowManager::new();
         // Initialize window manager with positions from app_core
         Self::init_window_manager(&app_core, &mut window_manager);
+
+        // Load initial theme
+        let current_theme_id = app_core.config.active_theme.clone();
+        let cached_theme = app_core.config.get_theme();
 
         Self {
             app_core,
@@ -144,6 +201,11 @@ impl EguiApp {
             last_link_click_pos: None,
             request_command_focus: false,
             skip_menu_enter_frames: 0,
+            window_editors: HashMap::new(),
+            current_theme_id,
+            cached_theme,
+            injury_textures: HashMap::new(),
+            tabbed_text_states: HashMap::new(),
         }
     }
 
@@ -181,9 +243,9 @@ impl EguiApp {
         eframe::run_native(
             "VellumFE",
             options,
-            Box::new(|cc| {
+            Box::new(move |cc| {
                 // Main window position/size is persisted via persist_window: true
-                configure_style(&cc.egui_ctx);
+                configure_style(&cc.egui_ctx, &self.cached_theme);
                 Ok(Box::new(self))
             }),
         )
@@ -229,6 +291,19 @@ impl EguiApp {
         // Check for dot commands - handle locally via AppCore
         if trimmed.starts_with('.') {
             tracing::info!("Processing dot command: {}", trimmed);
+
+            // Handle .themes command (list available themes)
+            if trimmed == ".themes" {
+                self.list_themes();
+                return;
+            }
+
+            // Handle .theme <name> command (switch theme)
+            if let Some(theme_name) = trimmed.strip_prefix(".theme ") {
+                self.switch_theme(theme_name.trim());
+                return;
+            }
+
             // Check if menu was open before command
             let had_menu = self.app_core.ui_state.has_menu();
 
@@ -261,6 +336,55 @@ impl EguiApp {
                 tracing::error!("Failed to send command: {}", e);
             }
         }
+    }
+
+    /// Switch to a new theme
+    fn switch_theme(&mut self, theme_id: &str) {
+        use crate::theme::ThemePresets;
+
+        // Get all available themes
+        let all_themes = ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
+
+        // Try to load the theme
+        if let Some(new_theme) = all_themes.get(theme_id) {
+            self.current_theme_id = theme_id.to_string();
+            self.cached_theme = new_theme.clone();
+
+            // Update config
+            self.app_core.config.active_theme = theme_id.to_string();
+
+            // Save config to disk
+            if let Err(e) = self.app_core.config.save(self.app_core.config.character.as_deref()) {
+                tracing::error!("Failed to save theme to config: {}", e);
+            }
+
+            // Add feedback message to main window
+            self.app_core.add_system_message(&format!("Theme switched to: {}", theme_id));
+        } else {
+            // Theme not found
+            self.app_core.add_system_message(&format!(
+                "Error: Theme '{}' not found. Use .themes to list available themes",
+                theme_id
+            ));
+        }
+    }
+
+    /// List all available themes
+    fn list_themes(&mut self) {
+        use crate::theme::ThemePresets;
+
+        let themes = ThemePresets::all_with_custom(self.app_core.config.character.as_deref());
+        let mut output = String::from("[Available themes:]\n");
+
+        for (id, theme) in themes.iter() {
+            let marker = if *id == self.current_theme_id { " *" } else { "" };
+            output.push_str(&format!("  - {} ({}){}\n", id, theme.name, marker));
+        }
+
+        output.push_str(&format!("\nCurrent: {}", self.current_theme_id));
+        output.push_str("\nUse .theme <name> to switch");
+
+        self.app_core.add_system_message(&output);
     }
 
     /// Navigate command history up
@@ -304,7 +428,17 @@ impl EguiApp {
     fn render_text_window(&self, ui: &mut egui::Ui, window_name: &str) -> widgets::TextWindowResponse {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Text(content) = &window.content {
-                return widgets::render_text_window(ui, content, window_name);
+                // Try to get config from layout
+                if let Some(window_def) = self.app_core.layout.get_window(window_name) {
+                    if let crate::config::WindowDef::Text { base, data } = window_def {
+                        let font_family = base.font_family.as_deref();
+                        return widgets::render_text_window(ui, content, data, window_name, font_family);
+                    }
+                } else {
+                    // Use defaults if not in layout
+                    let default_config = crate::config::TextWidgetData::default();
+                    return widgets::render_text_window(ui, content, &default_config, window_name, None);
+                }
             }
         }
         // Fallback for windows without content
@@ -312,13 +446,47 @@ impl EguiApp {
         widgets::TextWindowResponse::default()
     }
 
-    /// Render a tabbed text window widget
-    fn render_tabbed_text_window(&self, ui: &mut egui::Ui, window_name: &str) -> widgets::TabbedTextWindowResponse {
+    /// Render a tabbed text window widget with multiple tabs
+    /// Returns TabbedTextWindowResponse with link interactions and tab clicks
+    fn render_tabbed_text_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        window_name: &str,
+    ) -> widgets::TabbedTextWindowResponse {
+        // Get or create GUI state for this window
+        let gui_state = self
+            .tabbed_text_states
+            .entry(window_name.to_string())
+            .or_insert_with(widgets::GuiTabbedTextState::new);
+
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::TabbedText(content) = &window.content {
-                return widgets::render_tabbed_text_window(ui, content, window_name);
+                // Try to get config from layout
+                if let Some(window_def) = self.app_core.layout.get_window(window_name) {
+                    if let crate::config::WindowDef::TabbedText { base, data } = window_def {
+                        let font_family = base.font_family.as_deref();
+                        return widgets::render_tabbed_text_window(
+                            ui,
+                            content,
+                            data,
+                            gui_state,
+                            font_family,
+                        );
+                    }
+                }
+
+                // Use defaults if not in layout
+                let default_config = crate::config::TabbedTextWidgetData::default();
+                return widgets::render_tabbed_text_window(
+                    ui,
+                    content,
+                    &default_config,
+                    gui_state,
+                    None,
+                );
             }
         }
+
         // Fallback for windows without content
         ui.weak("Waiting for data...");
         widgets::TabbedTextWindowResponse::default()
@@ -525,6 +693,47 @@ impl EguiApp {
             return true;
         }
 
+        // Handle __EDIT__<window_name> commands from menu selection
+        if let Some(window_name) = command.strip_prefix("__EDIT__") {
+            tracing::info!("Action: edit window '{}'", window_name);
+
+            // Get WindowDef from layout
+            if let Some(window_def) = self.app_core.layout.windows.iter()
+                .find(|w| w.name() == window_name)
+                .cloned()
+            {
+                // Get panel position/size from config (or defaults)
+                let position = self.app_core.config.window_editor.panel_positions
+                    .get(window_name)
+                    .copied()
+                    .unwrap_or(self.app_core.config.window_editor.default_position);
+
+                let size = self.app_core.config.window_editor.panel_sizes
+                    .get(window_name)
+                    .copied()
+                    .unwrap_or(self.app_core.config.window_editor.default_size);
+
+                // Create editor (or replace if already exists)
+                let editor = GuiWindowEditor::new(
+                    window_name.to_string(),
+                    window_def,
+                    position,
+                    size,
+                );
+
+                self.window_editors.insert(window_name.to_string(), editor);
+                tracing::info!("Opened editor for window '{}'", window_name);
+            } else {
+                tracing::warn!("Window '{}' not found in layout", window_name);
+            }
+
+            // Close menus
+            self.app_core.ui_state.close_all_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.request_command_focus = true;
+            return true;
+        }
+
         // Handle exact action commands
         match command {
             "action:addwindow" => {
@@ -551,6 +760,18 @@ impl EguiApp {
                 }
                 true
             }
+            "action:editwindow" => {
+                tracing::info!("Action: open edit window picker");
+                // Build the edit window menu and push as new menu level
+                let items = self.app_core.build_edit_window_menu();
+                if !items.is_empty() {
+                    self.app_core.ui_state.push_menu(
+                        crate::data::ui_state::PopupMenu::new(items, (0, 0))
+                    );
+                    self.app_core.ui_state.input_mode = InputMode::Menu;
+                }
+                true
+            }
             "action:listwindows" | "action:windows" => {
                 tracing::info!("Action: list windows");
                 // Execute the .windows command locally
@@ -569,13 +790,116 @@ impl EguiApp {
     fn render_progress_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Progress(data) = &window.content {
+                // Get configuration
+                let progress_config = self.app_core.layout.windows.iter()
+                    .find(|w| w.name() == window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::Progress { data, .. } = w {
+                            Some(data.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                let config = progress_config.unwrap_or_default();
+
+                // Calculate fraction
                 let fraction = if data.max > 0 {
-                    data.value as f32 / data.max as f32
+                    (data.value as f32 / data.max as f32).clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
-                let text = format!("{}/{}", data.value, data.max);
-                ui.add(egui::ProgressBar::new(fraction).text(text));
+
+                // Build text based on custom format or defaults
+                let text = if let Some(ref format) = config.text_format {
+                    // Support {value}, {max}, {percent} placeholders
+                    let percent = (fraction * 100.0) as u32;
+                    format
+                        .replace("{value}", &data.value.to_string())
+                        .replace("{max}", &data.max.to_string())
+                        .replace("{percent}", &percent.to_string())
+                } else if config.current_only {
+                    data.value.to_string()
+                } else if config.numbers_only {
+                    format!("{}/{}", data.value, data.max)
+                } else if let Some(ref label) = config.label {
+                    format!("{}: {}/{}", label, data.value, data.max)
+                } else {
+                    format!("{}/{}", data.value, data.max)
+                };
+
+                // Render based on text position
+                match config.text_position {
+                    crate::config::ProgressTextPosition::Above => {
+                        // Text above bar
+                        let mut text_label = egui::RichText::new(&text).size(config.text_size);
+                        if let Some(ref color_hex) = config.color {
+                            if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                text_label = text_label.color(color);
+                            }
+                        }
+                        ui.label(text_label);
+
+                        // Progress bar below
+                        let mut bar = egui::ProgressBar::new(fraction)
+                            .desired_height(config.bar_height)
+                            .corner_radius(config.rounding);
+                        if let Some(ref color_hex) = config.color {
+                            if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                bar = bar.fill(color);
+                            }
+                        }
+                        ui.add(bar);
+                    }
+                    crate::config::ProgressTextPosition::Below => {
+                        // Progress bar above
+                        let mut bar = egui::ProgressBar::new(fraction)
+                            .desired_height(config.bar_height)
+                            .corner_radius(config.rounding);
+                        if let Some(ref color_hex) = config.color {
+                            if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                bar = bar.fill(color);
+                            }
+                        }
+                        ui.add(bar);
+
+                        // Text below
+                        let mut text_label = egui::RichText::new(&text).size(config.text_size);
+                        if let Some(ref color_hex) = config.color {
+                            if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                text_label = text_label.color(color);
+                            }
+                        }
+                        ui.label(text_label);
+                    }
+                    crate::config::ProgressTextPosition::Inside => {
+                        // Text inside bar (default egui behavior)
+                        let mut bar = egui::ProgressBar::new(fraction)
+                            .desired_height(config.bar_height)
+                            .corner_radius(config.rounding);
+
+                        // Apply text with size
+                        let mut rich_text = egui::RichText::new(&text).size(config.text_size);
+                        if let Some(ref color_hex) = config.color {
+                            if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                bar = bar.fill(color);
+                                // For inside text, use auto-contrast
+                                let luminance = 0.299 * color.r() as f32
+                                    + 0.587 * color.g() as f32
+                                    + 0.114 * color.b() as f32;
+                                let text_color = if luminance > 128.0 {
+                                    egui::Color32::BLACK
+                                } else {
+                                    egui::Color32::WHITE
+                                };
+                                rich_text = rich_text.color(text_color);
+                            }
+                        }
+
+                        bar = bar.text(rich_text);
+                        ui.add(bar);
+                    }
+                }
             }
         }
     }
@@ -584,19 +908,95 @@ impl EguiApp {
     fn render_countdown_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Countdown(data) = &window.content {
+                // Get configuration
+                let countdown_config = self.app_core.layout.windows.iter()
+                    .find(|w| w.name() == window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::Countdown { data, .. } = w {
+                            Some(data.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                let config = countdown_config.unwrap_or_default();
+
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
                 let remaining = (data.end_time - now).max(0);
+
                 if remaining > 0 {
-                    // Show countdown with label
-                    let text = format!("{}: {}s", data.label, remaining);
-                    // Use a simple fraction based on remaining time (assume max 30s for visual)
-                    let fraction = (remaining as f32 / 30.0).min(1.0);
-                    ui.add(egui::ProgressBar::new(fraction).text(text));
+                    // Format time based on config
+                    let time_text = match config.format {
+                        crate::config::CountdownFormat::Seconds => {
+                            format!("{}s", remaining)
+                        }
+                        crate::config::CountdownFormat::MMss => {
+                            let minutes = remaining / 60;
+                            let seconds = remaining % 60;
+                            format!("{:02}:{:02}", minutes, seconds)
+                        }
+                        crate::config::CountdownFormat::HHMMss => {
+                            let hours = remaining / 3600;
+                            let minutes = (remaining % 3600) / 60;
+                            let seconds = remaining % 60;
+                            format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+                        }
+                    };
+
+                    // Build display text with label
+                    let display_text = if let Some(ref label) = config.label {
+                        format!("{}: {}", label, time_text)
+                    } else {
+                        time_text
+                    };
+
+                    // Calculate fraction using max_time
+                    let fraction = (remaining as f32 / config.max_time as f32).clamp(0.0, 1.0);
+
+                    // Determine color based on alert threshold
+                    let is_alert = remaining <= config.alert_threshold as i64;
+                    let bar_color = if is_alert {
+                        config.alert_color.as_ref()
+                            .and_then(|c| widgets::parse_hex_to_color32(c))
+                            .or_else(|| Some(egui::Color32::from_rgb(255, 0, 0)))
+                    } else {
+                        config.color.as_ref()
+                            .and_then(|c| widgets::parse_hex_to_color32(c))
+                    };
+
+                    // Create progress bar with styling
+                    let mut bar = egui::ProgressBar::new(fraction);
+
+                    if let Some(color) = bar_color {
+                        bar = bar.fill(color);
+                    }
+
+                    // Apply text with size
+                    let rich_text = egui::RichText::new(&display_text).size(config.text_size);
+                    bar = bar.text(rich_text);
+
+                    ui.add(bar);
                 } else {
-                    ui.label(format!("{}: Ready", data.label));
+                    // Ready state
+                    let ready_text = if let Some(ref label) = config.label {
+                        format!("{}: Ready", label)
+                    } else {
+                        "Ready".to_string()
+                    };
+
+                    let mut text_label = egui::RichText::new(&ready_text).size(config.text_size);
+
+                    // Apply color if specified
+                    if let Some(ref color_hex) = config.color {
+                        if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                            text_label = text_label.color(color);
+                        }
+                    }
+
+                    ui.label(text_label);
                 }
             }
         }
@@ -606,46 +1006,100 @@ impl EguiApp {
     fn render_compass_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Compass(data) = &window.content {
-                ui.horizontal(|ui| {
-                    for dir in &["nw", "n", "ne"] {
-                        let active = data.directions.contains(&dir.to_string());
-                        if active {
-                            ui.strong(*dir);
+                // Get Compass configuration from layout
+                let compass_config = self.app_core.layout.windows.iter()
+                    .find(|w| w.name() == window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::Compass { data, .. } = w {
+                            Some(data.clone())
                         } else {
-                            ui.weak(*dir);
+                            None
+                        }
+                    });
+
+                let config = compass_config.unwrap_or_default();
+
+                // Determine colors
+                let active_color = config.active_color.as_ref()
+                    .and_then(|c| parse_hex_to_color32(c))
+                    .unwrap_or(egui::Color32::from_rgb(0, 255, 0)); // Green
+
+                let inactive_color = config.inactive_color.as_ref()
+                    .and_then(|c| parse_hex_to_color32(c))
+                    .unwrap_or(egui::Color32::from_rgb(85, 85, 85)); // Gray
+
+                // Direction icons (if enabled)
+                let direction_icons: std::collections::HashMap<&str, &str> = [
+                    ("n", "↑"), ("s", "↓"), ("e", "→"), ("w", "←"),
+                    ("ne", "↗"), ("nw", "↖"), ("se", "↘"), ("sw", "↙"),
+                    ("up", "⬆"), ("down", "⬇"), ("out", "◯"),
+                ].iter().cloned().collect();
+
+                // Helper function to render a direction
+                let render_dir = |ui: &mut egui::Ui, dir: &str| {
+                    let active = data.directions.contains(&dir.to_string());
+                    let color = if active { active_color } else { inactive_color };
+
+                    let text = if config.use_icons {
+                        direction_icons.get(dir).unwrap_or(&dir).to_string()
+                    } else {
+                        dir.to_string()
+                    };
+
+                    let mut rich_text = egui::RichText::new(text)
+                        .size(config.text_size)
+                        .color(color);
+
+                    if active && config.bold_active {
+                        rich_text = rich_text.strong();
+                    }
+
+                    ui.label(rich_text);
+                    ui.add_space(config.spacing);
+                };
+
+                // Render based on layout
+                match config.layout {
+                    crate::config::CompassLayout::Grid3x3 => {
+                        // Traditional 3x3 grid
+                        ui.horizontal(|ui| {
+                            for dir in &["nw", "n", "ne"] {
+                                render_dir(ui, dir);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            for dir in &["w", "out", "e"] {
+                                render_dir(ui, dir);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            for dir in &["sw", "s", "se"] {
+                                render_dir(ui, dir);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            for dir in &["up", "down"] {
+                                render_dir(ui, dir);
+                            }
+                        });
+                    }
+                    crate::config::CompassLayout::Horizontal => {
+                        // Single horizontal row
+                        ui.horizontal(|ui| {
+                            for dir in &["nw", "n", "ne", "w", "out", "e", "sw", "s", "se", "up", "down"] {
+                                render_dir(ui, dir);
+                            }
+                        });
+                    }
+                    crate::config::CompassLayout::Vertical => {
+                        // Single vertical column
+                        for dir in &["nw", "n", "ne", "w", "out", "e", "sw", "s", "se", "up", "down"] {
+                            ui.horizontal(|ui| {
+                                render_dir(ui, dir);
+                            });
                         }
                     }
-                });
-                ui.horizontal(|ui| {
-                    for dir in &["w", "out", "e"] {
-                        let active = data.directions.contains(&dir.to_string());
-                        if active {
-                            ui.strong(*dir);
-                        } else {
-                            ui.weak(*dir);
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    for dir in &["sw", "s", "se"] {
-                        let active = data.directions.contains(&dir.to_string());
-                        if active {
-                            ui.strong(*dir);
-                        } else {
-                            ui.weak(*dir);
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    for dir in &["up", "down"] {
-                        let active = data.directions.contains(&dir.to_string());
-                        if active {
-                            ui.strong(*dir);
-                        } else {
-                            ui.weak(*dir);
-                        }
-                    }
-                });
+                }
             }
         }
     }
@@ -687,6 +1141,7 @@ impl EguiApp {
                     .iter()
                     .map(|segments| StyledLine {
                         segments: segments.clone(),
+                        timestamp: None,
                     })
                     .collect()
             })
@@ -808,11 +1263,127 @@ impl EguiApp {
     fn render_indicator_window(&self, ui: &mut egui::Ui, window_name: &str) {
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Indicator(data) = &window.content {
+                // Get Indicator configuration from layout
+                let indicator_config = self.app_core.layout.windows.iter()
+                    .find(|w| w.name() == window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::Indicator { data, .. } = w {
+                            Some(data.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                let config = indicator_config.unwrap_or_default();
+
+                // Determine color based on active/inactive state
+                let color = if data.active {
+                    config.active_color.as_ref()
+                        .and_then(|c| parse_hex_to_color32(c))
+                        .unwrap_or(egui::Color32::from_rgb(0, 255, 0)) // Green
+                } else {
+                    config.inactive_color.as_ref()
+                        .and_then(|c| parse_hex_to_color32(c))
+                        .unwrap_or(egui::Color32::from_rgb(85, 85, 85)) // Gray
+                };
+
                 ui.horizontal(|ui| {
-                    if data.active {
-                        ui.strong(&data.indicator_id);
-                    } else {
-                        ui.weak(&data.indicator_id);
+                    // Render based on shape type
+                    match config.shape {
+                        crate::config::IndicatorShape::Circle => {
+                            // Draw a circle indicator
+                            let (rect, _response) = ui.allocate_exact_size(
+                                egui::vec2(config.indicator_size, config.indicator_size),
+                                egui::Sense::hover(),
+                            );
+                            let center = rect.center();
+                            let radius = config.indicator_size / 2.0;
+
+                            // Draw glow if active and enabled
+                            if data.active && config.glow_when_active && config.glow_radius > 0.0 {
+                                ui.painter().circle_filled(
+                                    center,
+                                    radius + config.glow_radius,
+                                    egui::Color32::from_rgba_premultiplied(
+                                        color.r(),
+                                        color.g(),
+                                        color.b(),
+                                        80, // Translucent glow
+                                    ),
+                                );
+                            }
+
+                            // Draw main circle
+                            ui.painter().circle_filled(center, radius, color);
+                        }
+                        crate::config::IndicatorShape::Square => {
+                            // Draw a square indicator
+                            let (rect, _response) = ui.allocate_exact_size(
+                                egui::vec2(config.indicator_size, config.indicator_size),
+                                egui::Sense::hover(),
+                            );
+
+                            // Draw glow if active and enabled
+                            if data.active && config.glow_when_active && config.glow_radius > 0.0 {
+                                let glow_rect = rect.expand(config.glow_radius);
+                                ui.painter().rect_filled(
+                                    glow_rect,
+                                    2.0,
+                                    egui::Color32::from_rgba_premultiplied(
+                                        color.r(),
+                                        color.g(),
+                                        color.b(),
+                                        80,
+                                    ),
+                                );
+                            }
+
+                            // Draw main square
+                            ui.painter().rect_filled(rect, 2.0, color);
+                        }
+                        crate::config::IndicatorShape::Icon => {
+                            // Use icon character if provided
+                            if let Some(icon) = &config.icon {
+                                let text = egui::RichText::new(icon)
+                                    .size(config.indicator_size)
+                                    .color(color);
+                                ui.label(text);
+                            } else {
+                                // Fallback to text
+                                let text = egui::RichText::new(&data.indicator_id)
+                                    .size(config.text_size)
+                                    .color(color);
+                                if data.active {
+                                    ui.label(text.strong());
+                                } else {
+                                    ui.label(text);
+                                }
+                            }
+                        }
+                        crate::config::IndicatorShape::Text => {
+                            // Text-only mode (no shape)
+                            let text = egui::RichText::new(&data.indicator_id)
+                                .size(config.text_size)
+                                .color(color);
+                            if data.active {
+                                ui.label(text.strong());
+                            } else {
+                                ui.label(text);
+                            }
+                        }
+                    }
+
+                    // Show label if enabled
+                    if config.show_label && !matches!(config.shape, crate::config::IndicatorShape::Text) {
+                        ui.add_space(4.0);
+                        let label_text = egui::RichText::new(&data.indicator_id)
+                            .size(config.text_size)
+                            .color(color);
+                        if data.active {
+                            ui.label(label_text.strong());
+                        } else {
+                            ui.label(label_text);
+                        }
                     }
                 });
             }
@@ -821,12 +1392,89 @@ impl EguiApp {
 
     /// Render hand widget (left/right hand items)
     fn render_hand_window(&self, ui: &mut egui::Ui, window_name: &str) {
+        // Note: Removed ui.set_min_size(available) as it prevented resizing to smaller sizes
+        // The window will now size based on its content, allowing 1-row layouts
+
         if let Some(window) = self.app_core.ui_state.windows.get(window_name) {
             if let WindowContent::Hand { item, .. } = &window.content {
-                match item {
-                    Some(text) => ui.label(text),
-                    None => ui.weak("Empty"),
+                // Get Hand configuration from layout
+                let hand_config = self.app_core.layout.windows.iter()
+                    .find(|w| w.name() == window_name)
+                    .and_then(|w| {
+                        if let crate::config::WindowDef::Hand { data, .. } = w {
+                            Some(data.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                let config = hand_config.unwrap_or_default();
+
+                // Render within frame if background is enabled
+                let render_content = |ui: &mut egui::Ui| {
+                    ui.horizontal(|ui| {
+                        // Icon with optional color
+                        if let Some(icon_text) = &config.icon {
+                            let mut icon_label = egui::RichText::new(icon_text)
+                                .size(config.icon_size);
+
+                            if let Some(icon_color_hex) = &config.icon_color {
+                                if let Some(icon_color) = widgets::parse_hex_to_color32(icon_color_hex) {
+                                    icon_label = icon_label.color(icon_color);
+                                }
+                            }
+
+                            ui.label(icon_label);
+                            ui.add_space(config.spacing);
+                        }
+
+                        // Item text or empty
+                        match item {
+                            Some(text) => {
+                                let mut item_label = egui::RichText::new(text)
+                                    .size(config.text_size);
+
+                                if let Some(text_color_hex) = &config.text_color {
+                                    if let Some(text_color) = widgets::parse_hex_to_color32(text_color_hex) {
+                                        item_label = item_label.color(text_color);
+                                    }
+                                }
+
+                                ui.label(item_label);
+                            }
+                            None => {
+                                let empty_text = config.empty_text.as_deref().unwrap_or("Empty");
+                                let mut empty_label = egui::RichText::new(empty_text)
+                                    .size(config.text_size)
+                                    .weak();
+
+                                if let Some(empty_color_hex) = &config.empty_color {
+                                    if let Some(empty_color) = widgets::parse_hex_to_color32(empty_color_hex) {
+                                        empty_label = empty_label.color(empty_color);
+                                    }
+                                }
+
+                                ui.label(empty_label);
+                            }
+                        }
+                    });
                 };
+
+                // Apply background frame if enabled
+                if config.show_background {
+                    let mut frame = egui::Frame::new()
+                        .inner_margin(4.0);
+
+                    if let Some(bg_color_hex) = &config.background_color {
+                        if let Some(bg_color) = widgets::parse_hex_to_color32(bg_color_hex) {
+                            frame = frame.fill(bg_color);
+                        }
+                    }
+
+                    frame.show(ui, render_content);
+                } else {
+                    render_content(ui);
+                }
             }
         }
     }
@@ -849,6 +1497,413 @@ impl EguiApp {
         // Fallback for windows without room content
         ui.weak("Waiting for room data...");
         widgets::RoomWindowResponse::default()
+    }
+
+    /// Render injury doll window with image-based visualization
+    fn render_injury_window(&mut self, ui: &mut egui::Ui, window_name: &str) {
+        // Extract content and config first to avoid borrow conflicts
+        let content_clone = self
+            .app_core
+            .ui_state
+            .windows
+            .get(window_name)
+            .and_then(|w| {
+                if let WindowContent::InjuryDoll(content) = &w.content {
+                    Some(content.clone())
+                } else {
+                    None
+                }
+            });
+
+        let Some(content) = content_clone else {
+            ui.weak("Waiting for injury data...");
+            return;
+        };
+
+        // Get config from layout
+        let config = self
+            .app_core
+            .layout
+            .get_window(window_name)
+            .and_then(|w| {
+                if let crate::config::WindowDef::InjuryDoll { data, .. } = w {
+                    Some(data.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                // Fallback to default config
+                crate::config::InjuryDollWidgetData {
+                    injury_default_color: None,
+                    injury1_color: Some("#aa5500".to_string()),
+                    injury2_color: Some("#ff8800".to_string()),
+                    injury3_color: Some("#ff0000".to_string()),
+                    scar1_color: Some("#999999".to_string()),
+                    scar2_color: Some("#777777".to_string()),
+                    scar3_color: Some("#555555".to_string()),
+                    image_path: Some("defaults/injuryDoll.png".to_string()),
+                    scale: 1.0,
+                    greyscale: false,
+                    tint_color: None,
+                    tint_strength: 0.3,
+                    marker_tint_strength: 0.3,
+                    marker_style: crate::config::InjuryMarkerStyle::Circles,
+                    marker_size: 6.0,
+                    show_numbers: true,
+                    calibration: crate::config::InjuryCalibration::default(),
+                    image_profiles: Vec::new(),
+                    // Phase 5: Multi-layer system
+                    tint_mode: crate::config::TintMode::Unified,
+                    overlay_tint_color: None,
+                    overlay_tint_strength: 0.3,
+                    nerve_indicator_type: crate::config::NerveIndicatorType::Default,
+                    overlay_layers: crate::config::default_overlay_layers(),
+                    rank_indicators: crate::config::RankIndicatorConfig::default(),
+                    background_color: None,
+                }
+            });
+
+        // PHASE 2.5: Get hand data for profile selection
+        let mut right_hand_item: Option<&str> = None;
+        let mut left_hand_item: Option<&str> = None;
+
+        for (name, window) in &self.app_core.ui_state.windows {
+            if let WindowContent::Hand { item, .. } = &window.content {
+                if name.to_lowercase().contains("right") {
+                    right_hand_item = item.as_deref();
+                } else if name.to_lowercase().contains("left") {
+                    left_hand_item = item.as_deref();
+                }
+            }
+        }
+
+        // Select profile based on hand data
+        let (selected_image_path, selected_calibration) = config.select_profile(right_hand_item, left_hand_item);
+
+        // Create effective config with selected profile's image/calibration
+        let mut effective_config = config.clone();
+        effective_config.image_path = Some(selected_image_path.to_string());
+        effective_config.calibration = selected_calibration.clone();
+
+        // Check calibration mode BEFORE calling get_injury_texture to avoid borrow conflicts
+        let (calibration_mode, calibration_target) = self
+            .window_editors
+            .get(window_name)
+            .and_then(|editor| {
+                editor.injury_doll_editor.as_ref().map(|doll_editor| {
+                    if doll_editor.calibration_active {
+                        let target_name = window_editor::GuiWindowEditor::get_body_part_name(doll_editor.calibration_index);
+                        (true, Some(target_name))
+                    } else {
+                        (false, None)
+                    }
+                })
+            })
+            .unwrap_or((false, None));
+
+        // Load texture (now we can mutably borrow self) - use effective_config with selected profile
+        if let Some(texture_cache) = self.get_injury_texture(ui.ctx(), window_name, &effective_config) {
+            // Render widget (use effective_config with selected profile's calibration)
+            // Phase 5: Pass overlay textures and rank indicators
+            let response = widgets::render_injury_doll(
+                ui,
+                &content,
+                &effective_config,
+                &texture_cache.silhouette,
+                &texture_cache.overlay_textures,
+                &texture_cache.rank_textures,
+                calibration_mode,
+                calibration_target,
+            );
+
+            // Handle calibration click response
+            if let (Some(clicked_part), Some((x, y))) = (response.clicked_body_part, response.clicked_position) {
+                // Update calibration data in the window editor's modified_def
+                if let Some(editor) = self.window_editors.get_mut(window_name) {
+                    if let Some(injury_editor) = &mut editor.injury_doll_editor {
+                        // Update the calibration data in the modified WindowDef
+                        if let crate::config::WindowDef::InjuryDoll { data, .. } = &mut editor.modified_def {
+                            // Update the body part position in calibration data
+                            data.calibration.body_parts
+                                .entry(clicked_part.clone())
+                                .and_modify(|bp| {
+                                    bp.x = x;
+                                    bp.y = y;
+                                })
+                                .or_insert(crate::config::InjuryBodyPart {
+                                    x,
+                                    y,
+                                    enabled: true,
+                                });
+
+                            // AUTO-APPLY: Also update the live layout immediately for real-time feedback
+                            // This makes calibration clicks visible without hitting Apply button
+                            if let Some(window) = self.app_core.layout.windows.iter_mut()
+                                .find(|w| w.name() == window_name)
+                            {
+                                if let crate::config::WindowDef::InjuryDoll { data: live_data, .. } = window {
+                                    live_data.calibration.body_parts
+                                        .entry(clicked_part)
+                                        .and_modify(|bp| {
+                                            bp.x = x;
+                                            bp.y = y;
+                                        })
+                                        .or_insert(crate::config::InjuryBodyPart {
+                                            x,
+                                            y,
+                                            enabled: true,
+                                        });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Texture loading failed - show error
+            ui.vertical_centered(|ui| {
+                ui.colored_label(egui::Color32::LIGHT_RED, "⚠ Image Load Failed");
+                ui.label(format!("Path: {:?}", effective_config.image_path));
+                ui.separator();
+                ui.label("Check:");
+                ui.label("• File exists and is readable");
+                ui.label("• Path is correct (relative to config dir)");
+                ui.label("• File is valid PNG format");
+
+                // Fallback: show text-based injury list
+                ui.separator();
+                ui.label("Injuries (fallback):");
+                for (part, level) in &content.injuries {
+                    if *level > 0 {
+                        ui.label(format!("{}: Level {}", part, level));
+                    }
+                }
+            });
+        }
+    }
+
+    /// Load or retrieve cached injury texture for a window
+    fn get_injury_texture(
+        &mut self,
+        ctx: &egui::Context,
+        window_name: &str,
+        config: &crate::config::InjuryDollWidgetData,
+    ) -> Option<&InjuryTextureCache> {
+        let requested_image_path = config.image_path.as_deref().unwrap_or("defaults/injuryDoll.png");
+        let resolved_path = self.resolve_image_path(requested_image_path);
+        let resolved_path_str = resolved_path.to_string_lossy().to_string();
+
+        // PHASE 2.5: Check if texture already loaded AND matches requested profile image
+        if let Some(cached) = self.injury_textures.get(window_name) {
+            // If cached image path matches requested path, return cached texture
+            if cached.loaded_image_path == resolved_path_str {
+                return self.injury_textures.get(window_name);
+            }
+            // Otherwise, fall through to reload with new profile image
+        }
+
+        // Load texture from file (either first load or profile changed)
+        if let Ok(mut texture_cache) = self.load_injury_texture(ctx, &resolved_path) {
+            // Phase 5: Also load overlay textures and rank indicators
+            texture_cache.overlay_textures = self.load_overlay_textures(ctx, config, window_name);
+            texture_cache.rank_textures = self.load_rank_textures(ctx, config, window_name);
+
+            self.injury_textures
+                .insert(window_name.to_string(), texture_cache);
+            return self.injury_textures.get(window_name);
+        }
+
+        None
+    }
+
+    /// Resolve image path (handle relative paths, config dir, etc.)
+    /// Priority: user images dir → config dir → executable dir → as-is
+    fn resolve_image_path(&self, path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(path);
+
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+
+        // Extract just the filename if path contains "defaults/" prefix
+        let filename = if path.starts_with("defaults/") {
+            path.strip_prefix("defaults/").unwrap_or(path)
+        } else {
+            path
+        };
+
+        // 1. Try user's images directory (~/.vellum-fe/global/images/)
+        if let Ok(images_dir) = crate::config::Config::images_dir() {
+            let user_image_path = images_dir.join(filename);
+            if user_image_path.exists() {
+                tracing::debug!("Loading image from user directory: {:?}", user_image_path);
+                return user_image_path;
+            }
+        }
+
+        // 2. Try relative to config directory (for backwards compatibility)
+        if let Ok(config_dir) = crate::config::Config::base_dir() {
+            let config_path = config_dir.join(path);
+            if config_path.exists() {
+                tracing::debug!("Loading image from config directory: {:?}", config_path);
+                return config_path;
+            }
+        }
+
+        // 3. Try relative to executable (embedded defaults)
+        if let Ok(exe_dir) = std::env::current_exe() {
+            if let Some(parent) = exe_dir.parent() {
+                let exe_path = parent.join(path);
+                if exe_path.exists() {
+                    tracing::debug!("Loading image from executable directory: {:?}", exe_path);
+                    return exe_path;
+                }
+            }
+        }
+
+        // Fallback: return as-is
+        tracing::warn!("Image not found in any location: {}", path);
+        p.to_path_buf()
+    }
+
+    /// Load texture from image file
+    fn load_injury_texture(
+        &self,
+        ctx: &egui::Context,
+        path: &std::path::Path,
+    ) -> Result<InjuryTextureCache> {
+        use image::GenericImageView;
+
+        // Load image using the image crate
+        let img = image::open(path)?;
+
+        let (width, height) = img.dimensions();
+        let rgba_image = img.to_rgba8();
+        let pixels = rgba_image.as_flat_samples();
+
+        // Convert to egui ColorImage
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            pixels.as_slice(),
+        );
+
+        // Upload to GPU
+        let texture = ctx.load_texture(
+            format!("injury_doll_{:?}", path),
+            color_image,
+            egui::TextureOptions::LINEAR,
+        );
+
+        // Get file modification time
+        let last_modified = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok());
+
+        Ok(InjuryTextureCache {
+            silhouette: texture,
+            markers: None, // TODO: Load injuryNumbers.png
+            original_size: (width, height),
+            last_modified,
+            loaded_image_path: path.to_string_lossy().to_string(),
+            // Phase 5: Overlays loaded separately per-window configuration
+            overlay_textures: std::collections::HashMap::new(),
+            rank_textures: None,
+        })
+    }
+
+    /// Load a single texture from a file path (Phase 5: helper for overlays/rank indicators)
+    fn load_single_texture(
+        &self,
+        ctx: &egui::Context,
+        path: &std::path::Path,
+        name: &str,
+    ) -> Result<egui::TextureHandle> {
+        use image::GenericImageView;
+
+        let img = image::open(path)?;
+        let (width, height) = img.dimensions();
+        let rgba_image = img.to_rgba8();
+        let pixels = rgba_image.as_flat_samples();
+
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            pixels.as_slice(),
+        );
+
+        Ok(ctx.load_texture(
+            name.to_string(),
+            color_image,
+            egui::TextureOptions::LINEAR,
+        ))
+    }
+
+    /// Load overlay textures for injury doll (Phase 5)
+    fn load_overlay_textures(
+        &self,
+        ctx: &egui::Context,
+        config: &crate::config::InjuryDollWidgetData,
+        window_name: &str,
+    ) -> std::collections::HashMap<String, egui::TextureHandle> {
+        let mut overlay_textures = std::collections::HashMap::new();
+
+        eprintln!("[INJURY] Loading overlays for {}: {} layers in config", window_name, config.overlay_layers.len());
+
+        for overlay in &config.overlay_layers {
+            eprintln!("[INJURY]   Overlay '{}': enabled={}, path={}", overlay.name, overlay.enabled, overlay.image_path);
+
+            if !overlay.enabled {
+                continue;
+            }
+
+            let path = self.resolve_image_path(&overlay.image_path);
+            let texture_name = format!("injury_overlay_{}_{}", window_name, overlay.name);
+
+            match self.load_single_texture(ctx, &path, &texture_name) {
+                Ok(texture) => {
+                    eprintln!("[INJURY]     Successfully loaded overlay texture: {:?}", path);
+                    overlay_textures.insert(overlay.name.clone(), texture);
+                }
+                Err(e) => {
+                    eprintln!("[INJURY]     ERROR: Failed to load overlay texture {:?}: {}", path, e);
+                }
+            }
+        }
+
+        eprintln!("[INJURY] Loaded {} overlay textures for {}", overlay_textures.len(), window_name);
+        overlay_textures
+    }
+
+    /// Load rank indicator textures (Phase 5)
+    fn load_rank_textures(
+        &self,
+        ctx: &egui::Context,
+        config: &crate::config::InjuryDollWidgetData,
+        window_name: &str,
+    ) -> Option<(egui::TextureHandle, egui::TextureHandle, egui::TextureHandle, egui::TextureHandle)> {
+        if !config.rank_indicators.enabled {
+            return None;
+        }
+
+        let rank1_path = self.resolve_image_path(&config.rank_indicators.rank1_path);
+        let rank2_path = self.resolve_image_path(&config.rank_indicators.rank2_path);
+        let rank3_path = self.resolve_image_path(&config.rank_indicators.rank3_path);
+        let nerves_path = self.resolve_image_path(&config.rank_indicators.nerves_path);
+
+        let r1_name = format!("injury_rank1_{}", window_name);
+        let r2_name = format!("injury_rank2_{}", window_name);
+        let r3_name = format!("injury_rank3_{}", window_name);
+        let nerves_name = format!("injury_nerves_{}", window_name);
+
+        match (
+            self.load_single_texture(ctx, &rank1_path, &r1_name),
+            self.load_single_texture(ctx, &rank2_path, &r2_name),
+            self.load_single_texture(ctx, &rank3_path, &r3_name),
+            self.load_single_texture(ctx, &nerves_path, &nerves_name),
+        ) {
+            (Ok(r1), Ok(r2), Ok(r3), Ok(nerves)) => Some((r1, r2, r3, nerves)),
+            _ => None,
+        }
     }
 
     /// Render a generic placeholder for unsupported widget types
@@ -1161,6 +2216,8 @@ impl EguiApp {
                 // (e.g., quit, which needs to close the window)
                 let key_str = input::key_event_to_keybind_string(&key_event);
                 if key_str == self.app_core.config.global_keybinds.quit {
+                    // Call quit() to trigger autosave before closing
+                    self.app_core.quit();
                     // Request close - egui will handle this
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     continue;
@@ -1188,6 +2245,9 @@ impl eframe::App for EguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll for server messages
         self.poll_server_messages();
+
+        // Apply theme at start of each frame
+        ctx.set_visuals(app_theme_to_visuals(&self.cached_theme));
 
         // Sync room data from room_components to WindowContent::Room
         self.sync_room_data();
@@ -1241,6 +2301,13 @@ impl eframe::App for EguiApp {
         // Track windows that need position override cleared
         let mut clear_position_overrides: Vec<String> = Vec::new();
 
+        // Track window pixel sizes for syncing to open editors
+        // (window_name, pixel_width, pixel_height)
+        let mut window_pixel_sizes: Vec<(String, f32, f32)> = Vec::new();
+
+        // Collect window names for send-to-back operation (before moving windows_info)
+        let all_window_names: Vec<String> = windows_info.iter().map(|(name, _, _, _, _, _)| name.clone()).collect();
+
         // Render each window dynamically based on widget type
         for (name, widget_type, default_pos, default_size, show_title_bar, position_override) in windows_info {
             // Determine window title (used as ID even if title bar hidden)
@@ -1250,16 +2317,43 @@ impl eframe::App for EguiApp {
                 name.clone()
             };
 
+            // Get show_border from layout's window definition
+            let show_border = self.app_core.layout.get_window(&name)
+                .map(|w| w.base().show_border)
+                .unwrap_or(true); // Default to showing border
+
             // Create the egui window
             // Use current_pos if position_override is set (one-frame force), otherwise default_pos
+            // IMPORTANT: scroll([false, false]) disables the Window's built-in scroll handling
+            // This is critical for preventing window growth - we manage scrolling ourselves via ScrollArea
             let mut window = egui::Window::new(&title)
                 .id(egui::Id::new(&name))
                 .default_size(default_size)
                 .default_open(true)
                 .resizable(true)
+                .scroll([false, false])  // Disable Window scroll - we use ScrollArea inside widgets
                 .collapsible(true)
                 .title_bar(show_title_bar)
-                .movable(show_title_bar); // Only draggable when title bar visible
+                // Always movable so all edges can be resized (egui restricts pivot edge when !movable)
+                // Borderless windows can still be dragged; use Alt+drag for precise positioning
+                .movable(true);
+
+            // InjuryDoll widgets need special handling:
+            // - auto_sized: resize to fit content exactly (prevents clicks in empty space)
+            // - movable: allow title bar dragging; content stays non-draggable unless Alt is held
+            // - resizable(false): scaling controls size instead of edge drag
+            if matches!(widget_type, WidgetType::InjuryDoll) {
+                window = window
+                    .auto_sized()
+                    .movable(true)
+                    .resizable(false);
+            }
+
+            // Apply frame based on show_border setting
+            if !show_border {
+                // Create borderless frame
+                window = window.frame(egui::Frame::none().fill(ctx.style().visuals.window_fill));
+            }
 
             // Apply position: use override for one frame, then default
             window = if let Some(override_pos) = position_override {
@@ -1271,10 +2365,9 @@ impl eframe::App for EguiApp {
 
             let window_response = window
                 .show(ctx, |ui| {
-                    // Store the content area rect for context menu detection
-                    let content_rect = ui.max_rect();
-
                     let mut should_toggle = false;
+                    let mut should_edit = false;
+                    let mut should_send_to_back = false;
                     let mut should_focus_command = false;
 
                     // Track link interactions from this window
@@ -1298,6 +2391,33 @@ impl eframe::App for EguiApp {
                                 link_hovered = Some(link);
                             }
                         }
+                        WidgetType::TabbedText => {
+                            let response = self.render_tabbed_text_window(ui, &name);
+                            if let Some(link) = response.clicked_link {
+                                let pos = ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or_default());
+                                link_clicked = Some((link, pos));
+                            }
+                            if let Some(link) = response.drag_started {
+                                link_drag_start = Some(link);
+                            }
+                            if let Some(link) = response.hovered_link {
+                                link_hovered = Some(link);
+                            }
+                            // Handle tab switching
+                            if let Some(tab_index) = response.tab_clicked {
+                                tracing::debug!("Tab clicked in {}: switching to tab {}", name, tab_index);
+                                // Update the content's active tab index
+                                if let Some(window) = self.app_core.ui_state.windows.get_mut(&name) {
+                                    if let WindowContent::TabbedText(content) = &mut window.content {
+                                        content.active_tab_index = tab_index;
+                                    }
+                                }
+                                // Clear unread for the newly selected tab
+                                if let Some(gui_state) = self.tabbed_text_states.get_mut(&name) {
+                                    gui_state.clear_unread(tab_index);
+                                }
+                            }
+                        }
                         WidgetType::Progress => self.render_progress_window(ui, &name),
                         WidgetType::Countdown => self.render_countdown_window(ui, &name),
                         WidgetType::Compass => self.render_compass_window(ui, &name),
@@ -1306,8 +2426,31 @@ impl eframe::App for EguiApp {
                         WidgetType::CommandInput => {
                             // Special handling for command input
                             // TextEdit has its own context menu, so we add ours to the prompt label
+
+                            // Get CommandInput configuration from layout
+                            let cmd_config = self.app_core.layout.windows.iter()
+                                .find(|w| w.name() == &name)
+                                .and_then(|w| {
+                                    if let crate::config::WindowDef::CommandInput { data, .. } = w {
+                                        Some(data.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                            let config = cmd_config.unwrap_or_default();
+                            let prompt_text = config.prompt_icon.as_deref().unwrap_or(">");
+
                             ui.horizontal(|ui| {
-                                let prompt_response = ui.label(">");
+                                // Apply prompt icon with optional color
+                                let mut prompt_label = egui::RichText::new(prompt_text);
+                                if let Some(color_hex) = &config.prompt_icon_color {
+                                    if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                        prompt_label = prompt_label.color(color);
+                                    }
+                                }
+
+                                let prompt_response = ui.label(prompt_label);
 
                                 // Add context menu to the prompt label (since TextEdit captures right-click)
                                 prompt_response.context_menu(|ui| {
@@ -1322,11 +2465,54 @@ impl eframe::App for EguiApp {
                                     }
                                 });
 
-                                let response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.command_input)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Enter command..."),
-                                );
+                                // Create TextEdit with visual customization
+                                let mut text_edit = egui::TextEdit::singleline(&mut self.command_input)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Enter command...")
+                                    .font(egui::FontId::proportional(config.text_size));
+
+                                // Apply text color if specified
+                                if let Some(color_hex) = &config.text_color {
+                                    if let Some(color) = widgets::parse_hex_to_color32(color_hex) {
+                                        text_edit = text_edit.text_color(color);
+                                    }
+                                }
+
+                                // Apply cursor color if specified (requires modifying visuals)
+                                if config.cursor_color.is_some() || config.cursor_background_color.is_some() {
+                                    ui.visuals_mut().selection.bg_fill = config.cursor_background_color
+                                        .as_ref()
+                                        .and_then(|c| widgets::parse_hex_to_color32(c))
+                                        .unwrap_or(ui.visuals().selection.bg_fill);
+
+                                    ui.visuals_mut().selection.stroke.color = config.cursor_color
+                                        .as_ref()
+                                        .and_then(|c| widgets::parse_hex_to_color32(c))
+                                        .unwrap_or(ui.visuals().selection.stroke.color);
+                                }
+
+                                // Wrap in frame for border/background/padding customization
+                                let mut frame = egui::Frame::new()
+                                    .inner_margin(config.padding);
+
+                                if let Some(bg_color_hex) = &config.background_color {
+                                    if let Some(bg_color) = widgets::parse_hex_to_color32(bg_color_hex) {
+                                        frame = frame.fill(bg_color);
+                                    }
+                                }
+
+                                if let Some(border_color_hex) = &config.border_color {
+                                    if let Some(border_color) = widgets::parse_hex_to_color32(border_color_hex) {
+                                        frame = frame.stroke(egui::Stroke::new(config.border_width, border_color));
+                                    }
+                                } else if config.border_width > 0.0 {
+                                    // Use default border color if width specified but no color
+                                    frame = frame.stroke(egui::Stroke::new(config.border_width, ui.visuals().window_stroke.color));
+                                }
+
+                                let response = frame.show(ui, |ui| {
+                                    ui.add(text_edit)
+                                }).inner;
 
                                 // Surrender focus when popup menu is open so arrow keys work for menu navigation
                                 if self.app_core.ui_state.has_menu() {
@@ -1377,24 +2563,17 @@ impl eframe::App for EguiApp {
                                 link_hovered = Some(link);
                             }
                         }
-                        WidgetType::TabbedText => {
-                            let response = self.render_tabbed_text_window(ui, &name);
-                            if let Some(link) = response.clicked_link {
-                                let pos = ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or_default());
-                                link_clicked = Some((link, pos));
-                            }
-                            if let Some(link) = response.drag_started {
-                                link_drag_start = Some(link);
-                            }
-                            if let Some(link) = response.hovered_link {
-                                link_hovered = Some(link);
-                            }
-                        }
                         WidgetType::ActiveEffects => {
                             self.render_active_effects_window(ui, &name);
                         }
+                        WidgetType::InjuryDoll => {
+                            self.render_injury_window(ui, &name);
+                        }
                         _ => self.render_placeholder_window(ui, &widget_type),
                     }
+
+                    // Actual used content area (prevents invisible overlays consuming clicks)
+                    let content_rect = ui.min_rect();
 
                     // Check for left-click on non-interactive content area to focus command input
                     // Only if no link was clicked in this frame
@@ -1411,42 +2590,51 @@ impl eframe::App for EguiApp {
                     }
 
                     // Right-click: show context menu at mouse position
+                    // Avoid grabbing primary clicks; only open when secondary click is inside used rect
                     let secondary_click_pos = ui.ctx().input(|i| {
                         if i.pointer.secondary_clicked() {
-                            i.pointer.interact_pos()
-                                .filter(|pos| content_rect.contains(*pos))
-                        } else {
-                            None
+                            if let Some(pos) = i.pointer.interact_pos() {
+                                if content_rect.contains(pos) {
+                                    return Some(pos);
+                                }
+                            }
                         }
+                        None
                     });
 
                     // Context menu state with delayed click-outside detection
-                    let menu_state_id = ui.id().with("context_menu_state");
-                    let menu_pos_id = ui.id().with("context_menu_pos");
-                    let menu_open_time_id = ui.id().with("context_menu_open_time");
+                    // IMPORTANT: Use GLOBAL IDs so only ONE context menu can be open at a time
+                    // This prevents multiple menus opening when clicking different windows
+                    let global_menu_window_id = egui::Id::new("__global_context_menu_window__");
+                    let global_menu_pos_id = egui::Id::new("__global_context_menu_pos__");
+                    let global_menu_open_time_id = egui::Id::new("__global_context_menu_open_time__");
 
                     if let Some(click_pos) = secondary_click_pos {
-                        // Open menu, store position and open time
+                        // Open menu for THIS window, store position and open time
+                        // This automatically closes any other window's context menu
                         let current_time = ui.ctx().input(|i| i.time);
                         ui.memory_mut(|mem| {
-                            mem.data.insert_temp::<bool>(menu_state_id, true);
-                            mem.data.insert_temp(menu_pos_id, click_pos);
-                            mem.data.insert_temp(menu_open_time_id, current_time);
+                            mem.data.insert_temp(global_menu_window_id, name.clone());
+                            mem.data.insert_temp(global_menu_pos_id, click_pos);
+                            mem.data.insert_temp(global_menu_open_time_id, current_time);
                         });
                     }
 
-                    // Check if menu is open
+                    // Check if THIS window's menu is open (compare window names)
                     let is_menu_open = ui.memory(|mem| {
-                        mem.data.get_temp::<bool>(menu_state_id).unwrap_or(false)
+                        mem.data.get_temp::<String>(global_menu_window_id)
+                            .map(|active_window| active_window == name)
+                            .unwrap_or(false)
                     });
 
                     if is_menu_open {
                         let menu_pos = ui.memory(|mem| {
-                            mem.data.get_temp::<egui::Pos2>(menu_pos_id)
+                            mem.data.get_temp::<egui::Pos2>(global_menu_pos_id)
                                 .unwrap_or(content_rect.center())
                         });
 
-                        let area_response = egui::Area::new(menu_state_id)
+                        // Use global ID for Area to ensure only one popup exists
+                        let area_response = egui::Area::new(egui::Id::new("__global_context_menu_area__"))
                             .fixed_pos(menu_pos)
                             .order(egui::Order::Foreground)
                             .show(ui.ctx(), |ui| {
@@ -1458,9 +2646,29 @@ impl eframe::App for EguiApp {
                                     };
                                     if ui.button(label).clicked() {
                                         should_toggle = true;
+                                        // Close menu by removing the active window
+                                        ui.memory_mut(|mem| {
+                                            mem.data.remove::<String>(global_menu_window_id);
+                                        });
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("Edit Window Settings").clicked() {
+                                        should_edit = true;
                                         // Close menu
                                         ui.memory_mut(|mem| {
-                                            mem.data.insert_temp::<bool>(menu_state_id, false);
+                                            mem.data.remove::<String>(global_menu_window_id);
+                                        });
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("Send to Back").clicked() {
+                                        should_send_to_back = true;
+                                        // Close menu
+                                        ui.memory_mut(|mem| {
+                                            mem.data.remove::<String>(global_menu_window_id);
                                         });
                                     }
                                 });
@@ -1469,7 +2677,7 @@ impl eframe::App for EguiApp {
                         // Click-outside detection with 1 second delay
                         let current_time = ui.ctx().input(|i| i.time);
                         let open_time = ui.memory(|mem| {
-                            mem.data.get_temp::<f64>(menu_open_time_id).unwrap_or(current_time)
+                            mem.data.get_temp::<f64>(global_menu_open_time_id).unwrap_or(current_time)
                         });
 
                         // Only check for click-outside after 1 second
@@ -1485,10 +2693,20 @@ impl eframe::App for EguiApp {
 
                             if clicked_outside {
                                 ui.memory_mut(|mem| {
-                                    mem.data.insert_temp::<bool>(menu_state_id, false);
+                                    mem.data.remove::<String>(global_menu_window_id);
                                 });
                             }
                         }
+                    }
+
+                    // Block normal content-area dragging on all windows (only title bar or Alt+drag should move)
+                    if !ui.ctx().input(|i| i.modifiers.alt) {
+                        // Swallow drag sense on content so the window doesn't move from content drags
+                        let _ = ui.interact(
+                            content_rect,
+                            ui.id().with("block_drag"),
+                            egui::Sense::drag(),
+                        );
                     }
 
                     // Alt+drag detection for window movement (works even with hidden title bar)
@@ -1512,16 +2730,34 @@ impl eframe::App for EguiApp {
                         }
                     }
 
-                    // Return tuple: (toggle_title_bar, clicked_link, drag_started, hovered_link, focus_command, window_drag_delta)
-                    (should_toggle, link_clicked, link_drag_start, link_hovered, should_focus_command, window_drag_delta)
+                    // Return tuple: (toggle_title_bar, edit_window, send_to_back, clicked_link, drag_started, hovered_link, focus_command, window_drag_delta)
+                    (should_toggle, should_edit, should_send_to_back, link_clicked, link_drag_start, link_hovered, should_focus_command, window_drag_delta)
                 });
 
             // Check if title bar toggle was requested and collect link interactions
             if let Some(inner) = window_response {
-                if let Some((toggle, clicked, drag_start, hovered, focus_command, drag_delta)) = inner.inner {
+                if let Some((toggle, edit, send_to_back, clicked, drag_start, hovered, focus_command, drag_delta)) = inner.inner {
                     if toggle {
                         // Store name and window rect for anchor-aware toggle
                         title_bar_toggles.push((name.clone(), inner.response.rect));
+                    }
+                    if edit {
+                        // Trigger edit window command
+                        self.handle_action_command(&format!("__EDIT__{}", name));
+                    }
+                    if send_to_back {
+                        // Send this window to back by moving all other windows to front
+                        ctx.memory_mut(|mem| {
+                            // Move all windows except this one to the top
+                            // Windows are in the Middle order by default
+                            for other_name in &all_window_names {
+                                if other_name != &name {
+                                    let other_window_id = egui::Id::new(other_name);
+                                    let other_layer_id = egui::LayerId::new(egui::Order::Middle, other_window_id);
+                                    mem.areas_mut().move_to_top(other_layer_id);
+                                }
+                            }
+                        });
                     }
                     if let Some(link) = clicked {
                         clicked_links.push(link);
@@ -1532,7 +2768,9 @@ impl eframe::App for EguiApp {
                     if let Some(link) = hovered {
                         hovered_links.push(link);
                     }
-                    if focus_command {
+                    // Only focus command input if no window editors are open
+                    // This prevents stealing focus from input boxes in the editor
+                    if focus_command && self.window_editors.is_empty() {
                         self.request_command_focus = true;
                     }
                     // Apply Alt+drag window movement
@@ -1542,6 +2780,10 @@ impl eframe::App for EguiApp {
                         self.window_manager.set_position_override(&name, new_pos);
                     }
                 }
+
+                // Collect window pixel sizes for syncing to open editors
+                let rect = inner.response.rect;
+                window_pixel_sizes.push((name.clone(), rect.width(), rect.height()));
             }
         }
 
@@ -1618,21 +2860,70 @@ impl eframe::App for EguiApp {
             }
         }
 
+        // Sync window pixel sizes to open editors (rows/cols)
+        // This ensures that when a window is mouse-resized, the editor reflects the new size
+        const CHAR_WIDTH: f32 = 8.0;
+        const CHAR_HEIGHT: f32 = 18.0;
+        for (window_name, pixel_width, pixel_height) in &window_pixel_sizes {
+            if let Some(editor) = self.window_editors.get_mut(window_name) {
+                // Convert pixel dimensions to character cells
+                let new_cols = (*pixel_width / CHAR_WIDTH).round() as u16;
+                let new_rows = (*pixel_height / CHAR_HEIGHT).round() as u16;
+
+                // Only update if actually changed (to avoid marking dirty unnecessarily)
+                let base = editor.modified_def.base();
+                if base.cols != new_cols || base.rows != new_rows {
+                    editor.modified_def.base_mut().cols = new_cols;
+                    editor.modified_def.base_mut().rows = new_rows;
+                }
+            }
+        }
+
+        // Render window editors and handle their actions
+        let mut editors_to_remove = Vec::new();
+
+        for (window_name, editor) in &mut self.window_editors {
+            use crate::frontend::gui::window_editor::EditorAction;
+
+            match editor.render(ctx, &self.app_core) {
+                EditorAction::Apply => {
+                    // Apply changes to layout for preview
+                    editor.apply(&mut self.app_core);
+                }
+                EditorAction::Cancel => {
+                    // Revert to original settings
+                    editor.cancel(&mut self.app_core);
+                }
+                EditorAction::Save => {
+                    // Persist changes to memory and save config
+                    editor.save(&mut self.app_core);
+                }
+                EditorAction::Close => {
+                    // Mark for removal
+                    editors_to_remove.push(window_name.clone());
+                }
+                EditorAction::None => {}
+            }
+        }
+
+        // Remove closed editors
+        for name in editors_to_remove {
+            self.window_editors.remove(&name);
+        }
+
         // Request repaint to keep polling for messages
         ctx.request_repaint();
     }
 }
 
 /// Configure egui visual style
-fn configure_style(ctx: &egui::Context) {
+fn configure_style(ctx: &egui::Context, theme: &crate::theme::AppTheme) {
     use egui::{FontId, TextStyle};
 
     let mut style = (*ctx.style()).clone();
-    let mut visuals = egui::Visuals::dark();
 
-    // Make window title bars more compact
-    visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
-
+    // Apply theme-based visuals
+    let visuals = app_theme_to_visuals(theme);
     ctx.set_visuals(visuals);
 
     // Smaller fonts for compact UI
