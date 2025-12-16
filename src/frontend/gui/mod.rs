@@ -2700,13 +2700,29 @@ impl eframe::App for EguiApp {
                     }
 
                     // Block normal content-area dragging on all windows (only title bar or Alt+drag should move)
+                    // Skip blocking when injury doll calibration is active so clicks can reach the image
                     if !ui.ctx().input(|i| i.modifiers.alt) {
-                        // Swallow drag sense on content so the window doesn't move from content drags
-                        let _ = ui.interact(
-                            content_rect,
-                            ui.id().with("block_drag"),
-                            egui::Sense::drag(),
-                        );
+                        let mut allow_block = true;
+                        if matches!(widget_type, WidgetType::InjuryDoll) {
+                            let is_calibrating = self
+                                .window_editors
+                                .get(&name)
+                                .and_then(|ed| ed.injury_doll_editor.as_ref())
+                                .map(|d| d.calibration_active)
+                                .unwrap_or(false);
+                            if is_calibrating {
+                                allow_block = false;
+                            }
+                        }
+
+                        if allow_block {
+                            // Swallow drag sense on content so the window doesn't move from content drags
+                            let _ = ui.interact(
+                                content_rect,
+                                ui.id().with("block_drag"),
+                                egui::Sense::drag(),
+                            );
+                        }
                     }
 
                     // Alt+drag detection for window movement (works even with hidden title bar)
