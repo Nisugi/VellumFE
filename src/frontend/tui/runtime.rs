@@ -37,7 +37,7 @@ async fn async_run(
     let port = config.connection.port;
 
     // Create core application state
-    let mut app_core = AppCore::new(config)?;
+    let mut app_core = AppCore::new(config, crate::config::FrontendType::Tui)?;
 
     // Set global color mode BEFORE creating frontend or any widgets
     // This ensures ALL color parsing respects the mode from config

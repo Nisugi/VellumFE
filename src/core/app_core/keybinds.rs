@@ -321,6 +321,7 @@ impl AppCore {
             max_cols: None,
             visible: true,
             content_align: None,
+            font_family: None,
         };
 
         WindowDef::Performance {

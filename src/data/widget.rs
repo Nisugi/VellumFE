@@ -25,6 +25,9 @@ pub struct TextContent {
 #[derive(Clone, Debug)]
 pub struct StyledLine {
     pub segments: Vec<TextSegment>,
+    /// Unix timestamp (seconds) when this line was created
+    /// Used by frontends to display timestamps if show_timestamps is enabled
+    pub timestamp: Option<i64>,
 }
 
 /// A segment of text with styling
@@ -244,6 +247,27 @@ impl StyledLine {
                 span_type: SpanType::Normal,
                 link_data: None,
             }],
+            timestamp: None,
+        }
+    }
+
+    /// Create a new styled line with timestamp set to current time
+    pub fn from_text_with_timestamp(text: impl Into<String>) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .ok();
+        Self {
+            segments: vec![TextSegment {
+                text: text.into(),
+                fg: None,
+                bg: None,
+                bold: false,
+                span_type: SpanType::Normal,
+                link_data: None,
+            }],
+            timestamp,
         }
     }
 }

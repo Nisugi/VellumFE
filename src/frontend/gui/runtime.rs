@@ -37,7 +37,7 @@ async fn async_run(
     let port = config.connection.port;
 
     // Create core application state
-    let mut app_core = AppCore::new(config)?;
+    let mut app_core = AppCore::new(config, crate::config::FrontendType::Gui)?;
 
     // Get a reasonable default size for window initialization
     // (will be updated when egui reports actual size)

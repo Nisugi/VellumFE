@@ -1579,6 +1579,7 @@ impl WindowEditor {
             max_cols: None,
             visible: true,
             content_align: None,
+            font_family: None,
         };
 
         // Create window_def based on widget type
@@ -1590,6 +1591,7 @@ impl WindowEditor {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             },
             "room" => WindowDef::Room {
@@ -1601,6 +1603,7 @@ impl WindowEditor {
                     show_players: true,
                     show_exits: true,
                     show_name: false,
+                    ..Default::default()
                 },
             },
             "command_input" => WindowDef::CommandInput {
@@ -1639,6 +1642,7 @@ impl WindowEditor {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             },
         };

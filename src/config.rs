@@ -31,6 +31,7 @@ const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
 // Embed entire directories - automatically includes all files
 static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/layouts");
 static SOUNDS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/sounds");
+static IMAGES_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults");
 
 // Keep embedded default layout for fallback
 const LAYOUT_DEFAULT: &str = include_str!("../defaults/layouts/layout.toml");
@@ -46,6 +47,23 @@ pub enum WidgetCategory {
     ProgressBar,
     Status,
     TextWindow,
+}
+
+/// Frontend type for layout separation (GUI vs TUI)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrontendType {
+    Tui,
+    Gui,
+}
+
+impl FrontendType {
+    /// Get the layout filename suffix for this frontend type
+    pub fn layout_suffix(&self) -> &str {
+        match self {
+            FrontendType::Tui => "tui",
+            FrontendType::Gui => "gui",
+        }
+    }
 }
 
 impl WidgetCategory {
@@ -127,6 +145,8 @@ pub struct Config {
     pub menu_keybinds: MenuKeybinds, // Keybinds for menu system (browsers, forms, editors)
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
+    #[serde(default)] // Use defaults for window editor
+    pub window_editor: WindowEditorConfig, // Window editor panel persistence
 }
 
 /// Terminal size range to layout mapping
@@ -146,6 +166,40 @@ impl LayoutMapping {
             && width <= self.max_width
             && height >= self.min_height
             && height <= self.max_height
+    }
+}
+
+/// Window editor configuration (saved to config.toml)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowEditorConfig {
+    #[serde(default = "default_editor_position")]
+    pub default_position: [f32; 2],
+    #[serde(default = "default_editor_size")]
+    pub default_size: [f32; 2],
+    /// Remember panel positions per window name
+    #[serde(default)]
+    pub panel_positions: HashMap<String, [f32; 2]>,
+    /// Remember panel sizes per window name
+    #[serde(default)]
+    pub panel_sizes: HashMap<String, [f32; 2]>,
+}
+
+fn default_editor_position() -> [f32; 2] {
+    [100.0, 100.0]
+}
+
+fn default_editor_size() -> [f32; 2] {
+    [400.0, 600.0]
+}
+
+impl Default for WindowEditorConfig {
+    fn default() -> Self {
+        Self {
+            default_position: default_editor_position(),
+            default_size: default_editor_size(),
+            panel_positions: HashMap::new(),
+            panel_sizes: HashMap::new(),
+        }
     }
 }
 
@@ -591,10 +645,13 @@ pub struct WindowBase {
     /// Content alignment within widget area
     #[serde(default)]
     pub content_align: Option<String>,
+    /// Font family for text rendering ("monospace", "proportional", or None for default)
+    #[serde(default)]
+    pub font_family: Option<String>,
 }
 
 /// Text widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TextWidgetData {
     #[serde(default)]
     pub streams: Vec<String>,
@@ -604,10 +661,30 @@ pub struct TextWidgetData {
     pub wordwrap: bool,
     #[serde(default)]
     pub show_timestamps: bool,
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_text_font_size")]
+    pub font_size: f32,
+    #[serde(default = "default_text_line_spacing")]
+    pub line_spacing: f32,
+    #[serde(default = "default_text_padding")]
+    pub padding: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_color: Option<String>,
+    #[serde(default)]
+    pub link_underline_on_hover: bool,
+    #[serde(default = "default_true")]
+    pub auto_scroll: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_format: Option<String>,
 }
 
 /// Room widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct RoomWidgetData {
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
@@ -628,6 +705,34 @@ pub struct RoomWidgetData {
     /// Display the room name within the window content (useful when borders are hidden)
     #[serde(default = "default_false")]
     pub show_name: bool,
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_room_name_text_size")]
+    pub name_text_size: f32,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_color: Option<String>,
+
+    #[serde(default = "default_room_desc_text_size")]
+    pub desc_text_size: f32,
+
+    #[serde(default = "default_room_section_spacing")]
+    pub section_spacing: f32,
+
+    #[serde(default)]
+    pub section_separators: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator_color: Option<String>,
+
+    #[serde(default)]
+    pub show_component_headers: bool,
+
+    #[serde(default = "default_room_header_text_size")]
+    pub header_text_size: f32,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_color: Option<String>,
 }
 
 /// Command input widget specific data
@@ -643,6 +748,29 @@ pub struct CommandInputWidgetData {
     pub prompt_icon: Option<String>,
     #[serde(default)]
     pub prompt_icon_color: Option<String>,
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_command_input_text_size")]
+    pub text_size: f32,
+    #[serde(default = "default_command_input_padding")]
+    pub padding: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    #[serde(default = "default_command_input_border_width")]
+    pub border_width: f32,
+}
+
+// Default functions for CommandInputWidgetData
+fn default_command_input_text_size() -> f32 {
+    14.0
+}
+fn default_command_input_padding() -> f32 {
+    4.0
+}
+fn default_command_input_border_width() -> f32 {
+    1.0
 }
 
 /// Inventory widget specific data
@@ -659,7 +787,7 @@ pub struct InventoryWidgetData {
 }
 
 /// TabbedText widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TabbedTextWidgetData {
     #[serde(default)]
     pub tabs: Vec<TabbedTextTab>,
@@ -677,10 +805,50 @@ pub struct TabbedTextWidgetData {
     pub tab_unread_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_unread_prefix: Option<String>,
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_tabbed_text_tab_text_size")]
+    pub tab_text_size: f32,
+    #[serde(default = "default_tabbed_text_tab_bar_height")]
+    pub tab_bar_height: f32,
+    #[serde(default = "default_tabbed_text_tab_padding")]
+    pub tab_padding: f32,
+    #[serde(default = "default_tabbed_text_tab_rounding")]
+    pub tab_rounding: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separator_color: Option<String>,
+    #[serde(default = "default_tabbed_text_separator_width")]
+    pub separator_width: f32,
+    #[serde(default = "default_tabbed_text_content_font_size")]
+    pub content_font_size: f32,
 }
 
 fn default_tab_bar_position() -> String {
     "top".to_string()
+}
+
+fn default_tabbed_text_tab_text_size() -> f32 {
+    14.0
+}
+
+fn default_tabbed_text_tab_bar_height() -> f32 {
+    30.0
+}
+
+fn default_tabbed_text_tab_padding() -> f32 {
+    6.0
+}
+
+fn default_tabbed_text_tab_rounding() -> f32 {
+    4.0
+}
+
+fn default_tabbed_text_separator_width() -> f32 {
+    2.0
+}
+
+fn default_tabbed_text_content_font_size() -> f32 {
+    14.0
 }
 
 fn default_title_position() -> String {
@@ -719,8 +887,18 @@ impl TabbedTextTab {
     }
 }
 
+/// Text position relative to progress bar
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressTextPosition {
+    #[default]
+    Inside,  // Text overlaid on bar
+    Above,   // Text above bar
+    Below,   // Text below bar
+}
+
 /// Progress bar widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ProgressWidgetData {
     /// Progress feed identifier (XML progressBar id); case-sensitive
     #[serde(default)]
@@ -734,10 +912,59 @@ pub struct ProgressWidgetData {
     /// When true, show only the current value (no label, no max)
     #[serde(default)]
     pub current_only: bool,
+
+    // NEW: Visual customization settings
+    /// Progress bar height in pixels
+    #[serde(default = "default_progress_bar_height")]
+    pub bar_height: f32,
+    /// Text font size in pixels
+    #[serde(default = "default_progress_text_size")]
+    pub text_size: f32,
+    /// Corner rounding radius
+    #[serde(default = "default_progress_rounding")]
+    pub rounding: f32,
+    /// Position of text relative to bar
+    #[serde(default = "default_progress_text_position")]
+    pub text_position: ProgressTextPosition,
+    /// Enable text shadow for better contrast
+    #[serde(default)]
+    pub text_shadow: bool,
+    /// Background color for empty portion of bar
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    /// Custom text format (e.g., "{value}/{max}", "{percent}%")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_format: Option<String>,
+}
+
+fn default_progress_bar_height() -> f32 {
+    20.0
+}
+
+fn default_progress_text_size() -> f32 {
+    14.0
+}
+
+fn default_progress_rounding() -> f32 {
+    3.0
+}
+
+fn default_progress_text_position() -> ProgressTextPosition {
+    ProgressTextPosition::Inside
+}
+
+/// Countdown time display format
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CountdownFormat {
+    #[default]
+    Seconds,  // "5s", "30s"
+    MMss,     // "01:30", "00:05"
+    HHMMss,   // "00:01:30", "00:00:05"
 }
 
 /// Countdown timer widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CountdownWidgetData {
     /// Countdown feed identifier (XML id), case-sensitive
     #[serde(default)]
@@ -750,20 +977,449 @@ pub struct CountdownWidgetData {
     pub color: Option<String>,
     #[serde(default)]
     pub background_color: Option<String>,
+
+    // NEW: Visual customization settings
+    /// Text font size in pixels
+    #[serde(default = "default_countdown_text_size")]
+    pub text_size: f32,
+    /// Maximum time for bar scale (seconds)
+    #[serde(default = "default_countdown_max_time")]
+    pub max_time: u32,
+    /// Alert threshold - change color when remaining < X seconds
+    #[serde(default = "default_countdown_alert_threshold")]
+    pub alert_threshold: u32,
+    /// Alert color when below threshold
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_color: Option<String>,
+    /// Pulse animation when ready/complete
+    #[serde(default)]
+    pub pulse_when_ready: bool,
+    /// Time display format
+    #[serde(default = "default_countdown_format")]
+    pub format: CountdownFormat,
+}
+
+fn default_countdown_text_size() -> f32 {
+    14.0
+}
+
+fn default_countdown_max_time() -> u32 {
+    30
+}
+
+fn default_countdown_alert_threshold() -> u32 {
+    5
+}
+
+fn default_countdown_format() -> CountdownFormat {
+    CountdownFormat::Seconds
+}
+
+/// Indicator visual shape
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum IndicatorShape {
+    #[default]
+    Circle,  // Circular indicator
+    Square,  // Square indicator
+    Icon,    // Use icon character
+    Text,    // Text only (no shape)
+}
+
+/// Compass layout style
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompassLayout {
+    #[default]
+    Grid3x3,    // Traditional 3x3 grid (nw/n/ne, w/out/e, sw/s/se, up/down)
+    Horizontal, // Single horizontal row
+    Vertical,   // Single vertical column
+}
+
+/// Injury marker rendering styles
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InjuryMarkerStyle {
+    #[default]
+    Circles,        // Solid colored circles
+    CirclesOutline, // Circle outlines only
+    Numbers,        // Numbered circles (using injuryNumbers.png)
+    Icons,          // Custom icons (future)
+}
+
+/// Nerve indicator type (Phase 5: Multi-layer system)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NerveIndicatorType {
+    #[default]
+    Default,        // Use nervous_system composite overlay
+    Greyscale,      // Use nerves_greyscale.png overlay
+    NervousSystem,  // Use nervous_system_greyscale.png overlay
+    Both,           // Show both default AND alternative
+}
+
+/// Tint mode for base vs overlay images (Phase 5)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TintMode {
+    #[default]
+    Unified,    // Use same tint for base and overlays
+    Separate,   // Separate tint controls for base vs overlays
+}
+
+/// Overlay layer configuration (Phase 5: Multi-layer system)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OverlayLayer {
+    /// Overlay name (e.g., "nervous_system", "nerves_greyscale")
+    pub name: String,
+
+    /// Path to overlay image (greyscale PNG)
+    pub image_path: String,
+
+    /// Whether this layer is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Layer render order (0 = first, higher = later)
+    #[serde(default)]
+    pub z_index: u32,
+
+    /// Opacity (0.0-1.0, default: 1.0)
+    #[serde(default = "default_one")]
+    pub opacity: f32,
+
+    /// Whether to apply severity tinting to this layer
+    #[serde(default = "default_true")]
+    pub apply_severity_tint: bool,
+}
+
+fn default_one() -> f32 { 1.0 }
+
+/// Default overlay layers - includes eyes/back overlay enabled by default
+pub fn default_overlay_layers() -> Vec<OverlayLayer> {
+    vec![
+        OverlayLayer {
+            name: "nervous_system".to_string(),
+            image_path: "defaults/eyes_back.png".to_string(),
+            enabled: true,
+            z_index: 1,
+            opacity: 1.0,
+            apply_severity_tint: true,
+        }
+    ]
+}
+
+/// Rank indicator configuration (Phase 5: Multi-layer system)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RankIndicatorConfig {
+    /// Enable rank indicator overlays
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to rank 1 image
+    #[serde(default = "default_rank1_path")]
+    pub rank1_path: String,
+
+    /// Path to rank 2 image
+    #[serde(default = "default_rank2_path")]
+    pub rank2_path: String,
+
+    /// Path to rank 3 image
+    #[serde(default = "default_rank3_path")]
+    pub rank3_path: String,
+
+    /// Opacity (0.0-1.0, default: 1.0)
+    #[serde(default = "default_one")]
+    pub opacity: f32,
+
+    /// Path to nerves marker image
+    #[serde(default = "default_nerves_path")]
+    pub nerves_path: String,
+
+    /// Nerve severity 1 tint color (default: yellow #FFFF00)
+    #[serde(default = "default_nerve_tint1")]
+    pub nerve_tint1_color: String,
+
+    /// Nerve severity 2 tint color (default: orange #FFA500)
+    #[serde(default = "default_nerve_tint2")]
+    pub nerve_tint2_color: String,
+
+    /// Nerve severity 3 tint color (default: red #FF0000)
+    #[serde(default = "default_nerve_tint3")]
+    pub nerve_tint3_color: String,
+}
+
+fn default_rank1_path() -> String { "defaults/rank1.png".to_string() }
+fn default_rank2_path() -> String { "defaults/rank2.png".to_string() }
+fn default_rank3_path() -> String { "defaults/rank3.png".to_string() }
+fn default_nerves_path() -> String { "defaults/nerves.png".to_string() }
+fn default_nerve_tint1() -> String { "#FFFF00".to_string() }  // Yellow
+fn default_nerve_tint2() -> String { "#FFA500".to_string() }  // Orange
+fn default_nerve_tint3() -> String { "#FF0000".to_string() }  // Red
+
+impl Default for RankIndicatorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,  // Enabled by default - rank indicators ship with VellumFE
+            rank1_path: default_rank1_path(),
+            rank2_path: default_rank2_path(),
+            rank3_path: default_rank3_path(),
+            opacity: 1.0,
+            nerves_path: default_nerves_path(),
+            nerve_tint1_color: default_nerve_tint1(),
+            nerve_tint2_color: default_nerve_tint2(),
+            nerve_tint3_color: default_nerve_tint3(),
+        }
+    }
+}
+
+/// Body part calibration data (normalized coordinates)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InjuryBodyPart {
+    pub x: f32,      // Normalized X (0.0-1.0)
+    pub y: f32,      // Normalized Y (0.0-1.0)
+    pub enabled: bool,
+}
+
+/// Calibration data - maps body parts to pixel coordinates on image
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InjuryCalibration {
+    /// Image dimensions used during calibration (for validation)
+    #[serde(default)]
+    pub image_width: u32,
+    #[serde(default)]
+    pub image_height: u32,
+
+    /// Body part coordinates (normalized 0.0-1.0)
+    #[serde(default = "default_body_parts")]
+    pub body_parts: std::collections::HashMap<String, InjuryBodyPart>,
+
+    /// Alternative nerve position (Phase 5: for nerves_greyscale/nervous_system_greyscale overlays)
+    /// When NerveIndicatorType is Greyscale or NervousSystem, this position is used instead
+    /// of the default nsys position in body_parts
+    #[serde(default)]
+    pub alternative_nerve_position: Option<InjuryBodyPart>,
+}
+
+impl Default for InjuryCalibration {
+    fn default() -> Self {
+        Self {
+            image_width: 0,
+            image_height: 0,
+            body_parts: default_body_parts(),
+            alternative_nerve_position: None,
+        }
+    }
+}
+
+/// Default body part positions for standard character image (normalized 0.0-1.0)
+fn default_body_parts() -> std::collections::HashMap<String, InjuryBodyPart> {
+    let mut parts = std::collections::HashMap::new();
+    parts.insert(
+        "head".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.12,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "neck".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.20,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "chest".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.35,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "abdomen".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.48,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "back".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.38,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "leftArm".into(),
+        InjuryBodyPart {
+            x: 0.25,
+            y: 0.40,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "rightArm".into(),
+        InjuryBodyPart {
+            x: 0.75,
+            y: 0.40,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "leftHand".into(),
+        InjuryBodyPart {
+            x: 0.15,
+            y: 0.55,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "rightHand".into(),
+        InjuryBodyPart {
+            x: 0.85,
+            y: 0.55,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "leftLeg".into(),
+        InjuryBodyPart {
+            x: 0.40,
+            y: 0.75,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "rightLeg".into(),
+        InjuryBodyPart {
+            x: 0.60,
+            y: 0.75,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "leftEye".into(),
+        InjuryBodyPart {
+            x: 0.45,
+            y: 0.10,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "rightEye".into(),
+        InjuryBodyPart {
+            x: 0.55,
+            y: 0.10,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "nsys".into(),
+        InjuryBodyPart {
+            x: 0.5,
+            y: 0.15,
+            enabled: true,
+        },
+    ); // Nervous system - near head
+    parts.insert(
+        "leftFoot".into(),
+        InjuryBodyPart {
+            x: 0.40,
+            y: 0.90,
+            enabled: true,
+        },
+    );
+    parts.insert(
+        "rightFoot".into(),
+        InjuryBodyPart {
+            x: 0.60,
+            y: 0.90,
+            enabled: true,
+        },
+    );
+    parts
 }
 
 /// Compass widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompassWidgetData {
+    // Existing fields
     #[serde(default)]
     pub active_color: Option<String>, // Color for available exits (default: green)
     #[serde(default)]
     pub inactive_color: Option<String>, // Color for unavailable exits (default: dark gray)
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_compass_layout")]
+    pub layout: CompassLayout,
+    #[serde(default = "default_compass_spacing")]
+    pub spacing: f32,
+    #[serde(default = "default_compass_text_size")]
+    pub text_size: f32,
+    #[serde(default)]
+    pub use_icons: bool,
+    #[serde(default = "default_compass_bold_active")]
+    pub bold_active: bool,
+}
+
+/// Hand matching mode for image profile triggers
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HandMatchMode {
+    #[default]
+    All,   // Both hands must match
+    Any,   // Either hand matches
+    Right, // Only right hand must match
+    Left,  // Only left hand must match
+}
+
+/// Image profile trigger conditions
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ImageTrigger {
+    /// Hand-based trigger (matches right/left hand item names)
+    Hands {
+        #[serde(default)]
+        right_hand: Option<String>, // Item name pattern (e.g., "bow", "runestaff")
+        #[serde(default)]
+        left_hand: Option<String>, // Item name pattern
+        #[serde(default)]
+        match_mode: HandMatchMode,
+    },
+}
+
+/// Image profile - associates an image/calibration with trigger conditions
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageProfile {
+    /// Profile name (e.g., "bow_stance", "sword_shield", "empty_hands")
+    pub name: String,
+
+    /// Path to character silhouette image
+    pub image_path: String,
+
+    /// Priority (higher = evaluated first, 0 = default/fallback)
+    #[serde(default)]
+    pub priority: u32,
+
+    /// Trigger condition (None = default/fallback profile)
+    #[serde(default)]
+    pub trigger: Option<ImageTrigger>,
+
+    /// Per-profile calibration data (independent body part positions)
+    #[serde(default)]
+    pub calibration: InjuryCalibration,
 }
 
 /// Injury doll widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InjuryDollWidgetData {
+    // Color configuration (existing)
     #[serde(default)]
     pub injury_default_color: Option<String>, // Level 0: none (default: #333333)
     #[serde(default)]
@@ -778,11 +1434,163 @@ pub struct InjuryDollWidgetData {
     pub scar2_color: Option<String>, // Level 5: scar 2 (default: #777777)
     #[serde(default)]
     pub scar3_color: Option<String>, // Level 6: scar 3 (default: #555555)
+
+    // Image and rendering configuration (new)
+    #[serde(default)]
+    pub image_path: Option<String>,
+
+    #[serde(default = "default_injury_scale")]
+    pub scale: f32, // 0.5 - 3.0 (default: 1.0)
+
+    #[serde(default)]
+    pub greyscale: bool,
+
+    #[serde(default)]
+    pub tint_color: Option<String>, // Hex color for tinting
+
+    #[serde(default = "default_injury_tint_strength")]
+    pub tint_strength: f32, // 0.0 - 1.0 (default: 0.3) - controls base image and overlays
+
+    #[serde(default = "default_injury_tint_strength")]
+    pub marker_tint_strength: f32, // 0.0 - 1.0 (default: 0.3) - controls rank/nerves markers
+
+    #[serde(default)]
+    pub marker_style: InjuryMarkerStyle,
+
+    #[serde(default = "default_marker_size")]
+    pub marker_size: f32, // Marker radius in pixels (default: 6.0)
+
+    #[serde(default)]
+    pub show_numbers: bool,
+
+    #[serde(default)]
+    pub calibration: InjuryCalibration,
+
+    // Phase 2.5: Multi-image profile system
+    /// Image profiles with hand-based triggers (Phase 2.5)
+    /// Profiles are evaluated in priority order (highest first).
+    /// The default image (image_path + calibration) is used when no profile matches.
+    #[serde(default)]
+    pub image_profiles: Vec<ImageProfile>,
+
+    // Phase 5: Multi-layer overlay system
+    /// Tint mode (unified vs separate for base/overlays)
+    #[serde(default)]
+    pub tint_mode: TintMode,
+
+    /// Overlay tint color (used when tint_mode is Separate)
+    #[serde(default)]
+    pub overlay_tint_color: Option<String>,
+
+    /// Overlay tint strength (used when tint_mode is Separate)
+    #[serde(default = "default_injury_tint_strength")]
+    pub overlay_tint_strength: f32,
+
+    /// Nerve indicator type (default in nervous_system or alternative greyscale images)
+    #[serde(default)]
+    pub nerve_indicator_type: NerveIndicatorType,
+
+    /// Overlay layers (e.g., nervous_system, nerves_greyscale, etc.)
+    /// Defaults to nervous_system enabled (ships with VellumFE)
+    #[serde(default = "default_overlay_layers")]
+    pub overlay_layers: Vec<OverlayLayer>,
+
+    /// Rank indicator configuration
+    #[serde(default)]
+    pub rank_indicators: RankIndicatorConfig,
+
+    /// Background color for injury doll widget (hex color, e.g., "#000000")
+    #[serde(default)]
+    pub background_color: Option<String>,
+}
+
+fn default_injury_scale() -> f32 {
+    1.0
+}
+fn default_injury_tint_strength() -> f32 {
+    0.3
+}
+fn default_marker_size() -> f32 {
+    6.0  // Base marker size at scale 1.0 (scales proportionally with image)
+}
+
+impl InjuryDollWidgetData {
+    /// Select the appropriate image profile based on current hand data
+    /// Returns (image_path, calibration) tuple
+    pub fn select_profile<'a>(
+        &'a self,
+        right_hand: Option<&str>,
+        left_hand: Option<&str>,
+    ) -> (&'a str, &'a InjuryCalibration) {
+        // Sort profiles by priority (highest first)
+        let mut sorted_profiles: Vec<&ImageProfile> = self.image_profiles.iter().collect();
+        sorted_profiles.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        // Evaluate profiles in priority order
+        for profile in sorted_profiles {
+            if let Some(ref trigger) = profile.trigger {
+                if Self::evaluate_trigger(trigger, right_hand, left_hand) {
+                    return (&profile.image_path, &profile.calibration);
+                }
+            } else {
+                // Profile with no trigger is a default fallback (only if priority-based)
+                // We'll use this if no other profile matches
+                return (&profile.image_path, &profile.calibration);
+            }
+        }
+
+        // No matching profile - use default image_path and calibration
+        (
+            self.image_path.as_deref().unwrap_or("defaults/injuryDoll.png"),
+            &self.calibration,
+        )
+    }
+
+    /// Evaluate a trigger condition against current hand data
+    fn evaluate_trigger(
+        trigger: &ImageTrigger,
+        right_hand: Option<&str>,
+        left_hand: Option<&str>,
+    ) -> bool {
+        match trigger {
+            ImageTrigger::Hands {
+                right_hand: expected_right,
+                left_hand: expected_left,
+                match_mode,
+            } => {
+                let right_matches = Self::hand_matches(expected_right.as_deref(), right_hand);
+                let left_matches = Self::hand_matches(expected_left.as_deref(), left_hand);
+
+                match match_mode {
+                    HandMatchMode::All => right_matches && left_matches,
+                    HandMatchMode::Any => right_matches || left_matches,
+                    HandMatchMode::Right => right_matches,
+                    HandMatchMode::Left => left_matches,
+                }
+            }
+        }
+    }
+
+    /// Check if a hand item matches the expected pattern
+    /// Returns true if:
+    /// - expected is None (no requirement)
+    /// - actual contains the expected string (case-insensitive)
+    fn hand_matches(expected: Option<&str>, actual: Option<&str>) -> bool {
+        match (expected, actual) {
+            (None, _) => true, // No requirement = always matches
+            (Some(_), None) => false, // Expecting something but hand is empty
+            (Some(exp), Some(act)) => {
+                // Case-insensitive substring match
+                act.to_lowercase().contains(&exp.to_lowercase())
+            }
+        }
+    }
 }
 
 /// Indicator widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct IndicatorWidgetData {
+    // Existing fields
     #[serde(default)]
     pub icon: Option<String>,
     #[serde(default)]
@@ -795,10 +1603,26 @@ pub struct IndicatorWidgetData {
     pub default_status: Option<String>, // legacy
     #[serde(default)]
     pub default_color: Option<String>,  // legacy
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_indicator_text_size")]
+    pub text_size: f32,
+    #[serde(default = "default_indicator_shape")]
+    pub shape: IndicatorShape,
+    #[serde(default = "default_indicator_size")]
+    pub indicator_size: f32,
+    #[serde(default)]
+    pub glow_when_active: bool,
+    #[serde(default = "default_indicator_glow_radius")]
+    pub glow_radius: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    #[serde(default = "default_indicator_show_label")]
+    pub show_label: bool,
 }
 
 /// Dashboard widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct DashboardWidgetData {
     /// Layout direction: "horizontal", "vertical", or "grid:RxC"
     #[serde(default = "default_dashboard_layout", rename = "dashboard_layout")]
@@ -815,6 +1639,24 @@ pub struct DashboardWidgetData {
     /// Indicator definitions (id/icon/colors)
     #[serde(default, rename = "dashboard_indicators")]
     pub indicators: Vec<DashboardIndicatorDef>,
+
+    // NEW: Visual customization settings
+    #[serde(default = "default_dashboard_text_size")]
+    pub text_size: f32,
+    #[serde(default = "default_dashboard_icon_size")]
+    pub icon_size: f32,
+    #[serde(default = "default_dashboard_padding")]
+    pub padding: f32,
+    #[serde(default = "default_dashboard_show_labels")]
+    pub show_labels: bool,
+    #[serde(default = "default_dashboard_show_values")]
+    pub show_values: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_color: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -918,6 +1760,26 @@ fn default_dashboard_hide_inactive() -> bool {
     false
 }
 
+fn default_dashboard_text_size() -> f32 {
+    14.0
+}
+
+fn default_dashboard_icon_size() -> f32 {
+    16.0
+}
+
+fn default_dashboard_padding() -> f32 {
+    4.0
+}
+
+fn default_dashboard_show_labels() -> bool {
+    true
+}
+
+fn default_dashboard_show_values() -> bool {
+    true
+}
+
 pub(crate) fn default_target_entity_id() -> String {
     "targetcount".to_string()
 }
@@ -934,8 +1796,44 @@ fn default_indicator_inactive_color() -> Option<String> {
     Some("#555555".to_string())
 }
 
+fn default_indicator_text_size() -> f32 {
+    14.0
+}
+
+fn default_indicator_shape() -> IndicatorShape {
+    IndicatorShape::Circle
+}
+
+fn default_indicator_size() -> f32 {
+    20.0
+}
+
+fn default_indicator_glow_radius() -> f32 {
+    4.0
+}
+
+fn default_indicator_show_label() -> bool {
+    true
+}
+
+fn default_compass_layout() -> CompassLayout {
+    CompassLayout::Grid3x3
+}
+
+fn default_compass_spacing() -> f32 {
+    4.0
+}
+
+fn default_compass_text_size() -> f32 {
+    14.0
+}
+
+fn default_compass_bold_active() -> bool {
+    true
+}
+
 /// Hand widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct HandWidgetData {
     /// Optional icon prefix (e.g., "L:", "R:", "S:")
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -946,6 +1844,40 @@ pub struct HandWidgetData {
     /// Text color override (also overrides link color if set)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
+
+    // NEW: Visual customization settings
+    /// Text font size
+    #[serde(default = "default_hand_text_size")]
+    pub text_size: f32,
+    /// Icon font size
+    #[serde(default = "default_hand_icon_size")]
+    pub icon_size: f32,
+    /// Spacing between icon and text
+    #[serde(default = "default_hand_spacing")]
+    pub spacing: f32,
+    /// Text to display when hand is empty
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty_text: Option<String>,
+    /// Color for empty text
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty_color: Option<String>,
+    /// Show background frame
+    #[serde(default)]
+    pub show_background: bool,
+    /// Background color
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+}
+
+// Default functions for HandWidgetData
+fn default_hand_text_size() -> f32 {
+    14.0
+}
+fn default_hand_icon_size() -> f32 {
+    16.0
+}
+fn default_hand_spacing() -> f32 {
+    4.0
 }
 
 /// Active effects display style
@@ -1678,6 +2610,34 @@ fn default_buffer_size() -> usize {
     1000
 }
 
+fn default_text_font_size() -> f32 {
+    14.0
+}
+
+fn default_text_line_spacing() -> f32 {
+    4.0
+}
+
+fn default_text_padding() -> f32 {
+    8.0
+}
+
+fn default_room_name_text_size() -> f32 {
+    18.0
+}
+
+fn default_room_desc_text_size() -> f32 {
+    14.0
+}
+
+fn default_room_section_spacing() -> f32 {
+    8.0
+}
+
+fn default_room_header_text_size() -> f32 {
+    12.0
+}
+
 fn default_command_echo_color() -> String {
     "#ffffff".to_string()
 }
@@ -1792,9 +2752,9 @@ fn default_windows() -> Vec<WindowDef> {
 
 impl Layout {
     /// Load layout from file using new profile-based structure
-    /// Priority: ~/.vellum-fe/{character}/layout.toml → ~/.vellum-fe/layouts/layout.toml → embedded
-    pub fn load(character: Option<&str>) -> Result<Self> {
-        let (layout, _base_name) = Self::load_with_terminal_size(character, None)?;
+    /// Priority: ~/.vellum-fe/{character}/layout-{frontend}.toml → ~/.vellum-fe/layouts/layout-{frontend}.toml → embedded
+    pub fn load(character: Option<&str>, frontend: FrontendType) -> Result<Self> {
+        let (layout, _base_name) = Self::load_with_terminal_size(character, None, frontend)?;
         Ok(layout)
     }
 
@@ -1802,19 +2762,23 @@ impl Layout {
     /// Returns (layout, base_layout_name) where base_layout_name is the source layout file name (without .toml)
     ///
     /// New structure:
-    /// 1. ~/.vellum-fe/{character}/layout.toml (auto-save from exit)
-    /// 2. ~/.vellum-fe/default/layouts/default.toml (shared default)
+    /// 1. ~/.vellum-fe/{character}/layout-{frontend}.toml (auto-save from exit)
+    /// 2. ~/.vellum-fe/default/layouts/default-{frontend}.toml (shared default)
     /// 3. Embedded default
     pub fn load_with_terminal_size(
         character: Option<&str>,
         terminal_size: Option<(u16, u16)>,
+        frontend: FrontendType,
     ) -> Result<(Self, Option<String>)> {
         let profile_dir = Config::profile_dir(character)?;
         let default_profile_dir = Config::profile_dir(None)?; // ~/.vellum-fe/default/
         let _shared_layouts_dir = Config::layouts_dir()?; // ~/.vellum-fe/layouts/ (templates only)
 
-        // 1. Try character auto-save layout: ~/.vellum-fe/{character}/layout.toml
-        let auto_layout_path = profile_dir.join("layout.toml");
+        // Construct frontend-specific filename
+        let layout_filename = format!("layout-{}.toml", frontend.layout_suffix());
+
+        // 1. Try character auto-save layout: ~/.vellum-fe/{character}/layout-{frontend}.toml
+        let auto_layout_path = profile_dir.join(&layout_filename);
         if auto_layout_path.exists() {
             tracing::info!("Loading auto-save layout from {:?}", auto_layout_path);
             let mut layout = Self::load_from_file(&auto_layout_path)?;
@@ -1848,8 +2812,8 @@ impl Layout {
             return Ok((layout, Some(base_name)));
         }
 
-        // 2. Try default profile auto-save layout: ~/.vellum-fe/default/layout.toml
-        let default_path = default_profile_dir.join("layout.toml");
+        // 2. Try default profile auto-save layout: ~/.vellum-fe/default/layout-{frontend}.toml
+        let default_path = default_profile_dir.join(&layout_filename);
         if default_path.exists() {
             tracing::info!(
                 "Loading default profile auto-save layout from {:?}",
@@ -1861,7 +2825,8 @@ impl Layout {
 
         // 3. Fall back to embedded default (should have been extracted by extract_defaults())
         tracing::warn!(
-            "No layout found, using embedded default (this should have been extracted!)"
+            "No {} layout found, using embedded default (this should have been extracted!)",
+            frontend.layout_suffix()
         );
         let layout: Layout =
             toml::from_str(LAYOUT_DEFAULT).context("Failed to parse embedded default layout")?;
@@ -2101,12 +3066,13 @@ impl Layout {
     }
 
     /// Save as character auto-save layout (on exit/resize)
-    /// Saves to: ~/.vellum-fe/{character}/layout.toml
+    /// Saves to: ~/.vellum-fe/{character}/layout-{frontend}.toml
     pub fn save_auto(
         &mut self,
         character: &str,
         base_layout_name: &str,
         terminal_size: Option<(u16, u16)>,
+        frontend: FrontendType,
     ) -> Result<()> {
         // Set base_layout reference
         self.base_layout = Some(base_layout_name.to_string());
@@ -2120,22 +3086,24 @@ impl Layout {
         // Normalize windows before saving (convert None colors to "-")
         self.normalize_windows_for_save();
 
-        // Save to character profile: ~/.vellum-fe/{character}/layout.toml
+        // Save to character profile: ~/.vellum-fe/{character}/layout-{frontend}.toml
         let profile_dir = Config::profile_dir(Some(character))?;
         fs::create_dir_all(&profile_dir)?;
 
-        let layout_path = profile_dir.join("layout.toml");
+        let layout_filename = format!("layout-{}.toml", frontend.layout_suffix());
+        let layout_path = profile_dir.join(&layout_filename);
         let toml_string =
             toml::to_string_pretty(&self).context("Failed to serialize auto layout")?;
         fs::write(&layout_path, toml_string).context("Failed to write auto layout file")?;
 
         tracing::info!(
-            "Saved auto layout for {} to {:?} (base: {}, terminal: {:?}x{:?})",
+            "Saved auto layout for {} to {:?} (base: {}, terminal: {:?}x{:?}, frontend: {:?})",
             character,
             layout_path,
             base_layout_name,
             self.terminal_width,
-            self.terminal_height
+            self.terminal_height,
+            frontend
         );
 
         Ok(())
@@ -2384,6 +3352,7 @@ impl Config {
             max_cols: None,
             visible: true,
             content_align: None,
+            font_family: None,
         };
         let ui_defaults = UiConfig::default();
 
@@ -2412,6 +3381,7 @@ impl Config {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2431,6 +3401,7 @@ impl Config {
                     show_players: true,
                     show_exits: true,
                     show_name: true,
+                    ..Default::default()
                 },
             }),
 
@@ -2484,6 +3455,7 @@ impl Config {
                     color: Some("#6e0202".to_string()), // Dark red
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
             "performance" => Some(WindowDef::Performance {
@@ -2537,6 +3509,7 @@ impl Config {
                     color: Some("#08086d".to_string()), // Dark blue
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2559,6 +3532,7 @@ impl Config {
                     color: Some("#bd7b00".to_string()), // Orange
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
             "targets" => Some(WindowDef::Targets {
@@ -2628,6 +3602,7 @@ impl Config {
                     spacing: default_dashboard_spacing(),
                     hide_inactive: default_dashboard_hide_inactive(),
                     indicators: Vec::new(),
+                    ..Default::default()
                 },
             }),
 
@@ -2654,6 +3629,7 @@ impl Config {
                     active_color: Some("#00ff00".to_string()),
                     default_status: None,
                     default_color: Some("#00ff00".to_string()),
+                    ..Default::default()
                 },
             }),
             "bleeding" => Some(WindowDef::Indicator {
@@ -2678,6 +3654,7 @@ impl Config {
                     active_color: Some("#ff0000".to_string()),
                     default_status: None,
                     default_color: Some("#ff0000".to_string()),
+                    ..Default::default()
                 },
             }),
             "diseased" => Some(WindowDef::Indicator {
@@ -2702,6 +3679,7 @@ impl Config {
                     active_color: Some("#8b4513".to_string()),
                     default_status: None,
                     default_color: Some("#8b4513".to_string()),
+                    ..Default::default()
                 },
             }),
             "stunned" => Some(WindowDef::Indicator {
@@ -2726,6 +3704,7 @@ impl Config {
                     active_color: Some("#ffff00".to_string()),
                     default_status: None,
                     default_color: Some("#ffff00".to_string()),
+                    ..Default::default()
                 },
             }),
             "webbed" => Some(WindowDef::Indicator {
@@ -2750,6 +3729,7 @@ impl Config {
                     active_color: Some("#cccccc".to_string()),
                     default_status: None,
                     default_color: Some("#cccccc".to_string()),
+                    ..Default::default()
                 },
             }),
 
@@ -2772,6 +3752,7 @@ impl Config {
                     color: Some("#6e727c".to_string()), // Gray
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2794,6 +3775,7 @@ impl Config {
                     color: Some("#006400".to_string()), // Dark green
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2816,6 +3798,7 @@ impl Config {
                     color: Some("#000080".to_string()), // Navy
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2838,6 +3821,7 @@ impl Config {
                     color: Some("#008b8b".to_string()), // Cyan/teal
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2860,6 +3844,7 @@ impl Config {
                     color: Some("#8B0000".to_string()), // Dark red
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2882,6 +3867,7 @@ impl Config {
                     color: None,
                     numbers_only: false,
                     current_only: false,
+                    ..Default::default()
                 },
             }),
 
@@ -2903,6 +3889,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -2924,6 +3911,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -2945,6 +3933,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -2965,6 +3954,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -2986,6 +3976,7 @@ impl Config {
                 data: CompassWidgetData {
                     active_color: Some("#00FF00".to_string()),   // Green
                     inactive_color: Some("#333333".to_string()), // Dark gray
+                    ..Default::default()
                 },
             }),
 
@@ -3005,6 +3996,7 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: InjuryDollWidgetData {
+                    // Color configuration
                     injury_default_color: None,
                     injury1_color: Some("#aa5500".to_string()), // Brown
                     injury2_color: Some("#ff8800".to_string()), // Orange
@@ -3012,6 +4004,27 @@ impl Config {
                     scar1_color: Some("#999999".to_string()),   // Light gray
                     scar2_color: Some("#777777".to_string()),   // Medium gray
                     scar3_color: Some("#555555".to_string()),   // Darker gray
+
+                    // Image and rendering configuration (new)
+                    image_path: Some("defaults/injuryDoll.png".to_string()),
+                    scale: 1.0,
+                    greyscale: false,
+                    tint_color: None,
+                    tint_strength: 0.3,
+                    marker_tint_strength: 0.3,
+                    marker_style: InjuryMarkerStyle::Circles,
+                    marker_size: 6.0,
+                    show_numbers: true,
+                    calibration: InjuryCalibration::default(),
+                    image_profiles: Vec::new(),
+                    // Phase 5: Multi-layer system
+                    tint_mode: TintMode::Unified,
+                    overlay_tint_color: None,
+                    overlay_tint_strength: 0.3,
+                    nerve_indicator_type: NerveIndicatorType::Default,
+                    overlay_layers: default_overlay_layers(),
+                    rank_indicators: RankIndicatorConfig::default(),
+                    background_color: None,
                 },
             }),
 
@@ -3181,6 +4194,7 @@ impl Config {
                     icon: Some("L:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -3201,6 +4215,7 @@ impl Config {
                     icon: Some("R:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -3221,6 +4236,7 @@ impl Config {
                     icon: Some("S:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    ..Default::default()
                 },
             }),
 
@@ -3240,6 +4256,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3258,6 +4275,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3276,6 +4294,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3294,6 +4313,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3312,6 +4332,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3330,6 +4351,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3348,6 +4370,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3366,6 +4389,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3384,6 +4408,7 @@ impl Config {
                     buffer_size: 0, // VellumFE uses 0 - content is cleared and replaced
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3402,6 +4427,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3419,6 +4445,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             }),
 
@@ -3489,6 +4516,7 @@ impl Config {
                     tab_inactive_color: None,
                     tab_unread_color: None,
                     tab_unread_prefix: None,
+                    ..Default::default()
                 },
             }),
             "tabbedtext_custom" => Some(WindowDef::TabbedText {
@@ -3515,6 +4543,7 @@ impl Config {
                     tab_inactive_color: None,
                     tab_unread_color: None,
                     tab_unread_prefix: None,
+                    ..Default::default()
                 },
             }),
 
@@ -3562,6 +4591,7 @@ impl Config {
                         active_color: tpl.active_color.clone(),
                         default_status: tpl.default_status.clone(),
                         default_color: tpl.default_color.clone(),
+                        ..Default::default()
                     },
                 }
             })
@@ -4099,6 +5129,31 @@ impl Config {
             }
         }
 
+        // Create shared images directory and extract all embedded images
+        let images_dir = Self::images_dir()?;
+        fs::create_dir_all(&images_dir)?;
+
+        // Automatically extract all PNG files from embedded images directory
+        for file in IMAGES_DIR.files() {
+            let filename = file
+                .path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .context("Invalid image filename")?;
+
+            // Only extract PNG files (injury doll images)
+            if filename.ends_with(".png") {
+                let image_path = images_dir.join(filename);
+
+                if !image_path.exists() {
+                    let content = file.contents();
+                    fs::write(&image_path, content)
+                        .context(format!("Failed to write images/{}", filename))?;
+                    tracing::info!("Extracted image {} to {:?}", filename, image_path);
+                }
+            }
+        }
+
         // Extract cmdlist1.xml to global directory (only once)
         let global_dir = Self::global_dir()?;
         fs::create_dir_all(&global_dir)?;
@@ -4297,6 +5352,12 @@ impl Config {
         Ok(Self::global_dir()?.join("sounds"))
     }
 
+    /// Get the shared images directory
+    /// Returns: ~/.vellum-fe/global/images/
+    pub fn images_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("images"))
+    }
+
     /// Get path to common (global) highlights file
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {
@@ -4473,6 +5534,7 @@ impl Default for Config {
             character: None,                // Set at runtime via load_with_options
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),
+            window_editor: WindowEditorConfig::default(),
         }
     }
 }
@@ -4917,6 +5979,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                ..Default::default()
             },
         };
 
@@ -4978,6 +6041,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                ..Default::default()
             },
         };
 
@@ -5034,6 +6098,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                ..Default::default()
             },
         };
 
@@ -5095,6 +6160,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                ..Default::default()
             },
         };
 

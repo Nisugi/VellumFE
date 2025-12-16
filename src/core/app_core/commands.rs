@@ -60,8 +60,12 @@ impl AppCore {
                         link_data: None,
                     });
 
-                    // Add the styled line to the main window
-                    content.add_line(StyledLine { segments: segments.clone() });
+                    // Add the styled line to the main window (with current timestamp)
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .ok();
+                    content.add_line(StyledLine { segments: segments.clone(), timestamp });
                     tracing::info!(
                         "[SEND_COMMAND] Added StyledLine with {} segments to main window",
                         segments.len()

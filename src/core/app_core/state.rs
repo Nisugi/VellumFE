@@ -130,6 +130,9 @@ pub struct AppCore {
     /// Base layout name for autosave reference
     pub base_layout_name: Option<String>,
 
+    /// Frontend type (GUI or TUI) for layout separation
+    pub frontend_type: crate::config::FrontendType,
+
     // === Keybind Runtime Cache ===
     /// Runtime keybind map for fast O(1) lookups (KeyEvent -> KeyBindAction)
     /// Built from config.keybinds at startup and on config reload
@@ -145,9 +148,9 @@ impl AppCore {
 
 
     /// Create a new AppCore instance
-    pub fn new(config: Config) -> Result<Self> {
-        // Load layout from file system
-        let layout = Layout::load(config.character.as_deref())?;
+    pub fn new(config: Config, frontend: crate::config::FrontendType) -> Result<Self> {
+        // Load layout from file system (frontend-specific)
+        let layout = Layout::load(config.character.as_deref(), frontend)?;
 
         // Load command list
         let cmdlist = CmdList::load().ok();
@@ -224,6 +227,7 @@ impl AppCore {
             layout_modified_since_save: false,
             save_reminder_shown: false,
             base_layout_name: None,
+            frontend_type: frontend,
             keybind_map,
         };
 
@@ -417,7 +421,7 @@ impl AppCore {
                 WidgetType::TabbedText => {
                     // Extract tab definitions and buffer size from window def
                     if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
-                        let tabs: Vec<(String, Vec<String>, bool, bool)> = data
+                        let mut tabs: Vec<(String, Vec<String>, bool, bool)> = data
                             .tabs
                             .iter()
                             .map(|tab| {
@@ -428,6 +432,17 @@ impl AppCore {
                                 (tab.name.clone(), tab.get_streams(), show_ts, ignore)
                             })
                             .collect();
+
+                        // If no tabs defined, create a default "Main" tab
+                        if tabs.is_empty() {
+                            tabs.push((
+                                "Main".to_string(),
+                                vec!["main".to_string()],
+                                self.config.ui.show_timestamps,
+                                false,
+                            ));
+                        }
+
                         WindowContent::TabbedText(crate::data::TabbedTextContent::new(
                             tabs,
                             data.buffer_size,
@@ -436,7 +451,7 @@ impl AppCore {
                         // Fallback, though this path should ideally not be taken if config is valid
                         WindowContent::TabbedText(crate::data::TabbedTextContent::new(
                             vec![(
-                                "Default".to_string(),
+                                "Main".to_string(),
                                 vec!["main".to_string()],
                                 self.config.ui.show_timestamps,
                                 false,
@@ -1071,6 +1086,10 @@ impl AppCore {
 
         if let Some(main_window) = self.ui_state.get_window_mut("main") {
             if let WindowContent::Text(ref mut content) = main_window.content {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .ok();
                 let line = StyledLine {
                     segments: vec![TextSegment {
                         text: message.to_string(),
@@ -1080,6 +1099,7 @@ impl AppCore {
                         span_type: SpanType::System, // system echo; skip highlight transforms
                         link_data: None,
                     }],
+                    timestamp,
                 };
                 content.add_line(line);
                 self.needs_render = true;
@@ -1620,6 +1640,7 @@ impl AppCore {
             max_cols: None,
             visible: true,
             content_align: None,
+            font_family: None,
         };
 
         let window_def = match widget_type_str.to_lowercase().as_str() {
@@ -1630,6 +1651,7 @@ impl AppCore {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    ..Default::default()
                 },
             },
             "room" => WindowDef::Room {
@@ -1641,6 +1663,7 @@ impl AppCore {
                     show_players: true,
                     show_exits: true,
                     show_name: false,
+                    ..Default::default()
                 },
             },
             "command_input" | "commandinput" => WindowDef::CommandInput {
@@ -1656,6 +1679,7 @@ impl AppCore {
                         buffer_size: 1000,
                         wordwrap: true,
                         show_timestamps: false,
+                        ..Default::default()
                     },
                 }
             }
@@ -2473,7 +2497,7 @@ impl AppCore {
             self.layout.theme = Some(self.config.active_theme.clone());
             if let Err(e) = self
                 .layout
-                .save_auto(character, &base_layout_name, terminal_size)
+                .save_auto(character, &base_layout_name, terminal_size, self.frontend_type)
             {
                 tracing::warn!("Failed to autosave layout on quit: {}", e);
             } else {
@@ -2500,7 +2524,7 @@ impl AppCore {
             self.layout.theme = Some(self.config.active_theme.clone());
             if let Err(e) = self
                 .layout
-                .save_auto("default", &base_layout_name, terminal_size)
+                .save_auto("default", &base_layout_name, terminal_size, self.frontend_type)
             {
                 tracing::warn!("Failed to autosave layout on quit: {}", e);
             } else {

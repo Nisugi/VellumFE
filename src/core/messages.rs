@@ -406,7 +406,10 @@ impl MessageProcessor {
                     Some(item.clone())
                 };
 
+                tracing::debug!("LeftHand update: {:?}", game_state.left_hand);
+
                 // Update left hand widget if it exists (support legacy and new names)
+                let mut found = false;
                 for name in ["left", "left_hand"] {
                     if let Some(left_hand_window) =
                         ui_state.get_window_by_type_mut(crate::data::WidgetType::Hand, Some(name))
@@ -418,9 +421,14 @@ impl MessageProcessor {
                         {
                             *window_item = game_state.left_hand.clone();
                             *window_link = link.clone();
+                            found = true;
+                            tracing::debug!("Updated left hand window '{}'", name);
                         }
                         break;
                     }
+                }
+                if !found {
+                    tracing::debug!("No left hand window found (searched 'left', 'left_hand')");
                 }
             }
             ParsedElement::RightHand { item, link } => {
@@ -432,7 +440,10 @@ impl MessageProcessor {
                     Some(item.clone())
                 };
 
+                tracing::debug!("RightHand update: {:?}", game_state.right_hand);
+
                 // Update right hand widget if it exists (support legacy and new names)
+                let mut found = false;
                 for name in ["right", "right_hand"] {
                     if let Some(right_hand_window) =
                         ui_state.get_window_by_type_mut(crate::data::WidgetType::Hand, Some(name))
@@ -444,9 +455,14 @@ impl MessageProcessor {
                         {
                             *window_item = game_state.right_hand.clone();
                             *window_link = link.clone();
+                            found = true;
+                            tracing::debug!("Updated right hand window '{}'", name);
                         }
                         break;
                     }
+                }
+                if !found {
+                    tracing::debug!("No right hand window found (searched 'right', 'right_hand')");
                 }
             }
             ParsedElement::SpellHand { spell } => {
@@ -968,8 +984,15 @@ impl MessageProcessor {
             }
         }
 
+        // Capture timestamp when line is committed
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .ok();
+
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
+            timestamp,
         };
 
         // Filter out Speech-typed segments only if no window consumes the speech stream
@@ -1278,6 +1301,7 @@ impl MessageProcessor {
                     for line_segments in &self.inventory_buffer {
                         content.add_line(StyledLine {
                             segments: line_segments.clone(),
+                            timestamp: None,
                         });
                     }
                     tracing::debug!(

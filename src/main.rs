@@ -82,7 +82,7 @@ struct Cli {
     command: Option<Commands>,
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum FrontendType {
     Tui,
     Gui,
@@ -165,8 +165,13 @@ fn main() -> Result<()> {
                     println!("Validating layout file: {:?}", path);
                     config::Layout::load_from_file(&path)
                 } else {
-                    println!("Validating default layout");
-                    config::Layout::load(cli.character.as_deref())
+                    println!("Validating default layout for {:?} frontend", cli.frontend);
+                    // Convert main.rs FrontendType to config::FrontendType
+                    let frontend_type = match cli.frontend {
+                        FrontendType::Tui => config::FrontendType::Tui,
+                        FrontendType::Gui => config::FrontendType::Gui,
+                    };
+                    config::Layout::load(cli.character.as_deref(), frontend_type)
                 };
 
                 match layout_result {

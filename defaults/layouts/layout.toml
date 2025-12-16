@@ -86,3 +86,49 @@ border_style = "single"
 border_color = "#9370DB"
 visible = false
 
+# Hand widgets - show left/right/spell items
+[[windows]]
+name = "left"
+widget_type = "hand"
+row = 0
+col = 0
+rows = 1
+cols = 20
+show_border = false
+visible = false
+[windows.data]
+icon = "L:"
+icon_size = 14.0
+text_size = 14.0
+spacing = 4.0
+
+[[windows]]
+name = "right"
+widget_type = "hand"
+row = 0
+col = 0
+rows = 1
+cols = 20
+show_border = false
+visible = false
+[windows.data]
+icon = "R:"
+icon_size = 14.0
+text_size = 14.0
+spacing = 4.0
+
+[[windows]]
+name = "spell"
+widget_type = "hand"
+row = 0
+col = 0
+rows = 1
+cols = 20
+show_border = false
+visible = false
+[windows.data]
+icon = "S:"
+icon_size = 14.0
+text_size = 14.0
+spacing = 4.0
+
