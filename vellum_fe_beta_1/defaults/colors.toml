@@ -5,23 +5,28 @@ fg = "#477ab3"
 fg = "#477ab3"
 
 [presets.speech]
-fg = "#53a684"
+fg = "#46ac36"
 
 [presets.roomName]
-fg = "#9BA2B2"
-bg = "#395573"
+fg = "#46ac36"
 
 [presets.monsterbold]
-fg = "#a29900"
+fg = "#FFFF00"
 
 [presets.familiar]
 fg = "#767339"
 
 [presets.thought]
-fg = "#FF8080"
+fg = "#0EE3D8"
+
+[preset.voln]
+fg = "#3ea4a3"
+
+[preset.percWindow]
+fg = "#0EE3D8"
 
 [presets.whisper]
-fg = "#60b4bf"
+fg = "#0EE3D8"
 
 [[prompt_colors]]
 character = "R"
@@ -247,7 +252,7 @@ bg_color = "#000000"
 # ─── Red Family ───
 [[color_palette]]
 name = "red"
-color = "#FF0000"
+color = "#ff623e"
 category = "red"
 
 [[color_palette]]
@@ -283,7 +288,7 @@ category = "red"
 # ─── Orange Family ───
 [[color_palette]]
 name = "orange"
-color = "#FFA500"
+color = "#ff8700"
 category = "orange"
 
 [[color_palette]]
@@ -335,7 +340,7 @@ category = "yellow"
 # ─── Green Family ───
 [[color_palette]]
 name = "green"
-color = "#00FF00"
+color = "#46ac36"
 category = "green"
 
 [[color_palette]]
@@ -386,7 +391,7 @@ category = "green"
 # ─── Cyan/Aqua Family ───
 [[color_palette]]
 name = "cyan"
-color = "#00FFFF"
+color = "#0EE3D8"
 category = "cyan"
 
 [[color_palette]]
@@ -400,8 +405,13 @@ color = "#008B8B"
 category = "cyan"
 
 [[color_palette]]
+name = "olive"
+color = "#9c9a26"
+category = "cyan"
+
+[[color_palette]]
 name = "teal"
-color = "#008080"
+color = "#3ea4a3"
 category = "cyan"
 
 [[color_palette]]
@@ -422,7 +432,7 @@ category = "cyan"
 # ─── Blue Family ───
 [[color_palette]]
 name = "blue"
-color = "#0000FF"
+color = "#7095db"
 category = "blue"
 
 [[color_palette]]
@@ -483,7 +493,7 @@ category = "blue"
 # ─── Purple/Violet Family ───
 [[color_palette]]
 name = "purple"
-color = "#800080"
+color = "#dc6ad8"
 category = "purple"
 
 [[color_palette]]
@@ -534,7 +544,7 @@ category = "purple"
 # ─── Magenta/Pink Family ───
 [[color_palette]]
 name = "magenta"
-color = "#FF00FF"
+color = "#ff2aff"
 category = "magenta"
 
 [[color_palette]]
@@ -631,7 +641,7 @@ category = "gray"
 
 [[color_palette]]
 name = "grey"
-color = "#808080"
+color = "#D0D4D6"
 category = "gray"
 
 [[color_palette]]
@@ -673,3 +683,11 @@ category = "gray"
 name = "lightslategray"
 color = "#778899"
 category = "gray"
+
+[[color_palette]]
+name = "lightslategray"
+color = "#778899"
+category = "gray"
+
+
+

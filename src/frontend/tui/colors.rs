@@ -196,6 +196,44 @@ fn indexed_color_to_rgb(index: u8) -> (u8, u8, u8) {
     (gray, gray, gray)
 }
 
+/// Try to match RGB to standard ANSI colors (slots 0-15)
+///
+/// Returns Some(slot) if the RGB closely matches a standard ANSI color.
+/// This is important for Profanity users who have terminal slots 0-15
+/// programmed with custom colors - we want to emit ANSI codes like \e[31m
+/// (red = slot 1) so their custom palette applies.
+fn rgb_to_ansi_slot(r: u8, g: u8, b: u8) -> Option<u8> {
+    // Standard ANSI color definitions (as used in parse_color_flexible)
+    // These are the RGB values we convert color names to
+    const ANSI_COLORS: [(u8, u8, u8, u8); 16] = [
+        (0, 0, 0, 0),         // black
+        (205, 0, 0, 1),       // red
+        (0, 205, 0, 2),       // green
+        (205, 205, 0, 3),     // yellow
+        (0, 0, 205, 4),       // blue
+        (205, 0, 205, 5),     // magenta
+        (0, 205, 205, 6),     // cyan
+        (192, 192, 192, 7),   // gray/white (normal)
+        (128, 128, 128, 8),   // dark gray (bright black)
+        (255, 0, 0, 9),       // bright red
+        (0, 255, 0, 10),      // bright green
+        (255, 255, 0, 11),    // bright yellow
+        (0, 0, 255, 12),      // bright blue
+        (255, 0, 255, 13),    // bright magenta
+        (0, 255, 255, 14),    // bright cyan
+        (255, 255, 255, 15),  // bright white
+    ];
+
+    // Exact match check
+    for (ar, ag, ab, slot) in ANSI_COLORS {
+        if r == ar && g == ag && b == ab {
+            return Some(slot);
+        }
+    }
+
+    None
+}
+
 /// Convert RGB to nearest xterm 256-color palette slot
 ///
 /// The 256-color palette is organized as:
@@ -203,9 +241,14 @@ fn indexed_color_to_rgb(index: u8) -> (u8, u8, u8) {
 /// - Slots 16-231: 6x6x6 color cube (216 colors)
 /// - Slots 232-255: Grayscale ramp (24 shades)
 ///
-/// This function maps RGB values to the nearest color cube or grayscale slot,
-/// avoiding ANSI slots 0-15 which may vary by terminal theme.
+/// This function first tries to match ANSI slots 0-15 (for Profanity users
+/// who have custom terminal palettes), then falls back to the color cube.
 pub fn rgb_to_nearest_slot(r: u8, g: u8, b: u8) -> u8 {
+    // First try ANSI slots 0-15 for exact matches
+    // This is critical for Profanity users whose terminal has custom palette
+    if let Some(slot) = rgb_to_ansi_slot(r, g, b) {
+        return slot;
+    }
     // Check if grayscale (r == g == b)
     if r == g && g == b {
         // Use grayscale ramp for pure grays

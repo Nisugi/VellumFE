@@ -547,6 +547,7 @@ impl HighlightFormWidget {
             redirect_to,
             redirect_mode,
             replace,
+            stream: None, // TODO: Add UI for stream filtering
             compiled_regex: None, // Will be compiled when config is loaded
         };
 

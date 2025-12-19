@@ -125,6 +125,8 @@ pub struct TextWindow {
     max_recent_links: usize,
     // Timestamp configuration
     show_timestamps: bool,
+    // Stream name for current line being built (for stream-filtered highlights)
+    current_line_stream: String,
 }
 
 impl Clone for TextWindow {
@@ -162,6 +164,7 @@ impl Clone for TextWindow {
             recent_links: self.recent_links.clone(),
             max_recent_links: self.max_recent_links,
             show_timestamps: self.show_timestamps,
+            current_line_stream: self.current_line_stream.clone(),
         }
     }
 }
@@ -198,6 +201,7 @@ impl TextWindow {
             max_recent_links: 100,         // Keep last 100 links
             show_timestamps: false,        // Timestamps off by default
             links_enabled: true,           // Links enabled by default
+            current_line_stream: String::new(), // No stream set yet
         }
     }
 
@@ -325,6 +329,12 @@ impl TextWindow {
         use chrono::Local;
         let now = Local::now();
         format!(" [{}]", now.format("%l:%M %p").to_string().trim())
+    }
+
+    /// Set the stream name for the current line being built
+    /// This is used for stream-filtered highlights (e.g., only apply to "death" stream)
+    pub fn set_current_stream(&mut self, stream: &str) {
+        self.current_line_stream = stream.to_string();
     }
 
     pub fn add_text(&mut self, styled: StyledText) {
@@ -505,6 +515,13 @@ impl TextWindow {
                         self.fast_pattern_map.get(mat.pattern().as_usize())
                     {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
+                            // Check stream filter - skip if highlight requires specific stream and doesn't match
+                            if let Some(ref required_stream) = highlight.stream {
+                                if !self.current_line_stream.eq_ignore_ascii_case(required_stream) {
+                                    continue;
+                                }
+                            }
+
                             let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
                             let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
                             matches.push(MatchInfo {
@@ -528,19 +545,48 @@ impl TextWindow {
                 continue; // Already handled by Aho-Corasick
             }
 
+            // Check stream filter - skip if highlight requires specific stream and doesn't match
+            if let Some(ref required_stream) = highlight.stream {
+                if !self.current_line_stream.eq_ignore_ascii_case(required_stream) {
+                    continue;
+                }
+            }
+
             if let Some(Some(regex)) = self.highlight_regexes.get(i) {
-                for m in regex.find_iter(&full_text) {
-                    let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                    let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                    matches.push(MatchInfo {
-                        start_byte: m.start(),
-                        end_byte: m.end(),
-                        fg,
-                        bg,
-                        bold: highlight.bold,
-                        color_entire_line: highlight.color_entire_line,
-                        replace: highlight.replace.clone(),
-                    });
+                let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
+                let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
+
+                // If there's a replace template, use captures_iter to expand $1, $2, etc.
+                // Otherwise, use find_iter for simpler/faster matching
+                if let Some(ref replace_template) = highlight.replace {
+                    for caps in regex.captures_iter(&full_text) {
+                        if let Some(m) = caps.get(0) {
+                            // Expand capture groups in replacement template
+                            let mut expanded = String::new();
+                            caps.expand(replace_template, &mut expanded);
+                            matches.push(MatchInfo {
+                                start_byte: m.start(),
+                                end_byte: m.end(),
+                                fg,
+                                bg,
+                                bold: highlight.bold,
+                                color_entire_line: highlight.color_entire_line,
+                                replace: Some(expanded),
+                            });
+                        }
+                    }
+                } else {
+                    for m in regex.find_iter(&full_text) {
+                        matches.push(MatchInfo {
+                            start_byte: m.start(),
+                            end_byte: m.end(),
+                            fg,
+                            bg,
+                            bold: highlight.bold,
+                            color_entire_line: highlight.color_entire_line,
+                            replace: None,
+                        });
+                    }
                 }
             }
         }

@@ -44,7 +44,9 @@ pub struct HighlightPattern {
     #[serde(default)]
     pub redirect_mode: RedirectMode, // How to handle redirect: only or copy
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub replace: Option<String>, // If set, replace matched text with this string
+    pub replace: Option<String>, // If set, replace matched text with this string (supports $1, $2 capture groups)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>, // If set, only apply this highlight to lines from this stream (e.g., "death", "thoughts")
 
     // Performance optimization: cache compiled regex (not serialized)
     #[serde(skip)]
@@ -304,6 +306,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -329,6 +332,7 @@ mod tests {
             redirect_to: Some("combat".to_string()),
             redirect_mode: RedirectMode::RedirectCopy,
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -357,6 +361,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -379,6 +384,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -401,6 +407,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -562,6 +569,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 
@@ -605,6 +613,7 @@ mod tests {
             redirect_to: Some("combat".to_string()),
             redirect_mode: RedirectMode::RedirectCopy,
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
         let toml_str = toml::to_string(&pattern).unwrap();
@@ -655,6 +664,7 @@ mod tests {
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
+            stream: None,
             compiled_regex: None,
         };
 

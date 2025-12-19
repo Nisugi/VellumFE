@@ -16,29 +16,34 @@
 # Colors for game text streams (speech, whisper, links, etc.)
 
 [presets.links]
-fg = "#477ab3"
+fg = "Link Blue"
 
 [presets.commands]
-fg = "#477ab3"
+fg = "Link Blue"
 
 [presets.speech]
-fg = "#53a684"
+fg = "ANSI Green"
 
 [presets.roomName]
-fg = "#9BA2B2"
-bg = "#395573"
+fg = "ANSI Green"
 
 [presets.monsterbold]
-fg = "#a29900"
+fg = "ANSI Yellow"
 
 [presets.familiar]
-fg = "#767339"
+fg = "Familiar"
 
 [presets.thought]
-fg = "#FF8080"
+fg = "ANSI Cyan"
 
 [presets.whisper]
-fg = "#60b4bf"
+fg = "ANSI Cyan"
+
+[presets.voln]
+fg = "ANSI Teal"
+
+[presets.percWindow]
+fg = "ANSI Cyan"
 
 # ─── Prompt Colors ───────────────────────────────────────────────────────────
 # Colors for prompt characters (R=RT, S=stance, H=hidden, >=prompt)
@@ -217,6 +222,7 @@ color = "#60b4bf"
 category = "presets"
 slot = 23
 
+
 # ─── UI Colors ───────────────────────────────────────────────────────────────
 
 [[color_palette]]
@@ -348,6 +354,107 @@ name = "Arcane"
 color = "#808000"
 category = "spell"
 slot = 50
+
+# ─── ANSI Slot Colors (0-15) ────────────────────────────────────────────────
+# These map custom hex colors to ANSI slots 0-15 for Profanity compatibility.
+# When slot mode sees these hex values, it emits the corresponding ANSI code.
+# Profanity users have their terminal palette set to these colors.
+
+[[color_palette]]
+name = "ANSI Black"
+color = "#000000"
+category = "ansi"
+slot = 0
+
+[[color_palette]]
+name = "ANSI Red"
+color = "#ff623e"
+category = "ansi"
+slot = 1
+
+[[color_palette]]
+name = "ANSI Green"
+color = "#46ac36"
+category = "ansi"
+slot = 2
+
+[[color_palette]]
+name = "ANSI Yellow"
+color = "#FFFF00"
+category = "ansi"
+slot = 3
+
+[[color_palette]]
+name = "ANSI Blue"
+color = "#7095db"
+category = "ansi"
+slot = 4
+
+[[color_palette]]
+name = "ANSI Magenta"
+color = "#ff2aff"
+category = "ansi"
+slot = 5
+
+[[color_palette]]
+name = "ANSI Cyan"
+color = "#0EE3D8"
+category = "ansi"
+slot = 6
+
+[[color_palette]]
+name = "ANSI White"
+color = "#FFFFFF"
+category = "ansi"
+slot = 7
+
+[[color_palette]]
+name = "ANSI Bright Black"
+color = "#D0D4D6"
+category = "ansi"
+slot = 8
+
+[[color_palette]]
+name = "ANSI Bright Red"
+color = "#dc6ad8"
+category = "ansi"
+slot = 9
+
+[[color_palette]]
+name = "ANSI Bright Green"
+color = "#3ea4a3"
+category = "ansi"
+slot = 10
+
+[[color_palette]]
+name = "ANSI Bright Yellow"
+color = "#9c9a26"
+category = "ansi"
+slot = 11
+
+[[color_palette]]
+name = "ANSI Bright Blue"
+color = "#ff8700"
+category = "ansi"
+slot = 12
+
+[[color_palette]]
+name = "ANSI Bright Magenta"
+color = "#ff2aff"
+category = "ansi"
+slot = 13
+
+[[color_palette]]
+name = "ANSI Bright Cyan"
+color = "#0EE3D8"
+category = "ansi"
+slot = 14
+
+[[color_palette]]
+name = "ANSI Bright White"
+color = "#FFFFFF"
+category = "ansi"
+slot = 15
 
 # ─── Utility Colors ──────────────────────────────────────────────────────────
 # Common colors for user convenience in highlights, custom widgets, etc.

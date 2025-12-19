@@ -162,6 +162,16 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
 
     items.push(SettingItem {
         category: "UI".to_string(),
+        key: "ui.selection_auto_copy".to_string(),
+        display_name: "Selection Auto-Copy".to_string(),
+        value: SettingValue::Boolean(config.ui.selection_auto_copy),
+        description: Some("Copy mouse selection to clipboard on release".to_string()),
+        editable: true,
+        name_width: None,
+    });
+
+    items.push(SettingItem {
+        category: "UI".to_string(),
         key: "ui.drag_modifier_key".to_string(),
         display_name: "Drag Modifier Key".to_string(),
         value: SettingValue::Enum(

@@ -58,3 +58,35 @@ category = "Squelch"
 pattern = "^You feel fully energized again\\.$"
 squelch = true
 category = "Squelch"
+
+# ===== STREAM-FILTERED HIGHLIGHTS =====
+# These highlights only apply to specific streams (e.g., death, thoughts)
+# Use stream = "death" to filter by stream name
+
+# Compact death feed - extract just player names from death messages (death stream only)
+[compact_death_basic]
+pattern = '^\s*\*\s*([A-Z][a-z]+) was just struck down.*'
+stream = "death"
+replace = "$1"
+fg = "#ff4444"
+bold = true
+category = "Death"
+
+# Compact death - Phoenix resurrection variant (death stream only)
+[compact_death_phoenix]
+pattern = '^\s*\*\s*A fiery phoenix soars into the heavens as\s*([A-Z][a-z]+).*'
+stream = "death"
+replace = "$1 🔥"
+fg = "#ff8800"
+bold = true
+category = "Death"
+
+# ===== CAPTURE GROUP EXAMPLES (Any Stream) =====
+# These demonstrate $1, $2 capture group replacement without stream filtering
+
+# Extract damage numbers from combat messages
+[combat_damage]
+pattern = '\b(\d+) damage\b'
+fg = "#ff0000"
+bold = true
+category = "Combat"

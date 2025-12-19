@@ -970,6 +970,7 @@ impl MessageProcessor {
 
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
+            stream: self.current_stream.clone(),
         };
 
         // Filter out Speech-typed segments only if no window consumes the speech stream
@@ -1278,6 +1279,7 @@ impl MessageProcessor {
                     for line_segments in &self.inventory_buffer {
                         content.add_line(StyledLine {
                             segments: line_segments.clone(),
+                            stream: String::from("inv"),
                         });
                     }
                     tracing::debug!(

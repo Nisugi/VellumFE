@@ -131,6 +131,9 @@ fn decode_icon(icon_str: &str) -> Option<String> {
 
                     let skip_count = text_content.lines.len().saturating_sub(lines_to_add);
                     for line in text_content.lines.iter().skip(skip_count) {
+                        // Set the stream for this line so stream-filtered highlights work
+                        text_window.set_current_stream(&line.stream);
+
                         // Convert our data format to TextWindow's format
                         for segment in &line.segments {
                             // Map data layer SpanType to TextWindow SpanType
@@ -1165,6 +1168,9 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                                     tab_state.content.lines.len().saturating_sub(lines_to_add);
                                 for line in tab_state.content.lines.iter().skip(skip_count) {
                                     lines_added = lines_added.saturating_add(1);
+                                    // Set the stream for this line so stream-filtered highlights work
+                                    text_window.set_current_stream(&line.stream);
+
                                     for segment in &line.segments {
                             let tw_span_type = match segment.span_type {
                                 crate::data::SpanType::Normal => text_window::SpanType::Normal,

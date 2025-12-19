@@ -1179,6 +1179,7 @@ impl AppCore {
                         span_type: SpanType::System, // system echo; skip highlight transforms
                         link_data: None,
                     }],
+                    stream: String::from("main"),
                 };
                 content.add_line(line);
                 self.needs_render = true;
@@ -2507,6 +2508,7 @@ impl AppCore {
         self.reload_keybinds();
         self.reload_settings();
         self.reload_colors();
+        self.reload_layout();
         self.add_system_message("All configuration reloaded");
     }
 
@@ -2591,6 +2593,54 @@ impl AppCore {
             }
             Err(e) => {
                 self.add_system_message(&format!("Failed to reload colors: {}", e));
+            }
+        }
+    }
+
+    /// Reload layout from the auto-saved layout.toml file
+    ///
+    /// This reloads the character's layout from ~/.vellum-fe/{character}/layout.toml
+    /// using the current terminal size stored in the layout.
+    pub fn reload_layout(&mut self) {
+        let layout_path =
+            match crate::config::Config::auto_layout_path(self.config.character.as_deref()) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.add_system_message(&format!("Failed to get layout path: {}", e));
+                    return;
+                }
+            };
+
+        if !layout_path.exists() {
+            self.add_system_message("No auto-saved layout found");
+            self.add_system_message("Use .savelayout to save the current layout first");
+            return;
+        }
+
+        match crate::config::Layout::load_from_file(&layout_path) {
+            Ok(new_layout) => {
+                // Get terminal size from current layout (use current if available)
+                let width = self.layout.terminal_width.unwrap_or(80);
+                let height = self.layout.terminal_height.unwrap_or(24);
+
+                // Apply theme if specified
+                self.apply_layout_theme(new_layout.theme.as_deref());
+
+                // Update layout and baseline
+                self.layout = new_layout.clone();
+                self.baseline_layout = Some(new_layout);
+
+                // Clear modified flag
+                self.layout_modified_since_save = false;
+
+                // Reinitialize windows with current terminal size
+                self.init_windows(width, height);
+                self.needs_render = true;
+
+                self.add_system_message("Layout reloaded from disk");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload layout: {}", e));
             }
         }
     }

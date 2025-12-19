@@ -690,7 +690,9 @@ impl TuiFrontend {
 
                 // Handle text selection copy to clipboard
                 if let Some(ref selection) = app_core.ui_state.selection_state {
-                    if !selection.is_empty() {
+                    let auto_copy = app_core.config.ui.selection_auto_copy;
+
+                    if auto_copy && !selection.is_empty() {
                         // Extract text from selection
                         let (start, end) = selection.normalized_range();
 
@@ -755,7 +757,9 @@ impl TuiFrontend {
                         }
                     }
                     // Clear selection
-                    app_core.ui_state.selection_state = None;
+                    if auto_copy {
+                        app_core.ui_state.selection_state = None;
+                    }
                     app_core.needs_render = true;
                 }
 
@@ -1124,6 +1128,21 @@ impl TuiFrontend {
                                 app_core.ui_state.input_mode = InputMode::Normal;
                                 tracing::info!("Switched to theme: {}", app_core.config.active_theme);
                             }
+                        }
+                        crate::core::menu_actions::MenuAction::Edit => {
+                            if let Some(theme) = browser.get_selected_theme() {
+                                self.theme_editor =
+                                    Some(crate::frontend::tui::theme_editor::ThemeEditor::new_edit(theme));
+                                self.theme_browser = None;
+                                app_core.ui_state.input_mode = InputMode::ThemeEditor;
+                            }
+                        }
+                        crate::core::menu_actions::MenuAction::New
+                        | crate::core::menu_actions::MenuAction::Add => {
+                            self.theme_editor =
+                                Some(crate::frontend::tui::theme_editor::ThemeEditor::new_create());
+                            self.theme_browser = None;
+                            app_core.ui_state.input_mode = InputMode::ThemeEditor;
                         }
                         crate::core::menu_actions::MenuAction::Cancel => {
                             self.theme_browser = None;
@@ -2547,4 +2566,3 @@ impl TuiFrontend {
         Ok(None)
     }
 }
-

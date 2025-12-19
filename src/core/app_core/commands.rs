@@ -61,7 +61,7 @@ impl AppCore {
                     });
 
                     // Add the styled line to the main window
-                    content.add_line(StyledLine { segments: segments.clone() });
+                    content.add_line(StyledLine { segments: segments.clone(), stream: String::from("main") });
                     tracing::info!(
                         "[SEND_COMMAND] Added StyledLine with {} segments to main window",
                         segments.len()
@@ -380,9 +380,10 @@ impl AppCore {
                         "keybinds" | "kb" => self.reload_keybinds(),
                         "settings" => self.reload_settings(),
                         "colors" => self.reload_colors(),
+                        "layout" => self.reload_layout(),
                         _ => {
                             self.add_system_message(&format!("Unknown reload category: {}", parts[1]));
-                            self.add_system_message("Usage: .reload [highlights|keybinds|settings|colors]");
+                            self.add_system_message("Usage: .reload [highlights|keybinds|settings|colors|layout]");
                             self.add_system_message("       .reload (reload everything)");
                         }
                     }

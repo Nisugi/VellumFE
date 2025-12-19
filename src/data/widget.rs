@@ -25,6 +25,9 @@ pub struct TextContent {
 #[derive(Clone, Debug)]
 pub struct StyledLine {
     pub segments: Vec<TextSegment>,
+    /// The stream this line originated from (e.g., "death", "thoughts", "main")
+    /// Used for stream-filtered highlights
+    pub stream: String,
 }
 
 /// A segment of text with styling
@@ -244,6 +247,22 @@ impl StyledLine {
                 span_type: SpanType::Normal,
                 link_data: None,
             }],
+            stream: String::from("main"),
+        }
+    }
+
+    /// Create a StyledLine with a specific stream
+    pub fn from_text_with_stream(text: impl Into<String>, stream: impl Into<String>) -> Self {
+        Self {
+            segments: vec![TextSegment {
+                text: text.into(),
+                fg: None,
+                bg: None,
+                bold: false,
+                span_type: SpanType::Normal,
+                link_data: None,
+            }],
+            stream: stream.into(),
         }
     }
 }

@@ -14,6 +14,7 @@ startup_music = true
 startup_music_file = "wizard_music"
 selection_enabled = true
 selection_respect_window_boundaries = true
+selection_auto_copy = true
 drag_modifier_key = "ctrl"
 min_command_length = 3
 perf_stats_x = 0

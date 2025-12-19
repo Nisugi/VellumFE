@@ -408,10 +408,11 @@ impl ColorPaletteBrowser {
 
             let is_selected = abs_idx == self.selected_index;
 
-            // Format: preview(3) + 3 spaces + fav + 3 spaces + name + color code
+            // Format: preview(3) + 3 spaces + fav + 3 spaces + name + color code + slot
             let preview = "███"; // 3-character preview swatch (full blocks)
             let fav_char = if color.favorite { '*' } else { ' ' };
-            let content = format!("   {}   {:<18} {}", fav_char, color.name, color.color);
+            let slot_str = color.slot.map_or(String::new(), |s| format!(" [{}]", s));
+            let content = format!("   {}   {:<18} {}{}", fav_char, color.name, color.color, slot_str);
             // Parse the color for preview
             let preview_color = Self::parse_hex_color(&color.color).unwrap_or(Color::White);
 

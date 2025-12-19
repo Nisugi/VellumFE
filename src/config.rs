@@ -1320,6 +1320,9 @@ pub struct UiConfig {
     pub selection_enabled: bool,
     #[serde(default = "default_selection_respect_window_boundaries")]
     pub selection_respect_window_boundaries: bool,
+    /// Automatically copy mouse selection to clipboard on mouse-up
+    #[serde(default = "default_selection_auto_copy")]
+    pub selection_auto_copy: bool,
     // Drag and drop settings
     #[serde(default = "default_drag_modifier_key")]
     pub drag_modifier_key: String, // Modifier key required for drag and drop (e.g., "ctrl", "alt", "shift")
@@ -1358,6 +1361,7 @@ impl Default for UiConfig {
             startup_music_file: default_startup_music_file(),
             selection_enabled: default_selection_enabled(),
             selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
+            selection_auto_copy: default_selection_auto_copy(),
             drag_modifier_key: default_drag_modifier_key(),
             min_command_length: default_min_command_length(),
             performance_stats_enabled: default_performance_stats_enabled(),
@@ -1612,6 +1616,10 @@ fn default_selection_enabled() -> bool {
 }
 
 fn default_selection_respect_window_boundaries() -> bool {
+    true
+}
+
+fn default_selection_auto_copy() -> bool {
     true
 }
 
@@ -4152,6 +4160,12 @@ impl Config {
         Ok(Self::profile_dir(character)?.join("keybinds.toml"))
     }
 
+    /// Get path to auto-saved layout.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/layout.toml
+    pub fn auto_layout_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("layout.toml"))
+    }
+
     /// List all saved layouts
     pub fn list_layouts() -> Result<Vec<String>> {
         let layouts_dir = Self::config_dir()?.join("layouts");
@@ -4265,6 +4279,7 @@ impl Default for Config {
                 startup_music_file: default_startup_music_file(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
+                selection_auto_copy: default_selection_auto_copy(),
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
                 performance_stats_enabled: default_performance_stats_enabled(),
@@ -5068,5 +5083,3 @@ visible = true
         assert!(spacer_end <= b_start, "Spacer should not overlap B");
     }
 }
-
-
