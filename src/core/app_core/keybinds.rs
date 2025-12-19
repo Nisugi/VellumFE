@@ -99,15 +99,33 @@ impl AppCore {
 
             // Window actions
             KeyAction::SwitchCurrentWindow => {
-                // TODO: Implement window switching logic
-                tracing::debug!("SwitchCurrentWindow not yet implemented");
+                // Handled in input_handlers.rs for smart Tab completion
+                tracing::debug!("SwitchCurrentWindow reached keybinds.rs - should be handled in input_handlers");
             }
-            KeyAction::ScrollCurrentWindowUpOne => self.scroll_current_window_up_one(),
-            KeyAction::ScrollCurrentWindowDownOne => self.scroll_current_window_down_one(),
-            KeyAction::ScrollCurrentWindowUpPage => self.scroll_current_window_up_page(),
-            KeyAction::ScrollCurrentWindowDownPage => self.scroll_current_window_down_page(),
-            KeyAction::ScrollCurrentWindowHome => self.scroll_current_window_home(),
-            KeyAction::ScrollCurrentWindowEnd => self.scroll_current_window_end(),
+            KeyAction::ScrollCurrentWindowUpOne => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowUpOne triggered");
+                self.scroll_current_window_up_one();
+            }
+            KeyAction::ScrollCurrentWindowDownOne => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowDownOne triggered");
+                self.scroll_current_window_down_one();
+            }
+            KeyAction::ScrollCurrentWindowUpPage => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowUpPage triggered");
+                self.scroll_current_window_up_page();
+            }
+            KeyAction::ScrollCurrentWindowDownPage => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowDownPage triggered");
+                self.scroll_current_window_down_page();
+            }
+            KeyAction::ScrollCurrentWindowHome => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowHome triggered");
+                self.scroll_current_window_home();
+            }
+            KeyAction::ScrollCurrentWindowEnd => {
+                tracing::debug!("KeyAction::ScrollCurrentWindowEnd triggered");
+                self.scroll_current_window_end();
+            }
 
             // Search actions (already implemented elsewhere)
             KeyAction::StartSearch => {

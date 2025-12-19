@@ -195,6 +195,46 @@ impl AppCore {
                     self.add_system_message("Usage: .testline <text>");
                 }
             }
+            "savehighlights" | "savehl" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match self.config.save_highlights_as(name) {
+                    Ok(path) => self.add_system_message(&format!(
+                        "Highlights saved as '{}' to {}",
+                        name,
+                        path.display()
+                    )),
+                    Err(e) => self.add_system_message(&format!("Failed to save highlights: {}", e)),
+                }
+            }
+            "loadhighlights" | "loadhl" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match crate::config::Config::load_highlights_from(name) {
+                    Ok(highlights) => {
+                        self.config.highlights = highlights;
+                        // Rebuild message processor with new highlights
+                        self.message_processor = crate::core::MessageProcessor::new(self.config.clone());
+                        self.add_system_message(&format!("Highlights '{}' loaded", name));
+                    }
+                    Err(e) => self.add_system_message(&format!("Failed to load highlights: {}", e)),
+                }
+            }
+            "highlightprofiles" | "hlprofiles" => {
+                match crate::config::Config::list_saved_highlights() {
+                    Ok(profiles) => {
+                        if profiles.is_empty() {
+                            self.add_system_message("No saved highlight profiles");
+                        } else {
+                            self.add_system_message(&format!(
+                                "Saved highlight profiles: {}",
+                                profiles.join(", ")
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to list highlight profiles: {}", e))
+                    }
+                }
+            }
 
             // Keybinds
             "keybinds" | "kb" => {

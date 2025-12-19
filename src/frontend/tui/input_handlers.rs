@@ -112,7 +112,87 @@ impl super::TuiFrontend {
                     )
                 );
 
-                if is_tab_action {
+                // Check for switch_current_window (Tab key) - smart behavior:
+                // - If command input has text starting with '.', do tab completion
+                // - Otherwise, cycle focused window for scrolling
+                let is_switch_window_action = matches!(&action,
+                    crate::config::KeyBindAction::Action(s) if s.as_str() == "switch_current_window"
+                );
+
+                // Check for scroll actions - must be handled by frontend (TuiFrontend.scroll_window)
+                let is_scroll_action = matches!(&action,
+                    crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
+                        "scroll_current_window_up_one" | "scroll_current_window_down_one" |
+                        "scroll_current_window_up_page" | "scroll_current_window_down_page" |
+                        "scroll_current_window_home" | "scroll_current_window_end"
+                    )
+                );
+
+                if is_scroll_action {
+                    // Get the focused window name and scroll it via frontend
+                    let focused_name = app_core.get_focused_window_name();
+                    if let crate::config::KeyBindAction::Action(action_str) = &action {
+                        match action_str.as_str() {
+                            "scroll_current_window_up_one" => {
+                                self.scroll_window(&focused_name, 1);
+                                tracing::debug!("Scrolled '{}' up 1 line via frontend", focused_name);
+                            }
+                            "scroll_current_window_down_one" => {
+                                self.scroll_window(&focused_name, -1);
+                                tracing::debug!("Scrolled '{}' down 1 line via frontend", focused_name);
+                            }
+                            "scroll_current_window_up_page" => {
+                                self.scroll_window(&focused_name, 20);
+                                tracing::info!("Scrolled '{}' up 20 lines via frontend", focused_name);
+                            }
+                            "scroll_current_window_down_page" => {
+                                self.scroll_window(&focused_name, -20);
+                                tracing::info!("Scrolled '{}' down 20 lines via frontend", focused_name);
+                            }
+                            "scroll_current_window_home" => {
+                                // Scroll to top - use a large number
+                                self.scroll_window(&focused_name, 100000);
+                                tracing::debug!("Scrolled '{}' to top via frontend", focused_name);
+                            }
+                            "scroll_current_window_end" => {
+                                // Scroll to bottom - use a large negative number
+                                self.scroll_window(&focused_name, -100000);
+                                tracing::debug!("Scrolled '{}' to bottom via frontend", focused_name);
+                            }
+                            _ => {}
+                        }
+                    }
+                    app_core.needs_render = true;
+                } else if is_switch_window_action {
+                    // Check if command input has text that should trigger tab completion
+                    let should_complete = self
+                        .widget_manager
+                        .command_inputs
+                        .get("command_input")
+                        .and_then(|cmd| cmd.get_input())
+                        .map(|text| text.starts_with('.'))
+                        .unwrap_or(false);
+
+                    if should_complete {
+                        // Do tab completion for dot commands
+                        let available_commands = app_core.get_available_commands();
+                        let available_window_names = app_core.get_window_names();
+                        use crate::frontend::tui::crossterm_bridge;
+                        let ct_code = crossterm_bridge::to_crossterm_keycode(code);
+                        let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
+                        self.command_input_key(
+                            "command_input",
+                            ct_code,
+                            ct_mods,
+                            &available_commands,
+                            &available_window_names,
+                        );
+                    } else {
+                        // No text or doesn't start with '.', cycle focused window
+                        app_core.cycle_focused_window();
+                    }
+                    app_core.needs_render = true;
+                } else if is_tab_action {
                     if let crate::config::KeyBindAction::Action(action_str) = &action {
                         match action_str.as_str() {
                             "next_tab" => {

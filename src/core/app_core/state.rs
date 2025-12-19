@@ -166,15 +166,30 @@ impl AppCore {
         // Create parser with presets and event patterns
         let parser = XmlParser::with_presets(preset_list, config.event_patterns.clone());
 
-        // Initialize sound player (if sound feature is enabled)
-        let sound_player = crate::sound::SoundPlayer::new(true, 0.8, 500).ok();
-        if sound_player.is_some() {
-            tracing::debug!("Sound player initialized");
-            // Ensure sounds directory exists
-            if let Err(e) = crate::sound::ensure_sounds_directory() {
-                tracing::warn!("Failed to create sounds directory: {}", e);
+        // Initialize sound player (skip if config.sound.disabled to avoid audio hardware probe delay)
+        let sound_player = if config.sound.disabled {
+            tracing::info!("Sound system disabled via config (sound.disabled = true)");
+            None
+        } else {
+            match crate::sound::SoundPlayer::new(
+                config.sound.enabled,
+                config.sound.volume,
+                config.sound.cooldown_ms,
+            ) {
+                Ok(player) => {
+                    tracing::debug!("Sound player initialized");
+                    // Ensure sounds directory exists
+                    if let Err(e) = crate::sound::ensure_sounds_directory() {
+                        tracing::warn!("Failed to create sounds directory: {}", e);
+                    }
+                    Some(player)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize sound player: {}", e);
+                    None
+                }
             }
-        }
+        };
 
         // Initialize TTS manager (respects config.tts.enabled)
         let tts_manager = crate::tts::TtsManager::new(
@@ -251,6 +266,7 @@ impl AppCore {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     content.scroll_up(1);
+                    self.needs_render = true;
                 }
             }
         }
@@ -262,6 +278,7 @@ impl AppCore {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     content.scroll_down(1);
+                    self.needs_render = true;
                 }
             }
         }
@@ -269,25 +286,47 @@ impl AppCore {
 
     /// Scroll the currently focused window up by one page
     pub fn scroll_current_window_up_page(&mut self) {
+        tracing::debug!("scroll_current_window_up_page called, focused_window={:?}", self.ui_state.focused_window);
         if let Some(window_name) = &self.ui_state.focused_window.clone() {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
+                tracing::debug!("Found window '{}', widget_type={:?}", window_name, window.widget_type);
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     // Use a reasonable page size (20 lines)
+                    let old_offset = content.scroll_offset;
                     content.scroll_up(20);
+                    tracing::info!("Scrolled '{}' up: {} -> {}", window_name, old_offset, content.scroll_offset);
+                    self.needs_render = true;
+                } else {
+                    tracing::debug!("Window '{}' content is not Text type", window_name);
                 }
+            } else {
+                tracing::warn!("Focused window '{}' not found in windows map", window_name);
             }
+        } else {
+            tracing::warn!("No focused window set for scrolling");
         }
     }
 
     /// Scroll the currently focused window down by one page
     pub fn scroll_current_window_down_page(&mut self) {
+        tracing::debug!("scroll_current_window_down_page called, focused_window={:?}", self.ui_state.focused_window);
         if let Some(window_name) = &self.ui_state.focused_window.clone() {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
+                tracing::debug!("Found window '{}', widget_type={:?}", window_name, window.widget_type);
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     // Use a reasonable page size (20 lines)
+                    let old_offset = content.scroll_offset;
                     content.scroll_down(20);
+                    tracing::info!("Scrolled '{}' down: {} -> {}", window_name, old_offset, content.scroll_offset);
+                    self.needs_render = true;
+                } else {
+                    tracing::debug!("Window '{}' content is not Text type", window_name);
                 }
+            } else {
+                tracing::warn!("Focused window '{}' not found in windows map", window_name);
             }
+        } else {
+            tracing::warn!("No focused window set for scrolling");
         }
     }
 
@@ -297,6 +336,7 @@ impl AppCore {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     content.scroll_to_top();
+                    self.needs_render = true;
                 }
             }
         }
@@ -308,9 +348,49 @@ impl AppCore {
             if let Some(window) = self.ui_state.windows.get_mut(window_name) {
                 if let crate::data::WindowContent::Text(ref mut content) = window.content {
                     content.scroll_to_bottom();
+                    self.needs_render = true;
                 }
             }
         }
+    }
+
+    /// Cycle to the next scrollable text window
+    /// Only cycles through text and tabbedtext windows since other types don't scroll
+    pub fn cycle_focused_window(&mut self) {
+        // Get list of scrollable window names (text and tabbedtext only)
+        let scrollable_names: Vec<String> = self
+            .ui_state
+            .windows
+            .iter()
+            .filter(|(_, w)| {
+                matches!(
+                    w.widget_type,
+                    crate::data::WidgetType::Text | crate::data::WidgetType::TabbedText
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        if scrollable_names.is_empty() {
+            return;
+        }
+
+        // Find current index
+        let current_idx = self
+            .ui_state
+            .focused_window
+            .as_ref()
+            .and_then(|name| scrollable_names.iter().position(|n| n == name))
+            .unwrap_or(0);
+
+        // Cycle to next
+        let next_idx = (current_idx + 1) % scrollable_names.len();
+        let next_name = scrollable_names[next_idx].clone();
+
+        self.ui_state.set_focus(Some(next_name.clone()));
+        self.add_system_message(&format!("Focused window: {}", next_name));
+        self.needs_render = true;
+        tracing::debug!("Cycled focused window to '{}'", next_name);
     }
 
     // ===========================================================================================
@@ -591,6 +671,18 @@ impl AppCore {
 
             self.ui_state
                 .set_window(window_def.name().to_string(), window);
+        }
+
+        // Set default focused window to "main" if it exists (enables scrolling with PageUp/PageDown)
+        if self.ui_state.focused_window.is_none() {
+            if self.ui_state.windows.contains_key("main") {
+                self.ui_state.set_focus(Some("main".to_string()));
+                tracing::debug!("Set default focused window to 'main'");
+            } else if let Some(first_name) = self.ui_state.windows.keys().next().cloned() {
+                // Fall back to first window if main doesn't exist
+                self.ui_state.set_focus(Some(first_name.clone()));
+                tracing::debug!("Set default focused window to '{}'", first_name);
+            }
         }
 
         self.needs_render = true;
@@ -966,6 +1058,12 @@ impl AppCore {
             ".edithighlight".to_string(),
             ".edithl".to_string(),
             ".testline".to_string(),
+            ".savehighlights".to_string(),
+            ".savehl".to_string(),
+            ".loadhighlights".to_string(),
+            ".loadhl".to_string(),
+            ".highlightprofiles".to_string(),
+            ".hlprofiles".to_string(),
             // Keybind commands
             ".keybinds".to_string(),
             ".kb".to_string(),
@@ -1148,6 +1246,9 @@ impl AppCore {
         self.add_system_message("  .addhighlight / .addhl  - Create new highlight");
         self.add_system_message("  .edithighlight <name>   - Edit existing highlight");
         self.add_system_message("  .edithl <name>          - Alias for .edithighlight");
+        self.add_system_message("  .savehighlights [name]  - Save highlights as profile (default: 'default')");
+        self.add_system_message("  .loadhighlights [name]  - Load highlights from profile");
+        self.add_system_message("  .highlightprofiles      - List saved highlight profiles");
         self.add_system_message("");
 
         // Testing
