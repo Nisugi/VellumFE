@@ -1036,6 +1036,7 @@ impl AppCore {
             ".help".to_string(),
             ".h".to_string(),
             ".?".to_string(),
+            ".reload".to_string(),
             // Layout commands
             ".savelayout".to_string(),
             ".loadlayout".to_string(),
@@ -1214,6 +1215,7 @@ impl AppCore {
         self.add_system_message("  .help / .h / .?         - Show this help");
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
+        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|settings|colors)");
         self.add_system_message("");
 
         // Layout commands
@@ -2472,6 +2474,105 @@ impl AppCore {
         // Update redirect cache after config save (in case highlights changed)
         self.message_processor.update_redirect_cache();
         Ok(())
+    }
+
+    // ===========================================================================================
+    // Config Reload Methods
+    // ===========================================================================================
+
+    /// Reload all configuration from disk
+    pub fn reload_all(&mut self) {
+        self.add_system_message("Reloading all configuration...");
+        self.reload_highlights();
+        self.reload_keybinds();
+        self.reload_settings();
+        self.reload_colors();
+        self.add_system_message("All configuration reloaded");
+    }
+
+    /// Reload highlights from disk
+    pub fn reload_highlights(&mut self) {
+        match crate::config::Config::load_highlights(self.config.character.as_deref()) {
+            Ok(highlights) => {
+                self.config.highlights = highlights;
+                // Rebuild message processor with new highlights
+                self.message_processor = crate::core::MessageProcessor::new(self.config.clone());
+                self.add_system_message("Highlights reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload highlights: {}", e));
+            }
+        }
+    }
+
+    /// Reload keybinds from disk
+    pub fn reload_keybinds(&mut self) {
+        match crate::config::Config::load_keybinds(self.config.character.as_deref()) {
+            Ok(keybinds) => {
+                self.config.keybinds = keybinds;
+                // Rebuild keybind map for O(1) lookups
+                self.keybind_map = Self::build_keybind_map(&self.config);
+                self.add_system_message("Keybinds reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload keybinds: {}", e));
+            }
+        }
+    }
+
+    /// Reload settings (UI, connection, sound) from disk
+    pub fn reload_settings(&mut self) {
+        let config_path = match crate::config::Config::config_path(self.config.character.as_deref()) {
+            Ok(path) => path,
+            Err(e) => {
+                self.add_system_message(&format!("Failed to get config path: {}", e));
+                return;
+            }
+        };
+
+        match std::fs::read_to_string(&config_path) {
+            Ok(contents) => {
+                match toml::from_str::<crate::config::Config>(&contents) {
+                    Ok(new_config) => {
+                        // Update only the settings sections, preserve character name and runtime state
+                        self.config.connection = new_config.connection;
+                        self.config.ui = new_config.ui;
+                        self.config.sound = new_config.sound;
+                        self.config.event_patterns = new_config.event_patterns;
+                        self.config.layout_mappings = new_config.layout_mappings;
+                        self.add_system_message("Settings reloaded");
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to parse config: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to read config file: {}", e));
+            }
+        }
+    }
+
+    /// Reload colors (presets, spell colors, prompt colors, UI colors) from disk
+    pub fn reload_colors(&mut self) {
+        match crate::config::ColorConfig::load(self.config.character.as_deref()) {
+            Ok(colors) => {
+                self.config.colors = colors;
+                // Update parser with new presets
+                let presets: Vec<(String, Option<String>, Option<String>)> = self
+                    .config
+                    .colors
+                    .presets
+                    .iter()
+                    .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
+                    .collect();
+                self.parser.update_presets(presets);
+                self.add_system_message("Colors reloaded");
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload colors: {}", e));
+            }
+        }
     }
 
     /// Start search mode (Ctrl+F)

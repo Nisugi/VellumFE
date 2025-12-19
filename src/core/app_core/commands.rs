@@ -317,6 +317,26 @@ impl AppCore {
                 }
             }
 
+            // Reload config from disk
+            "reload" => {
+                if parts.len() < 2 {
+                    // Reload everything
+                    self.reload_all();
+                } else {
+                    match parts[1] {
+                        "highlights" | "hl" => self.reload_highlights(),
+                        "keybinds" | "kb" => self.reload_keybinds(),
+                        "settings" => self.reload_settings(),
+                        "colors" => self.reload_colors(),
+                        _ => {
+                            self.add_system_message(&format!("Unknown reload category: {}", parts[1]));
+                            self.add_system_message("Usage: .reload [highlights|keybinds|settings|colors]");
+                            self.add_system_message("       .reload (reload everything)");
+                        }
+                    }
+                }
+            }
+
             // Menu system
             "menu" => {
                 // Build main menu
