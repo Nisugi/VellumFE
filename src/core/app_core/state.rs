@@ -167,10 +167,12 @@ impl AppCore {
         let parser = XmlParser::with_presets(preset_list, config.event_patterns.clone());
 
         // Initialize sound player (if sound feature is enabled)
+        // Pass disabled flag to skip audio device initialization on systems without audio hardware
         let sound_player = crate::sound::SoundPlayer::new(
             config.sound.enabled,
             config.sound.volume,
             config.sound.cooldown_ms,
+            config.sound.disabled,
         ).ok();
         if sound_player.is_some() {
             tracing::debug!("Sound player initialized");

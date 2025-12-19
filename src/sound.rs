@@ -33,9 +33,19 @@ pub struct SoundPlayer {
 
 impl SoundPlayer {
     /// Create a new sound player
-    pub fn new(enabled: bool, volume: f32, cooldown_ms: u64) -> Result<Self> {
+    ///
+    /// If `disabled` is true, skip audio device initialization entirely.
+    /// This is useful for systems without audio hardware to avoid long timeouts.
+    pub fn new(enabled: bool, volume: f32, cooldown_ms: u64, disabled: bool) -> Result<Self> {
         #[cfg(feature = "sound")]
         {
+            // Skip rodio initialization if sound is disabled entirely
+            // This avoids the ~10 second timeout on systems without audio hardware
+            if disabled {
+                debug!("Sound system disabled - skipping audio device initialization");
+                return Err(anyhow::anyhow!("Sound disabled by configuration"));
+            }
+
             let (stream, stream_handle) = OutputStream::try_default()?;
 
             Ok(Self {
@@ -50,6 +60,7 @@ impl SoundPlayer {
 
         #[cfg(not(feature = "sound"))]
         {
+            let _ = disabled; // Suppress unused warning
             Ok(Self {
                 enabled,
                 volume: volume.clamp(0.0, 1.0),

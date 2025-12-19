@@ -70,6 +70,10 @@ struct Cli {
     #[arg(long)]
     nomusic: bool,
 
+    /// Disable sound system entirely (skip audio device initialization)
+    #[arg(long)]
+    nosound: bool,
+
     /// Color rendering mode: direct (true color RGB) or slot (256-color palette)
     #[arg(long, value_enum)]
     color_mode: Option<config::ColorMode>,
@@ -259,6 +263,9 @@ fn main() -> Result<()> {
     // Apply CLI flag overrides
     if cli.nomusic {
         config.ui.startup_music = false;
+    }
+    if cli.nosound {
+        config.sound.disabled = true;
     }
     if let Some(mode) = cli.color_mode {
         config.ui.color_mode = mode;
