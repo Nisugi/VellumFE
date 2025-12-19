@@ -243,6 +243,58 @@ impl AppCore {
             "addkeybind" | "addkey" => {
                 return Ok("action:addkeybind".to_string());
             }
+            "savekeybinds" | "savekb" => {
+                let name = parts.get(1).unwrap_or(&"default");
+                match self.config.save_keybinds_as(name) {
+                    Ok(path) => {
+                        self.add_system_message(&format!(
+                            "Keybinds saved to: {}",
+                            path.display()
+                        ));
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to save keybinds: {}", e));
+                    }
+                }
+            }
+            "loadkeybinds" | "loadkb" => {
+                if let Some(name) = parts.get(1) {
+                    match crate::config::Config::load_keybinds_from(name) {
+                        Ok(keybinds) => {
+                            self.config.keybinds = keybinds;
+                            self.rebuild_keybind_map();
+                            self.add_system_message(&format!("Keybinds loaded from profile: {}", name));
+                        }
+                        Err(e) => {
+                            self.add_system_message(&format!("Failed to load keybinds: {}", e));
+                        }
+                    }
+                } else {
+                    self.add_system_message("Usage: .loadkeybinds <profile_name>");
+                    self.add_system_message("Use .keybindprofiles to list available profiles");
+                }
+            }
+            "keybindprofiles" | "kbprofiles" => {
+                match crate::config::Config::list_saved_keybinds() {
+                    Ok(profiles) => {
+                        if profiles.is_empty() {
+                            self.add_system_message("No saved keybind profiles found.");
+                            self.add_system_message("Use .savekeybinds <name> to create one.");
+                        } else {
+                            self.add_system_message("=== Keybind Profiles ===");
+                            for name in profiles {
+                                self.add_system_message(&format!(
+                                    "  {} - .loadkeybinds {}",
+                                    name, name
+                                ));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to list keybind profiles: {}", e))
+                    }
+                }
+            }
 
             // Colors
             "colors" | "colorpalette" => {
@@ -335,6 +387,34 @@ impl AppCore {
                         }
                     }
                 }
+            }
+
+            // Toggle ignores (squelch patterns)
+            "toggleignores" | "ignores" => {
+                self.config.ui.ignores_enabled = !self.config.ui.ignores_enabled;
+                let status = if self.config.ui.ignores_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.add_system_message(&format!("Squelch patterns {}", status));
+                tracing::info!("Squelch patterns toggled: {}", status);
+            }
+
+            // Lock/unlock all windows
+            "lockwindows" | "lockall" => {
+                for window in &mut self.layout.windows {
+                    window.base_mut().locked = true;
+                }
+                self.add_system_message("All windows locked (cannot be moved/resized)");
+                self.needs_render = true;
+            }
+            "unlockwindows" | "unlockall" => {
+                for window in &mut self.layout.windows {
+                    window.base_mut().locked = false;
+                }
+                self.add_system_message("All windows unlocked (can be moved/resized)");
+                self.needs_render = true;
             }
 
             // Menu system

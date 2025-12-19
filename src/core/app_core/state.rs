@@ -1059,6 +1059,12 @@ impl AppCore {
             ".kb".to_string(),
             ".addkeybind".to_string(),
             ".addkey".to_string(),
+            ".savekeybinds".to_string(),
+            ".savekb".to_string(),
+            ".loadkeybinds".to_string(),
+            ".loadkb".to_string(),
+            ".keybindprofiles".to_string(),
+            ".kbprofiles".to_string(),
             // Color commands
             ".colors".to_string(),
             ".colorpalette".to_string(),
@@ -1080,6 +1086,14 @@ impl AppCore {
             ".nextunread".to_string(),
             // Settings
             ".settings".to_string(),
+            // Toggles
+            ".toggleignores".to_string(),
+            ".ignores".to_string(),
+            // Window locking
+            ".lockwindows".to_string(),
+            ".lockall".to_string(),
+            ".unlockwindows".to_string(),
+            ".unlockall".to_string(),
             // Menu system
             ".menu".to_string(),
         ]
@@ -1251,6 +1265,9 @@ impl AppCore {
         self.add_system_message("KEYBINDS:");
         self.add_system_message("  .keybinds / .kb         - Open keybinds browser");
         self.add_system_message("  .addkeybind / .addkey   - Create new keybind");
+        self.add_system_message("  .savekeybinds [name]    - Save keybinds as profile (default: 'default')");
+        self.add_system_message("  .loadkeybinds <name>    - Load keybinds from profile");
+        self.add_system_message("  .keybindprofiles        - List saved keybind profiles");
         self.add_system_message("");
 
         // Colors
@@ -1278,6 +1295,18 @@ impl AppCore {
         self.add_system_message("  .nexttab                - Switch to next tab");
         self.add_system_message("  .prevtab                - Switch to previous tab");
         self.add_system_message("  .gonew / .nextunread    - Jump to next tab with unread messages");
+        self.add_system_message("");
+
+        // Toggles
+        self.add_system_message("TOGGLES:");
+        self.add_system_message("  .toggleignores          - Toggle squelch patterns on/off");
+        self.add_system_message("  .ignores                - Alias for .toggleignores");
+        self.add_system_message("");
+
+        // Window locking
+        self.add_system_message("WINDOW LOCKING:");
+        self.add_system_message("  .lockwindows / .lockall - Lock all windows (prevent move/resize)");
+        self.add_system_message("  .unlockwindows / .unlockall - Unlock all windows");
         self.add_system_message("");
 
         self.add_system_message("Type the command name for more details. Example: .help windows");

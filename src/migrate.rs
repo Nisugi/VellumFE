@@ -213,8 +213,28 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
     }
     let template_name = mapping.template_name;
 
-    // Get the template - if not found, this window will be skipped
+    // Get the template - if not found, try a fallback based on widget_type
     let mut window = Config::get_window_template(&template_name)
+        .or_else(|| {
+            // Fallback to generic template by widget_type
+            let fallback = match widget_type.as_str() {
+                "progress" => Some("progress_custom"),
+                "countdown" => Some("roundtime"),
+                "text" => Some("main"),
+                "tabbed" => Some("chat"),
+                "active_effects" => Some("buffs"),
+                "indicator" => Some("kneeling"),
+                _ => None,
+            };
+            if let Some(fb) = fallback {
+                if verbose {
+                    eprintln!("    Using fallback template '{}' for '{}'", fb, template_name);
+                }
+                Config::get_window_template(fb)
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| anyhow!("No template for '{}'", template_name))?;
 
     // Override base fields
@@ -347,7 +367,14 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
             }
         }
         WindowDef::Progress { data, base } => {
-            if let Some(v) = get_str(table, "bar_color")? {
+            // progress_id -> data.id (the XML progressBar id)
+            if let Some(v) = get_str(table, "progress_id")? {
+                data.id = Some(v);
+            }
+            // bar_fill or bar_color -> data.color
+            if let Some(v) = get_str(table, "bar_fill")? {
+                data.color = Some(v);
+            } else if let Some(v) = get_str(table, "bar_color")? {
                 data.color = Some(v);
             }
             if let Some(v) = get_bool(table, "numbers_only")? {
@@ -366,8 +393,14 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                 data.label = Some(v.clone());
                 base.title = Some(v);
             }
-            if let Some(v) = get_str(table, "bar_color")? {
-                base.background_color = Some(v);
+            // bar_fill -> data.color (the countdown bar color)
+            if let Some(v) = get_str(table, "bar_fill")? {
+                data.color = Some(v);
+            } else if let Some(v) = get_str(table, "bar_color")? {
+                data.color = Some(v);
+            }
+            if let Some(v) = get_str(table, "bar_background")? {
+                data.background_color = Some(v);
             }
             if let Some(v) = get_char(table, "icon")? {
                 data.icon = Some(v);
