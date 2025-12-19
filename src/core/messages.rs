@@ -1149,8 +1149,8 @@ impl MessageProcessor {
             let mut added_here = false;
             match &mut window.content {
                 WindowContent::Text(content) => {
-                    let mapped_name = self.map_stream_to_window(&self.current_stream);
-                    if *window_name == mapped_name {
+                    // Check if this text window listens to the current stream
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
                         content.add_line(line.clone());
                         added_here = true;
                     }
@@ -1198,7 +1198,7 @@ impl MessageProcessor {
         }
 
         // Fallback to main window if no other window handled the stream
-        if !text_added_to_any_window && self.map_stream_to_window(&self.current_stream) != "main" {
+        if !text_added_to_any_window {
             tracing::trace!(
                 "Window for stream '{}' not found, routing content to main window",
                 self.current_stream

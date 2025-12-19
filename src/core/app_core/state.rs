@@ -477,13 +477,15 @@ impl AppCore {
 
             let content = match widget_type {
                 WidgetType::Text => {
-                    let buffer_size =
+                    let (buffer_size, streams) =
                         if let crate::config::WindowDef::Text { data, .. } = window_def {
-                            data.buffer_size
+                            (data.buffer_size, data.streams.clone())
                         } else {
-                            1000 // fallback
+                            (1000, vec![]) // fallback
                         };
-                    WindowContent::Text(TextContent::new(title, buffer_size))
+                    let mut text_content = TextContent::new(title, buffer_size);
+                    text_content.streams = streams;
+                    WindowContent::Text(text_content)
                 }
                 WidgetType::TabbedText => {
                     // Extract tab definitions and buffer size from window def
@@ -743,12 +745,14 @@ impl AppCore {
 
         let content = match widget_type {
             WidgetType::Text => {
-                let buffer_size = if let crate::config::WindowDef::Text { data, .. } = window_def {
-                    data.buffer_size
+                let (buffer_size, streams) = if let crate::config::WindowDef::Text { data, .. } = window_def {
+                    (data.buffer_size, data.streams.clone())
                 } else {
-                    1000 // fallback
+                    (1000, vec![]) // fallback
                 };
-                WindowContent::Text(TextContent::new(title, buffer_size))
+                let mut text_content = TextContent::new(title, buffer_size);
+                text_content.streams = streams;
+                WindowContent::Text(text_content)
             }
             WidgetType::TabbedText => {
                 // Extract tab definitions and buffer size from window def

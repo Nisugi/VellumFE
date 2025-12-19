@@ -19,6 +19,7 @@ mod frontend_impl;
 mod hand;
 pub mod highlight_browser;
 pub mod highlight_form;
+mod highlight_utils;
 pub mod indicator_template_editor;
 mod indicator;
 mod injury_doll;

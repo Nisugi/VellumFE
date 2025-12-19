@@ -282,10 +282,13 @@ fn add_tabbed_window(
 }
 
 fn add_text_window(ui_state: &mut UiState, name: &str, max_lines: usize) {
+    let mut text_content = TextContent::new(name, max_lines);
+    // Set streams to match window name (for routing)
+    text_content.streams = vec![name.to_string()];
     let window = WindowState {
         name: name.to_string(),
         widget_type: WidgetType::Text,
-        content: WindowContent::Text(TextContent::new(name, max_lines)),
+        content: WindowContent::Text(text_content),
         position: position(),
         visible: true,
         focused: false,

@@ -37,6 +37,9 @@ pub struct SpellsWindow {
     inner_width: usize,
     inner_height: usize,
 
+    /// Highlight engine for pattern matching and styling
+    highlight_engine: super::highlight_utils::HighlightEngine,
+
     /// Recent links cache for click detection
     recent_links: VecDeque<LinkData>,
     max_recent_links: usize,
@@ -57,9 +60,15 @@ impl SpellsWindow {
             scroll_offset: 0,
             inner_width: 80,
             inner_height: 20,
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
             recent_links: VecDeque::new(),
             max_recent_links: 100,
         }
+    }
+
+    /// Set highlight patterns for this window
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
     /// Clear all content (called when clearStream is received)
@@ -127,7 +136,12 @@ impl SpellsWindow {
             // Add empty line as-is (preserves spacing in spell list)
             self.lines.push(Vec::new());
         } else {
-            self.lines.push(line);
+            // Apply highlights before adding to buffer
+            let highlighted = self
+                .highlight_engine
+                .apply_highlights_to_segments(&line, "spell")
+                .unwrap_or(line);
+            self.lines.push(highlighted);
         }
     }
 

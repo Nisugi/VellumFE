@@ -136,17 +136,7 @@ fn decode_icon(icon_str: &str) -> Option<String> {
 
                         // Convert our data format to TextWindow's format
                         for segment in &line.segments {
-                            // Map data layer SpanType to TextWindow SpanType
-                            use crate::data::SpanType as DataSpanType;
-                            let tw_span_type = match segment.span_type {
-                                DataSpanType::Normal => text_window::SpanType::Normal,
-                                DataSpanType::Link => text_window::SpanType::Link,
-                                DataSpanType::Monsterbold => text_window::SpanType::Monsterbold,
-                                DataSpanType::Spell => text_window::SpanType::Spell,
-                                DataSpanType::Speech => text_window::SpanType::Speech,
-                                DataSpanType::System => text_window::SpanType::System,
-                            };
-
+                            // TextWindow now uses the same SpanType and LinkData from data module
                             let styled_text = text_window::StyledText {
                                 content: segment.text.clone(),
                                 fg: segment
@@ -158,15 +148,8 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                                     .as_ref()
                                     .and_then(|hex| parse_hex_color(hex).ok()),
                                 bold: segment.bold,
-                                span_type: tw_span_type,
-                                link_data: segment.link_data.as_ref().map(|ld| {
-                                    text_window::LinkData {
-                                        exist_id: ld.exist_id.clone(),
-                                        noun: ld.noun.clone(),
-                                        text: ld.text.clone(),
-                                        coord: ld.coord.clone(),
-                                    }
-                                }),
+                                span_type: segment.span_type,  // Direct use, no conversion needed
+                                link_data: segment.link_data.clone(),  // Direct use, no conversion needed
                             };
                             text_window.add_text(styled_text);
                         }
@@ -373,6 +356,10 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                         inv_window.set_title(title_text);
                     }
 
+                    // Set highlight patterns
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    inv_window.set_highlights(highlights);
+
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
                         self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
@@ -453,6 +440,10 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                     } else {
                         spells_window.set_title(text_content.title.clone());
                     }
+
+                    // Set highlight patterns
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    spells_window.set_highlights(highlights);
 
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
@@ -1172,15 +1163,7 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                                     text_window.set_current_stream(&line.stream);
 
                                     for segment in &line.segments {
-                            let tw_span_type = match segment.span_type {
-                                crate::data::SpanType::Normal => text_window::SpanType::Normal,
-                                crate::data::SpanType::Link => text_window::SpanType::Link,
-                                crate::data::SpanType::Monsterbold => text_window::SpanType::Monsterbold,
-                                crate::data::SpanType::Spell => text_window::SpanType::Spell,
-                                crate::data::SpanType::Speech => text_window::SpanType::Speech,
-                                crate::data::SpanType::System => text_window::SpanType::System,
-                            };
-
+                                        // TextWindow now uses the same SpanType and LinkData from data module
                                         let styled_text = text_window::StyledText {
                                             content: segment.text.clone(),
                                             fg: segment
@@ -1192,15 +1175,8 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                                                 .as_ref()
                                                 .and_then(|hex| parse_hex_color(hex).ok()),
                                             bold: segment.bold,
-                                            span_type: tw_span_type,
-                                            link_data: segment.link_data.as_ref().map(|ld| {
-                                                text_window::LinkData {
-                                                    exist_id: ld.exist_id.clone(),
-                                                    noun: ld.noun.clone(),
-                                                    text: ld.text.clone(),
-                                                    coord: ld.coord.clone(),
-                                                }
-                                            }),
+                                            span_type: segment.span_type,  // Direct use, no conversion needed
+                                            link_data: segment.link_data.clone(),  // Direct use, no conversion needed
                                         };
                                         text_window.add_text(styled_text);
                                     }

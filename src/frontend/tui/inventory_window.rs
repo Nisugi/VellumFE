@@ -41,6 +41,9 @@ pub struct InventoryWindow {
     /// Enable word wrapping (default false - less clutter for small windows)
     word_wrap: bool,
 
+    /// Highlight engine for pattern matching and styling
+    highlight_engine: super::highlight_utils::HighlightEngine,
+
     /// Recent links cache for deduplication and click detection
     /// Consecutive segments with same exist_id get their text appended
     recent_links: VecDeque<crate::data::LinkData>,
@@ -62,9 +65,15 @@ impl InventoryWindow {
             inner_width: 80,
             inner_height: 20,
             word_wrap: false, // Default off - less clutter for small windows
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
             recent_links: VecDeque::new(),
             max_recent_links: 100,
         }
+    }
+
+    /// Set highlight patterns for this window
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
     /// Clear all content (called when inv stream is pushed)
@@ -118,8 +127,14 @@ impl InventoryWindow {
             return;
         }
 
-        // Wrap the line to window width
-        let wrapped = self.wrap_line(line);
+        // Apply highlights before wrapping
+        let highlighted = self
+            .highlight_engine
+            .apply_highlights_to_segments(&line, "inv")
+            .unwrap_or(line);
+
+        // Wrap the highlighted line to window width
+        let wrapped = self.wrap_line(highlighted);
         self.lines.extend(wrapped);
     }
 

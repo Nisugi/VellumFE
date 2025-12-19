@@ -5,7 +5,7 @@
 
 use crate::frontend::tui::{crossterm_bridge, title_position::{self, TitlePosition}};
 use crate::config::HighlightPattern;
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
+use crate::data::{LinkData, SpanType};  // Use types from data module
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,36 +13,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, Paragraph, Widget},
 };
-use regex::Regex;
+use regex::Regex;  // Add back Regex import for SearchState
 use std::collections::VecDeque;
-
-// Per-character style info for layering
-#[derive(Clone, Copy)]
-struct CharStyle {
-    fg: Option<Color>,
-    bg: Option<Color>,
-    bold: bool,
-    span_type: SpanType,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpanType {
-    Normal,      // Regular text
-    Link,        // <a> tag from parser
-    Monsterbold, // <preset id="monsterbold"> from parser
-    Spell,       // <spell> tag from parser
-    Speech,      // <preset id="speech"> from parser
-    System,      // Client/system messages; skip highlights/replacements
-}
-
-/// Link metadata for clickable game objects
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LinkData {
-    pub exist_id: String,      // Unique ID for this game object
-    pub noun: String,          // The noun/name of the object
-    pub text: String,          // The actual displayed text (e.g., "nacreous pearl bangle")
-    pub coord: Option<String>, // Optional coord for direct commands (e.g., "2524,1864" for movement)
-}
 
 #[derive(Clone)]
 pub struct StyledText {
@@ -110,16 +82,10 @@ pub struct TextWindow {
     content_align: Option<String>,
     // Search functionality
     search_state: Option<SearchState>,
-    // Highlight patterns
-    highlights: Vec<HighlightPattern>,
-    // Precompiled highlight regexes (parallel to highlights vec, only for non-fast_parse)
-    highlight_regexes: Vec<Option<Regex>>,
-    // Aho-Corasick matcher for fast_parse patterns
-    fast_matcher: Option<AhoCorasick>,
-    // Maps Aho-Corasick match index -> highlight index
+    // Highlight engine for pattern matching and styling
+    highlight_engine: super::highlight_utils::HighlightEngine,
     // Link toggling
     links_enabled: bool,
-    fast_pattern_map: Vec<usize>,
     // Recent links cache for click detection
     recent_links: VecDeque<LinkData>,
     max_recent_links: usize,
@@ -154,13 +120,9 @@ impl Clone for TextWindow {
             content_align: self.content_align.clone(),
             // Skip search_state (contains Regex which doesn't implement Clone)
             search_state: None,
-            highlights: self.highlights.clone(),
-            // Skip highlight_regexes (contains Regex)
-            highlight_regexes: vec![],
-            // Skip fast_matcher (AhoCorasick doesn't implement Clone)
-            fast_matcher: None,
+            // Create empty highlight engine (regexes/matchers don't clone)
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
             links_enabled: self.links_enabled,
-            fast_pattern_map: self.fast_pattern_map.clone(),
             recent_links: self.recent_links.clone(),
             max_recent_links: self.max_recent_links,
             show_timestamps: self.show_timestamps,
@@ -193,10 +155,7 @@ impl TextWindow {
             scroll_position: None,         // Start in live view mode
             last_visible_height: 20,       // Reasonable default
             search_state: None,            // No active search
-            highlights: Vec::new(),        // No highlights by default
-            highlight_regexes: Vec::new(), // No precompiled regexes by default
-            fast_matcher: None,            // No Aho-Corasick matcher by default
-            fast_pattern_map: Vec::new(),  // No fast pattern mapping by default
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()), // Empty engine by default
             recent_links: VecDeque::new(), // No recent links yet
             max_recent_links: 100,         // Keep last 100 links
             show_timestamps: false,        // Timestamps off by default
@@ -206,45 +165,8 @@ impl TextWindow {
     }
 
     pub fn set_highlights(&mut self, highlights: Vec<HighlightPattern>) {
-        // Separate fast_parse patterns from regex patterns
-        let mut fast_patterns: Vec<String> = Vec::new();
-        let mut fast_map: Vec<usize> = Vec::new();
-
-        // Build regex list and collect fast_parse patterns
-        self.highlight_regexes = highlights
-            .iter()
-            .enumerate()
-            .map(|(i, h)| {
-                if h.fast_parse {
-                    // Split pattern on | and add to Aho-Corasick
-                    for literal in h.pattern.split('|') {
-                        let literal = literal.trim();
-                        if !literal.is_empty() {
-                            fast_patterns.push(literal.to_string());
-                            fast_map.push(i); // Map this pattern back to highlight index
-                        }
-                    }
-                    None // Don't compile as regex
-                } else {
-                    // Regular regex pattern
-                    Regex::new(&h.pattern).ok()
-                }
-            })
-            .collect();
-
-        // Build Aho-Corasick matcher for fast_parse patterns with whole-word matching only
-        if !fast_patterns.is_empty() {
-            self.fast_matcher = AhoCorasickBuilder::new()
-                .match_kind(MatchKind::Standard) // Standard matching
-                .build(&fast_patterns)
-                .ok();
-            self.fast_pattern_map = fast_map;
-        } else {
-            self.fast_matcher = None;
-            self.fast_pattern_map = Vec::new();
-        }
-
-        self.highlights = highlights;
+        // Create new highlight engine with compiled patterns
+        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
     pub fn with_border_config(
@@ -436,346 +358,13 @@ impl TextWindow {
 
     /// Apply highlight patterns to current line spans with proper priority layering
     fn apply_highlights(&mut self) {
-        // Skip highlight transforms for pure system lines
-        if self
-            .current_line_spans
-            .iter()
-            .all(|(_, _, span_type, _)| matches!(span_type, SpanType::System))
-        {
-            return;
+        // Delegate to the shared highlight engine
+        if let Some(highlighted) = self.highlight_engine.apply_highlights(
+            &self.current_line_spans,
+            &self.current_line_stream,
+        ) {
+            self.current_line_spans = highlighted;
         }
-
-        if self.highlights.is_empty() {
-            return;
-        }
-
-        // STEP 1: Build character-by-character style and link maps from current spans
-        let mut char_styles: Vec<CharStyle> = Vec::new();
-        let mut char_links: Vec<Option<LinkData>> = Vec::new();
-        for (content, style, span_type, link) in &self.current_line_spans {
-            for _ in content.chars() {
-                char_styles.push(CharStyle {
-                    fg: style.fg,
-                    bg: style.bg,
-                    bold: style.add_modifier.contains(Modifier::BOLD),
-                    span_type: *span_type,
-                });
-                char_links.push(link.clone());
-            }
-        }
-
-        if char_styles.is_empty() {
-            return;
-        }
-
-        // STEP 2: Build full text for pattern matching
-        let mut full_text: String = self
-            .current_line_spans
-            .iter()
-            .map(|(content, _, _, _)| content.as_str())
-            .collect();
-
-        // STEP 3: Find all highlight matches (both Aho-Corasick and regex)
-        #[derive(Clone)]
-        struct MatchInfo {
-            start_byte: usize,
-            end_byte: usize,
-            fg: Option<Color>,
-            bg: Option<Color>,
-            bold: bool,
-            color_entire_line: bool,
-            replace: Option<String>,
-        }
-
-        let mut matches: Vec<MatchInfo> = Vec::new();
-
-        // Try Aho-Corasick fast patterns (with word boundary checking)
-        if let Some(ref matcher) = self.fast_matcher {
-            for mat in matcher.find_iter(&full_text) {
-                let start = mat.start();
-                let end = mat.end();
-                let bytes = full_text.as_bytes();
-
-                let is_word_start = start == 0 || {
-                    bytes.get(start - 1).is_none_or(|&b| {
-                        let c = b as char;
-                        !c.is_alphanumeric() && c != '_'
-                    })
-                };
-
-                let is_word_end = end >= bytes.len() || {
-                    bytes.get(end).is_none_or(|&b| {
-                        let c = b as char;
-                        !c.is_alphanumeric() && c != '_'
-                    })
-                };
-
-                if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) =
-                        self.fast_pattern_map.get(mat.pattern().as_usize())
-                    {
-                        if let Some(highlight) = self.highlights.get(highlight_idx) {
-                            // Check stream filter - skip if highlight requires specific stream and doesn't match
-                            if let Some(ref required_stream) = highlight.stream {
-                                if !self.current_line_stream.eq_ignore_ascii_case(required_stream) {
-                                    continue;
-                                }
-                            }
-
-                            let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                            let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                            matches.push(MatchInfo {
-                                start_byte: start,
-                                end_byte: end,
-                                fg,
-                                bg,
-                                bold: highlight.bold,
-                                color_entire_line: highlight.color_entire_line,
-                                replace: highlight.replace.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Try regex patterns
-        for (i, highlight) in self.highlights.iter().enumerate() {
-            if highlight.fast_parse {
-                continue; // Already handled by Aho-Corasick
-            }
-
-            // Check stream filter - skip if highlight requires specific stream and doesn't match
-            if let Some(ref required_stream) = highlight.stream {
-                if !self.current_line_stream.eq_ignore_ascii_case(required_stream) {
-                    continue;
-                }
-            }
-
-            if let Some(Some(regex)) = self.highlight_regexes.get(i) {
-                let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
-                let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
-
-                // If there's a replace template, use captures_iter to expand $1, $2, etc.
-                // Otherwise, use find_iter for simpler/faster matching
-                if let Some(ref replace_template) = highlight.replace {
-                    for caps in regex.captures_iter(&full_text) {
-                        if let Some(m) = caps.get(0) {
-                            // Expand capture groups in replacement template
-                            let mut expanded = String::new();
-                            caps.expand(replace_template, &mut expanded);
-                            matches.push(MatchInfo {
-                                start_byte: m.start(),
-                                end_byte: m.end(),
-                                fg,
-                                bg,
-                                bold: highlight.bold,
-                                color_entire_line: highlight.color_entire_line,
-                                replace: Some(expanded),
-                            });
-                        }
-                    }
-                } else {
-                    for m in regex.find_iter(&full_text) {
-                        matches.push(MatchInfo {
-                            start_byte: m.start(),
-                            end_byte: m.end(),
-                            fg,
-                            bg,
-                            bold: highlight.bold,
-                            color_entire_line: highlight.color_entire_line,
-                            replace: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        if !matches.is_empty() {
-            use std::collections::HashMap;
-
-            // Map byte offsets to char indices
-            let mut byte_to_char: HashMap<usize, usize> = HashMap::new();
-            for (idx, (byte, _ch)) in full_text.char_indices().enumerate() {
-                byte_to_char.insert(byte, idx);
-            }
-
-            let full_text_chars: Vec<char> = full_text.chars().collect();
-            matches.sort_by_key(|m| m.start_byte);
-
-            let mut new_text = String::new();
-            let mut new_styles: Vec<CharStyle> = Vec::new();
-            let mut new_links: Vec<Option<LinkData>> = Vec::new();
-            let mut new_match_ranges: Vec<(usize, usize, MatchInfo)> = Vec::new();
-
-            let mut last_char_idx = 0usize;
-            for m in matches {
-                let start_char = *byte_to_char.get(&m.start_byte).unwrap_or(&last_char_idx);
-                let end_char = *byte_to_char.get(&m.end_byte).unwrap_or(&full_text_chars.len());
-                if start_char < last_char_idx {
-                    continue; // overlapping; skip
-                }
-
-                // Copy untouched region
-                for i in last_char_idx..start_char {
-                    new_text.push(full_text_chars[i]);
-                    new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                        fg: None,
-                        bg: None,
-                        bold: false,
-                        span_type: SpanType::Normal,
-                    }));
-                    new_links.push(char_links.get(i).cloned().unwrap_or(None));
-                }
-
-                let new_start = new_styles.len();
-
-                // Replacement or original segment
-                if let Some(ref repl) = m.replace {
-                    let base_style = char_styles
-                        .get(start_char)
-                        .cloned()
-                        .unwrap_or(CharStyle {
-                            fg: None,
-                            bg: None,
-                            bold: false,
-                            span_type: SpanType::Normal,
-                        });
-                    for ch in repl.chars() {
-                        new_text.push(ch);
-                        new_styles.push(base_style);
-                        new_links.push(None);
-                    }
-                } else {
-                    for i in start_char..end_char {
-                        new_text.push(full_text_chars[i]);
-                        new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                            fg: None,
-                            bg: None,
-                            bold: false,
-                            span_type: SpanType::Normal,
-                        }));
-                        new_links.push(char_links.get(i).cloned().unwrap_or(None));
-                    }
-                }
-
-                let new_end = new_styles.len();
-                new_match_ranges.push((
-                    new_start,
-                    new_end,
-                    MatchInfo {
-                        start_byte: m.start_byte,
-                        end_byte: m.end_byte,
-                        fg: m.fg,
-                        bg: m.bg,
-                        bold: m.bold,
-                        color_entire_line: m.color_entire_line,
-                        replace: m.replace,
-                    },
-                ));
-
-                last_char_idx = end_char;
-            }
-
-            // Tail
-            for i in last_char_idx..full_text_chars.len() {
-                new_text.push(full_text_chars[i]);
-                new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                    fg: None,
-                    bg: None,
-                    bold: false,
-                    span_type: SpanType::Normal,
-                }));
-                new_links.push(char_links.get(i).cloned().unwrap_or(None));
-            }
-
-            // Apply highlight styling on rewritten text
-            for (start, end, info) in &new_match_ranges {
-                if info.color_entire_line {
-                    for cs in new_styles.iter_mut() {
-                        if cs.span_type == SpanType::Link || cs.span_type == SpanType::Monsterbold {
-                            if let Some(color) = info.bg {
-                                cs.bg = Some(color);
-                            }
-                        } else {
-                            if let Some(color) = info.fg {
-                                cs.fg = Some(color);
-                            }
-                            if let Some(color) = info.bg {
-                                cs.bg = Some(color);
-                            }
-                            if info.bold {
-                                cs.bold = true;
-                            }
-                        }
-                    }
-                    break; // only first whole-line match applies
-                } else {
-                    for idx in *start..(*end).min(new_styles.len()) {
-                        if let Some(color) = info.fg {
-                            new_styles[idx].fg = Some(color);
-                        }
-                        if let Some(color) = info.bg {
-                            new_styles[idx].bg = Some(color);
-                        }
-                        if info.bold {
-                            new_styles[idx].bold = true;
-                        }
-                    }
-                }
-            }
-
-            char_styles = new_styles;
-            char_links = new_links;
-            full_text = new_text;
-        }
-
-        // STEP 5: Reconstruct spans from char_styles with proper splitting
-        let mut new_spans: Vec<(String, Style, SpanType, Option<LinkData>)> = Vec::new();
-        let full_text_chars: Vec<char> = full_text.chars().collect();
-
-        let mut i = 0;
-        while i < char_styles.len() {
-            let current_style = char_styles[i];
-            let current_link = char_links.get(i).cloned().unwrap_or(None);
-            let mut content = String::new();
-            content.push(full_text_chars[i]);
-
-            // Extend span while style matches
-            i += 1;
-            while i < char_styles.len() {
-                let next_style = char_styles[i];
-                let next_link = char_links.get(i).cloned().unwrap_or(None);
-                if next_style.fg == current_style.fg
-                    && next_style.bg == current_style.bg
-                    && next_style.bold == current_style.bold
-                    && next_style.span_type == current_style.span_type
-                    && next_link == current_link
-                {
-                    content.push(full_text_chars[i]);
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Build Style
-            let mut style = Style::default();
-            if let Some(fg) = current_style.fg {
-                style = style.fg(fg);
-            }
-            if let Some(bg) = current_style.bg {
-                style = style.bg(bg);
-            }
-            if current_style.bold {
-                style = style.add_modifier(Modifier::BOLD);
-            }
-
-            new_spans.push((content, style, current_style.span_type, current_link));
-        }
-
-        // Replace current_line_spans with new layered spans
-        self.current_line_spans = new_spans;
     }
 
     // Wrap a series of styled spans into multiple display lines

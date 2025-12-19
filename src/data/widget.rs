@@ -19,6 +19,9 @@ pub struct TextContent {
     /// Generation counter - increments on every add_line call
     /// Used to detect changes even when line count stays constant (at max_lines)
     pub generation: u64,
+    /// Stream IDs this window listens to (e.g., ["thoughts"], ["main"], ["combat"])
+    /// Used for routing incoming game text to the correct window
+    pub streams: Vec<String>,
 }
 
 /// A single display line with styled segments
@@ -204,6 +207,7 @@ impl TextContent {
             max_lines,
             title: title.into(),
             generation: 0,
+            streams: vec![],  // Default to empty - will be set during window creation
         }
     }
 
