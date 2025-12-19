@@ -260,6 +260,53 @@ pub fn key_event_to_keybind_string(event: &KeyEvent) -> String {
     }
 }
 
+/// Convert eframe NumpadKeyEvent to frontend-agnostic KeyEvent
+///
+/// This converts numpad key events from the forked eframe (which intercepts them
+/// before egui-winit loses the KeyLocation::Numpad information) into our
+/// platform-independent KeyEvent type.
+///
+/// Returns None if:
+/// - NumLock is ON (key should go to text input instead)
+/// - The key is not a numpad key we recognize
+pub fn convert_numpad_key_event(numpad_event: &eframe::NumpadKeyEvent) -> Option<KeyEvent> {
+    // When NumLock is on, let egui handle the key for text input
+    if numpad_event.numlock_on {
+        return None;
+    }
+
+    use winit::keyboard::{KeyCode as WinitKeyCode, PhysicalKey};
+
+    let code = match numpad_event.physical_key {
+        PhysicalKey::Code(WinitKeyCode::Numpad0) => KeyCode::Keypad0,
+        PhysicalKey::Code(WinitKeyCode::Numpad1) => KeyCode::Keypad1,
+        PhysicalKey::Code(WinitKeyCode::Numpad2) => KeyCode::Keypad2,
+        PhysicalKey::Code(WinitKeyCode::Numpad3) => KeyCode::Keypad3,
+        PhysicalKey::Code(WinitKeyCode::Numpad4) => KeyCode::Keypad4,
+        PhysicalKey::Code(WinitKeyCode::Numpad5) => KeyCode::Keypad5,
+        PhysicalKey::Code(WinitKeyCode::Numpad6) => KeyCode::Keypad6,
+        PhysicalKey::Code(WinitKeyCode::Numpad7) => KeyCode::Keypad7,
+        PhysicalKey::Code(WinitKeyCode::Numpad8) => KeyCode::Keypad8,
+        PhysicalKey::Code(WinitKeyCode::Numpad9) => KeyCode::Keypad9,
+        PhysicalKey::Code(WinitKeyCode::NumpadAdd) => KeyCode::KeypadPlus,
+        PhysicalKey::Code(WinitKeyCode::NumpadSubtract) => KeyCode::KeypadMinus,
+        PhysicalKey::Code(WinitKeyCode::NumpadMultiply) => KeyCode::KeypadMultiply,
+        PhysicalKey::Code(WinitKeyCode::NumpadDivide) => KeyCode::KeypadDivide,
+        PhysicalKey::Code(WinitKeyCode::NumpadEnter) => KeyCode::KeypadEnter,
+        PhysicalKey::Code(WinitKeyCode::NumpadDecimal) => KeyCode::KeypadPeriod,
+        _ => return None,
+    };
+
+    // Convert egui modifiers to our KeyModifiers
+    let modifiers = KeyModifiers {
+        ctrl: numpad_event.modifiers.ctrl,
+        alt: numpad_event.modifiers.alt,
+        shift: numpad_event.modifiers.shift,
+    };
+
+    Some(KeyEvent { code, modifiers })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

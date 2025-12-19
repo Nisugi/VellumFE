@@ -21,7 +21,14 @@ tui-textarea = "0.7"
 
 # GUI
 egui = "0.33"
-eframe = { version = "0.33", features = ["persistence"] }
+eframe = { version = "0.33", default-features = false, features = ["glow", "persistence"] }
+winit = "0.30.12"       # Match eframe's winit version for custom event loop
+egui-winit = "0.33"     # Direct access for custom event loop
+egui_glow = { version = "0.33", features = ["winit"] }  # OpenGL rendering for custom event loop
+glow = "0.16"           # OpenGL bindings
+glutin = "0.32"         # OpenGL context creation
+glutin-winit = "0.5"    # glutin + winit integration
+raw-window-handle = "0.6"  # Window handle abstraction
 image = "0.24"  # For loading PNG images (injury doll silhouettes)
 
 # Serialization
@@ -68,3 +75,10 @@ sound = ["dep:rodio"]
 opt-level = 3
 lto = true
 codegen-units = 1
+
+# Use forked eframe with numpad key support
+[patch.crates-io]
+eframe = { git = "https://github.com/Nisugi/egui", branch = "numpad-support" }
+egui = { git = "https://github.com/Nisugi/egui", branch = "numpad-support" }
+egui-winit = { git = "https://github.com/Nisugi/egui", branch = "numpad-support" }
+egui_glow = { git = "https://github.com/Nisugi/egui", branch = "numpad-support" }

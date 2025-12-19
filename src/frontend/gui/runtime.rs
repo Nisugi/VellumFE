@@ -1,6 +1,8 @@
 //! GUI Runtime - Network integration for egui frontend
 //!
 //! This module handles the tokio runtime and network connection setup for the GUI.
+//! Numpad key support is provided via the forked eframe which intercepts numpad keys
+//! before egui-winit loses the KeyLocation::Numpad information.
 
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -8,10 +10,13 @@ use tokio::sync::mpsc;
 use super::EguiApp;
 use crate::config::Config;
 use crate::core::AppCore;
-use crate::network::{DirectConnectConfig, LichConnection, DirectConnection, ServerMessage};
+use crate::network::{DirectConnectConfig, DirectConnection, LichConnection, ServerMessage};
 
 /// Run the GUI frontend with the given configuration.
 /// This is the main entry point for GUI mode.
+///
+/// Numpad key detection is handled by the forked eframe which intercepts
+/// numpad keys at the winit level before egui-winit processes them.
 pub fn run(
     config: Config,
     character: Option<String>,
@@ -54,7 +59,8 @@ async fn async_run(
         None => {
             let host_clone = host.clone();
             tokio::spawn(async move {
-                if let Err(e) = LichConnection::start(&host_clone, port, server_tx, command_rx).await {
+                if let Err(e) = LichConnection::start(&host_clone, port, server_tx, command_rx).await
+                {
                     tracing::error!(error = ?e, "Network connection error");
                 }
             })

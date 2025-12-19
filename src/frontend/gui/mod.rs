@@ -2,6 +2,13 @@
 //!
 //! This module implements the GUI frontend using egui/eframe.
 //! It provides a native windowed interface with moveable/resizable widgets.
+//!
+//! ## Numpad Key Support
+//!
+//! Numpad key distinction is provided by a forked eframe which intercepts
+//! keyboard events at the winit level before egui-winit processes them.
+//! This allows numpad keys (num_0 through num_9, num_+, etc.) to be bound
+//! separately from regular number keys.
 
 mod input;
 mod runtime;
@@ -138,6 +145,10 @@ pub struct EguiApp {
 
     /// GUI state for tabbed text windows (window_name → tab state)
     tabbed_text_states: HashMap<String, widgets::GuiTabbedTextState>,
+
+    /// Pending numpad key events intercepted by custom event loop
+    /// These are processed BEFORE regular egui keys in handle_keybinds()
+    pub pending_numpad_keys: Vec<crate::frontend::common::KeyEvent>,
 }
 
 impl EguiApp {
@@ -170,6 +181,7 @@ impl EguiApp {
             cached_theme,
             injury_textures: HashMap::new(),
             tabbed_text_states: HashMap::new(),
+            pending_numpad_keys: Vec::new(),
         }
     }
 
@@ -206,6 +218,7 @@ impl EguiApp {
             cached_theme,
             injury_textures: HashMap::new(),
             tabbed_text_states: HashMap::new(),
+            pending_numpad_keys: Vec::new(),
         }
     }
 
@@ -253,7 +266,7 @@ impl EguiApp {
     }
 
     /// Poll for server messages and process them
-    fn poll_server_messages(&mut self) {
+    pub fn poll_server_messages(&mut self) {
         if let Some(ref mut rx) = self.server_rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -279,7 +292,7 @@ impl EguiApp {
     }
 
     /// Send a command to the server
-    fn send_command(&mut self, command: String) {
+    pub fn send_command(&mut self, command: String) {
         let trimmed = command.trim();
 
         // Add to history (even for dot commands)
@@ -1106,7 +1119,7 @@ impl EguiApp {
 
     /// Sync room data from app_core.room_components to WindowContent::Room
     /// This is the GUI equivalent of TUI's sync_room_windows
-    fn sync_room_data(&mut self) {
+    pub fn sync_room_data(&mut self) {
         use crate::data::widget::{RoomContent, StyledLine};
 
         // Only sync if room data has changed
@@ -2189,28 +2202,117 @@ impl EguiApp {
         None
     }
 
+    /// Get the background clear color for the window (from theme)
+    pub fn get_clear_color(&self) -> [f32; 3] {
+        let bg = &self.cached_theme.window_background;
+        [
+            bg.r as f32 / 255.0,
+            bg.g as f32 / 255.0,
+            bg.b as f32 / 255.0,
+        ]
+    }
+
+    /// Render the main UI (called by custom event loop)
+    /// This is the main rendering entry point, containing all the window rendering logic
+    pub fn render_ui(&mut self, ctx: &egui::Context) {
+        // Decrement skip menu enter frames counter
+        if self.skip_menu_enter_frames > 0 {
+            self.skip_menu_enter_frames -= 1;
+        }
+
+        // Background panel
+        egui::CentralPanel::default().show(ctx, |_ui| {});
+
+        // Connection status
+        let status = if self.connected {
+            "🟢 Connected"
+        } else {
+            "🔴 Disconnected"
+        };
+
+        // Collect window info to avoid borrow issues
+        let windows_info: Vec<_> = self
+            .app_core
+            .ui_state
+            .windows
+            .iter()
+            .filter(|(_, state)| state.visible)
+            .map(|(name, state)| {
+                let gui_state = self.window_manager.get_or_create(name);
+                (
+                    name.clone(),
+                    state.widget_type.clone(),
+                    gui_state.position,
+                    gui_state.size,
+                    gui_state.show_title_bar,
+                    gui_state.position_override,
+                )
+            })
+            .collect();
+
+        // Note: This is a simplified render_ui for the custom event loop.
+        // The full rendering logic from the eframe::App::update method will be called
+        // when we fully transition to the custom loop.
+        // For now, the eframe::App impl handles rendering via update().
+
+        // TODO: Move full rendering logic here when custom event loop is fully enabled
+        let _ = (status, windows_info); // Suppress unused warnings
+    }
+
     /// Handle keybinds from egui input
     /// Returns commands to send to server (from macros)
-    fn handle_keybinds(&mut self, ctx: &egui::Context) -> Vec<String> {
+    ///
+    /// NOTE: Numpad keys are processed FIRST via `pending_numpad_keys` which are
+    /// intercepted by the custom event loop BEFORE egui-winit merges them with
+    /// regular digit keys.
+    pub fn handle_keybinds(&mut self, ctx: &egui::Context) -> Vec<String> {
         let mut commands = Vec::new();
 
-        // Get all key events from this frame
+        // Skip all keybind processing in Menu/Search modes
+        if self.app_core.ui_state.input_mode == InputMode::Menu
+            || self.app_core.ui_state.input_mode == InputMode::Search
+        {
+            // Clear pending numpad keys to avoid stale events
+            self.pending_numpad_keys.clear();
+            return commands;
+        }
+
+        // 1. Process pending numpad keys FIRST (these have higher priority)
+        // These were intercepted by the custom event loop before egui-winit
+        // could merge them with regular digit keys.
+        for key_event in std::mem::take(&mut self.pending_numpad_keys) {
+            if let Some(action) = self.app_core.keybind_map.get(&key_event) {
+                let action = action.clone();
+
+                // Check for quit keybind
+                let key_str = input::key_event_to_keybind_string(&key_event);
+                if key_str == self.app_core.config.global_keybinds.quit {
+                    self.app_core.quit();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    continue;
+                }
+
+                // Execute the keybind action via AppCore
+                match self.app_core.execute_keybind_action(&action) {
+                    Ok(cmds) => {
+                        commands.extend(cmds);
+                    }
+                    Err(e) => {
+                        tracing::error!("Error executing numpad keybind action: {}", e);
+                    }
+                }
+
+                tracing::debug!("Processed numpad keybind: {} -> {:?}", key_str, action);
+            }
+        }
+
+        // 2. Process regular egui key events
         let key_events = input::get_key_events(ctx);
 
         for key_event in key_events {
             // First check if this key has a binding
             if let Some(action) = self.app_core.keybind_map.get(&key_event) {
                 let action = action.clone(); // Clone to avoid borrow issues
-
-                // Skip keybind processing if:
-                // 1. We're in Menu mode (popup menus handle their own input)
-                // 2. We're in Search mode (search handles its own input)
-                // This allows normal mode keybinds to work
-                if self.app_core.ui_state.input_mode == InputMode::Menu
-                    || self.app_core.ui_state.input_mode == InputMode::Search
-                {
-                    continue;
-                }
 
                 // Check for special keybinds that need GUI-level handling
                 // (e.g., quit, which needs to close the window)
@@ -2242,7 +2344,32 @@ impl EguiApp {
 }
 
 impl eframe::App for EguiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    // The new eframe 0.33.3 API requires ui() but we still use update()
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Not used - we use update() instead which gives us access to Context
+    }
+
+    #[allow(deprecated)]
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Capture numpad keys from eframe FIRST (before any other processing)
+        // These are intercepted by the forked eframe before egui-winit loses
+        // the KeyLocation::Numpad information.
+        for numpad_event in frame.numpad_keys() {
+            // Only process key presses, not releases
+            if !numpad_event.pressed {
+                continue;
+            }
+            // Convert to our platform-independent KeyEvent
+            if let Some(key_event) = input::convert_numpad_key_event(numpad_event) {
+                self.pending_numpad_keys.push(key_event);
+                tracing::debug!(
+                    "Captured numpad key: {:?} (numlock={})",
+                    numpad_event.physical_key,
+                    numpad_event.numlock_on
+                );
+            }
+        }
+
         // Poll for server messages
         self.poll_server_messages();
 

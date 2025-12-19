@@ -147,6 +147,8 @@ pub struct Config {
     pub active_theme: String, // Currently active theme name
     #[serde(default)] // Use defaults for window editor
     pub window_editor: WindowEditorConfig, // Window editor panel persistence
+    #[serde(default)] // Use defaults for GUI config
+    pub gui: GuiConfig, // GUI-specific configuration (custom event loop, etc.)
 }
 
 /// Terminal size range to layout mapping
@@ -2596,6 +2598,14 @@ impl Default for TtsConfig {
             speak_main: default_tts_speak_main(),
         }
     }
+}
+
+/// GUI-specific configuration options
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GuiConfig {
+    // Numpad key support is now handled by the forked eframe which intercepts
+    // numpad keys at the winit level before egui-winit processes them.
+    // No configuration needed - it works automatically.
 }
 
 fn default_host() -> String {
@@ -5535,6 +5545,7 @@ impl Default for Config {
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),
             window_editor: WindowEditorConfig::default(),
+            gui: GuiConfig::default(),
         }
     }
 }
