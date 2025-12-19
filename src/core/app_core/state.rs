@@ -166,30 +166,19 @@ impl AppCore {
         // Create parser with presets and event patterns
         let parser = XmlParser::with_presets(preset_list, config.event_patterns.clone());
 
-        // Initialize sound player (skip if config.sound.disabled to avoid audio hardware probe delay)
-        let sound_player = if config.sound.disabled {
-            tracing::info!("Sound system disabled via config (sound.disabled = true)");
-            None
-        } else {
-            match crate::sound::SoundPlayer::new(
-                config.sound.enabled,
-                config.sound.volume,
-                config.sound.cooldown_ms,
-            ) {
-                Ok(player) => {
-                    tracing::debug!("Sound player initialized");
-                    // Ensure sounds directory exists
-                    if let Err(e) = crate::sound::ensure_sounds_directory() {
-                        tracing::warn!("Failed to create sounds directory: {}", e);
-                    }
-                    Some(player)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize sound player: {}", e);
-                    None
-                }
+        // Initialize sound player (if sound feature is enabled)
+        let sound_player = crate::sound::SoundPlayer::new(
+            config.sound.enabled,
+            config.sound.volume,
+            config.sound.cooldown_ms,
+        ).ok();
+        if sound_player.is_some() {
+            tracing::debug!("Sound player initialized");
+            // Ensure sounds directory exists
+            if let Err(e) = crate::sound::ensure_sounds_directory() {
+                tracing::warn!("Failed to create sounds directory: {}", e);
             }
-        };
+        }
 
         // Initialize TTS manager (respects config.tts.enabled)
         let tts_manager = crate::tts::TtsManager::new(
