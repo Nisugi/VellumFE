@@ -1017,6 +1017,56 @@ pub struct SpellsWidgetData {
     // No extra fields currently - uses "spells" stream
 }
 
+/// Text replacement rule for perception widget
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextReplacement {
+    pub pattern: String,   // Pattern to find (literal string match)
+    pub replace: String,   // Replacement text (empty string to remove)
+}
+
+/// Sort direction for perception entries
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SortDirection {
+    #[serde(rename = "ascending")]
+    Ascending,   // Lowest weight first (Fading → Roisaen → Other → Indefinite → OM → Percentage)
+
+    #[serde(rename = "descending")]
+    Descending,  // Highest weight first (Percentage → OM → Indefinite → Other → Roisaen → Fading)
+}
+
+impl Default for SortDirection {
+    fn default() -> Self {
+        Self::Descending
+    }
+}
+
+fn default_perception_stream() -> String {
+    "percWindow".to_string()
+}
+
+fn default_perception_buffer_size() -> usize {
+    100
+}
+
+/// Perception window widget specific data
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PerceptionWidgetData {
+    #[serde(default = "default_perception_stream")]
+    pub stream: String,              // Stream ID to receive perception data from
+
+    #[serde(default = "default_perception_buffer_size")]
+    pub buffer_size: usize,          // Maximum number of perception entries to keep
+
+    #[serde(default)]
+    pub sort_direction: SortDirection,  // Ascending or descending sort by weight
+
+    #[serde(default)]
+    pub text_replacements: Vec<TextReplacement>,  // User-defined find/replace rules
+
+    #[serde(default)]
+    pub use_short_spell_names: bool,  // Use abbreviated spell names (Profanity-style)
+}
+
 /// Window definition - enum with widget-specific variants
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "widget_type")]
@@ -1163,6 +1213,14 @@ pub enum WindowDef {
         #[serde(flatten)]
         data: SpellsWidgetData,
     },
+
+    #[serde(rename = "perception")]
+    Perception {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: PerceptionWidgetData,
+    },
 }
 
 impl WindowDef {
@@ -1187,6 +1245,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
+            WindowDef::Perception { base, .. } => &base.name,
         }
     }
 
@@ -1211,6 +1270,7 @@ impl WindowDef {
             WindowDef::Players { .. } => "players",
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Spells { .. } => "spells",
+            WindowDef::Perception { .. } => "perception",
         }
     }
 
@@ -1235,6 +1295,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
+            WindowDef::Perception { base, .. } => base,
         }
     }
 
@@ -1259,6 +1320,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
+            WindowDef::Perception { base, .. } => base,
         }
     }
 }
@@ -3352,6 +3414,27 @@ impl Config {
                 data: SpacerWidgetData {},
             }),
 
+            "perception" => Some(WindowDef::Perception {
+                base: WindowBase {
+                    name: "perception".to_string(),
+                    title: Some("Perceptions".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 20,
+                    cols: 40,
+                    min_rows: Some(5),
+                    min_cols: Some(20),
+                    ..base_defaults
+                },
+                data: PerceptionWidgetData {
+                    stream: "percWindow".to_string(),
+                    buffer_size: 100,
+                    sort_direction: SortDirection::Descending,
+                    text_replacements: vec![],
+                    use_short_spell_names: false,
+                },
+            }),
+
             _ => None,
         }
     }
@@ -3466,6 +3549,7 @@ impl Config {
             "injuries".to_string(),
             "spacer".to_string(),
             "performance".to_string(),
+            "perception".to_string(),
             // command_input is NOT in this list - it's always present and can't be added/removed
         ];
 

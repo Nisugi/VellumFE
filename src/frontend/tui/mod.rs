@@ -28,6 +28,7 @@ pub mod keybind_browser;
 pub mod keybind_form;
 pub mod menu_actions;
 pub mod menu_builders;
+mod perception;
 mod performance_stats;
 mod players;
 mod popup_menu;

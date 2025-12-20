@@ -38,9 +38,54 @@ pub enum WidgetType {
     Spells,
     Spacer,
     Performance,
+    Perception,
 }
 
-// helper maybe not needed currently
+impl WidgetType {
+    /// Parse a widget type string to WidgetType enum
+    ///
+    /// Returns Text as the default for unknown widget types.
+    pub fn from_str(s: &str) -> Self {
+        Self::try_from_str(s).unwrap_or(WidgetType::Text)
+    }
+
+    /// Try to parse a widget type string to WidgetType enum
+    ///
+    /// Returns None for unknown widget types.
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "text" => Some(WidgetType::Text),
+            "tabbedtext" => Some(WidgetType::TabbedText),
+            "progress" => Some(WidgetType::Progress),
+            "countdown" => Some(WidgetType::Countdown),
+            "compass" => Some(WidgetType::Compass),
+            "injury_doll" | "injuries" => Some(WidgetType::InjuryDoll),
+            "indicator" => Some(WidgetType::Indicator),
+            "room" => Some(WidgetType::Room),
+            "inventory" => Some(WidgetType::Inventory),
+            "command_input" | "commandinput" => Some(WidgetType::CommandInput),
+            "dashboard" => Some(WidgetType::Dashboard),
+            "hand" => Some(WidgetType::Hand),
+            "active_effects" => Some(WidgetType::ActiveEffects),
+            "targets" => Some(WidgetType::Targets),
+            "players" => Some(WidgetType::Players),
+            "spells" => Some(WidgetType::Spells),
+            "perception" => Some(WidgetType::Perception),
+            "performance" => Some(WidgetType::Performance),
+            "spacer" => Some(WidgetType::Spacer),
+            "map" => Some(WidgetType::Map),
+            _ => None,
+        }
+    }
+
+    /// List of valid widget type names for help messages
+    pub const VALID_TYPES: &'static [&'static str] = &[
+        "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
+        "indicator", "room", "inventory", "command_input", "dashboard", "hand",
+        "active_effects", "targets", "players", "spells", "perception", "performance",
+        "spacer", "map",
+    ];
+}
 
 /// Window content - what the window displays
 #[derive(Clone, Debug)]
@@ -80,6 +125,7 @@ pub enum WindowContent {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },
     Performance,
+    Perception(PerceptionData), // Perception window - sorted spells/buffs
     Empty, // For spacers or not-yet-implemented widgets
 }
 
@@ -223,6 +269,7 @@ mod tests {
             WidgetType::Spells,
             WidgetType::Spacer,
             WidgetType::Performance,
+            WidgetType::Perception,
         ];
 
         // All variants should be distinct

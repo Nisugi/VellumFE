@@ -14,6 +14,7 @@ mod parser;
 mod performance;
 mod selection;
 mod sound;
+mod spell_abbrevs;
 mod theme;
 mod tts;
 

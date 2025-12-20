@@ -320,6 +320,36 @@ impl StyledLine {
     }
 }
 
+// ==================== Perception Window Structures ====================
+
+/// Perception entry with parsed format and calculated weight for sorting
+#[derive(Clone, Debug, PartialEq)]
+pub struct PerceptionEntry {
+    pub name: String,                    // "Bless", "Monkey"
+    pub format: PerceptionFormat,        // Parsed format type
+    pub raw_text: String,                // Original text
+    pub weight: i32,                     // Sort priority
+    pub link_data: Option<LinkData>,     // Optional clickable link
+}
+
+/// Perception format types detected from parenthetical suffixes
+#[derive(Clone, Debug, PartialEq)]
+pub enum PerceptionFormat {
+    OngoingMagic,           // (OM)
+    Indefinite,             // (Indefinite) or (Cyclic)
+    Fading,                 // (Fading)
+    Percentage(u8),         // (94%)
+    Roisaen(u32),           // (82 roisaen)
+    Other(String),          // Unknown formats
+}
+
+/// Perception window content (sorted entries)
+#[derive(Clone, Debug, PartialEq)]
+pub struct PerceptionData {
+    pub entries: Vec<PerceptionEntry>,   // Sorted by weight
+    pub last_update: i64,                // Unix timestamp
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

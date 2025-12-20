@@ -168,6 +168,11 @@ impl Players {
         self.container.set_transparent_background(transparent);
     }
 
+    /// Set highlight patterns for this widget
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        self.container.set_highlights(highlights);
+    }
+
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.container.render(area, buf);
     }

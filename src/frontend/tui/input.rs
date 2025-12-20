@@ -2403,9 +2403,16 @@ impl TuiFrontend {
                     } else if editor.is_on_tab_bar_position() {
                         editor.cycle_tab_bar_position();
                         app_core.needs_render = true;
+                    } else if editor.is_on_perception_sort_direction() {
+                        editor.cycle_perception_sort_direction();
+                        app_core.needs_render = true;
+                    } else if editor.is_on_perception_short_spell_names() {
+                        editor.toggle_perception_short_spell_names();
+                        app_core.needs_render = true;
                     } else if editor.is_on_edit_tabs()
                         || editor.is_on_edit_indicators()
                         || editor.is_on_perf_metrics_button()
+                        || editor.is_on_perception_replacements()
                     {
                         editor.toggle_field();
                         app_core.needs_render = true;
@@ -2446,6 +2453,9 @@ impl TuiFrontend {
                             || editor.is_on_edit_tabs()
                             || editor.is_on_edit_indicators()
                             || editor.is_on_perf_metrics_button()
+                            || editor.is_on_perception_sort_direction()
+                            || editor.is_on_perception_short_spell_names()
+                            || editor.is_on_perception_replacements()
                         {
                             if editor.is_on_checkbox() {
                                 editor.toggle_field();
@@ -2455,11 +2465,16 @@ impl TuiFrontend {
                                 editor.cycle_title_position(false);
                             } else if editor.is_on_tab_bar_position() {
                                 editor.cycle_tab_bar_position();
+                            } else if editor.is_on_perception_sort_direction() {
+                                editor.cycle_perception_sort_direction();
+                            } else if editor.is_on_perception_short_spell_names() {
+                                editor.toggle_perception_short_spell_names();
                             } else if editor.is_on_border_style() {
                                 editor.cycle_border_style(false);
                             } else if editor.is_on_edit_tabs()
                                 || editor.is_on_edit_indicators()
                                 || editor.is_on_perf_metrics_button()
+                                || editor.is_on_perception_replacements()
                             {
                                 editor.toggle_field();
                             }

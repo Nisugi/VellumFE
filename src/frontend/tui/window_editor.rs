@@ -40,6 +40,11 @@ const TITLE_POSITION_OPTIONS: &[&str] = &[
     "bottom-right",
 ];
 
+const SORT_DIRECTION_OPTIONS: &[&str] = &[
+    "ascending",
+    "descending",
+];
+
 /// Field reference for linear navigation/rendering
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FieldRef {
@@ -122,6 +127,12 @@ enum FieldRef {
     DashboardHideInactive,
     PerfEnableMonitor,
     PerfChooseMetrics,
+
+    // Perception widget fields
+    // Note: stream and buffer_size are NOT configurable - hardcoded internally
+    PerceptionSortDirection,
+    PerceptionTextReplacements,
+    PerceptionUseShortSpellNames,
 }
 
 impl FieldRef {
@@ -204,6 +215,9 @@ impl FieldRef {
             FieldRef::HandIcon => 89,
             FieldRef::HandIconColor => 90,
             FieldRef::HandTextColor => 91,
+            FieldRef::PerceptionSortDirection => 93,
+            FieldRef::PerceptionTextReplacements => 94,
+            FieldRef::PerceptionUseShortSpellNames => 95,
         }
     }
 }
@@ -392,6 +406,157 @@ impl TabEditor {
     fn move_down(&mut self) {
         if self.selected + 1 < self.tabs.len() {
             self.tabs.swap(self.selected, self.selected + 1);
+            self.selected += 1;
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Text Replacements Editor (for Perception widget)
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+struct TextReplacementItem {
+    pattern: String,
+    replace: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextReplacementsEditorMode {
+    List,
+    Form,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextReplacementsFormField {
+    Pattern,
+    Replace,
+}
+
+#[derive(Clone, Debug)]
+struct TextReplacementsEditor {
+    replacements: Vec<TextReplacementItem>,
+    selected: usize,
+    mode: TextReplacementsEditorMode,
+    form_field: TextReplacementsFormField,
+    pattern_input: TextArea<'static>,
+    replace_input: TextArea<'static>,
+    editing_index: Option<usize>,
+}
+
+impl TextReplacementsEditor {
+    fn from_replacements(replacements: &[crate::config::TextReplacement]) -> Self {
+        let items: Vec<TextReplacementItem> = replacements
+            .iter()
+            .map(|r| TextReplacementItem {
+                pattern: r.pattern.clone(),
+                replace: r.replace.clone(),
+            })
+            .collect();
+
+        let pattern_input = WindowEditor::create_textarea();
+        let replace_input = WindowEditor::create_textarea();
+
+        Self {
+            replacements: items,
+            selected: 0,
+            mode: TextReplacementsEditorMode::List,
+            form_field: TextReplacementsFormField::Pattern,
+            pattern_input,
+            replace_input,
+            editing_index: None,
+        }
+    }
+
+    fn to_replacements(&self) -> Vec<crate::config::TextReplacement> {
+        self.replacements
+            .iter()
+            .map(|r| crate::config::TextReplacement {
+                pattern: r.pattern.clone(),
+                replace: r.replace.clone(),
+            })
+            .collect()
+    }
+
+    fn start_add(&mut self) {
+        self.mode = TextReplacementsEditorMode::Form;
+        self.form_field = TextReplacementsFormField::Pattern;
+        self.editing_index = None;
+        self.pattern_input = WindowEditor::create_textarea();
+        self.replace_input = WindowEditor::create_textarea();
+    }
+
+    fn start_edit(&mut self) {
+        if let Some(item) = self.replacements.get(self.selected).cloned() {
+            self.mode = TextReplacementsEditorMode::Form;
+            self.form_field = TextReplacementsFormField::Pattern;
+            self.editing_index = Some(self.selected);
+            self.pattern_input = WindowEditor::create_textarea();
+            self.replace_input = WindowEditor::create_textarea();
+            self.pattern_input.insert_str(&item.pattern);
+            self.replace_input.insert_str(&item.replace);
+        }
+    }
+
+    fn save_form(&mut self) {
+        let pattern = self
+            .pattern_input
+            .lines()
+            .get(0)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let replace = self
+            .replace_input
+            .lines()
+            .get(0)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        // Pattern is required, but replace can be empty (to remove text)
+        if pattern.is_empty() {
+            return;
+        }
+
+        let item = TextReplacementItem { pattern, replace };
+
+        if let Some(idx) = self.editing_index {
+            if idx < self.replacements.len() {
+                self.replacements[idx] = item;
+                self.selected = idx;
+            }
+        } else {
+            self.replacements.push(item);
+            self.selected = self.replacements.len().saturating_sub(1);
+        }
+
+        self.mode = TextReplacementsEditorMode::List;
+        self.editing_index = None;
+    }
+
+    fn cancel_form(&mut self) {
+        self.mode = TextReplacementsEditorMode::List;
+        self.editing_index = None;
+    }
+
+    fn delete_selected(&mut self) {
+        if self.selected < self.replacements.len() {
+            self.replacements.remove(self.selected);
+            if self.selected >= self.replacements.len() && self.selected > 0 {
+                self.selected = self.replacements.len().saturating_sub(1);
+            }
+        }
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.replacements.swap(self.selected, self.selected - 1);
+            self.selected -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.replacements.len() {
+            self.replacements.swap(self.selected, self.selected + 1);
             self.selected += 1;
         }
     }
@@ -822,6 +987,10 @@ pub struct WindowEditor {
     perf_show_memory_delta: bool,
     available_indicators: Vec<IndicatorItem>,
 
+    // Perception widget (stream and buffer_size hardcoded, only sort_direction configurable)
+    perception_sort_direction_input: TextArea<'static>,
+    perception_use_short_spell_names: bool,
+
     window_def: WindowDef,
     original_window_def: WindowDef,
     is_new: bool,
@@ -829,6 +998,7 @@ pub struct WindowEditor {
     tab_editor: Option<TabEditor>,
     indicator_editor: Option<IndicatorEditor>,
     performance_metrics_editor: Option<PerformanceMetricsEditor>,
+    text_replacements_editor: Option<TextReplacementsEditor>,
 }
 
 impl WindowEditor {
@@ -1081,6 +1251,12 @@ impl WindowEditor {
             WindowDef::Performance { .. } => {
                 fields.push(FieldRef::PerfEnableMonitor);
                 fields.push(FieldRef::PerfChooseMetrics);
+            }
+            WindowDef::Perception { .. } => {
+                // Only sort_direction is configurable (stream="percWindow", buffer_size=100 are hardcoded)
+                fields.push(FieldRef::PerceptionSortDirection);
+                fields.push(FieldRef::PerceptionUseShortSpellNames);
+                fields.push(FieldRef::PerceptionTextReplacements);
             }
         }
 
@@ -1426,6 +1602,19 @@ impl WindowEditor {
             show_name = data.show_name;
         }
 
+        // Perception widget fields
+        // Note: stream and buffer_size are hardcoded - only sort_direction is user-configurable
+        let mut perception_sort_direction_input = Self::create_textarea();
+        let mut perception_use_short_spell_names = false;
+
+        if let crate::config::WindowDef::Perception { data, .. } = &window_def {
+            perception_sort_direction_input.insert_str(match data.sort_direction {
+                crate::config::SortDirection::Ascending => "ascending",
+                crate::config::SortDirection::Descending => "descending",
+            });
+            perception_use_short_spell_names = data.use_short_spell_names;
+        }
+
         let mut content_align_input = Self::create_textarea();
         if let Some(ref align) = window_def.base().content_align {
             content_align_input.insert_str(align);
@@ -1524,6 +1713,8 @@ impl WindowEditor {
             perf_show_event_lag,
             perf_show_memory_delta,
             available_indicators: Vec::new(),
+            perception_sort_direction_input,
+            perception_use_short_spell_names,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: false,
@@ -1531,6 +1722,7 @@ impl WindowEditor {
             tab_editor: None,
             indicator_editor: None,
             performance_metrics_editor: None,
+            text_replacements_editor: None,
         }
     }
 
@@ -1737,6 +1929,11 @@ impl WindowEditor {
         let show_exits = true;
         let show_name = false;
 
+        // Perception widget - default to descending sort, short names off
+        let mut perception_sort_direction_input = Self::create_textarea();
+        perception_sort_direction_input.insert_str("descending");
+        let perception_use_short_spell_names = false;
+
         let field_order = Self::build_field_order_for(&window_def);
 
         Self {
@@ -1830,6 +2027,8 @@ impl WindowEditor {
             perf_show_event_lag,
             perf_show_memory_delta,
             available_indicators: Vec::new(),
+            perception_sort_direction_input,
+            perception_use_short_spell_names,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: true,
@@ -1837,6 +2036,7 @@ impl WindowEditor {
             tab_editor: None,
             indicator_editor: None,
             performance_metrics_editor: None,
+            text_replacements_editor: None,
         }
     }
 
@@ -1903,7 +2103,7 @@ impl WindowEditor {
     }
 
     pub fn is_sub_editor_active(&self) -> bool {
-        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some()
+        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some()
     }
 
     fn footer_help_text(&self) -> &str {
@@ -1917,6 +2117,11 @@ impl WindowEditor {
         }
         if let Some(editor) = self.tab_editor.as_ref() {
             if matches!(editor.mode, TabEditorMode::List) {
+                return "[A: Add]─[E: Edit]─[Del: Delete]─[Shift+↑/↓: Re-order]─[Esc: Back]";
+            }
+        }
+        if let Some(editor) = self.text_replacements_editor.as_ref() {
+            if matches!(editor.mode, TextReplacementsEditorMode::List) {
                 return "[A: Add]─[E: Edit]─[Del: Delete]─[Shift+↑/↓: Re-order]─[Esc: Back]";
             }
         }
@@ -1948,6 +2153,30 @@ impl WindowEditor {
     fn open_performance_metrics_editor(&mut self) {
         let items = self.perf_group_states();
         self.performance_metrics_editor = Some(PerformanceMetricsEditor::new(items));
+    }
+
+    fn open_perception_replacements_editor(&mut self) {
+        if let WindowDef::Perception { data, .. } = &self.window_def {
+            self.text_replacements_editor =
+                Some(TextReplacementsEditor::from_replacements(&data.text_replacements));
+        } else {
+            self.status_message =
+                "Text replacements editor only available for Perception windows".to_string();
+        }
+    }
+
+    fn commit_text_replacements_editor(&mut self) {
+        if let (Some(editor), WindowDef::Perception { data, .. }) =
+            (self.text_replacements_editor.clone(), &mut self.window_def)
+        {
+            // If the editor is in form mode, capture in-progress edits
+            let mut editor = editor;
+            if editor.mode == TextReplacementsEditorMode::Form {
+                editor.save_form();
+            }
+            data.text_replacements = editor.to_replacements();
+            self.text_replacements_editor = Some(editor);
+        }
     }
 
     fn commit_tab_editor(&mut self) {
@@ -1990,6 +2219,9 @@ impl WindowEditor {
         }
         if self.performance_metrics_editor.is_some() {
             self.commit_performance_metrics_editor();
+        }
+        if self.text_replacements_editor.is_some() {
+            self.commit_text_replacements_editor();
         }
     }
 
@@ -2082,6 +2314,12 @@ impl WindowEditor {
                 return true;
             }
         }
+        if let Some(editor) = self.text_replacements_editor.as_mut() {
+            if matches!(editor.mode, TextReplacementsEditorMode::Form) {
+                editor.save_form();
+                return true;
+            }
+        }
         false
     }
 
@@ -2099,6 +2337,11 @@ impl WindowEditor {
         if self.performance_metrics_editor.is_some() {
             self.commit_performance_metrics_editor();
             self.performance_metrics_editor = None;
+            return true;
+        }
+        if self.text_replacements_editor.is_some() {
+            self.commit_text_replacements_editor();
+            self.text_replacements_editor = None;
             return true;
         }
         false
@@ -2175,6 +2418,26 @@ impl WindowEditor {
     /// Check if the current field is the Edit Indicators button
     pub fn is_on_edit_indicators(&self) -> bool {
         matches!(self.current_field_ref(), Some(FieldRef::EditIndicators))
+    }
+
+    /// Check if the current field is the Perception Sort Direction dropdown
+    pub fn is_on_perception_sort_direction(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::PerceptionSortDirection))
+    }
+
+    /// Check if the current field is the Perception Text Replacements button
+    pub fn is_on_perception_replacements(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::PerceptionTextReplacements))
+    }
+
+    /// Check if the current field is the Perception Short Spell Names checkbox
+    pub fn is_on_perception_short_spell_names(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::PerceptionUseShortSpellNames))
+    }
+
+    /// Toggle the perception short spell names setting
+    pub fn toggle_perception_short_spell_names(&mut self) {
+        self.perception_use_short_spell_names = !self.perception_use_short_spell_names;
     }
 
     /// Cycle to the next/previous border style
@@ -2270,6 +2533,28 @@ impl WindowEditor {
         let mut ta = Self::create_textarea();
         ta.insert_str(next);
         self.tab_bar_position_input = ta;
+    }
+
+    /// Cycle perception sort direction
+    pub fn cycle_perception_sort_direction(&mut self) {
+        let current = self
+            .perception_sort_direction_input
+            .lines()
+            .get(0)
+            .map(|s| s.trim().to_lowercase())
+            .unwrap_or_else(|| "descending".to_string());
+
+        let len = SORT_DIRECTION_OPTIONS.len();
+        let current_idx = SORT_DIRECTION_OPTIONS
+            .iter()
+            .position(|opt| opt.eq_ignore_ascii_case(&current))
+            .unwrap_or(1); // Default to "descending" if not found
+        let next_idx = (current_idx + 1) % len;
+        let new_value = SORT_DIRECTION_OPTIONS[next_idx];
+
+        let mut ta = Self::create_textarea();
+        ta.insert_str(new_value);
+        self.perception_sort_direction_input = ta;
     }
 
     pub fn input(&mut self, input: ratatui::crossterm::event::KeyEvent) {
@@ -2414,6 +2699,15 @@ impl WindowEditor {
             _ if id == FieldRef::ActiveEffectsCategory.legacy_field_id() => {
                 self.active_effects_category_input.input(input);
             }
+            _ if id == FieldRef::PerceptionSortDirection.legacy_field_id() => {
+                // Dropdown field - do not accept text input (use Enter/Space to cycle)
+            }
+            _ if id == FieldRef::PerceptionTextReplacements.legacy_field_id() => {
+                // Button field - do not accept text input (use Enter/Space to activate)
+            }
+            _ if id == FieldRef::PerceptionUseShortSpellNames.legacy_field_id() => {
+                // Checkbox field - do not accept text input (use Enter/Space to toggle)
+            }
             _ if id == FieldRef::DashboardLayout.legacy_field_id() => {
                 self.dashboard_layout_input.input(input);
             }
@@ -2533,11 +2827,17 @@ impl WindowEditor {
                         FieldRef::TitlePosition => {
                             self.cycle_title_position(false);
                         }
+                        FieldRef::PerceptionSortDirection => {
+                            self.cycle_perception_sort_direction();
+                        }
                         FieldRef::EditTabs => {
                             self.open_tab_editor();
                         }
                         FieldRef::EditIndicators => {
                             self.open_indicator_editor();
+                        }
+                        FieldRef::PerceptionTextReplacements => {
+                            self.open_perception_replacements_editor();
                         }
                         FieldRef::DashboardHideInactive => {
                             self.dashboard_hide_inactive = !self.dashboard_hide_inactive;
@@ -2589,6 +2889,12 @@ impl WindowEditor {
         }
         if let Some(editor) = self.indicator_editor.as_mut() {
             if matches!(editor.mode, IndicatorEditorMode::Form) {
+                editor.cancel_form();
+                return true;
+            }
+        }
+        if let Some(editor) = self.text_replacements_editor.as_mut() {
+            if matches!(editor.mode, TextReplacementsEditorMode::Form) {
                 editor.cancel_form();
                 return true;
             }
@@ -2666,6 +2972,32 @@ impl WindowEditor {
             return true;
         }
 
+        if let Some(editor) = self.text_replacements_editor.as_mut() {
+            match editor.mode {
+                TextReplacementsEditorMode::List => {
+                    let len = editor.replacements.len();
+                    if len == 0 {
+                        editor.selected = 0;
+                    } else if down {
+                        editor.selected = (editor.selected + 1) % len;
+                    } else if editor.selected == 0 {
+                        editor.selected = len.saturating_sub(1);
+                    } else {
+                        editor.selected -= 1;
+                    }
+                }
+                TextReplacementsEditorMode::Form => {
+                    editor.form_field = match (editor.form_field, down) {
+                        (TextReplacementsFormField::Pattern, true) => TextReplacementsFormField::Replace,
+                        (TextReplacementsFormField::Replace, true) => TextReplacementsFormField::Pattern,
+                        (TextReplacementsFormField::Pattern, false) => TextReplacementsFormField::Replace,
+                        (TextReplacementsFormField::Replace, false) => TextReplacementsFormField::Pattern,
+                    };
+                }
+            }
+            return true;
+        }
+
         false
     }
 
@@ -2694,6 +3026,17 @@ impl WindowEditor {
 
         if self.performance_metrics_editor.is_some() {
             return true;
+        }
+
+        if let Some(editor) = self.text_replacements_editor.as_mut() {
+            if matches!(editor.mode, TextReplacementsEditorMode::List) {
+                if down {
+                    editor.move_down();
+                } else {
+                    editor.move_up();
+                }
+                return true;
+            }
         }
 
         false
@@ -2900,6 +3243,88 @@ impl WindowEditor {
             }
         }
 
+        if let Some(editor) = self.text_replacements_editor.as_mut() {
+            match editor.mode {
+                TextReplacementsEditorMode::List => match key_event.code {
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        editor.start_add();
+                        return true;
+                    }
+                    KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+                        if !editor.replacements.is_empty() {
+                            editor.start_edit();
+                        }
+                        return true;
+                    }
+                    KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                        editor.delete_selected();
+                        return true;
+                    }
+                    KeyCode::Up => {
+                        if key_event.modifiers.contains_shift() {
+                            editor.move_up();
+                        } else if editor.replacements.is_empty() {
+                            editor.selected = 0;
+                        } else if editor.selected == 0 {
+                            editor.selected = editor.replacements.len().saturating_sub(1);
+                        } else {
+                            editor.selected -= 1;
+                        }
+                        return true;
+                    }
+                    KeyCode::Down => {
+                        if key_event.modifiers.contains_shift() {
+                            editor.move_down();
+                        } else if editor.replacements.is_empty() {
+                            editor.selected = 0;
+                        } else {
+                            editor.selected = (editor.selected + 1) % editor.replacements.len();
+                        }
+                        return true;
+                    }
+                    KeyCode::Esc => {
+                        self.close_sub_editor();
+                        return true;
+                    }
+                    _ => {}
+                },
+                TextReplacementsEditorMode::Form => match key_event.code {
+                    KeyCode::Esc => {
+                        editor.cancel_form();
+                        return true;
+                    }
+                    KeyCode::Enter => {
+                        editor.save_form();
+                        return true;
+                    }
+                    KeyCode::Tab => {
+                        self.handle_sub_editor_navigation(true);
+                        return true;
+                    }
+                    KeyCode::BackTab => {
+                        self.handle_sub_editor_navigation(false);
+                        return true;
+                    }
+                    _ => {
+                        let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
+                        let ct_mods =
+                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
+                        let ev = textarea_bridge::to_textarea_event(key);
+                        match editor.form_field {
+                            TextReplacementsFormField::Pattern => {
+                                editor.pattern_input.input(ev);
+                            }
+                            TextReplacementsFormField::Replace => {
+                                editor.replace_input.input(ev);
+                            }
+                        };
+                        return true;
+                    }
+                },
+            }
+        }
+
         false
     }
 
@@ -3018,6 +3443,30 @@ impl WindowEditor {
             data.show_players = self.show_players;
             data.show_exits = self.show_exits;
             data.show_name = self.show_name;
+        }
+
+        if let crate::config::WindowDef::Perception { data, .. } = &mut self.window_def {
+            // Stream is ALWAYS "percWindow" - hardcoded, not user-editable
+            data.stream = "percWindow".to_string();
+
+            // Buffer size is ALWAYS 100 - hardcoded (window clears on each update)
+            data.buffer_size = 100;
+
+            // Parse sort direction
+            data.sort_direction = match self.perception_sort_direction_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_lowercase())
+                .as_deref()
+            {
+                Some("ascending") => crate::config::SortDirection::Ascending,
+                _ => crate::config::SortDirection::Descending,
+            };
+
+            // Short spell names toggle
+            data.use_short_spell_names = self.perception_use_short_spell_names;
+
+            // text_replacements are handled by the TextReplacementsEditor
         }
 
         if let crate::config::WindowDef::Progress { data, .. } = &mut self.window_def {
@@ -3364,7 +3813,8 @@ impl WindowEditor {
         // Draw combined bottom border with footer hints
         let inner_width = popup_area.width.saturating_sub(2);
         let help = self.footer_help_text();
-        let pad_len = inner_width.saturating_sub(1 + help.len() as u16) as usize;
+        // Use chars().count() not len() - help contains multi-byte Unicode chars like "─"
+        let pad_len = inner_width.saturating_sub(1 + help.chars().count() as u16) as usize;
         let pad = "─".repeat(pad_len);
         let mut interior = String::from("─");
         interior.push_str(help);
@@ -3411,6 +3861,12 @@ impl WindowEditor {
         if let Some(mut editor) = self.performance_metrics_editor.take() {
             self.render_performance_metrics_editor(area, buf, theme, &mut editor);
             self.performance_metrics_editor = Some(editor);
+            return;
+        }
+
+        if let Some(mut editor) = self.text_replacements_editor.take() {
+            self.render_text_replacements_editor(area, buf, theme, &mut editor);
+            self.text_replacements_editor = Some(editor);
         }
     }
 
@@ -3656,6 +4112,103 @@ impl WindowEditor {
                 self.truncate_to_width(&line, area.width.saturating_sub(2)),
                 Style::default().fg(color),
             );
+        }
+    }
+
+    fn render_text_replacements_editor(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &EditorTheme,
+        editor: &mut TextReplacementsEditor,
+    ) {
+        let header_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.section_header_color));
+        buf.set_string(area.x + 1, area.y, "Text Replacements Editor", header_style);
+
+        match editor.mode {
+            TextReplacementsEditorMode::List => {
+                // Footer help is shown in the border, no need for separate footer here
+
+                if editor.replacements.is_empty() {
+                    let empty_msg = "(No replacements defined - press 'a' to add)";
+                    let msg_style = Style::default()
+                        .fg(crossterm_bridge::to_ratatui_color(theme.label_color))
+                        .add_modifier(Modifier::DIM);
+                    buf.set_string(area.x + 1, area.y + 2, empty_msg, msg_style);
+                    return;
+                }
+
+                let max_rows = area.height.saturating_sub(3) as usize;
+                let available_width = area.width.saturating_sub(4) as usize;
+                let pattern_width = (available_width / 2).min(30);
+                let replace_width = available_width.saturating_sub(pattern_width + 4);
+
+                for (idx, item) in editor.replacements.iter().enumerate() {
+                    if idx >= max_rows {
+                        break;
+                    }
+                    let y = area.y + 1 + idx as u16;
+                    let is_sel = idx == editor.selected;
+                    let prefix = if is_sel { "> " } else { "  " };
+                    let color = if is_sel {
+                        crossterm_bridge::to_ratatui_color(theme.focused_label_color)
+                    } else {
+                        crossterm_bridge::to_ratatui_color(theme.label_color)
+                    };
+
+                    // Format: pattern → replace (or pattern → (remove) if replace is empty)
+                    let pattern_display: String = item.pattern.chars().take(pattern_width).collect();
+                    let replace_display = if item.replace.is_empty() {
+                        "(remove)".to_string()
+                    } else {
+                        item.replace.chars().take(replace_width).collect()
+                    };
+                    let line = format!("{}{} → {}", prefix, pattern_display, replace_display);
+                    buf.set_string(area.x + 1, y, &line, Style::default().fg(color));
+                }
+            }
+            TextReplacementsEditorMode::Form => {
+                let y = area.y + 1;
+                self.render_textarea_compact(
+                    0,
+                    "Pattern:",
+                    &editor.pattern_input,
+                    area.x + 1,
+                    y,
+                    area.width as usize - 2,
+                    buf,
+                    theme,
+                    matches!(editor.form_field, TextReplacementsFormField::Pattern),
+                );
+                self.render_textarea_compact(
+                    0,
+                    "Replace:",
+                    &editor.replace_input,
+                    area.x + 1,
+                    y + 2,
+                    area.width as usize - 2,
+                    buf,
+                    theme,
+                    matches!(editor.form_field, TextReplacementsFormField::Replace),
+                );
+
+                let hint = "(leave Replace empty to remove matched text)";
+                let hint_style = Style::default()
+                    .fg(crossterm_bridge::to_ratatui_color(theme.label_color))
+                    .add_modifier(Modifier::DIM);
+                buf.set_string(area.x + 1, y + 4, hint, hint_style);
+
+                let footer = "Enter: Save | Esc: Cancel | Tab: Next Field";
+                let footer_style =
+                    Style::default().fg(crossterm_bridge::to_ratatui_color(theme.label_color));
+                buf.set_string(
+                    area.x + 1,
+                    area.y + area.height.saturating_sub(1),
+                    self.truncate_to_width(footer, area.width.saturating_sub(2)),
+                    footer_style,
+                );
+            }
         }
     }
 
@@ -4643,6 +5196,45 @@ impl WindowEditor {
                     buf,
                     theme,
                     is_focus(FieldRef::PerfChooseMetrics, self.focused_field),
+                );
+            }
+            WindowDef::Perception { .. } => {
+                // Only sort_direction is configurable (stream="percWindow", buffer_size=100 hardcoded)
+                // Window clears on each update (<clearStream/>) so buffer size is irrelevant
+                self.render_dropdown_compact(
+                    FieldRef::PerceptionSortDirection.legacy_field_id(),
+                    "Sort:",
+                    self.perception_sort_direction_input
+                        .lines()
+                        .get(0)
+                        .map(|s| s.as_str())
+                        .unwrap_or("descending"),
+                    left_x,
+                    special_row,
+                    12,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::PerceptionSortDirection, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::PerceptionUseShortSpellNames.legacy_field_id(),
+                    "Short Spell Names:",
+                    self.perception_use_short_spell_names,
+                    right_x,
+                    special_row,
+                    20,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::PerceptionUseShortSpellNames, self.focused_field),
+                );
+                self.render_button(
+                    FieldRef::PerceptionTextReplacements.legacy_field_id(),
+                    "[ Edit Replacements ]",
+                    left_x,
+                    special_row + 1,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::PerceptionTextReplacements, self.focused_field),
                 );
             }
             _ => {

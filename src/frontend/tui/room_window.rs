@@ -54,6 +54,9 @@ pub struct RoomWindow {
     /// Window dimensions (updated during layout)
     inner_width: usize,
     inner_height: usize,
+
+    /// Highlight engine for pattern matching and styling
+    highlight_engine: super::highlight_utils::HighlightEngine,
 }
 
 impl RoomWindow {
@@ -85,7 +88,14 @@ impl RoomWindow {
             scroll_offset: 0,
             inner_width: 80,
             inner_height: 20,
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
         }
+    }
+
+    /// Set highlight patterns for this window
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
+        self.needs_rewrap = true; // Re-process content with new highlights
     }
 
     /// Clear all component buffers (called when room stream is pushed)
@@ -385,14 +395,20 @@ impl RoomWindow {
         let mut all_lines: Vec<Vec<TextSegment>> = Vec::new();
 
         if self.show_inline_title && !self.title.is_empty() {
-            all_lines.push(vec![TextSegment {
+            let title_segment = vec![TextSegment {
                 text: self.title.clone(),
                 fg: self.title_fg_hex.clone(),
                 bg: self.title_bg_hex.clone(),
                 bold: true,
                 span_type: SpanType::Normal,
                 link_data: None,
-            }]);
+            }];
+            // Apply highlights to title
+            let highlighted = self
+                .highlight_engine
+                .apply_highlights_to_segments(&title_segment, "room")
+                .unwrap_or(title_segment);
+            all_lines.push(highlighted);
         }
 
         // Combine desc + objs on same line (only if visible)
@@ -418,7 +434,12 @@ impl RoomWindow {
 
         // Only add the combined line if it's not empty
         if !desc_and_objs_line.is_empty() {
-            all_lines.push(desc_and_objs_line);
+            // Apply highlights to desc+objs line
+            let highlighted = self
+                .highlight_engine
+                .apply_highlights_to_segments(&desc_and_objs_line, "room")
+                .unwrap_or(desc_and_objs_line);
+            all_lines.push(highlighted);
         }
 
         // Add room players on own line (skip if empty or not visible)
@@ -427,7 +448,12 @@ impl RoomWindow {
                 if !players_lines.is_empty() && !players_lines.iter().all(|line| line.is_empty()) {
                     for line in players_lines {
                         if !line.is_empty() {
-                            all_lines.push(line.clone());
+                            // Apply highlights to players line
+                            let highlighted = self
+                                .highlight_engine
+                                .apply_highlights_to_segments(line, "room")
+                                .unwrap_or_else(|| line.clone());
+                            all_lines.push(highlighted);
                         }
                     }
                 }
@@ -440,7 +466,12 @@ impl RoomWindow {
                 if !exits_lines.is_empty() && !exits_lines.iter().all(|line| line.is_empty()) {
                     for line in exits_lines {
                         if !line.is_empty() {
-                            all_lines.push(line.clone());
+                            // Apply highlights to exits line
+                            let highlighted = self
+                                .highlight_engine
+                                .apply_highlights_to_segments(line, "room")
+                                .unwrap_or_else(|| line.clone());
+                            all_lines.push(highlighted);
                         }
                     }
                 }

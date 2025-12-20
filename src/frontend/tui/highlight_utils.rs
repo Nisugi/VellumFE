@@ -446,6 +446,67 @@ impl HighlightEngine {
     fn parse_hex_color(hex: &str) -> Option<Color> {
         super::colors::parse_color_to_ratatui(hex)
     }
+
+    /// Get the foreground color of the first matching highlight pattern for the given text.
+    ///
+    /// This is useful for simple widgets (like ScrollableContainer) that display
+    /// single-colored rows and want to apply highlight colors to matching items.
+    pub fn get_first_match_color(&self, text: &str) -> Option<String> {
+        if self.highlights.is_empty() {
+            return None;
+        }
+
+        // Try Aho-Corasick fast patterns first (with word boundary checking)
+        if let Some(ref matcher) = self.fast_matcher {
+            for mat in matcher.find_iter(text) {
+                let start = mat.start();
+                let end = mat.end();
+                let bytes = text.as_bytes();
+
+                let is_word_start = start == 0 || {
+                    bytes.get(start - 1).is_none_or(|&b| {
+                        let c = b as char;
+                        !c.is_alphanumeric() && c != '_'
+                    })
+                };
+
+                let is_word_end = end >= bytes.len() || {
+                    bytes.get(end).is_none_or(|&b| {
+                        let c = b as char;
+                        !c.is_alphanumeric() && c != '_'
+                    })
+                };
+
+                if is_word_start && is_word_end {
+                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize())
+                    {
+                        if let Some(highlight) = self.highlights.get(highlight_idx) {
+                            if let Some(ref fg) = highlight.fg {
+                                return Some(fg.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try regex patterns
+        for (i, highlight) in self.highlights.iter().enumerate() {
+            if highlight.fast_parse {
+                continue; // Already handled by Aho-Corasick
+            }
+
+            if let Some(Some(regex)) = self.highlight_regexes.get(i) {
+                if regex.is_match(text) {
+                    if let Some(ref fg) = highlight.fg {
+                        return Some(fg.clone());
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 /// Convert TextSegment to span tuple format

@@ -47,6 +47,9 @@ pub struct MessageProcessor {
     /// Buffer for accumulating playerlist stream lines (for players widget)
     playerlist_buffer: Vec<Vec<TextSegment>>,
 
+    /// Buffer for accumulating perception stream lines (for perception widget)
+    perception_buffer: Vec<Vec<TextSegment>>,
+
     /// Previous room component values (for change detection to avoid unnecessary processing)
     previous_room_components: std::collections::HashMap<String, String>,
 
@@ -104,6 +107,7 @@ impl MessageProcessor {
             previous_inventory: Vec::new(),
             combat_buffer: Vec::new(),
             playerlist_buffer: Vec::new(),
+            perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
             squelch_enabled: false,
             squelch_matcher: None,
@@ -200,6 +204,10 @@ impl MessageProcessor {
                     self.playerlist_buffer.clear();
                     tracing::debug!("Playerlist stream pushed - cleared playerlist buffer");
                 }
+
+                // Note: perception buffer is NOT cleared on pushStream
+                // It's cleared on clearStream (which comes before all entries)
+                // This allows entries from multiple push/pop pairs to accumulate
             }
             ParsedElement::StreamPop => {
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
@@ -218,6 +226,9 @@ impl MessageProcessor {
                 if self.current_stream == "playerlist" {
                     self.flush_playerlist_buffer(ui_state);
                 }
+
+                // Note: perception buffer is NOT flushed on popStream
+                // It accumulates across multiple push/pop pairs and flushes on clearStream
 
                 // Check if stream was routed to a non-main window that actually exists
                 // If so, skip the next prompt to avoid duplication in main window
@@ -242,9 +253,30 @@ impl MessageProcessor {
                 self.discard_current_stream = false;
                 self.current_stream = String::from("main");
             }
+            ParsedElement::ClearStream { id } => {
+                // ClearStream clears the window content for a fresh update
+                if id == "percWindow" {
+                    // Clear the buffer for new entries
+                    self.perception_buffer.clear();
+                    // Clear the window content
+                    for window in ui_state.windows.values_mut() {
+                        if let WindowContent::Perception(ref mut data) = window.content {
+                            data.entries.clear();
+                            data.last_update = chrono::Utc::now().timestamp();
+                        }
+                    }
+                    tracing::debug!("ClearStream percWindow - cleared buffer and window");
+                }
+                // Other streams can be handled here as needed
+            }
             ParsedElement::Prompt { time, text } => {
                 // Finish current stream before prompt
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
+
+                // Flush perception buffer on prompt (after all entries have accumulated)
+                if !self.perception_buffer.is_empty() {
+                    self.flush_perception_buffer(ui_state);
+                }
 
                 // Decide whether to show this prompt based on chunk tracking
                 // Skip if: chunk had ONLY silent updates (no main text)
@@ -320,6 +352,14 @@ impl MessageProcessor {
                 link_data,
                 ..
             } => {
+                // Debug: log perception stream text elements
+                if self.current_stream == "percWindow" {
+                    tracing::debug!(
+                        "Text element on percWindow stream: '{}'",
+                        if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() }
+                    );
+                }
+
                 // Track main stream text for prompt skip logic
                 if self.current_stream == "main" && !content.trim().is_empty() {
                     self.chunk_has_main_text = true;
@@ -922,6 +962,14 @@ impl MessageProcessor {
         ui_state: &mut UiState,
         mut tts_manager: Option<&mut crate::tts::TtsManager>,
     ) {
+        // Debug: log perception stream flushes
+        if self.current_stream == "percWindow" {
+            tracing::debug!(
+                "flush_current_stream_with_tts called for percWindow, segments.len={}",
+                self.current_segments.len()
+            );
+        }
+
         if self.current_segments.is_empty() {
             return;
         }
@@ -1083,6 +1131,51 @@ impl MessageProcessor {
             let num_segments = line.segments.len();
             self.playerlist_buffer.push(line.segments);
             tracing::trace!("Buffered playerlist line ({} segments)", num_segments);
+            return;
+        }
+
+        // Special handling for percWindow stream - buffer for perception widget
+        // Perception stream is always a silent update (shouldn't trigger prompts in main window)
+        if self.current_stream == "percWindow" {
+            self.chunk_has_silent_updates = true;
+            // Check if ANY window has Perception content type
+            if !ui_state
+                .windows
+                .values()
+                .any(|w| matches!(w.content, WindowContent::Perception(_)))
+            {
+                tracing::debug!("Discarding percWindow stream content - no perception window exists");
+                return;
+            }
+
+            // Concatenate segments to get full text
+            let full_text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
+
+            // Split concatenated entries into individual perception entries
+            // The game may send multiple entries in one line like: "Bless  (OM)Auspice  (OM)"
+            let split_entries = Self::split_perception_entries(&full_text);
+
+            for entry_text in split_entries {
+                // Find link data for this specific entry (if any)
+                let entry_name = entry_text.split('(').next().unwrap_or("").trim();
+                let link_data = line.segments
+                    .iter()
+                    .find(|seg| seg.text.trim() == entry_name)
+                    .and_then(|seg| seg.link_data.clone());
+
+                // Create a single segment for this entry
+                let entry_segment = TextSegment {
+                    text: entry_text.clone(),
+                    fg: line.segments.first().and_then(|s| s.fg.clone()),
+                    bg: line.segments.first().and_then(|s| s.bg.clone()),
+                    bold: line.segments.first().map(|s| s.bold).unwrap_or(false),
+                    span_type: crate::data::SpanType::Normal,
+                    link_data,
+                };
+
+                self.perception_buffer.push(vec![entry_segment]);
+                tracing::debug!("Buffered perception entry: '{}'", entry_text);
+            }
             return;
         }
 
@@ -1437,6 +1530,229 @@ impl MessageProcessor {
         self.playerlist_buffer.clear();
     }
 
+    /// Flush perception buffer to perception window with parsing and sorting
+    pub fn flush_perception_buffer(&mut self, ui_state: &mut UiState) {
+        // If buffer is empty, nothing to do
+        if self.perception_buffer.is_empty() {
+            return;
+        }
+
+        tracing::debug!(
+            "Flushing perception buffer - {} entries",
+            self.perception_buffer.len()
+        );
+
+        // Parse each buffered entry into PerceptionEntry
+        // Note: Entries are already split during buffering, each buffer item is one entry
+        let mut entries: Vec<PerceptionEntry> = Vec::new();
+
+        for line_segments in &self.perception_buffer {
+            // Get text from segment (should be a single segment with the entry text)
+            let text: String = line_segments
+                .iter()
+                .map(|seg| seg.text.as_str())
+                .collect();
+
+            // Skip empty lines
+            if text.trim().is_empty() {
+                continue;
+            }
+
+            // Get link data from segment
+            let link_data = line_segments
+                .iter()
+                .find_map(|seg| seg.link_data.clone());
+
+            entries.push(Self::parse_perception_entry(&text, link_data));
+        }
+
+        // TODO: Get configuration from window definitions when available
+        // For now, use default sort direction (descending) and no text replacements
+        // This will be enhanced in Phase 5 when integrating with widget manager
+
+        // Sort by weight in descending order (highest weight first)
+        entries.sort_by(|a, b| b.weight.cmp(&a.weight));
+
+        tracing::debug!(
+            "Parsed {} perception entries (sorted by weight descending)",
+            entries.len()
+        );
+
+        // Update all perception windows
+        let mut updated_count = 0;
+        for window in ui_state.windows.values_mut() {
+            if matches!(window.content, WindowContent::Perception(_)) {
+                window.content = WindowContent::Perception(PerceptionData {
+                    entries: entries.clone(),
+                    last_update: chrono::Utc::now().timestamp(),
+                });
+                updated_count += 1;
+            }
+        }
+
+        if updated_count == 0 {
+            tracing::debug!("No perception windows found to update");
+        } else {
+            tracing::debug!("Updated {} perception window(s)", updated_count);
+        }
+
+        // Clear buffer for next update
+        self.perception_buffer.clear();
+    }
+
+    /// Parse a perception entry from text and extract format/weight
+    fn parse_perception_entry(text: &str, link_data: Option<LinkData>) -> PerceptionEntry {
+        let text = text.trim();
+
+        // Parse format from parenthetical suffix
+        let (name, format) = if let Some(paren_start) = text.rfind('(') {
+            let name = text[..paren_start].trim().to_string();
+            let suffix = &text[paren_start..];
+
+            let format = if suffix == "(OM)" {
+                PerceptionFormat::OngoingMagic
+            } else if suffix.contains("Indefinite") || suffix.contains("Cyclic") {
+                PerceptionFormat::Indefinite
+            } else if suffix.contains("Fading") {
+                PerceptionFormat::Fading
+            } else if suffix.ends_with("%)") {
+                // Extract percentage: "(94%)"
+                if let Some(pct_str) = suffix.strip_prefix('(').and_then(|s| s.strip_suffix("%)"))
+                {
+                    if let Ok(pct) = pct_str.parse::<u8>() {
+                        PerceptionFormat::Percentage(pct)
+                    } else {
+                        PerceptionFormat::Other(suffix.to_string())
+                    }
+                } else {
+                    PerceptionFormat::Other(suffix.to_string())
+                }
+            } else if suffix.contains("roisaen") || suffix.contains("roisan") {
+                // Extract roisaen count: "(82 roisaen)"
+                let inner = suffix.trim_start_matches('(').trim_end_matches(')');
+                if let Some(num_str) = inner.split_whitespace().next() {
+                    if let Ok(num) = num_str.parse::<u32>() {
+                        PerceptionFormat::Roisaen(num)
+                    } else {
+                        PerceptionFormat::Other(suffix.to_string())
+                    }
+                } else {
+                    PerceptionFormat::Other(suffix.to_string())
+                }
+            } else {
+                PerceptionFormat::Other(suffix.to_string())
+            };
+
+            (name, format)
+        } else {
+            (text.to_string(), PerceptionFormat::Other(String::new()))
+        };
+
+        // Calculate weight for sorting
+        let weight = Self::calculate_weight(&format);
+
+        PerceptionEntry {
+            name,
+            format,
+            raw_text: text.to_string(),
+            weight,
+            link_data,
+        }
+    }
+
+    /// Calculate sort weight from perception format
+    fn calculate_weight(format: &PerceptionFormat) -> i32 {
+        match format {
+            PerceptionFormat::OngoingMagic => 2000,
+            PerceptionFormat::Indefinite => 1500,
+            PerceptionFormat::Fading => 0,
+            PerceptionFormat::Percentage(pct) => 3000 + (*pct as i32),
+            PerceptionFormat::Roisaen(num) => *num as i32,
+            PerceptionFormat::Other(_) => 500,
+        }
+    }
+
+    /// Split concatenated perception entries into individual entries
+    ///
+    /// The game sends multiple entries concatenated without separators, like:
+    /// "Bless  (OM)Auspice  (OM)Divine Radiance  (OM)"
+    /// " Monkey (82 roisaen)" (single entry with leading space)
+    ///
+    /// This function splits them by detecting duration patterns followed by new entry text.
+    fn split_perception_entries(text: &str) -> Vec<String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        // Patterns that end an entry (duration/status indicators)
+        // After these, a new entry begins (if there's more text)
+        let end_patterns = [
+            "(OM)",
+            "(Indefinite)",
+            "(Cyclic)",
+            "(Fading)",
+            "roisaen)",
+            "roisan)",
+            "%)",
+        ];
+
+        let mut entries = Vec::new();
+        let mut remaining = text;
+
+        while !remaining.is_empty() {
+            // Find the earliest end pattern
+            let mut earliest_end: Option<(usize, usize)> = None; // (pattern_start, pattern_len)
+
+            for pattern in &end_patterns {
+                if let Some(pos) = remaining.find(pattern) {
+                    let end_pos = pos + pattern.len();
+                    match earliest_end {
+                        None => earliest_end = Some((pos, end_pos)),
+                        Some((_, current_end)) if end_pos < current_end => {
+                            earliest_end = Some((pos, end_pos))
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            match earliest_end {
+                Some((_, end_pos)) => {
+                    // Extract this entry (up to and including the end pattern)
+                    let entry = remaining[..end_pos].trim();
+                    if !entry.is_empty() {
+                        entries.push(entry.to_string());
+                    }
+                    // Continue with remainder
+                    remaining = remaining[end_pos..].trim_start();
+                }
+                None => {
+                    // No end pattern found - treat entire remaining text as one entry
+                    let entry = remaining.trim();
+                    if !entry.is_empty() {
+                        entries.push(entry.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+
+        entries
+    }
+
+    /// Apply user-defined text replacements to a string
+    fn apply_text_replacements(
+        text: &str,
+        replacements: &[crate::config::TextReplacement],
+    ) -> String {
+        let mut result = text.to_string();
+        for replacement in replacements {
+            result = result.replace(&replacement.pattern, &replacement.replace);
+        }
+        result
+    }
+
     /// Enqueue text for TTS if enabled and configured for this window
     fn enqueue_tts(&self, tts_manager: &mut crate::tts::TtsManager, window_name: &str, line: &StyledLine) {
         // Early exit if TTS not enabled
@@ -1511,6 +1827,7 @@ impl MessageProcessor {
             "Spells" => "spells",
             "combat" => "targets",
             "playerlist" => "players",
+            "percWindow" => "perception",
             _ => "main", // Default to main window
         }
         .to_string()

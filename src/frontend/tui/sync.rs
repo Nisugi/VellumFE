@@ -3,6 +3,42 @@ use super::performance_stats;
 use super::colors::{blend_colors_hex, color_to_hex_string, normalize_color, parse_hex_color};
 use std::char;
 
+/// Apply a text replacement pattern, auto-detecting whether to use regex or literal matching.
+/// If the pattern contains regex metacharacters, it's compiled as a regex.
+/// Otherwise, simple string replacement is used.
+fn apply_text_replacement(text: &str, pattern: &str, replace: &str) -> String {
+    // Check for common regex metacharacters that indicate this should be a regex
+    let is_regex = pattern.contains('\\')
+        || pattern.contains('^')
+        || pattern.contains('$')
+        || pattern.contains('.')
+        || pattern.contains('*')
+        || pattern.contains('+')
+        || pattern.contains('?')
+        || pattern.contains('(')
+        || pattern.contains(')')
+        || pattern.contains('[')
+        || pattern.contains(']')
+        || pattern.contains('{')
+        || pattern.contains('}')
+        || pattern.contains('|');
+
+    if is_regex {
+        // Try to compile as regex
+        match regex::Regex::new(pattern) {
+            Ok(re) => re.replace_all(text, replace).into_owned(),
+            Err(e) => {
+                // If regex fails to compile, fall back to literal match and log warning
+                tracing::warn!("Invalid regex pattern '{}': {}, using literal match", pattern, e);
+                text.replace(pattern, replace)
+            }
+        }
+    } else {
+        // Simple literal string replacement
+        text.replace(pattern, replace)
+    }
+}
+
 impl TuiFrontend {
     pub(crate) fn sync_text_windows(
         &mut self,
@@ -762,6 +798,10 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                         widget.set_transparent_background(def.base().transparent_background);
                         widget.set_background_color(colors.background.clone());
                         widget.set_text_color(colors.text.clone());
+
+                        // Set up highlights from config
+                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        widget.set_highlights(highlights);
                     }
                 }
             }
@@ -903,6 +943,11 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                         if let Some(ref color) = colors.text {
                             widget.set_bar_color(color.clone());
                         }
+
+                        // Set up highlights from config
+                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        widget.set_highlights(highlights);
+
                         let base_title = window_def
                             .base()
                             .title
@@ -956,6 +1001,11 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                         if let Some(ref color) = colors.text {
                             widget.set_bar_color(color.clone());
                         }
+
+                        // Set up highlights from config
+                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        widget.set_highlights(highlights);
+
                         let base_title = window_def
                             .base()
                             .title
@@ -1541,6 +1591,11 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                 room_window.set_border_sides(window_def.base().border_sides.clone());
                 room_window.set_background_color(colors.background.clone());
                 room_window.set_text_color(colors.text.clone());
+
+                // Set up highlights from config
+                let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                room_window.set_highlights(highlights);
+
                 if let crate::config::WindowDef::Room { data, .. } = window_def {
                     room_window.set_component_visible("room desc", data.show_desc);
                     room_window.set_component_visible("room objs", data.show_objs);
@@ -1659,6 +1714,115 @@ fn decode_icon(icon_str: &str) -> Option<String> {
             .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
             .rev()
             .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+    }
+
+    /// Sync perception windows with app state
+    pub(crate) fn sync_perception_windows(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        // Find perception windows in ui_state
+        for (name, window) in &app_core.ui_state.windows {
+            // Check for Perception content type
+            let perc_data = match &window.content {
+                crate::data::WindowContent::Perception(data) => Some(data),
+                _ => None,
+            };
+
+            if let Some(perc_data) = perc_data {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get or create PerceptionWindow for this window
+                if !self.widget_manager.perception_windows.contains_key(name) {
+                    let title = window_def
+                        .and_then(|def| def.base().title.clone())
+                        .unwrap_or_else(|| "Perceptions".to_string());
+                    let perception_window = super::perception::PerceptionWindow::new(title);
+                    self.widget_manager.perception_windows.insert(name.clone(), perception_window);
+                    tracing::debug!("Created PerceptionWindow widget for '{}'", name);
+                }
+
+                // Update configuration and content from WindowDef if present
+                if let Some(perception_window) = self.widget_manager.perception_windows.get_mut(name) {
+                    if let Some(def) = window_def {
+                        let colors = resolve_window_colors(def.base(), theme);
+                        perception_window.set_show_border(def.base().show_border);
+                        perception_window.set_border_color(colors.border.clone());
+                        perception_window.set_background_color(colors.background.clone());
+                        perception_window.set_text_color(colors.text.clone());
+
+                        let title_text = if def.base().show_title {
+                            def.base()
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| "Perceptions".to_string())
+                        } else {
+                            String::new()
+                        };
+                        // Note: We'd set title here if PerceptionWindow had set_title method
+                        // For now, title is set during creation
+                    }
+
+                    // Set up highlights from config
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    perception_window.set_highlights(highlights);
+
+                    // Get settings from WindowDef if it's a Perception type
+                    let (text_replacements, sort_direction, use_short_spell_names) =
+                        if let Some(crate::config::WindowDef::Perception { data, .. }) = window_def {
+                            (&data.text_replacements[..], data.sort_direction.clone(), data.use_short_spell_names)
+                        } else {
+                            (&[][..], crate::config::SortDirection::Descending, false)
+                        };
+
+                    // Process entries: apply spell abbreviations, then custom replacements
+                    let mut processed_entries: Vec<crate::data::widget::PerceptionEntry> = perc_data
+                        .entries
+                        .iter()
+                        .filter_map(|entry| {
+                            let mut text = entry.raw_text.clone();
+
+                            // Apply short spell names if enabled (BEFORE custom replacements)
+                            if use_short_spell_names {
+                                text = crate::spell_abbrevs::abbreviate_spells(&text);
+                            }
+
+                            // Apply user custom replacements (auto-detect regex vs literal)
+                            for replacement in text_replacements {
+                                text = apply_text_replacement(&text, &replacement.pattern, &replacement.replace);
+                            }
+
+                            // If the text becomes empty after replacements, filter it out
+                            if text.trim().is_empty() {
+                                None
+                            } else {
+                                Some(crate::data::widget::PerceptionEntry {
+                                    raw_text: text,
+                                    name: entry.name.clone(),
+                                    format: entry.format.clone(),
+                                    weight: entry.weight,
+                                    link_data: entry.link_data.clone(),
+                                })
+                            }
+                        })
+                        .collect();
+
+                    // Re-sort based on configured sort direction
+                    match sort_direction {
+                        crate::config::SortDirection::Ascending => {
+                            processed_entries.sort_by(|a, b| a.weight.cmp(&b.weight));
+                        }
+                        crate::config::SortDirection::Descending => {
+                            processed_entries.sort_by(|a, b| b.weight.cmp(&a.weight));
+                        }
+                    }
+
+                    perception_window.set_entries(processed_entries);
+                }
+            }
+        }
     }
 
 }

@@ -448,26 +448,7 @@ impl AppCore {
                     height: 24,
                 });
 
-            let widget_type = match window_def.widget_type() {
-                "text" => WidgetType::Text,
-                "tabbedtext" => WidgetType::TabbedText,
-                "progress" => WidgetType::Progress,
-                "countdown" => WidgetType::Countdown,
-                "compass" => WidgetType::Compass,
-                "injury_doll" | "injuries" => WidgetType::InjuryDoll,
-                "indicator" => WidgetType::Indicator,
-                "room" => WidgetType::Room,
-                "inventory" => WidgetType::Inventory,
-                "command_input" | "commandinput" => WidgetType::CommandInput, // Support both for backward compatibility
-                "dashboard" => WidgetType::Dashboard,
-                "hand" => WidgetType::Hand,
-                "active_effects" => WidgetType::ActiveEffects,
-                "targets" => WidgetType::Targets,
-                "players" => WidgetType::Players,
-                "spells" => WidgetType::Spells,
-                "performance" => WidgetType::Performance,
-                _ => WidgetType::Text,
-            };
+            let widget_type = WidgetType::from_str(window_def.widget_type());
 
             let title = window_def
                 .base()
@@ -649,6 +630,10 @@ impl AppCore {
                 WidgetType::Dashboard => WindowContent::Dashboard {
                     indicators: Vec::new(),
                 },
+                WidgetType::Perception => WindowContent::Perception(PerceptionData {
+                    entries: Vec::new(),
+                    last_update: 0,
+                }),
                 _ => WindowContent::Empty,
             };
 
@@ -716,26 +701,7 @@ impl AppCore {
 
         let is_room_window = window_def.widget_type() == "room";
 
-        let widget_type = match window_def.widget_type() {
-            "text" => WidgetType::Text,
-            "tabbedtext" => WidgetType::TabbedText,
-            "progress" => WidgetType::Progress,
-            "countdown" => WidgetType::Countdown,
-            "compass" => WidgetType::Compass,
-            "injury_doll" | "injuries" => WidgetType::InjuryDoll,
-            "indicator" => WidgetType::Indicator,
-            "room" => WidgetType::Room,
-            "inventory" => WidgetType::Inventory,
-            "command_input" | "commandinput" => WidgetType::CommandInput,
-            "dashboard" => WidgetType::Dashboard,
-            "hand" => WidgetType::Hand,
-            "active_effects" => WidgetType::ActiveEffects,
-            "targets" => WidgetType::Targets,
-            "players" => WidgetType::Players,
-            "spells" => WidgetType::Spells,
-            "performance" => WidgetType::Performance,
-            _ => WidgetType::Text,
-        };
+        let widget_type = WidgetType::from_str(window_def.widget_type());
 
         let title = window_def
             .base()
@@ -842,6 +808,10 @@ impl AppCore {
                     color: active_color,
                 })
             }
+            WidgetType::Perception => WindowContent::Perception(PerceptionData {
+                entries: Vec::new(),
+                last_update: 0,
+            }),
             WidgetType::Performance => {
                 if let crate::config::WindowDef::Performance { data, .. } = window_def {
                     self.perf_stats.apply_enabled_from(data);
@@ -1600,8 +1570,8 @@ impl AppCore {
     ) {
         use crate::config::WindowDef;
         use crate::data::{
-            CompassData, CountdownData, IndicatorData, ProgressData, RoomContent, TextContent,
-            WidgetType, WindowContent, WindowPosition, WindowState,
+            CompassData, CountdownData, IndicatorData, PerceptionData, ProgressData, RoomContent,
+            TextContent, WidgetType, WindowContent, WindowPosition, WindowState,
         };
 
         // Check if window already exists
@@ -1611,20 +1581,11 @@ impl AppCore {
         }
 
         // Parse widget type
-        let widget_type = match widget_type_str.to_lowercase().as_str() {
-            "text" => WidgetType::Text,
-            "progress" => WidgetType::Progress,
-            "countdown" => WidgetType::Countdown,
-            "compass" => WidgetType::Compass,
-            "injury_doll" | "injuries" => WidgetType::InjuryDoll,
-            "hand" => WidgetType::Hand,
-            "room" => WidgetType::Room,
-            "indicator" => WidgetType::Indicator,
-            "performance" => WidgetType::Performance,
-            "command_input" | "commandinput" => WidgetType::CommandInput,
-            _ => {
+        let widget_type = match WidgetType::try_from_str(widget_type_str) {
+            Some(wt) => wt,
+            None => {
                 self.add_system_message(&format!("Unknown widget type: {}", widget_type_str));
-                self.add_system_message("Types: text, progress, countdown, compass, injury_doll, hand, room, indicator, performance, command_input");
+                self.add_system_message(&format!("Valid types: {}", WidgetType::VALID_TYPES.join(", ")));
                 return;
             }
         };
@@ -1665,6 +1626,10 @@ impl AppCore {
                 color: None,
             }),
             WidgetType::Performance => WindowContent::Performance,
+            WidgetType::Perception => WindowContent::Perception(PerceptionData {
+                entries: Vec::new(),
+                last_update: 0,
+            }),
             WidgetType::CommandInput => WindowContent::CommandInput {
                 text: String::new(),
                 cursor: 0,

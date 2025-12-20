@@ -714,6 +714,7 @@ impl BaseMut for WindowDef {
             WindowDef::Players { base, .. } => Some(base),
             WindowDef::Spacer { base, .. } => Some(base),
             WindowDef::Spells { base, .. } => Some(base),
+            WindowDef::Perception { base, .. } => Some(base),
         }
     }
 }

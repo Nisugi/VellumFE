@@ -85,6 +85,9 @@ impl Frontend for TuiFrontend {
         // Sync spells window data from AppCore
         self.sync_spells_windows(app_core, &theme);
 
+        // Sync perception window data from AppCore
+        self.sync_perception_windows(app_core, &theme);
+
         // Sync progress bar data from AppCore
         self.sync_progress_bars(app_core, &theme);
         self.sync_countdowns(app_core, &theme);
@@ -106,6 +109,7 @@ impl Frontend for TuiFrontend {
         let mut room_windows = std::mem::take(&mut self.widget_manager.room_windows);
         let mut inventory_windows = std::mem::take(&mut self.widget_manager.inventory_windows);
         let mut spells_windows = std::mem::take(&mut self.widget_manager.spells_windows);
+        let mut perception_windows = std::mem::take(&mut self.widget_manager.perception_windows);
         let mut progress_bars = std::mem::take(&mut self.widget_manager.progress_bars);
         let mut countdowns = std::mem::take(&mut self.widget_manager.countdowns);
         let mut active_effects_windows = std::mem::take(&mut self.widget_manager.active_effects_windows);
@@ -391,6 +395,11 @@ impl Frontend for TuiFrontend {
                             perf_widget.render(area, f.buffer_mut(), &app_core.perf_stats);
                         }
                     }
+                    WindowContent::Perception(_) => {
+                        if let Some(perception_window) = perception_windows.get_mut(name) {
+                            perception_window.render(area, f.buffer_mut());
+                        }
+                    }
                 }
             }
 
@@ -547,6 +556,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.room_windows = room_windows;
         self.widget_manager.inventory_windows = inventory_windows;
         self.widget_manager.spells_windows = spells_windows;
+        self.widget_manager.perception_windows = perception_windows;
         self.widget_manager.progress_bars = progress_bars;
         self.widget_manager.countdowns = countdowns;
         self.widget_manager.active_effects_windows = active_effects_windows;

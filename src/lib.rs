@@ -11,5 +11,6 @@ pub mod parser;
 pub mod performance;
 pub mod selection;
 pub mod sound;
+pub mod spell_abbrevs;
 pub mod theme;
 pub mod tts;

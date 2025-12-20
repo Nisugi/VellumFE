@@ -44,6 +44,8 @@ pub struct ScrollableContainer {
     background_color: Option<Color>,
     show_values: bool,
     show_percentage: bool,
+    /// Highlight engine for pattern matching and styling
+    highlight_engine: super::highlight_utils::HighlightEngine,
 }
 
 impl ScrollableContainer {
@@ -67,7 +69,13 @@ impl ScrollableContainer {
             background_color: None,
             show_values: false,
             show_percentage: false,
+            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
         }
+    }
+
+    /// Set highlight patterns for this container
+    pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
+        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
     pub fn toggle_alternate_text(&mut self) {
@@ -368,7 +376,12 @@ impl ScrollableContainer {
                 } else {
                     pb.set_background_color(None);
                 }
-                let row_text_color = item.text_color.clone().or_else(|| self.text_color.clone());
+
+                // Check for highlight match on the item text
+                let highlight_color = self.highlight_engine.get_first_match_color(source_text);
+                let row_text_color = highlight_color
+                    .or_else(|| item.text_color.clone())
+                    .or_else(|| self.text_color.clone());
                 pb.set_text_color(row_text_color);
 
                 pb.set_transparent_background(self.transparent_background);
