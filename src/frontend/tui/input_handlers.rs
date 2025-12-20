@@ -71,6 +71,14 @@ impl super::TuiFrontend {
                 app_core.ui_state.search_cursor = app_core.ui_state.search_input.len();
                 app_core.needs_render = true;
             }
+            KeyCode::Esc => {
+                // Exit search mode
+                app_core.ui_state.input_mode = crate::data::InputMode::Normal;
+                app_core.ui_state.search_input.clear();
+                app_core.ui_state.search_cursor = 0;
+                app_core.needs_render = true;
+                tracing::debug!("Exited search mode");
+            }
             _ => {}
         }
         Ok(None)
@@ -119,6 +127,13 @@ impl super::TuiFrontend {
                     crate::config::KeyBindAction::Action(s) if s.as_str() == "switch_current_window"
                 );
 
+                // Check for search actions - must be handled by frontend
+                let is_search_action = matches!(&action,
+                    crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
+                        "start_search" | "next_search_match" | "prev_search_match" | "clear_search"
+                    )
+                );
+
                 // Check for scroll actions - must be handled by frontend (TuiFrontend.scroll_window)
                 let is_scroll_action = matches!(&action,
                     crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
@@ -128,7 +143,42 @@ impl super::TuiFrontend {
                     )
                 );
 
-                if is_scroll_action {
+                if is_search_action {
+                    // Handle search actions
+                    if let crate::config::KeyBindAction::Action(action_str) = &action {
+                        match action_str.as_str() {
+                            "start_search" => {
+                                // Enter search mode
+                                app_core.ui_state.input_mode = crate::data::InputMode::Search;
+                                app_core.ui_state.search_input.clear();
+                                app_core.ui_state.search_cursor = 0;
+                                tracing::debug!("Entered search mode");
+                            }
+                            "next_search_match" => {
+                                let focused_name = app_core.get_focused_window_name();
+                                if self.next_search_match(&focused_name) {
+                                    tracing::debug!("Jumped to next search match in '{}'", focused_name);
+                                } else {
+                                    tracing::debug!("No more search matches in '{}'", focused_name);
+                                }
+                            }
+                            "prev_search_match" => {
+                                let focused_name = app_core.get_focused_window_name();
+                                if self.prev_search_match(&focused_name) {
+                                    tracing::debug!("Jumped to previous search match in '{}'", focused_name);
+                                } else {
+                                    tracing::debug!("No more search matches in '{}'", focused_name);
+                                }
+                            }
+                            "clear_search" => {
+                                self.clear_all_searches();
+                                tracing::debug!("Cleared all searches");
+                            }
+                            _ => {}
+                        }
+                    }
+                    app_core.needs_render = true;
+                } else if is_scroll_action {
                     // Get the focused window name and scroll it via frontend
                     let focused_name = app_core.get_focused_window_name();
                     if let crate::config::KeyBindAction::Action(action_str) = &action {
@@ -206,7 +256,11 @@ impl super::TuiFrontend {
                                 tracing::info!("Switched to previous tab in all tabbed windows");
                             }
                             "next_unread_tab" => {
-                                tracing::warn!("next_unread_tab not yet fully implemented");
+                                if !self.go_to_next_unread_tab() {
+                                    app_core.add_system_message("No tabs with new messages");
+                                }
+                                self.sync_tabbed_active_state(app_core);
+                                tracing::info!("Next unread tab navigation triggered");
                             }
                             _ => {}
                         }

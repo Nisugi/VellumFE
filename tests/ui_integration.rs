@@ -442,9 +442,11 @@ fn ui_falls_back_to_main_when_stream_window_missing() {
         })
         .unwrap_or_default();
 
+    // Speech/talk/whisper streams are dropped when no dedicated window exists
+    // This prevents duplicates since the game sends both a speech stream line AND a main stream line
     assert!(
-        main_lines.iter().any(|l| l.contains("Hello there")),
-        "speech stream should fall back to main when no speech window exists"
+        main_lines.is_empty(),
+        "speech stream should be dropped (not fall back) to prevent duplicates in main window"
     );
 }
 
@@ -550,6 +552,39 @@ fn playerlist_stream_is_discarded_without_window() {
     assert!(
         main_lines.is_empty(),
         "playerlist stream should be discarded when no players window exists"
+    );
+}
+
+#[test]
+fn speech_stream_dropped_without_window() {
+    const XML: &str = include_str!("fixtures/speech_duplicate.xml");
+    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
+    add_text_window(&mut ui_state, "main", 100);
+
+    run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
+
+    let main_lines = ui_state
+        .windows
+        .get("main")
+        .and_then(|w| {
+            if let WindowContent::Text(content) = &w.content {
+                Some(lines_to_strings(&content.lines))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Should have exactly ONE line (the non-speech-stream copy)
+    // The speech stream line should be dropped since no speech window exists
+    assert_eq!(
+        main_lines.len(),
+        1,
+        "should have exactly one line (speech stream line should be dropped)"
+    );
+    assert!(
+        main_lines[0].contains("You politely say"),
+        "main window should receive the regular copy"
     );
 }
 

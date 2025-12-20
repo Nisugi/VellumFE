@@ -165,6 +165,7 @@ pub struct TabDefinition {
 pub struct TabState {
     pub definition: TabDefinition,
     pub content: TextContent,
+    pub has_unread: bool, // Whether tab has unread messages
 }
 
 /// Tabbed text window content
@@ -189,13 +190,61 @@ impl TabbedTextContent {
                     ignore_activity,
                 };
                 let content = TextContent::new(name, max_lines_per_tab);
-                TabState { definition, content }
+                TabState {
+                    definition,
+                    content,
+                    has_unread: false,
+                }
             })
             .collect();
         Self {
             tabs,
             active_tab_index: 0,
         }
+    }
+
+    /// Mark a specific tab as having unread messages
+    pub fn mark_tab_unread(&mut self, tab_index: usize) {
+        if let Some(tab) = self.tabs.get_mut(tab_index) {
+            // Only mark as unread if not the active tab and activity tracking is enabled
+            if tab_index != self.active_tab_index && !tab.definition.ignore_activity {
+                tab.has_unread = true;
+            }
+        }
+    }
+
+    /// Clear unread status for a specific tab (called when user switches to it)
+    pub fn clear_tab_unread(&mut self, tab_index: usize) {
+        if let Some(tab) = self.tabs.get_mut(tab_index) {
+            tab.has_unread = false;
+        }
+    }
+
+    /// Clear unread status for the currently active tab
+    pub fn clear_active_tab_unread(&mut self) {
+        self.clear_tab_unread(self.active_tab_index);
+    }
+
+    /// Get the index of the next tab with unread messages
+    pub fn next_unread_tab(&self) -> Option<usize> {
+        // Start searching from the tab after the active one
+        let start = self.active_tab_index + 1;
+
+        // Search from active+1 to end
+        for i in start..self.tabs.len() {
+            if self.tabs[i].has_unread {
+                return Some(i);
+            }
+        }
+
+        // Wrap around and search from beginning to active
+        for i in 0..self.active_tab_index {
+            if self.tabs[i].has_unread {
+                return Some(i);
+            }
+        }
+
+        None
     }
 }
 

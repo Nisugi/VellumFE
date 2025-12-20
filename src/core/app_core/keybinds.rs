@@ -127,22 +127,19 @@ impl AppCore {
                 self.scroll_current_window_end();
             }
 
-            // Search actions (already implemented elsewhere)
+            // Search actions - handled in frontend layer (TuiFrontend.handle_normal_mode_keys)
+            // These require frontend access to manipulate text windows
             KeyAction::StartSearch => {
-                // TODO: Set input mode to Search
-                tracing::debug!("StartSearch should be handled by input mode change");
+                tracing::debug!("StartSearch handled in frontend layer");
             }
             KeyAction::NextSearchMatch => {
-                // TODO: Implement search navigation
-                tracing::debug!("NextSearchMatch not yet implemented");
+                tracing::debug!("NextSearchMatch handled in frontend layer");
             }
             KeyAction::PrevSearchMatch => {
-                // TODO: Implement search navigation
-                tracing::debug!("PrevSearchMatch not yet implemented");
+                tracing::debug!("PrevSearchMatch handled in frontend layer");
             }
             KeyAction::ClearSearch => {
-                // TODO: Implement search clearing
-                tracing::debug!("ClearSearch not yet implemented");
+                tracing::debug!("ClearSearch handled in frontend layer");
             }
 
             // Tab navigation actions - need to be handled in main.rs (require frontend access)

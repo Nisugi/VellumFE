@@ -574,7 +574,7 @@ impl AppCore {
 
                 let window_def = self.layout.windows.iter()
                     .find(|w| w.name() == window_name)
-                    .unwrap();
+                    .expect("window in metadata must exist in layout");
                 let base = window_def.base();
                 let widget_type = window_def.widget_type();
                 let (_, min_rows) = self.widget_min_size(widget_type);
@@ -887,7 +887,7 @@ impl AppCore {
 
                 let window_def = self.layout.windows.iter()
                     .find(|w| w.name() == window_name)
-                    .unwrap();
+                    .expect("window in metadata must exist in layout");
                 let base = window_def.base();
                 let widget_type = window_def.widget_type();
                 let (min_cols, _) = self.widget_min_size(widget_type);

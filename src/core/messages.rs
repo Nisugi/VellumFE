@@ -294,7 +294,10 @@ impl MessageProcessor {
                 if let Ok(server_time) = time.parse::<i64>() {
                     let local_time = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_else(|_| {
+                            tracing::warn!("System time before UNIX epoch, using 0");
+                            std::time::Duration::from_secs(0)
+                        })
                         .as_secs() as i64;
                     self.server_time_offset = server_time - local_time;
                     // Update game_time to the prompt's server timestamp
@@ -973,25 +976,33 @@ impl MessageProcessor {
             stream: self.current_stream.clone(),
         };
 
-        // Filter out Speech-typed segments only if no window consumes the speech stream
-        // This prevents duplicate speech text when the game sends it both in speech preset AND normally
-        let has_speech_consumer = ui_state.windows.iter().any(|(name, window)| {
-            if name == "speech" {
-                return true;
-            }
-            matches!(&window.content, WindowContent::TabbedText(tabbed) if tabbed.tabs.iter().any(
-                |t| t.definition.streams.iter().any(|s| s == "speech")
-            ))
-        });
+        // Filter out Speech-typed segments ONLY when on a speech-related stream with no consumer
+        // When on main stream, keep Speech segments even if no speech window (main displays full text)
+        // This prevents "You say" from being cut off when there's no speech window
+        let should_filter_speech = if self.current_stream == "speech" || self.current_stream == "talk" || self.current_stream == "whisper" {
+            // On speech stream - check if there's a consumer
+            !ui_state.windows.iter().any(|(name, window)| {
+                if name == &self.current_stream {
+                    return true;
+                }
+                matches!(&window.content, WindowContent::TabbedText(tabbed) if tabbed.tabs.iter().any(
+                    |t| t.definition.streams.iter().any(|s| s == &self.current_stream)
+                ))
+            })
+        } else {
+            // On other streams (like main) - never filter Speech segments
+            false
+        };
 
-        if !has_speech_consumer {
+        if should_filter_speech {
             let original_count = line.segments.len();
             line.segments
                 .retain(|seg| seg.span_type != crate::data::SpanType::Speech);
             if line.segments.len() < original_count {
                 tracing::trace!(
-                    "Filtered out {} Speech segments (no speech window)",
-                    original_count - line.segments.len()
+                    "Filtered out {} Speech segments on stream '{}' (no consumer window)",
+                    original_count - line.segments.len(),
+                    self.current_stream
                 );
             }
         }
@@ -1170,7 +1181,8 @@ impl MessageProcessor {
                     }
                 }
                 WindowContent::TabbedText(tab_content) => {
-                    for tab in &mut tab_content.tabs {
+                    let active_tab_index = tab_content.active_tab_index;
+                    for (tab_index, tab) in tab_content.tabs.iter_mut().enumerate() {
                         if tab
                             .definition
                             .streams
@@ -1179,7 +1191,10 @@ impl MessageProcessor {
                         {
                             tab.content.add_line(line.clone());
                             added_here = true;
-                            // TODO: Add logic to mark tab as unread
+                            // Mark tab as unread if it's not the active tab and activity tracking is enabled
+                            if tab_index != active_tab_index && !tab.definition.ignore_activity {
+                                tab.has_unread = true;
+                            }
                         }
                     }
                 }
@@ -1198,16 +1213,30 @@ impl MessageProcessor {
         }
 
         // Fallback to main window if no other window handled the stream
+        // Exception: speech/talk/whisper streams send duplicate lines (one for dedicated window, one for main)
+        // If no dedicated window exists, drop the line instead of falling back (main gets its own copy)
         if !text_added_to_any_window {
-            tracing::trace!(
-                "Window for stream '{}' not found, routing content to main window",
-                self.current_stream
+            let is_duplicate_stream = matches!(
+                self.current_stream.to_lowercase().as_str(),
+                "speech" | "talk" | "whisper"
             );
-            if let Some(main_window) = ui_state.get_window_mut("main") {
-                if let WindowContent::Text(ref mut content) = main_window.content {
-                    content.add_line(line.clone());
-                    if let Some(tts_mgr) = tts_manager.as_deref_mut() {
-                        self.enqueue_tts(tts_mgr, "main", &line);
+
+            if is_duplicate_stream {
+                tracing::trace!(
+                    "Dropping line from stream '{}' (no dedicated window, main gets duplicate copy)",
+                    self.current_stream
+                );
+            } else {
+                tracing::trace!(
+                    "Window for stream '{}' not found, routing content to main window",
+                    self.current_stream
+                );
+                if let Some(main_window) = ui_state.get_window_mut("main") {
+                    if let WindowContent::Text(ref mut content) = main_window.content {
+                        content.add_line(line.clone());
+                        if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                            self.enqueue_tts(tts_mgr, "main", &line);
+                        }
                     }
                 }
             }
@@ -1602,7 +1631,7 @@ impl MessageProcessor {
                 continue;
             }
 
-            let redirect_window = pattern.redirect_to.as_ref().unwrap();
+            let redirect_window = pattern.redirect_to.as_ref().expect("redirect_to checked above");
 
             // Check if pattern matches
             let match_len = if pattern.fast_parse {
@@ -1630,7 +1659,8 @@ impl MessageProcessor {
 
             // Update best match if this match is longer
             if let Some(len) = match_len {
-                if best_match.is_none() || len > best_match.as_ref().unwrap().2 {
+                let is_better = best_match.as_ref().map_or(true, |(_, _, best_len)| len > *best_len);
+                if is_better {
                     best_match = Some((
                         redirect_window.clone(),
                         pattern.redirect_mode.clone(),

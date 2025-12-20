@@ -1,0 +1,3 @@
+<pushStream id="speech"/><preset id='speech'>You politely say</preset>, "Hello."
+<popStream/><preset id='speech'>You politely say</preset>, "Hello."
+<prompt time="1000">&gt;</prompt>

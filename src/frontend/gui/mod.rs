@@ -1,7 +1,17 @@
 //! GUI Frontend - Native GUI using egui
 //!
-//! This module will implement the Frontend trait for native GUI rendering.
-//! Currently a stub - will be implemented after TUI frontend is stable.
+//! # ⚠️ WORK IN PROGRESS - NOT IMPLEMENTED
+//!
+//! This module is a stub for future egui-based GUI implementation.
+//! The TUI frontend (ratatui) is the current stable interface.
+//!
+//! ## Roadmap
+//! - [ ] Implement Frontend trait for egui
+//! - [ ] Port widget renderers from TUI
+//! - [ ] Add window management
+//! - [ ] Implement input handling
+//!
+//! For now, use `--frontend tui` (default) or omit the flag entirely.
 
 use crate::core::AppCore;
 use anyhow::Result;
@@ -18,7 +28,13 @@ impl EguiApp {
     }
 
     pub fn run(self) -> Result<()> {
-        eprintln!("GUI frontend not yet implemented. Use --frontend tui for now.");
+        eprintln!("\n⚠️  GUI Frontend Not Implemented");
+        eprintln!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        eprintln!("The egui GUI frontend is a work-in-progress stub.");
+        eprintln!("Please use the TUI frontend instead (default):\n");
+        eprintln!("  vellum-fe --frontend tui [options]");
+        eprintln!("  or simply:");
+        eprintln!("  vellum-fe [options]\n");
         Ok(())
     }
 }

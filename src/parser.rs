@@ -1479,12 +1479,11 @@ mod tests {
         let elements = parser.parse_line("Hello, world!");
 
         assert_eq!(elements.len(), 1);
-        if let ParsedElement::Text { content, span_type, .. } = &elements[0] {
-            assert_eq!(content, "Hello, world!");
-            assert_eq!(*span_type, SpanType::Normal);
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, span_type, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", &elements[0]);
+        };
+        assert_eq!(content, "Hello, world!");
+        assert_eq!(*span_type, SpanType::Normal);
     }
 
     #[test]
@@ -1493,12 +1492,11 @@ mod tests {
         let elements = parser.parse_line("");
 
         assert_eq!(elements.len(), 1);
-        if let ParsedElement::Text { content, span_type, .. } = &elements[0] {
-            assert_eq!(content, "");
-            assert_eq!(*span_type, SpanType::Normal);
-        } else {
-            panic!("Expected Text element for blank line");
-        }
+        let ParsedElement::Text { content, span_type, .. } = &elements[0] else {
+            panic!("Expected Text element for blank line, got {:?}", &elements[0]);
+        };
+        assert_eq!(content, "");
+        assert_eq!(*span_type, SpanType::Normal);
     }
 
     #[test]
@@ -1507,11 +1505,10 @@ mod tests {
         let elements = parser.parse_line("&lt;test&gt; &amp; &quot;quoted&quot;");
 
         assert_eq!(elements.len(), 1);
-        if let ParsedElement::Text { content, .. } = &elements[0] {
-            assert_eq!(content, "<test> & \"quoted\"");
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", &elements[0]);
+        };
+        assert_eq!(content, "<test> & \"quoted\"");
     }
 
     // ==================== Preset Tag Parsing ====================
@@ -1525,13 +1522,12 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, fg_color, span_type, .. } = &text_elements[0] {
-            assert_eq!(content, "Someone says, \"Hello\"");
-            assert_eq!(fg_color.as_deref(), Some("#53a684"));
-            assert_eq!(*span_type, SpanType::Speech);
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, fg_color, span_type, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "Someone says, \"Hello\"");
+        assert_eq!(fg_color.as_deref(), Some("#53a684"));
+        assert_eq!(*span_type, SpanType::Speech);
     }
 
     // ==================== Color Tag Parsing ====================
@@ -1544,12 +1540,11 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, fg_color, .. } = &text_elements[0] {
-            assert_eq!(content, "Red text");
-            assert_eq!(fg_color.as_deref(), Some("#FF0000"));
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, fg_color, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "Red text");
+        assert_eq!(fg_color.as_deref(), Some("#FF0000"));
     }
 
     #[test]
@@ -1560,13 +1555,12 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, fg_color, bg_color, .. } = &text_elements[0] {
-            assert_eq!(content, "White on blue");
-            assert_eq!(fg_color.as_deref(), Some("#FFFFFF"));
-            assert_eq!(bg_color.as_deref(), Some("#0000FF"));
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, fg_color, bg_color, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "White on blue");
+        assert_eq!(fg_color.as_deref(), Some("#FFFFFF"));
+        assert_eq!(bg_color.as_deref(), Some("#0000FF"));
     }
 
     // ==================== Bold Tag Parsing ====================
@@ -1580,22 +1574,20 @@ mod tests {
         assert_eq!(text_elements.len(), 2);
 
         // First text should be bold (monsterbold)
-        if let ParsedElement::Text { content, bold, span_type, .. } = &text_elements[0] {
-            assert_eq!(content, "A goblin");
-            assert!(*bold);
-            assert_eq!(*span_type, SpanType::Monsterbold);
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, bold, span_type, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "A goblin");
+        assert!(*bold);
+        assert_eq!(*span_type, SpanType::Monsterbold);
 
         // Second text should not be bold
-        if let ParsedElement::Text { content, bold, span_type, .. } = &text_elements[1] {
-            assert_eq!(content, " attacks!");
-            assert!(!*bold);
-            assert_eq!(*span_type, SpanType::Normal);
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, bold, span_type, .. } = text_elements[1] else {
+            panic!("Expected Text element, got {:?}", text_elements[1]);
+        };
+        assert_eq!(content, " attacks!");
+        assert!(!*bold);
+        assert_eq!(*span_type, SpanType::Normal);
     }
 
     // ==================== GemStone IV Link Parsing (<a> tags) ====================
@@ -1608,17 +1600,16 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, span_type, link_data, .. } = &text_elements[0] {
-            assert_eq!(content, "a rusty sword");
-            assert_eq!(*span_type, SpanType::Link);
+        let ParsedElement::Text { content, span_type, link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "a rusty sword");
+        assert_eq!(*span_type, SpanType::Link);
 
-            let link = link_data.as_ref().expect("Should have link_data");
-            assert_eq!(link.exist_id, "12345");
-            assert_eq!(link.noun, "sword");
-            assert_eq!(link.text, "a rusty sword");
-        } else {
-            panic!("Expected Text element");
-        }
+        let link = link_data.as_ref().expect("Should have link_data");
+        assert_eq!(link.exist_id, "12345");
+        assert_eq!(link.noun, "sword");
+        assert_eq!(link.text, "a rusty sword");
     }
 
     #[test]
@@ -1629,12 +1620,11 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { link_data, .. } = &text_elements[0] {
-            let link = link_data.as_ref().expect("Should have link_data");
-            assert_eq!(link.coord.as_deref(), Some("1234,5678"));
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        let link = link_data.as_ref().expect("Should have link_data");
+        assert_eq!(link.coord.as_deref(), Some("1234,5678"));
     }
 
     // ==================== DragonRealms Link Parsing (<d> tags) ====================
@@ -1647,16 +1637,15 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, span_type, link_data, .. } = &text_elements[0] {
-            assert_eq!(content, "Some item");
-            assert_eq!(*span_type, SpanType::Link);
+        let ParsedElement::Text { content, span_type, link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "Some item");
+        assert_eq!(*span_type, SpanType::Link);
 
-            let link = link_data.as_ref().expect("Should have link_data for <d> tag");
-            assert_eq!(link.exist_id, "_direct_");
-            assert_eq!(link.noun, "get #123");
-        } else {
-            panic!("Expected Text element");
-        }
+        let link = link_data.as_ref().expect("Should have link_data for <d> tag");
+        assert_eq!(link.exist_id, "_direct_");
+        assert_eq!(link.noun, "get #123");
     }
 
     #[test]
@@ -1669,25 +1658,23 @@ mod tests {
         assert_eq!(text_elements.len(), 2); // Link text + rest of line
 
         // First element should be the link
-        if let ParsedElement::Text { content, span_type, link_data, .. } = &text_elements[0] {
-            assert_eq!(content, "Some arzumodine cloth");
-            assert_eq!(*span_type, SpanType::Link);
+        let ParsedElement::Text { content, span_type, link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element for link, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "Some arzumodine cloth");
+        assert_eq!(*span_type, SpanType::Link);
 
-            let link = link_data.as_ref().expect("Should have link_data");
-            assert_eq!(link.exist_id, "_direct_");
-            assert_eq!(link.noun, "get #8735861 in #8735860 in watery portal");
-        } else {
-            panic!("Expected Text element for link");
-        }
+        let link = link_data.as_ref().expect("Should have link_data");
+        assert_eq!(link.exist_id, "_direct_");
+        assert_eq!(link.noun, "get #8735861 in #8735860 in watery portal");
 
         // Second element should be normal text
-        if let ParsedElement::Text { content, span_type, link_data, .. } = &text_elements[1] {
-            assert_eq!(content, " is in a lumpy canvas sack.");
-            assert_eq!(*span_type, SpanType::Normal);
-            assert!(link_data.is_none());
-        } else {
-            panic!("Expected Text element for trailing text");
-        }
+        let ParsedElement::Text { content, span_type, link_data, .. } = text_elements[1] else {
+            panic!("Expected Text element for trailing text, got {:?}", text_elements[1]);
+        };
+        assert_eq!(content, " is in a lumpy canvas sack.");
+        assert_eq!(*span_type, SpanType::Normal);
+        assert!(link_data.is_none());
     }
 
     #[test]
@@ -1698,20 +1685,19 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, span_type, link_data, .. } = &text_elements[0] {
-            assert_eq!(content, "SKILLS BASE");
-            assert_eq!(*span_type, SpanType::Link);
+        let ParsedElement::Text { content, span_type, link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "SKILLS BASE");
+        assert_eq!(*span_type, SpanType::Link);
 
-            let link = link_data.as_ref().expect("Should have link_data");
-            assert_eq!(link.exist_id, "_direct_");
-            // NOTE: In current implementation, noun is empty when cmd is not specified
-            // because link_data is cloned to ParsedElement before </d> close updates it.
-            // The text content is stored in link.text instead.
-            assert_eq!(link.noun, "");
-            assert_eq!(link.text, "SKILLS BASE");
-        } else {
-            panic!("Expected Text element");
-        }
+        let link = link_data.as_ref().expect("Should have link_data");
+        assert_eq!(link.exist_id, "_direct_");
+        // NOTE: In current implementation, noun is empty when cmd is not specified
+        // because link_data is cloned to ParsedElement before </d> close updates it.
+        // The text content is stored in link.text instead.
+        assert_eq!(link.noun, "");
+        assert_eq!(link.text, "SKILLS BASE");
     }
 
     // ==================== Prompt Parsing ====================
@@ -1724,12 +1710,11 @@ mod tests {
         let prompt_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Prompt { .. })).collect();
         assert_eq!(prompt_elements.len(), 1);
 
-        if let ParsedElement::Prompt { time, text } = &prompt_elements[0] {
-            assert_eq!(time, "1234567890");
-            assert_eq!(text, ">");
-        } else {
-            panic!("Expected Prompt element");
-        }
+        let ParsedElement::Prompt { time, text } = prompt_elements[0] else {
+            panic!("Expected Prompt element, got {:?}", prompt_elements[0]);
+        };
+        assert_eq!(time, "1234567890");
+        assert_eq!(text, ">");
     }
 
     // ==================== RoundTime Parsing ====================
@@ -1742,11 +1727,10 @@ mod tests {
         let rt_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::RoundTime { .. })).collect();
         assert_eq!(rt_elements.len(), 1);
 
-        if let ParsedElement::RoundTime { value } = &rt_elements[0] {
-            assert_eq!(*value, 1764904999);
-        } else {
-            panic!("Expected RoundTime element");
-        }
+        let ParsedElement::RoundTime { value } = rt_elements[0] else {
+            panic!("Expected RoundTime element, got {:?}", rt_elements[0]);
+        };
+        assert_eq!(*value, 1764904999);
     }
 
     // ==================== Stream Parsing ====================
@@ -1759,11 +1743,10 @@ mod tests {
         let stream_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StreamPush { .. })).collect();
         assert_eq!(stream_elements.len(), 1);
 
-        if let ParsedElement::StreamPush { id } = &stream_elements[0] {
-            assert_eq!(id, "inv");
-        } else {
-            panic!("Expected StreamPush element");
-        }
+        let ParsedElement::StreamPush { id } = stream_elements[0] else {
+            panic!("Expected StreamPush element, got {:?}", stream_elements[0]);
+        };
+        assert_eq!(id, "inv");
     }
 
     #[test]
@@ -1785,14 +1768,13 @@ mod tests {
         let compass_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Compass { .. })).collect();
         assert_eq!(compass_elements.len(), 1);
 
-        if let ParsedElement::Compass { directions } = &compass_elements[0] {
-            assert_eq!(directions.len(), 3);
-            assert!(directions.contains(&"n".to_string()));
-            assert!(directions.contains(&"e".to_string()));
-            assert!(directions.contains(&"out".to_string()));
-        } else {
-            panic!("Expected Compass element");
-        }
+        let ParsedElement::Compass { directions } = compass_elements[0] else {
+            panic!("Expected Compass element, got {:?}", compass_elements[0]);
+        };
+        assert_eq!(directions.len(), 3);
+        assert!(directions.contains(&"n".to_string()));
+        assert!(directions.contains(&"e".to_string()));
+        assert!(directions.contains(&"out".to_string()));
     }
 
     // ==================== Complex Scenarios ====================
@@ -1825,17 +1807,16 @@ mod tests {
         let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
         assert_eq!(text_elements.len(), 1);
 
-        if let ParsedElement::Text { content, fg_color, span_type, link_data, .. } = &text_elements[0] {
-            assert_eq!(content, "glowing item");
-            // Link should still work inside color
-            assert_eq!(*span_type, SpanType::Link);
-            assert!(link_data.is_some());
-            // NOTE: The <a> tag pushes the "links" preset color on top of the color stack,
-            // so the actual color is the links preset (#477ab3) not the outer color (#FF0000)
-            assert_eq!(fg_color.as_deref(), Some("#477ab3"));
-        } else {
-            panic!("Expected Text element");
-        }
+        let ParsedElement::Text { content, fg_color, span_type, link_data, .. } = text_elements[0] else {
+            panic!("Expected Text element, got {:?}", text_elements[0]);
+        };
+        assert_eq!(content, "glowing item");
+        // Link should still work inside color
+        assert_eq!(*span_type, SpanType::Link);
+        assert!(link_data.is_some());
+        // NOTE: The <a> tag pushes the "links" preset color on top of the color stack,
+        // so the actual color is the links preset (#477ab3) not the outer color (#FF0000)
+        assert_eq!(fg_color.as_deref(), Some("#477ab3"));
     }
 
     // ==================== Attribute Extraction ====================
@@ -1961,14 +1942,13 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, text } = &pb_elements[0] {
-            assert_eq!(id, "health");
-            assert_eq!(*value, 175);
-            assert_eq!(*max, 175);
-            assert_eq!(text, "health 175/175");
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, text } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "health");
+        assert_eq!(*value, 175);
+        assert_eq!(*max, 175);
+        assert_eq!(text, "health 175/175");
     }
 
     #[test]
@@ -1979,14 +1959,13 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, text } = &pb_elements[0] {
-            assert_eq!(id, "mana");
-            assert_eq!(*value, 386);
-            assert_eq!(*max, 407);
-            assert_eq!(text, "mana 386/407");
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, text } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "mana");
+        assert_eq!(*value, 386);
+        assert_eq!(*max, 407);
+        assert_eq!(text, "mana 386/407");
     }
 
     #[test]
@@ -1997,14 +1976,13 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, text } = &pb_elements[0] {
-            assert_eq!(id, "stamina");
-            assert_eq!(*value, 75);
-            assert_eq!(*max, 100);
-            assert_eq!(text, "stamina 75/100");
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, text } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "stamina");
+        assert_eq!(*value, 75);
+        assert_eq!(*max, 100);
+        assert_eq!(text, "stamina 75/100");
     }
 
     #[test]
@@ -2015,13 +1993,12 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, .. } = &pb_elements[0] {
-            assert_eq!(id, "spirit");
-            assert_eq!(*value, 100);
-            assert_eq!(*max, 100);
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, .. } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "spirit");
+        assert_eq!(*value, 100);
+        assert_eq!(*max, 100);
     }
 
     #[test]
@@ -2032,14 +2009,13 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, text } = &pb_elements[0] {
-            assert_eq!(id, "mindState");
-            assert_eq!(*value, 0);  // Falls back to percentage
-            assert_eq!(*max, 100);
-            assert_eq!(text, "clear as a bell");
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, text } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "mindState");
+        assert_eq!(*value, 0);  // Falls back to percentage
+        assert_eq!(*max, 100);
+        assert_eq!(text, "clear as a bell");
     }
 
     #[test]
@@ -2050,13 +2026,12 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, .. } = &pb_elements[0] {
-            assert_eq!(id, "concentration");
-            assert_eq!(*value, 100);
-            assert_eq!(*max, 100);
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, .. } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "concentration");
+        assert_eq!(*value, 100);
+        assert_eq!(*max, 100);
     }
 
     #[test]
@@ -2095,11 +2070,10 @@ mod tests {
         let ct_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::CastTime { .. })).collect();
         assert_eq!(ct_elements.len(), 1);
 
-        if let ParsedElement::CastTime { value } = &ct_elements[0] {
-            assert_eq!(*value, 3);
-        } else {
-            panic!("Expected CastTime element");
-        }
+        let ParsedElement::CastTime { value } = ct_elements[0] else {
+            panic!("Expected CastTime element, got {:?}", ct_elements[0]);
+        };
+        assert_eq!(*value, 3);
     }
 
     #[test]
@@ -2110,11 +2084,10 @@ mod tests {
         let ct_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::CastTime { .. })).collect();
         assert_eq!(ct_elements.len(), 1);
 
-        if let ParsedElement::CastTime { value } = &ct_elements[0] {
-            assert_eq!(*value, 10);
-        } else {
-            panic!("Expected CastTime element");
-        }
+        let ParsedElement::CastTime { value } = ct_elements[0] else {
+            panic!("Expected CastTime element, got {:?}", ct_elements[0]);
+        };
+        assert_eq!(*value, 10);
     }
 
     #[test]
@@ -2125,11 +2098,10 @@ mod tests {
         let ct_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::CastTime { .. })).collect();
         assert_eq!(ct_elements.len(), 1);
 
-        if let ParsedElement::CastTime { value } = &ct_elements[0] {
-            assert_eq!(*value, 0);
-        } else {
-            panic!("Expected CastTime element");
-        }
+        let ParsedElement::CastTime { value } = ct_elements[0] else {
+            panic!("Expected CastTime element, got {:?}", ct_elements[0]);
+        };
+        assert_eq!(*value, 0);
     }
 
     // ==================== Hand Item Parsing ====================
@@ -2142,12 +2114,11 @@ mod tests {
         let hand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::LeftHand { .. })).collect();
         assert_eq!(hand_elements.len(), 1);
 
-        if let ParsedElement::LeftHand { item, link } = &hand_elements[0] {
-            assert_eq!(item, "Empty");
-            assert!(link.is_none());
-        } else {
-            panic!("Expected LeftHand element");
-        }
+        let ParsedElement::LeftHand { item, link } = hand_elements[0] else {
+            panic!("Expected LeftHand element, got {:?}", hand_elements[0]);
+        };
+        assert_eq!(item, "Empty");
+        assert!(link.is_none());
     }
 
     #[test]
@@ -2158,14 +2129,13 @@ mod tests {
         let hand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::LeftHand { .. })).collect();
         assert_eq!(hand_elements.len(), 1);
 
-        if let ParsedElement::LeftHand { item, link } = &hand_elements[0] {
-            assert_eq!(item, "a gleaming steel sword");
-            let link_data = link.as_ref().expect("Should have link data");
-            assert_eq!(link_data.exist_id, "12345");
-            assert_eq!(link_data.noun, "sword");
-        } else {
-            panic!("Expected LeftHand element");
-        }
+        let ParsedElement::LeftHand { item, link } = hand_elements[0] else {
+            panic!("Expected LeftHand element, got {:?}", hand_elements[0]);
+        };
+        assert_eq!(item, "a gleaming steel sword");
+        let link_data = link.as_ref().expect("Should have link data");
+        assert_eq!(link_data.exist_id, "12345");
+        assert_eq!(link_data.noun, "sword");
     }
 
     #[test]
@@ -2176,12 +2146,11 @@ mod tests {
         let hand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::RightHand { .. })).collect();
         assert_eq!(hand_elements.len(), 1);
 
-        if let ParsedElement::RightHand { item, link } = &hand_elements[0] {
-            assert_eq!(item, "Empty");
-            assert!(link.is_none());
-        } else {
-            panic!("Expected RightHand element");
-        }
+        let ParsedElement::RightHand { item, link } = hand_elements[0] else {
+            panic!("Expected RightHand element, got {:?}", hand_elements[0]);
+        };
+        assert_eq!(item, "Empty");
+        assert!(link.is_none());
     }
 
     #[test]
@@ -2192,14 +2161,13 @@ mod tests {
         let hand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::RightHand { .. })).collect();
         assert_eq!(hand_elements.len(), 1);
 
-        if let ParsedElement::RightHand { item, link } = &hand_elements[0] {
-            assert_eq!(item, "an iron-banded shield");
-            let link_data = link.as_ref().expect("Should have link data");
-            assert_eq!(link_data.exist_id, "67890");
-            assert_eq!(link_data.noun, "shield");
-        } else {
-            panic!("Expected RightHand element");
-        }
+        let ParsedElement::RightHand { item, link } = hand_elements[0] else {
+            panic!("Expected RightHand element, got {:?}", hand_elements[0]);
+        };
+        assert_eq!(item, "an iron-banded shield");
+        let link_data = link.as_ref().expect("Should have link data");
+        assert_eq!(link_data.exist_id, "67890");
+        assert_eq!(link_data.noun, "shield");
     }
 
     #[test]
@@ -2210,13 +2178,12 @@ mod tests {
         let hand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::LeftHand { .. })).collect();
         assert_eq!(hand_elements.len(), 1);
 
-        if let ParsedElement::LeftHand { item, link } = &hand_elements[0] {
-            assert_eq!(item, "a silver dagger");
-            let link_data = link.as_ref().expect("Should have link data");
-            assert_eq!(link_data.coord.as_deref(), Some("1234,5678"));
-        } else {
-            panic!("Expected LeftHand element");
-        }
+        let ParsedElement::LeftHand { item, link } = hand_elements[0] else {
+            panic!("Expected LeftHand element, got {:?}", hand_elements[0]);
+        };
+        assert_eq!(item, "a silver dagger");
+        let link_data = link.as_ref().expect("Should have link data");
+        assert_eq!(link_data.coord.as_deref(), Some("1234,5678"));
     }
 
     // ==================== SpellHand Parsing ====================
@@ -2233,17 +2200,15 @@ mod tests {
         assert_eq!(spell_elements.len(), 1);
         assert_eq!(spellhand_elements.len(), 1);
 
-        if let ParsedElement::Spell { text } = &spell_elements[0] {
-            assert_eq!(text, "Minor Shock (901)");
-        } else {
-            panic!("Expected Spell element");
-        }
+        let ParsedElement::Spell { text } = spell_elements[0] else {
+            panic!("Expected Spell element, got {:?}", spell_elements[0]);
+        };
+        assert_eq!(text, "Minor Shock (901)");
 
-        if let ParsedElement::SpellHand { spell } = &spellhand_elements[0] {
-            assert_eq!(spell, "Minor Shock (901)");
-        } else {
-            panic!("Expected SpellHand element");
-        }
+        let ParsedElement::SpellHand { spell } = spellhand_elements[0] else {
+            panic!("Expected SpellHand element, got {:?}", spellhand_elements[0]);
+        };
+        assert_eq!(spell, "Minor Shock (901)");
     }
 
     #[test]
@@ -2254,11 +2219,9 @@ mod tests {
         let spellhand_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::SpellHand { .. })).collect();
         assert_eq!(spellhand_elements.len(), 1);
 
-        if let ParsedElement::SpellHand { spell } = &spellhand_elements[0] {
-            assert_eq!(spell, "");
-        } else {
-            panic!("Expected SpellHand element");
-        }
+        let ParsedElement::SpellHand { spell: _ } = spellhand_elements[0] else {
+            panic!("Expected SpellHand element, got {:?}", spellhand_elements[0]);
+        };
     }
 
     #[test]
@@ -2269,11 +2232,10 @@ mod tests {
         let spell_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Spell { .. })).collect();
         assert_eq!(spell_elements.len(), 1);
 
-        if let ParsedElement::Spell { text } = &spell_elements[0] {
-            assert_eq!(text, "Fire Spirit (111)");
-        } else {
-            panic!("Expected Spell element");
-        }
+        let ParsedElement::Spell { text } = spell_elements[0] else {
+            panic!("Expected Spell element, got {:?}", spell_elements[0]);
+        };
+        assert_eq!(text, "Fire Spirit (111)");
     }
 
     // ==================== StatusIndicator Parsing ====================
@@ -2286,12 +2248,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "HIDDEN");  // Icon prefix stripped, casing preserved
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "HIDDEN");  // Icon prefix stripped, casing preserved
+        assert!(*active);
     }
 
     #[test]
@@ -2302,12 +2263,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "STUNNED");
-            assert!(!*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "STUNNED");
+        assert!(!*active);
     }
 
     #[test]
@@ -2318,12 +2278,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "STANDING");
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "STANDING");
+        assert!(*active);
     }
 
     #[test]
@@ -2334,12 +2293,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "KNEELING");
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "KNEELING");
+        assert!(*active);
     }
 
     #[test]
@@ -2350,12 +2308,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "PRONE");
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "PRONE");
+        assert!(*active);
     }
 
     #[test]
@@ -2366,12 +2323,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "POISONED");
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "POISONED");
+        assert!(*active);
     }
 
     #[test]
@@ -2382,12 +2338,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "DISEASED");
-            assert!(!*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "DISEASED");
+        assert!(!*active);
     }
 
     #[test]
@@ -2398,12 +2353,11 @@ mod tests {
         let ind_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StatusIndicator { .. })).collect();
         assert_eq!(ind_elements.len(), 1);
 
-        if let ParsedElement::StatusIndicator { id, active } = &ind_elements[0] {
-            assert_eq!(id, "BLEEDING");
-            assert!(*active);
-        } else {
-            panic!("Expected StatusIndicator element");
-        }
+        let ParsedElement::StatusIndicator { id, active } = ind_elements[0] else {
+            panic!("Expected StatusIndicator element, got {:?}", ind_elements[0]);
+        };
+        assert_eq!(id, "BLEEDING");
+        assert!(*active);
     }
 
     // ==================== InjuryImage Parsing ====================
@@ -2416,12 +2370,9 @@ mod tests {
         let injury_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::InjuryImage { .. })).collect();
         assert_eq!(injury_elements.len(), 1);
 
-        if let ParsedElement::InjuryImage { id, name } = &injury_elements[0] {
-            assert_eq!(id, "head");
-            assert_eq!(name, "Injury2");
-        } else {
-            panic!("Expected InjuryImage element");
-        }
+        let ParsedElement::InjuryImage { id: _, name: _ } = injury_elements[0] else {
+            panic!("Expected InjuryImage element, got {:?}", injury_elements[0]);
+        };
     }
 
     #[test]
@@ -2433,20 +2384,18 @@ mod tests {
         assert_eq!(injury_elements.len(), 2);
 
         // First injury
-        if let ParsedElement::InjuryImage { id, name } = &injury_elements[0] {
-            assert_eq!(id, "leftArm");
-            assert_eq!(name, "Injury1");
-        } else {
-            panic!("Expected InjuryImage element");
-        }
+        let ParsedElement::InjuryImage { id, name } = injury_elements[0] else {
+            panic!("Expected InjuryImage element, got {:?}", injury_elements[0]);
+        };
+        assert_eq!(id, "leftArm");
+        assert_eq!(name, "Injury1");
 
         // Second injury
-        if let ParsedElement::InjuryImage { id, name } = &injury_elements[1] {
-            assert_eq!(id, "chest");
-            assert_eq!(name, "Injury3");
-        } else {
-            panic!("Expected InjuryImage element");
-        }
+        let ParsedElement::InjuryImage { id, name } = injury_elements[1] else {
+            panic!("Expected InjuryImage element, got {:?}", injury_elements[1]);
+        };
+        assert_eq!(id, "chest");
+        assert_eq!(name, "Injury3");
     }
 
     #[test]
@@ -2457,12 +2406,11 @@ mod tests {
         let injury_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::InjuryImage { .. })).collect();
         assert_eq!(injury_elements.len(), 1);
 
-        if let ParsedElement::InjuryImage { id, name } = &injury_elements[0] {
-            assert_eq!(id, "rightLeg");
-            assert_eq!(name, "Scar1");
-        } else {
-            panic!("Expected InjuryImage element");
-        }
+        let ParsedElement::InjuryImage { id, name } = injury_elements[0] else {
+            panic!("Expected InjuryImage element, got {:?}", injury_elements[0]);
+        };
+        assert_eq!(id, "rightLeg");
+        assert_eq!(name, "Scar1");
     }
 
     #[test]
@@ -2505,14 +2453,13 @@ mod tests {
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
         assert_eq!(pb_elements.len(), 1);
 
-        if let ParsedElement::ProgressBar { id, value, max, text } = &pb_elements[0] {
-            assert_eq!(id, "lblBPs");
-            assert_eq!(*value, 100);
-            assert_eq!(*max, 100);
-            assert!(text.contains("Blood Points"));
-        } else {
-            panic!("Expected ProgressBar element");
-        }
+        let ParsedElement::ProgressBar { id, value, max, text } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "lblBPs");
+        assert_eq!(*value, 100);
+        assert_eq!(*max, 100);
+        assert!(text.contains("Blood Points"));
     }
 
     #[test]
@@ -2523,12 +2470,11 @@ mod tests {
         let label_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Label { .. })).collect();
         assert_eq!(label_elements.len(), 1);
 
-        if let ParsedElement::Label { id, value } = &label_elements[0] {
-            assert_eq!(id, "someLabel");
-            assert_eq!(value, "Some Value");
-        } else {
-            panic!("Expected Label element");
-        }
+        let ParsedElement::Label { id, value } = label_elements[0] else {
+            panic!("Expected Label element, got {:?}", label_elements[0]);
+        };
+        assert_eq!(id, "someLabel");
+        assert_eq!(value, "Some Value");
     }
 
     // ==================== Component Parsing ====================
@@ -2541,12 +2487,11 @@ mod tests {
         let comp_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Component { .. })).collect();
         assert_eq!(comp_elements.len(), 1);
 
-        if let ParsedElement::Component { id, value } = &comp_elements[0] {
-            assert_eq!(id, "room title");
-            assert_eq!(value, "Town Square");
-        } else {
-            panic!("Expected Component element");
-        }
+        let ParsedElement::Component { id, value } = comp_elements[0] else {
+            panic!("Expected Component element, got {:?}", comp_elements[0]);
+        };
+        assert_eq!(id, "room title");
+        assert_eq!(value, "Town Square");
     }
 
     #[test]
@@ -2557,12 +2502,11 @@ mod tests {
         let comp_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Component { .. })).collect();
         assert_eq!(comp_elements.len(), 1);
 
-        if let ParsedElement::Component { id, value } = &comp_elements[0] {
-            assert_eq!(id, "room desc");
-            assert!(value.contains("marble statue"));
-        } else {
-            panic!("Expected Component element");
-        }
+        let ParsedElement::Component { id, value } = comp_elements[0] else {
+            panic!("Expected Component element, got {:?}", comp_elements[0]);
+        };
+        assert_eq!(id, "room desc");
+        assert!(value.contains("marble statue"));
     }
 
     // ==================== Active Effects Parsing ====================
@@ -2575,15 +2519,14 @@ mod tests {
         let effect_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ActiveEffect { .. })).collect();
         assert_eq!(effect_elements.len(), 1);
 
-        if let ParsedElement::ActiveEffect { category, id, value, text, time } = &effect_elements[0] {
-            assert_eq!(category, "ActiveSpells");  // Normalized
-            assert_eq!(id, "115");
-            assert_eq!(*value, 74);
-            assert_eq!(text, "Fasthr's Reward");
-            assert_eq!(time, "03:06:54");
-        } else {
-            panic!("Expected ActiveEffect element");
-        }
+        let ParsedElement::ActiveEffect { category, id, value, text, time } = effect_elements[0] else {
+            panic!("Expected ActiveEffect element, got {:?}", effect_elements[0]);
+        };
+        assert_eq!(category, "ActiveSpells");  // Normalized
+        assert_eq!(id, "115");
+        assert_eq!(*value, 74);
+        assert_eq!(text, "Fasthr's Reward");
+        assert_eq!(time, "03:06:54");
     }
 
     #[test]
@@ -2594,11 +2537,10 @@ mod tests {
         let effect_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ActiveEffect { .. })).collect();
         assert_eq!(effect_elements.len(), 1);
 
-        if let ParsedElement::ActiveEffect { category, .. } = &effect_elements[0] {
-            assert_eq!(category, "Buffs");
-        } else {
-            panic!("Expected ActiveEffect element");
-        }
+        let ParsedElement::ActiveEffect { category, .. } = effect_elements[0] else {
+            panic!("Expected ActiveEffect element, got {:?}", effect_elements[0]);
+        };
+        assert_eq!(category, "Buffs");
     }
 
     #[test]
@@ -2609,11 +2551,10 @@ mod tests {
         let clear_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ClearActiveEffects { .. })).collect();
         assert_eq!(clear_elements.len(), 1);
 
-        if let ParsedElement::ClearActiveEffects { category } = &clear_elements[0] {
-            assert_eq!(category, "ActiveSpells");
-        } else {
-            panic!("Expected ClearActiveEffects element");
-        }
+        let ParsedElement::ClearActiveEffects { category } = clear_elements[0] else {
+            panic!("Expected ClearActiveEffects element, got {:?}", clear_elements[0]);
+        };
+        assert_eq!(category, "ActiveSpells");
     }
 
     // ==================== StreamWindow Parsing ====================
@@ -2626,12 +2567,11 @@ mod tests {
         let sw_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StreamWindow { .. })).collect();
         assert_eq!(sw_elements.len(), 1);
 
-        if let ParsedElement::StreamWindow { id, subtitle } = &sw_elements[0] {
-            assert_eq!(id, "room");
-            assert_eq!(subtitle.as_deref(), Some(" - Emberthorn Refuge, Bowery"));
-        } else {
-            panic!("Expected StreamWindow element");
-        }
+        let ParsedElement::StreamWindow { id, subtitle } = sw_elements[0] else {
+            panic!("Expected StreamWindow element, got {:?}", sw_elements[0]);
+        };
+        assert_eq!(id, "room");
+        assert_eq!(subtitle.as_deref(), Some(" - Emberthorn Refuge, Bowery"));
     }
 
     // ==================== Nav/RoomId Parsing ====================
@@ -2644,11 +2584,10 @@ mod tests {
         let room_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::RoomId { .. })).collect();
         assert_eq!(room_elements.len(), 1);
 
-        if let ParsedElement::RoomId { id } = &room_elements[0] {
-            assert_eq!(id, "7150105");
-        } else {
-            panic!("Expected RoomId element");
-        }
+        let ParsedElement::RoomId { id } = room_elements[0] else {
+            panic!("Expected RoomId element, got {:?}", room_elements[0]);
+        };
+        assert_eq!(id, "7150105");
     }
 
     // ==================== ClearStream Parsing ====================
@@ -2661,11 +2600,10 @@ mod tests {
         let clear_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ClearStream { .. })).collect();
         assert_eq!(clear_elements.len(), 1);
 
-        if let ParsedElement::ClearStream { id } = &clear_elements[0] {
-            assert_eq!(id, "room");
-        } else {
-            panic!("Expected ClearStream element");
-        }
+        let ParsedElement::ClearStream { id } = clear_elements[0] else {
+            panic!("Expected ClearStream element, got {:?}", clear_elements[0]);
+        };
+        assert_eq!(id, "room");
     }
 
     // ==================== LaunchURL Parsing ====================
@@ -2678,11 +2616,10 @@ mod tests {
         let url_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::LaunchURL { .. })).collect();
         assert_eq!(url_elements.len(), 1);
 
-        if let ParsedElement::LaunchURL { url } = &url_elements[0] {
-            assert_eq!(url, "/gs4/play/cm/loader.asp?uname=test");
-        } else {
-            panic!("Expected LaunchURL element");
-        }
+        let ParsedElement::LaunchURL { url } = url_elements[0] else {
+            panic!("Expected LaunchURL element, got {:?}", url_elements[0]);
+        };
+        assert_eq!(url, "/gs4/play/cm/loader.asp?uname=test");
     }
 
     // ==================== Menu Response Parsing ====================
@@ -2695,15 +2632,14 @@ mod tests {
         let menu_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::MenuResponse { .. })).collect();
         assert_eq!(menu_elements.len(), 1);
 
-        if let ParsedElement::MenuResponse { id, coords } = &menu_elements[0] {
-            assert_eq!(id, "123");
-            assert_eq!(coords.len(), 2);
-            assert_eq!(coords[0].0, "2524,1898");
-            assert!(coords[0].1.is_none());
-            assert_eq!(coords[1].0, "2524,1735");
-            assert_eq!(coords[1].1.as_deref(), Some("gleaming steel baselard"));
-        } else {
-            panic!("Expected MenuResponse element");
-        }
+        let ParsedElement::MenuResponse { id, coords } = menu_elements[0] else {
+            panic!("Expected MenuResponse element, got {:?}", menu_elements[0]);
+        };
+        assert_eq!(id, "123");
+        assert_eq!(coords.len(), 2);
+        assert_eq!(coords[0].0, "2524,1898");
+        assert!(coords[0].1.is_none());
+        assert_eq!(coords[1].0, "2524,1735");
+        assert_eq!(coords[1].1.as_deref(), Some("gleaming steel baselard"));
     }
 }

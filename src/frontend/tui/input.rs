@@ -1823,7 +1823,7 @@ impl TuiFrontend {
                     if modifiers.ctrl {
                         match code {
                             crate::frontend::KeyCode::Char(c @ '1'..='6') => {
-                                let section = c.to_digit(10).unwrap() as usize;
+                                let section = c.to_digit(10).expect("char '1'..='6' is always a digit") as usize;
                                 editor.jump_to_section(section);
                                 app_core.needs_render = true;
                                 return Ok(None);

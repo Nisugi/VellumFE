@@ -566,7 +566,7 @@ impl HighlightBrowser {
                 fg: highlight.fg.clone(),
                 bg: highlight.bg.clone(),
                 has_sound: highlight.sound.is_some(),
-                is_squelched: false, // TODO: Add squelch support to HighlightPattern
+                is_squelched: highlight.squelch,
                 redirect_to: highlight.redirect_to.clone(),
                 redirect_mode: if highlight.redirect_to.is_some() {
                     Some(highlight.redirect_mode.clone())
