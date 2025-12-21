@@ -1413,11 +1413,12 @@ pub struct UiConfig {
     pub countdown_icon: String, // Unicode character for countdown blocks (e.g., "\u{f0c8}")
     #[serde(default = "default_poll_timeout_ms")]
     pub poll_timeout_ms: u64, // Event poll timeout in milliseconds (lower = higher FPS, higher CPU)
-    // Startup music settings
-    #[serde(default = "default_startup_music")]
-    pub startup_music: bool, // Play startup music on connection
-    #[serde(default = "default_startup_music_file")]
-    pub startup_music_file: String, // Sound file to play on startup (without extension)
+    /// DEPRECATED: Moved to [sound] section. Kept for backwards compatibility.
+    #[serde(default = "default_startup_music", skip_serializing)]
+    pub startup_music: bool,
+    /// DEPRECATED: Moved to [sound] section. Kept for backwards compatibility.
+    #[serde(default = "default_startup_music_file", skip_serializing)]
+    pub startup_music_file: String,
     // Text selection settings
     #[serde(default = "default_selection_enabled")]
     pub selection_enabled: bool,
@@ -1562,16 +1563,25 @@ impl ContentAlign {
         (row_offset, col_offset)
     }
 }
+/// Sound configuration for audio playback.
+///
+/// When `enabled = false`, the audio system is not initialized at all.
+/// This avoids the ~10 second timeout on systems without audio hardware.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundConfig {
     #[serde(default = "default_sound_enabled")]
-    pub enabled: bool,
+    pub enabled: bool, // false = skip audio init entirely
     #[serde(default = "default_sound_volume")]
     pub volume: f32, // Master volume (0.0 to 1.0)
     #[serde(default = "default_sound_cooldown")]
     pub cooldown_ms: u64, // Cooldown between same sound plays (milliseconds)
-    #[serde(default)]
-    pub disabled: bool, // Skip sound system initialization entirely (for systems without audio)
+    #[serde(default = "default_startup_music")]
+    pub startup_music: bool, // Play startup music on connection
+    #[serde(default = "default_startup_music_file")]
+    pub startup_music_file: String, // Sound file to play on startup (without extension)
+    /// DEPRECATED: Use `enabled = false` instead. This field is only for backwards compatibility.
+    #[serde(default, skip_serializing)]
+    pub disabled: bool,
 }
 
 fn default_sound_enabled() -> bool {
@@ -1592,7 +1602,9 @@ impl Default for SoundConfig {
             enabled: default_sound_enabled(),
             volume: default_sound_volume(),
             cooldown_ms: default_sound_cooldown(),
-            disabled: false,
+            startup_music: default_startup_music(),
+            startup_music_file: default_startup_music_file(),
+            disabled: false, // Deprecated, kept for backwards compat
         }
     }
 }
@@ -1601,30 +1613,25 @@ impl Default for SoundConfig {
 ///
 /// Controls accessibility features for visually impaired users.
 /// When disabled (default), has zero performance impact.
+/// TTS operates independently of the sound system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsConfig {
     #[serde(default = "default_tts_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_tts_voice")]
-    pub voice: Option<String>, // Voice name (None = system default)
     #[serde(default = "default_tts_rate")]
     pub rate: f32, // Speech rate (0.5 to 2.0, 1.0 = normal)
     #[serde(default = "default_tts_volume")]
     pub volume: f32, // Volume (0.0 to 1.0)
     #[serde(default = "default_tts_speak_thoughts")]
     pub speak_thoughts: bool, // Automatically speak thought window
-    #[serde(default = "default_tts_speak_whispers")]
-    pub speak_whispers: bool, // Automatically speak whispers
+    #[serde(default = "default_tts_speak_speech", alias = "speak_whispers")]
+    pub speak_speech: bool, // Automatically speak speech window (renamed from speak_whispers)
     #[serde(default = "default_tts_speak_main")]
     pub speak_main: bool, // Automatically speak main window
 }
 
 fn default_tts_enabled() -> bool {
     false // Disabled by default (opt-in)
-}
-
-fn default_tts_voice() -> Option<String> {
-    None // Use system default voice
 }
 
 fn default_tts_rate() -> f32 {
@@ -1639,8 +1646,8 @@ fn default_tts_speak_thoughts() -> bool {
     true // Thoughts are high priority for screen reader users
 }
 
-fn default_tts_speak_whispers() -> bool {
-    true // Whispers are important communications
+fn default_tts_speak_speech() -> bool {
+    true // Speech window is important for communications
 }
 
 fn default_tts_speak_main() -> bool {
@@ -1651,11 +1658,10 @@ impl Default for TtsConfig {
     fn default() -> Self {
         Self {
             enabled: default_tts_enabled(),
-            voice: default_tts_voice(),
             rate: default_tts_rate(),
             volume: default_tts_volume(),
             speak_thoughts: default_tts_speak_thoughts(),
-            speak_whispers: default_tts_speak_whispers(),
+            speak_speech: default_tts_speak_speech(),
             speak_main: default_tts_speak_main(),
         }
     }
@@ -4145,6 +4151,29 @@ impl Config {
 
         // Store character name for later saves
         config.character = character.map(|s| s.to_string());
+
+        // === Backwards Compatibility Migrations ===
+
+        // [sound] Migration: disabled field → enabled = false
+        if config.sound.disabled {
+            tracing::warn!(
+                "DEPRECATED: sound.disabled is deprecated. Use enabled = false instead. \
+                 Migrating: setting sound.enabled = false"
+            );
+            config.sound.enabled = false;
+        }
+
+        // [sound] Migration: startup_music from [ui] to [sound]
+        // If ui.startup_music was explicitly set to false, respect that
+        if !config.ui.startup_music {
+            config.sound.startup_music = false;
+        }
+        // If ui.startup_music_file was changed from default, use that
+        if config.ui.startup_music_file != default_startup_music_file() {
+            config.sound.startup_music_file = config.ui.startup_music_file.clone();
+        }
+
+        // === End Migrations ===
 
         // Load from separate files
         config.colors = ColorConfig::load(character)?;

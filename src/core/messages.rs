@@ -1817,7 +1817,7 @@ impl MessageProcessor {
         // Check if this window should be spoken based on config
         let should_speak = match window_name {
             "thoughts" => self.config.tts.speak_thoughts,
-            "speech" => self.config.tts.speak_whispers, // Whispers go to speech window
+            "speech" => self.config.tts.speak_speech,
             "main" => self.config.tts.speak_main,
             _ => false, // Don't speak other windows by default
         };

@@ -263,10 +263,10 @@ fn main() -> Result<()> {
 
     // Apply CLI flag overrides
     if cli.nomusic {
-        config.ui.startup_music = false;
+        config.sound.startup_music = false;
     }
     if cli.nosound {
-        config.sound.disabled = true;
+        config.sound.enabled = false;
     }
     if let Some(mode) = cli.color_mode {
         config.ui.color_mode = mode;
