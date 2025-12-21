@@ -310,9 +310,9 @@ impl TextWindow {
     }
 
     pub fn finish_line(&mut self, _width: u16) {
-        if self.current_line_spans.is_empty() {
-            return;
-        }
+        // Note: Blank line filtering is now handled in MessageProcessor
+        // (flush_current_stream_with_tts) which knows about chunk context.
+        // TextWindow just displays what it's given, including blank lines.
 
         // Apply highlights before storing/wrapping
         self.apply_highlights();

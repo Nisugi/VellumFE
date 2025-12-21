@@ -84,11 +84,18 @@ impl WidgetCategory {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorMode {
-    /// True color RGB (24-bit) - requires modern terminal
+    /// True color RGB (24-bit) - ESC[38;2;R;G;Bm
+    /// Requires modern terminal with true color support.
     #[default]
     Direct,
-    /// 256-color palette indices - for legacy terminals or SSH sessions
+    /// 256-color with custom palette - ESC[38;5;Nm + OSC4
+    /// Use with .setpalette to reprogram terminal palette slots.
+    /// Requires terminal with OSC4 support (most modern terminals).
     Slot,
+    /// 256-color with standard palette - ESC[38;5;Nm only
+    /// Uses default xterm 256-color palette, finds closest match.
+    /// For terminals without true color OR OSC4 support.
+    Indexed,
 }
 
 impl std::fmt::Display for ColorMode {
@@ -96,6 +103,46 @@ impl std::fmt::Display for ColorMode {
         match self {
             ColorMode::Direct => write!(f, "direct"),
             ColorMode::Slot => write!(f, "slot"),
+            ColorMode::Indexed => write!(f, "indexed"),
+        }
+    }
+}
+
+// Default functions for HighlightsConfig
+fn default_highlights_enabled() -> bool {
+    true
+}
+
+/// Configuration for highlight system toggles.
+/// Allows disabling specific highlight features without deleting patterns.
+/// Note: System highlights (monsterbold, links, roomname) are NOT affected by these toggles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HighlightsConfig {
+    /// Enable squelch/ignore patterns (hide matching lines)
+    #[serde(default = "default_highlights_enabled")]
+    pub ignores_enabled: bool,
+    /// Enable sound triggers on pattern match
+    #[serde(default = "default_highlights_enabled")]
+    pub sounds_enabled: bool,
+    /// Enable text replacement patterns
+    #[serde(default = "default_highlights_enabled")]
+    pub replace_enabled: bool,
+    /// Enable redirect patterns (route lines to other windows)
+    #[serde(default = "default_highlights_enabled")]
+    pub redirect_enabled: bool,
+    /// Enable color highlighting
+    #[serde(default = "default_highlights_enabled")]
+    pub coloring_enabled: bool,
+}
+
+impl Default for HighlightsConfig {
+    fn default() -> Self {
+        Self {
+            ignores_enabled: true,
+            sounds_enabled: true,
+            replace_enabled: true,
+            redirect_enabled: true,
+            coloring_enabled: true,
         }
     }
 }
@@ -129,6 +176,8 @@ pub struct Config {
     pub active_theme: String, // Currently active theme name
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
+    #[serde(default, rename = "highlights")] // [highlights] section in config.toml
+    pub highlight_settings: HighlightsConfig, // Highlight system toggles (ignores, sounds, replace, redirect, coloring)
 }
 
 /// Terminal size range to layout mapping
@@ -1411,8 +1460,6 @@ pub struct UiConfig {
     pub border_style: String, // Default border style: "single", "double", "rounded", "thick", "none"
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String, // Unicode character for countdown blocks (e.g., "\u{f0c8}")
-    #[serde(default = "default_poll_timeout_ms")]
-    pub poll_timeout_ms: u64, // Event poll timeout in milliseconds (lower = higher FPS, higher CPU)
     /// DEPRECATED: Moved to [sound] section. Kept for backwards compatibility.
     #[serde(default = "default_startup_music", skip_serializing)]
     pub startup_music: bool,
@@ -1444,9 +1491,9 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
-    // Squelch/ignore settings
-    #[serde(default = "default_ignores_enabled")]
-    pub ignores_enabled: bool, // Global toggle for squelch patterns (can disable without deleting patterns)
+    /// DEPRECATED: Moved to [highlights] section. Kept for backwards compatibility.
+    #[serde(default = "default_ignores_enabled", skip_serializing)]
+    pub ignores_enabled: bool,
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
@@ -1460,7 +1507,6 @@ impl Default for UiConfig {
             layout: LayoutConfig::default(),
             border_style: default_border_style(),
             countdown_icon: default_countdown_icon(),
-            poll_timeout_ms: default_poll_timeout_ms(),
             startup_music: default_startup_music(),
             startup_music_file: default_startup_music_file(),
             selection_enabled: default_selection_enabled(),
@@ -1729,10 +1775,6 @@ fn default_border_style() -> String {
 
 fn default_countdown_icon() -> String {
     "\u{f0c8}".to_string() // Nerd Font square icon
-}
-
-fn default_poll_timeout_ms() -> u64 {
-    16 // 16ms = ~60 FPS, 8ms = ~120 FPS, 4ms = ~240 FPS
 }
 
 fn default_background_color() -> String {
@@ -4173,6 +4215,15 @@ impl Config {
             config.sound.startup_music_file = config.ui.startup_music_file.clone();
         }
 
+        // [highlights] Migration: ui.ignores_enabled → highlight_settings.ignores_enabled
+        // If ui.ignores_enabled was explicitly set to false, migrate to new location
+        if !config.ui.ignores_enabled {
+            tracing::info!(
+                "Migrating ui.ignores_enabled=false to [highlights].ignores_enabled"
+            );
+            config.highlight_settings.ignores_enabled = false;
+        }
+
         // === End Migrations ===
 
         // Load from separate files
@@ -4456,7 +4507,6 @@ impl Default for Config {
                 layout: LayoutConfig::default(),
                 border_style: default_border_style(),
                 countdown_icon: default_countdown_icon(),
-                poll_timeout_ms: default_poll_timeout_ms(),
                 startup_music: default_startup_music(),
                 startup_music_file: default_startup_music_file(),
                 selection_enabled: default_selection_enabled(),
@@ -4479,6 +4529,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             tts: TtsConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
+            highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

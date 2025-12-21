@@ -70,7 +70,7 @@ pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
     match get_global_color_mode() {
         ColorMode::Direct => ratatui::style::Color::Rgb(r, g, b),
         ColorMode::Slot => {
-            // First try palette lookup
+            // First try palette lookup (user-defined slots via .setpalette)
             let hex = format!("#{:02x}{:02x}{:02x}", r, g, b);
             if let Some(slot) = lookup_hex_to_slot(&hex) {
                 ratatui::style::Color::Indexed(slot)
@@ -78,6 +78,11 @@ pub fn rgb_to_ratatui_color(r: u8, g: u8, b: u8) -> ratatui::style::Color {
                 // Fall back to nearest slot calculation
                 ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))
             }
+        }
+        ColorMode::Indexed => {
+            // Always use nearest slot in standard 256-color palette
+            // No palette lookup - for terminals without OSC4 support
+            ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))
         }
     }
 }
@@ -116,7 +121,11 @@ pub fn parse_hex_color_with_mode(hex: &str, mode: ColorMode) -> Result<ratatui::
 
     match mode {
         ColorMode::Direct => Ok(ratatui::style::Color::Rgb(r, g, b)),
-        ColorMode::Slot => Ok(ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b))),
+        ColorMode::Slot | ColorMode::Indexed => {
+            // Both modes use 256-color indexed output
+            // Slot mode may use custom palette via OSC4, Indexed uses standard xterm palette
+            Ok(ratatui::style::Color::Indexed(rgb_to_nearest_slot(r, g, b)))
+        }
     }
 }
 

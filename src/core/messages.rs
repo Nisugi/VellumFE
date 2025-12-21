@@ -1004,16 +1004,21 @@ impl MessageProcessor {
             );
         }
 
-        if self.current_segments.is_empty() {
-            return;
-        }
-
         // Concatenate all segments to get full line text for squelch checking
         let full_text: String = self
             .current_segments
             .iter()
             .map(|seg| seg.text.as_str())
             .collect();
+
+        // Skip leading blank lines - only keep interior blanks (after content starts)
+        // This preserves formatting blank lines within output blocks like BOUNTY
+        // while filtering noise blank lines before any content appears
+        let is_blank_line = full_text.trim().is_empty();
+        if is_blank_line && !self.chunk_has_main_text {
+            self.current_segments.clear();
+            return;
+        }
 
         // Check if line should be squelched (ignored/filtered)
         // Squelch always takes precedence over redirect
@@ -1916,7 +1921,7 @@ impl MessageProcessor {
 
     /// Update squelch pattern matching infrastructure from config
     pub fn update_squelch_patterns(&mut self) {
-        self.squelch_enabled = self.config.ui.ignores_enabled;
+        self.squelch_enabled = self.config.highlight_settings.ignores_enabled;
 
         // Collect all squelch patterns
         let squelch_patterns: Vec<_> = self

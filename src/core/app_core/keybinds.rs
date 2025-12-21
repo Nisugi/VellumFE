@@ -160,8 +160,9 @@ impl AppCore {
                 tracing::info!("Performance stats overlay toggled: {}", status);
             }
             KeyAction::ToggleIgnores => {
-                self.config.ui.ignores_enabled = !self.config.ui.ignores_enabled;
-                let status = if self.config.ui.ignores_enabled {
+                self.config.highlight_settings.ignores_enabled =
+                    !self.config.highlight_settings.ignores_enabled;
+                let status = if self.config.highlight_settings.ignores_enabled {
                     "enabled"
                 } else {
                     "disabled"

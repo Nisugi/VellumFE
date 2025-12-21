@@ -33,24 +33,36 @@ port = 8001
 # Display and interaction settings.
 
 [ui]
-# Text buffer size (lines kept in memory per window)
+# --- Window Defaults ---
+# These values apply to windows that don't specify their own settings.
+
+# Default text buffer size (lines kept in memory per window)
 buffer_size = 1000
 
-# Show timestamps on messages
+# Default timestamp visibility on messages
 show_timestamps = true
 
-# Window border style: "single", "double", "rounded", "thick", "none"
+# Default window border style: "single", "double", "rounded", "thick", "none"
 border_style = "single"
 
 # Icon for countdown timer blocks (uses Nerd Font glyph)
+# Examples: "" (square), "" (circle), "●" (bullet)
+# Find icons: https://www.nerdfonts.com/cheat-sheet
 countdown_icon = ""
 
-# Event loop timing (ms). Lower = smoother, higher = less CPU
-# 16ms ≈ 60 FPS, 33ms ≈ 30 FPS
-poll_timeout_ms = 16
-
-# Color rendering mode: "direct" (24-bit true color) or "slot" (256-color palette)
-# Use "slot" for compatibility with .setpalette command
+# Color rendering mode - choose based on your terminal:
+#
+#   "direct"  - 24-bit true color (16 million colors)
+#               Use with: kitty, alacritty, wezterm, iTerm2, Windows Terminal
+#
+#   "slot"    - 256-color with custom palette via .setpalette
+#               Use with: terminals supporting OSC4 palette reprogramming
+#               Allows exact color matching via terminal palette slots
+#
+#   "indexed" - 256-color with standard xterm palette (finds closest match)
+#               Use with: legacy terminals, SSH sessions, or when colors look wrong
+#               Safe fallback that works everywhere
+#
 color_mode = "direct"
 
 # --- Text Selection ---
@@ -66,10 +78,6 @@ drag_modifier_key = "ctrl"
 # Minimum command length to save (shorter commands not recorded)
 min_command_length = 3
 
-# --- Squelch/Ignore System ---
-# Global toggle for squelch patterns (disable without deleting patterns)
-ignores_enabled = true
-
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
 performance_stats_enabled = false
@@ -77,6 +85,20 @@ perf_stats_x = 0
 perf_stats_y = 0
 perf_stats_width = 35
 perf_stats_height = 23
+
+
+# ------------------------------------------------------------
+# HIGHLIGHT SYSTEM
+# ------------------------------------------------------------
+# Global toggles for highlight features (disable without deleting patterns).
+# Note: System highlights (monsterbold, links, roomname) are NOT affected.
+
+[highlights]
+ignores_enabled = true      # Squelch/hide matching lines
+sounds_enabled = true       # Play sounds on pattern match
+replace_enabled = true      # Apply text replacements
+redirect_enabled = true     # Route lines to other windows
+coloring_enabled = true     # Apply color highlighting
 
 
 # ------------------------------------------------------------

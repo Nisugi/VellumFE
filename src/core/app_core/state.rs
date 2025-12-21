@@ -940,6 +940,20 @@ impl AppCore {
 
     /// Process incoming XML data from server
     pub fn process_server_data(&mut self, data: &str) -> Result<()> {
+        // Handle empty input (blank line from server) - "".lines() yields nothing!
+        // Network reads line-by-line, so blank lines arrive as empty strings.
+        // We must handle this explicitly since Rust's lines() returns an empty iterator for "".
+        if data.is_empty() {
+            // Parser already handles empty input: returns vec![Text { content: "" }]
+            let elements = self.parser.parse_line(data);
+            for element in elements {
+                self.process_element(&element)?;
+            }
+            self.message_processor
+                .flush_current_stream_with_tts(&mut self.ui_state, Some(&mut self.tts_manager));
+            return Ok(());
+        }
+
         // Parse XML line by line
         for line in data.lines() {
             let elements = self.parser.parse_line(line);
