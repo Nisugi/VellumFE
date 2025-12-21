@@ -1,61 +1,152 @@
-layout_mappings = []
+# ============================================================
+# VellumFE Configuration
+# ============================================================
+# This file controls client behavior. Most users only need to
+# modify [connection] and [ui] sections.
+#
+# Configuration files (in ~/.vellum-fe/ or per-character folder):
+#   config.toml     - This file (connection, UI, sound settings)
+#   keybinds.toml   - Keyboard shortcuts
+#   highlights.toml - Text highlighting and coloring rules
+#   colors.toml     - Color palette definitions
+#   layout.toml     - Window positions and sizes
+#
+# Use .reload command in-game to apply changes without restart.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# CONNECTION
+# ------------------------------------------------------------
+# Where to connect. Default is Lich proxy on localhost.
+# For direct connection, use --direct flag with CLI arguments.
 
 [connection]
 host = "127.0.0.1"
 port = 8001
+# character = "YourName"  # Optional: auto-select this character
+
+
+# ------------------------------------------------------------
+# USER INTERFACE
+# ------------------------------------------------------------
+# Display and interaction settings.
 
 [ui]
+# Text buffer size (lines kept in memory per window)
 buffer_size = 1000
+
+# Show timestamps on messages
 show_timestamps = true
+
+# Window border style: "single", "double", "rounded", "thick", "none"
 border_style = "single"
-countdown_icon = ""
+
+# Icon for countdown timer blocks (uses Nerd Font glyph)
+countdown_icon = ""
+
+# Event loop timing (ms). Lower = smoother, higher = less CPU
+# 16ms ≈ 60 FPS, 33ms ≈ 30 FPS
 poll_timeout_ms = 16
-startup_music = true
-startup_music_file = "wizard_music"
+
+# Color rendering mode: "direct" (24-bit true color) or "slot" (256-color palette)
+# Use "slot" for compatibility with .setpalette command
+color_mode = "direct"
+
+# --- Text Selection ---
 selection_enabled = true
 selection_respect_window_boundaries = true
-selection_auto_copy = true
+selection_auto_copy = true  # Copy to clipboard on mouse-up
+
+# --- Drag and Drop ---
+# Modifier key required for window dragging: "ctrl", "alt", "shift"
 drag_modifier_key = "ctrl"
+
+# --- Command History ---
+# Minimum command length to save (shorter commands not recorded)
 min_command_length = 3
+
+# --- Squelch/Ignore System ---
+# Global toggle for squelch patterns (disable without deleting patterns)
+ignores_enabled = true
+
+# --- Startup ---
+startup_music = true
+startup_music_file = "wizard_music"
+
+# --- Performance Overlay (Debug) ---
+# Press F3 or use .perf command to toggle
+performance_stats_enabled = false
 perf_stats_x = 0
 perf_stats_y = 0
 perf_stats_width = 35
 perf_stats_height = 23
 
-[ui.layout]
+
+# ------------------------------------------------------------
+# SOUND
+# ------------------------------------------------------------
+# Audio feedback for game events.
 
 [sound]
 enabled = true
-volume = 0.5
-cooldown_ms = 500
+volume = 0.7           # Master volume (0.0 to 1.0)
+cooldown_ms = 500      # Minimum time between repeated sounds
 
-# Text-to-Speech (Accessibility)
-# Enable this for screen-reader support via native TTS engines
-# Controls: Ctrl+Shift+N (next), Ctrl+Shift+P (previous), Ctrl+Shift+M (mute toggle)
+
+# ------------------------------------------------------------
+# TEXT-TO-SPEECH (Accessibility)
+# ------------------------------------------------------------
+# Screen reader support via native TTS engines.
+# Controls: Ctrl+Shift+N (next), Ctrl+Shift+P (previous),
+#           Ctrl+Shift+M (mute toggle)
+
 [tts]
-enabled = false          # Set to true to enable TTS
-voice = ""               # Leave empty for system default voice
-rate = 1.0               # Speech rate (0.5 = slow, 1.0 = normal, 2.0 = fast)
-volume = 1.0             # Volume (0.0 = silent, 1.0 = full)
-speak_thoughts = true    # Speak focused thoughts
-speak_whispers = true    # Speak whispers/speech
-speak_main = false       # Speak main window text (can be overwhelming)
+enabled = false        # Set to true to enable TTS
+voice = ""             # Leave empty for system default voice
+rate = 1.0             # Speech rate: 0.5 (slow) to 2.0 (fast)
+volume = 1.0           # Volume: 0.0 (silent) to 1.0 (full)
+speak_thoughts = true  # Speak focused thoughts
+speak_whispers = true  # Speak whispers and speech
+speak_main = false     # Speak main window (can be overwhelming)
 
-# Stream Routing Configuration
-# Controls how text streams are routed when no widget subscribes to them
+
+# ------------------------------------------------------------
+# STREAM ROUTING
+# ------------------------------------------------------------
+# Controls how text streams are handled when no widget subscribes.
+# Most users won't need to modify this section.
+
 [streams]
-# Streams to silently discard if no widget subscribes
+# Streams to silently discard if no widget subscribes to them.
 # Example: drop_unsubscribed = ["speech", "bounty", "whisper"]
 drop_unsubscribed = []
 
-# Where to route orphaned streams that aren't in the drop list
-# Default: "main" - set to another window name to redirect all unknown streams
+# Where to route streams that aren't in the drop list.
+# Default routes unknown streams to main window.
 fallback = "main"
 
-# NOTE: Keybindings are configured in keybinds.toml (not here!)
-# See defaults/keybinds.toml or ~/.vellum-fe/{character}/keybinds.toml
-# Use .keybinds or .addkeybind commands to manage them
-# If backspace doesn't work, edit keybinds.toml and change "backspace" to "delete"
+
+# ============================================================
+# ADVANCED SETTINGS
+# ============================================================
+# Most users won't need to modify settings below this line.
+
+
+# ------------------------------------------------------------
+# EVENT PATTERNS
+# ------------------------------------------------------------
+# Regex patterns to detect game events for countdown timers.
+# Each pattern can trigger stun/RT/CT timer updates.
+#
+# Fields:
+#   pattern           - Regex to match game text
+#   event_type        - Timer type: "stun", "rt", "ct"
+#   action            - "set" (start timer) or "clear" (cancel timer)
+#   duration          - Fixed duration in seconds (if not captured)
+#   duration_capture  - Regex capture group for dynamic duration
+#   duration_multiplier - Multiply captured value (e.g., 5.0 for rounds)
+#   enabled           - Toggle pattern on/off
 
 [event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
@@ -89,3 +180,27 @@ action = "set"
 duration = 16
 duration_multiplier = 1.0
 enabled = true
+
+
+# ------------------------------------------------------------
+# LAYOUT MAPPINGS
+# ------------------------------------------------------------
+# Automatically switch layouts based on terminal size.
+# Useful for responsive layouts on resize.
+#
+# Example:
+# [[layout_mappings]]
+# min_width = 80
+# min_height = 24
+# max_width = 120
+# max_height = 40
+# layout = "compact"
+#
+# [[layout_mappings]]
+# min_width = 121
+# min_height = 41
+# max_width = 9999
+# max_height = 9999
+# layout = "fullscreen"
+
+layout_mappings = []
