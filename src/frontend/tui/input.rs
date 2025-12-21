@@ -261,6 +261,7 @@ impl TuiFrontend {
                             app_core.ui_state.popup_menu = None;
                             app_core.ui_state.submenu = None;
                             app_core.ui_state.nested_submenu = None;
+                            app_core.ui_state.deep_submenu = None;
                             app_core.ui_state.input_mode = InputMode::Normal;
 
                             // Check if this is an internal action or game command
@@ -283,6 +284,7 @@ impl TuiFrontend {
                         app_core.ui_state.popup_menu = None;
                         app_core.ui_state.submenu = None;
                         app_core.ui_state.nested_submenu = None;
+                        app_core.ui_state.deep_submenu = None;
                         app_core.ui_state.input_mode = InputMode::Normal;
                         app_core.needs_render = true;
                     }
@@ -1984,22 +1986,29 @@ impl TuiFrontend {
 
         match code {
             KeyCode::Esc => {
-                if app_core.ui_state.nested_submenu.is_some() {
-                    // Close the deepest level first
+                if app_core.ui_state.deep_submenu.is_some() {
+                    // Close the deepest level first (level 4)
+                    app_core.ui_state.deep_submenu = None;
+                } else if app_core.ui_state.nested_submenu.is_some() {
+                    // Close level 3
                     app_core.ui_state.nested_submenu = None;
                 } else if app_core.ui_state.submenu.is_some() {
+                    // Close level 2
                     app_core.ui_state.submenu = None;
                 } else {
                     // Close all menus and return to normal mode
                     app_core.ui_state.popup_menu = None;
                     app_core.ui_state.submenu = None;
                     app_core.ui_state.nested_submenu = None;
+                    app_core.ui_state.deep_submenu = None;
                     app_core.ui_state.input_mode = InputMode::Normal;
                 }
                 app_core.needs_render = true;
             }
             KeyCode::Tab | KeyCode::Down => {
-                if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
+                if let Some(ref mut deep) = app_core.ui_state.deep_submenu {
+                    deep.select_next();
+                } else if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
                     nested.select_next();
                 } else if let Some(ref mut submenu) = app_core.ui_state.submenu {
                     submenu.select_next();
@@ -2009,7 +2018,9 @@ impl TuiFrontend {
                 app_core.needs_render = true;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
+                if let Some(ref mut deep) = app_core.ui_state.deep_submenu {
+                    deep.select_prev();
+                } else if let Some(ref mut nested) = app_core.ui_state.nested_submenu {
                     nested.select_prev();
                 } else if let Some(ref mut submenu) = app_core.ui_state.submenu {
                     submenu.select_prev();
@@ -2020,7 +2031,9 @@ impl TuiFrontend {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 // Choose the deepest open menu
-                let menu_to_use = if app_core.ui_state.nested_submenu.is_some() {
+                let menu_to_use = if app_core.ui_state.deep_submenu.is_some() {
+                    &app_core.ui_state.deep_submenu
+                } else if app_core.ui_state.nested_submenu.is_some() {
                     &app_core.ui_state.nested_submenu
                 } else if app_core.ui_state.submenu.is_some() {
                     &app_core.ui_state.submenu
@@ -2066,7 +2079,30 @@ impl TuiFrontend {
                     return Ok(None);
                 }
             };
-            app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (40, 12)));
+
+            // Create menu at the right level based on current menu state
+            if app_core.ui_state.submenu.is_some() {
+                // Already have a submenu, create nested_submenu
+                let parent_pos = app_core
+                    .ui_state
+                    .submenu
+                    .as_ref()
+                    .map(|m| m.get_position())
+                    .unwrap_or((40, 12));
+                app_core.ui_state.nested_submenu = Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+            } else if app_core.ui_state.popup_menu.is_some() {
+                // Have popup_menu, create submenu
+                let parent_pos = app_core
+                    .ui_state
+                    .popup_menu
+                    .as_ref()
+                    .map(|m| m.get_position())
+                    .unwrap_or((40, 12));
+                app_core.ui_state.submenu = Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+            } else {
+                // No existing menu, create popup_menu
+                app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (40, 12)));
+            }
             app_core.needs_render = true;
         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
             let items = app_core.build_submenu(category);
@@ -2097,29 +2133,9 @@ impl TuiFrontend {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_add_window_category_menu(&category);
             if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
             } else {
-                let parent_pos = app_core
-                    .ui_state
-                    .submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
-            }
-            app_core.needs_render = true;
-        } else if command == "__SUBMENU_INDICATORS" {
-            // Indicator submenu under Status
-            let templates = crate::config::Config::get_addable_templates_by_category(&app_core.layout)
-                .get(&crate::config::WidgetCategory::Status)
-                .cloned()
-                .unwrap_or_default();
-            let items = app_core.build_indicator_add_menu(&templates);
-            if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
-            } else {
+                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
                 let parent_pos = app_core
                     .ui_state
                     .nested_submenu
@@ -2128,7 +2144,30 @@ impl TuiFrontend {
                     .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
+                app_core.ui_state.deep_submenu =
+                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+            }
+            app_core.needs_render = true;
+        } else if command == "__SUBMENU_INDICATORS" {
+            // Indicator submenu under Status (replaces deep_submenu since we're at level 4)
+            let templates = crate::config::Config::get_addable_templates_by_category(&app_core.layout)
+                .get(&crate::config::WidgetCategory::Status)
+                .cloned()
+                .unwrap_or_default();
+            let items = app_core.build_indicator_add_menu(&templates);
+            if items.is_empty() {
+                app_core.ui_state.deep_submenu = None;
+            } else {
+                let parent_pos = app_core
+                    .ui_state
+                    .deep_submenu
+                    .as_ref()
+                    .map(|m| m.get_position())
+                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
+                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
+                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
+                    .unwrap_or((40, 12));
+                app_core.ui_state.deep_submenu =
                     Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             }
             app_core.needs_render = true;
@@ -2136,16 +2175,18 @@ impl TuiFrontend {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_hide_window_category_menu(&category);
             if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
             } else {
+                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
                 let parent_pos = app_core
                     .ui_state
-                    .submenu
+                    .nested_submenu
                     .as_ref()
                     .map(|m| m.get_position())
+                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
+                app_core.ui_state.deep_submenu =
                     Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             }
             app_core.needs_render = true;
@@ -2153,20 +2194,23 @@ impl TuiFrontend {
             let category = Self::parse_widget_category(category_str, app_core)?;
             let items = app_core.build_edit_window_category_menu(&category);
             if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
             } else {
+                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
                 let parent_pos = app_core
                     .ui_state
-                    .submenu
+                    .nested_submenu
                     .as_ref()
                     .map(|m| m.get_position())
+                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
+                app_core.ui_state.deep_submenu =
                     Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_HIDE_INDICATORS" {
+            // Indicator hide submenu (replaces deep_submenu since we're at level 4)
             let indicators = app_core
                 .layout
                 .windows
@@ -2176,21 +2220,23 @@ impl TuiFrontend {
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);
             if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
             } else {
                 let parent_pos = app_core
                     .ui_state
-                    .nested_submenu
+                    .deep_submenu
                     .as_ref()
                     .map(|m| m.get_position())
+                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
+                app_core.ui_state.deep_submenu =
                     Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_EDIT_INDICATORS" {
+            // Indicator edit submenu (replaces deep_submenu since we're at level 4)
             let indicators = app_core
                 .layout
                 .windows
@@ -2200,17 +2246,18 @@ impl TuiFrontend {
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_edit_menu(&indicators);
             if items.is_empty() {
-                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
             } else {
                 let parent_pos = app_core
                     .ui_state
-                    .nested_submenu
+                    .deep_submenu
                     .as_ref()
                     .map(|m| m.get_position())
+                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
                     .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
                     .unwrap_or((40, 12));
-                app_core.ui_state.nested_submenu =
+                app_core.ui_state.deep_submenu =
                     Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
             }
             app_core.needs_render = true;
@@ -2220,6 +2267,7 @@ impl TuiFrontend {
             app_core.ui_state.popup_menu = None;
             app_core.ui_state.submenu = None;
             app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
             app_core.ui_state.input_mode = crate::data::ui_state::InputMode::IndicatorTemplateEditor;
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
@@ -2283,6 +2331,7 @@ impl TuiFrontend {
             app_core.ui_state.popup_menu = None;
             app_core.ui_state.submenu = None;
             app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__HIDE__") {
             match app_core.layout.hide_window(window_name) {
@@ -2300,6 +2349,7 @@ impl TuiFrontend {
             }
             // Keep parent menus open so Esc can back up
             app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__EDIT__") {
             if let Some(window_def) = app_core.layout.get_window(window_name) {
@@ -2315,6 +2365,7 @@ impl TuiFrontend {
             app_core.ui_state.popup_menu = None;
             app_core.ui_state.submenu = None;
             app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
             app_core.needs_render = true;
         } else {
             // Internal action commands should manage menus themselves
@@ -2330,6 +2381,7 @@ impl TuiFrontend {
                 app_core.ui_state.popup_menu = None;
                 app_core.ui_state.submenu = None;
                 app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
 

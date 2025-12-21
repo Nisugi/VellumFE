@@ -234,34 +234,30 @@ impl Frontend for TuiFrontend {
                             }
                             .unwrap_or_default();
 
-                            // Create search prompt with info
-                            let prompt = format!("Search{}: ", search_info);
+                            // Build inline prompt with full help text (no borders)
+                            let help_text = "(Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate)";
+                            let prompt = format!("Search{} {}: ", search_info, help_text);
+
+                            // Split input into before/at/after cursor for proper cursor rendering
                             let input_text = &app_core.ui_state.search_input;
                             let cursor_pos = app_core.ui_state.search_cursor;
+                            let chars: Vec<char> = input_text.chars().collect();
+                            let before_cursor: String = chars.iter().take(cursor_pos).collect();
+                            let cursor_char = chars.get(cursor_pos).copied().unwrap_or(' ');
+                            let after_cursor: String = chars.iter().skip(cursor_pos + 1).collect();
 
-                            // Build display text with cursor
-                            let display_text = if cursor_pos < input_text.len() {
-                                format!(
-                                    "{}{}{}",
-                                    &input_text[..cursor_pos],
-                                    "█",
-                                    &input_text[cursor_pos..]
-                                )
-                            } else {
-                                format!("{}█", input_text)
-                            };
-
-                            let search_text = Line::from(vec![
+                            let search_line = Line::from(vec![
                                 Span::styled(prompt, Style::default().fg(Color::Yellow)),
-                                Span::raw(display_text),
+                                Span::raw(before_cursor),
+                                Span::styled(
+                                    cursor_char.to_string(),
+                                    Style::default().bg(Color::White).fg(Color::Black),
+                                ),
+                                Span::raw(after_cursor),
                             ]);
 
-                            let search_block = Block::default()
-                                .borders(Borders::ALL)
-                                .title("Search (Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate)")
-                                .style(Style::default().bg(Color::Black));
-
-                            let search_paragraph = Paragraph::new(search_text).block(search_block);
+                            // Render directly without Block wrapper - no borders
+                            let search_paragraph = Paragraph::new(search_line);
                             f.render_widget(search_paragraph, area);
                         } else {
                             // Normal mode - render command input
@@ -465,6 +461,27 @@ impl Frontend for TuiFrontend {
                     nested_submenu.selected,
                 );
                 render_nested.render(screen_area, f.buffer_mut(), &theme);
+            }
+
+            // Render deep submenu if active (level 4)
+            if let Some(ref deep_submenu) = app_core.ui_state.deep_submenu {
+                // Filter out disabled items
+                let menu_items: Vec<popup_menu::MenuItem> = deep_submenu
+                    .items
+                    .iter()
+                    .filter(|item| !item.disabled)
+                    .map(|item| popup_menu::MenuItem {
+                        text: item.text.clone(),
+                        command: item.command.clone(),
+                    })
+                    .collect();
+
+                let render_deep = popup_menu::PopupMenu::with_selected(
+                    menu_items,
+                    deep_submenu.position,
+                    deep_submenu.selected,
+                );
+                render_deep.render(screen_area, f.buffer_mut(), &theme);
             }
 
             // Render browsers and forms if active

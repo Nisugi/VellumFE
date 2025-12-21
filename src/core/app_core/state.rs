@@ -2089,12 +2089,12 @@ impl AppCore {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Add window >".to_string(),
-                command: ".addwindow".to_string(),
+                command: "menu:addwindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
                 text: "Edit window >".to_string(),
-                command: ".editwindow".to_string(),
+                command: "menu:editwindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
@@ -2104,7 +2104,7 @@ impl AppCore {
             },
             crate::data::ui_state::PopupMenuItem {
                 text: "Hide window >".to_string(),
-                command: ".hidewindow".to_string(),
+                command: "menu:hidewindow".to_string(),
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {

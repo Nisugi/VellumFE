@@ -37,6 +37,9 @@ pub struct UiState {
     /// Nested submenu (level 3) - shown when clicking subcategory in submenu
     pub nested_submenu: Option<PopupMenu>,
 
+    /// Deep submenu (level 4) - shown when clicking item in nested_submenu
+    pub deep_submenu: Option<PopupMenu>,
+
     /// Status bar text
     pub status_text: String,
 
@@ -160,6 +163,7 @@ impl UiState {
             popup_menu: None,
             submenu: None,
             nested_submenu: None,
+            deep_submenu: None,
             status_text: String::from("Ready"),
             mouse_drag: None,
             selection_state: None,
