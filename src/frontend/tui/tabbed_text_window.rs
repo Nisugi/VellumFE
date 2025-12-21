@@ -792,6 +792,7 @@ impl TabbedTextWindow {
         self.render_tab_bar(tab_bar_area, buf);
 
         // Render separator line if enabled and space remains
+        // Include scroll indicator [N] if the active tab is scrolled
         if let Some(sep) = separator_area {
             if sep.width > 0 && sep.y < buf.area().height {
                 let sep_color = self
@@ -805,12 +806,32 @@ impl TabbedTextWindow {
                     })
                     .unwrap_or(Color::DarkGray);
 
+                // Check if active tab has scroll indicator
+                let scroll_indicator = self
+                    .tabs
+                    .get(self.active_tab_index)
+                    .and_then(|tab| tab.window.get_scroll_indicator())
+                    .map(|n| format!("[{}]", n));
+
+                // Draw separator line
                 for dx in 0..sep.width {
                     let x = sep.x + dx;
                     if x < buf.area().width {
                         buf[(x, sep.y)]
                             .set_char('-')
                             .set_style(Style::default().fg(sep_color));
+                    }
+                }
+
+                // Draw scroll indicator on left side of separator if scrolled
+                if let Some(indicator) = scroll_indicator {
+                    for (i, ch) in indicator.chars().enumerate() {
+                        let x = sep.x + i as u16;
+                        if x < sep.x + sep.width && x < buf.area().width {
+                            buf[(x, sep.y)]
+                                .set_char(ch)
+                                .set_style(Style::default().fg(sep_color));
+                        }
                     }
                 }
             }

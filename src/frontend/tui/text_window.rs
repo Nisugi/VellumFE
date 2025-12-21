@@ -36,6 +36,8 @@ struct WrappedLine {
 #[derive(Clone)]
 struct LogicalLine {
     spans: Vec<(String, Style, SpanType, Option<LinkData>)>,
+    /// Number of wrapped lines this logical line produces (for scroll position tracking)
+    wrapped_count: usize,
 }
 
 // Match location: (line_index, start_char, end_char)
@@ -325,18 +327,7 @@ impl TextWindow {
                 .push((timestamp, timestamp_style, SpanType::Normal, None));
         }
 
-        // Store the original logical line
-        let logical_line = LogicalLine {
-            spans: self.current_line_spans.clone(),
-        };
-        self.logical_lines.push_back(logical_line);
-
-        // Remove oldest logical line if we exceed buffer
-        if self.logical_lines.len() > self.max_lines {
-            self.logical_lines.pop_front();
-        }
-
-        // Wrap this logical line and add to wrapped cache
+        // Wrap this logical line first to get the count
         let actual_width = if self.last_width > 0 {
             self.last_width
         } else {
@@ -348,7 +339,40 @@ impl TextWindow {
         let wrap_duration = wrap_start.elapsed();
         self.wrap_samples.push(wrap_duration);
 
-        // Add wrapped lines to the END
+        let wrapped_count = wrapped.len();
+
+        // Store the original logical line with wrapped count
+        let logical_line = LogicalLine {
+            spans: self.current_line_spans.clone(),
+            wrapped_count,
+        };
+        self.logical_lines.push_back(logical_line);
+
+        // Remove oldest logical line AND its wrapped lines if we exceed buffer
+        if self.logical_lines.len() > self.max_lines {
+            if let Some(old_line) = self.logical_lines.pop_front() {
+                let removed_count = old_line.wrapped_count;
+
+                // Remove corresponding wrapped lines from front
+                for _ in 0..removed_count {
+                    self.wrapped_lines.pop_front();
+                }
+
+                // Adjust scroll_position to maintain view on same content
+                if let Some(pos) = self.scroll_position {
+                    if pos < removed_count {
+                        // Viewed content was purged - reset to live view
+                        self.scroll_position = None;
+                        self.scroll_offset = 0;
+                    } else {
+                        // Shift position to maintain same content
+                        self.scroll_position = Some(pos - removed_count);
+                    }
+                }
+            }
+        }
+
+        // Add new wrapped lines to the END
         for line in wrapped {
             self.wrapped_lines.push_back(line);
         }
@@ -640,6 +664,19 @@ impl TextWindow {
         } else {
             // Already in live view, just decrease offset (shouldn't normally happen)
             self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+        }
+    }
+
+    /// Get the scroll indicator value (lines from end) if scrolled, None if in live view.
+    /// Used by TabbedTextWindow to display scroll status in separator line.
+    pub fn get_scroll_indicator(&self) -> Option<usize> {
+        if let Some(pos) = self.scroll_position {
+            let total_lines = self.wrapped_lines.len();
+            Some(total_lines.saturating_sub(pos))
+        } else if self.scroll_offset > 0 {
+            Some(self.scroll_offset)
+        } else {
+            None
         }
     }
 
@@ -993,11 +1030,35 @@ impl TextWindow {
             80
         };
 
-        // Wrap each logical line
-        for logical_line in &self.logical_lines {
-            let wrapped = self.wrap_styled_spans(&logical_line.spans, width);
+        // First pass: collect spans for wrapping (to avoid borrow conflict)
+        let spans_to_wrap: Vec<_> = self
+            .logical_lines
+            .iter()
+            .map(|ll| ll.spans.clone())
+            .collect();
+
+        // Second pass: wrap and update counts
+        for (i, spans) in spans_to_wrap.iter().enumerate() {
+            let wrapped = self.wrap_styled_spans(spans, width);
+            let wrapped_count = wrapped.len();
+
+            // Update the wrapped_count in the logical line
+            if let Some(ll) = self.logical_lines.get_mut(i) {
+                ll.wrapped_count = wrapped_count;
+            }
+
             for line in wrapped {
                 self.wrapped_lines.push_back(line);
+            }
+        }
+
+        // Validate scroll_position after rebuild
+        let total = self.wrapped_lines.len();
+        if let Some(pos) = self.scroll_position {
+            if pos >= total {
+                // Position is now invalid - reset to live view
+                self.scroll_position = None;
+                self.scroll_offset = 0;
             }
         }
 
@@ -1320,9 +1381,9 @@ impl TextWindow {
 
         let title = if let Some(pos) = self.scroll_position {
             let lines_from_end = total_lines.saturating_sub(pos);
-            format!("{} [{}]", self.title, lines_from_end)
+            format!("{} [{}]", self.title, lines_from_end)
         } else if self.scroll_offset > 0 {
-            format!("{} [{}]", self.title, self.scroll_offset)
+            format!("{} [{}]", self.title, self.scroll_offset)
         } else {
             self.title.clone()
         };
@@ -1476,6 +1537,7 @@ impl TextWindow {
         self.logical_lines.clear();
         self.current_line_spans.clear();
         self.scroll_offset = 0;
+        self.scroll_position = None; // Reset scroll state on clear
         self.wrapped_lines.clear();
     }
 }

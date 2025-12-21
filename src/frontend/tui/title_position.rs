@@ -65,7 +65,9 @@ pub fn render_block_with_title(
         block.render(area, buf);
     }
 
-    if title.is_empty() || area.width == 0 || area.height == 0 {
+    // Don't render title if no border (e.g., TextWindow inside TabbedTextWindow)
+    // or if title is empty or area is zero
+    if !show_border || title.is_empty() || area.width == 0 || area.height == 0 {
         return inner;
     }
 
@@ -123,18 +125,22 @@ pub fn render_block_with_title(
         ),
     };
 
-    if let Some(line_char) = line_char {
-        let line_char = line_char.chars().next().unwrap_or(' ');
-        let start_line_x = area.x + left_pad;
-        let end_line_x = area
-            .x
-            .saturating_add(area.width.saturating_sub(right_pad.saturating_add(1)));
-        if end_line_x >= start_line_x {
-            for x in start_line_x..=end_line_x {
-                buf[(x, title_y)]
-                    .set_char(line_char)
-                    .set_style(Style::default().fg(border_color));
-            }
+    // Always clear/redraw the title area to prevent old characters from persisting
+    // when title length changes (e.g., [64] -> [126])
+    let start_line_x = area.x + left_pad;
+    let end_line_x = area
+        .x
+        .saturating_add(area.width.saturating_sub(right_pad.saturating_add(1)));
+    if end_line_x >= start_line_x {
+        let clear_char = if let Some(lc) = line_char {
+            lc.chars().next().unwrap_or(' ')
+        } else {
+            ' ' // Use space if no border
+        };
+        for x in start_line_x..=end_line_x {
+            buf[(x, title_y)]
+                .set_char(clear_char)
+                .set_style(Style::default().fg(border_color));
         }
     }
 
