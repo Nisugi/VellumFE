@@ -211,8 +211,10 @@ impl AppCore {
                 match crate::config::Config::load_highlights_from(name) {
                     Ok(highlights) => {
                         self.config.highlights = highlights;
-                        // Rebuild message processor with new highlights
-                        self.message_processor = crate::core::MessageProcessor::new(self.config.clone());
+                        crate::config::Config::compile_highlight_patterns(
+                            &mut self.config.highlights,
+                        );
+                        self.message_processor.apply_config(self.config.clone());
                         self.add_system_message(&format!("Highlights '{}' loaded", name));
                     }
                     Err(e) => self.add_system_message(&format!("Failed to load highlights: {}", e)),

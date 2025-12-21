@@ -27,7 +27,6 @@ pub struct UIColorEntry {
     pub category: String,
     pub fg_color: Option<String>,
     pub bg_color: Option<String>,
-    #[allow(dead_code)]
     pub entry_type: UIColorEntryType,
 }
 

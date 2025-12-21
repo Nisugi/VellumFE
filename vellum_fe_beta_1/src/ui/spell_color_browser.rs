@@ -94,7 +94,6 @@ impl SpellColorBrowser {
         }
     }
 
-    #[allow(dead_code)]
     pub fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let (col, row) = (event.column, event.row);
         let (popup_col, popup_row) = self.popup_position;

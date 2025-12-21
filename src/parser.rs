@@ -7,6 +7,7 @@
 use crate::config::EventAction;
 use crate::data::LinkData;
 use regex::Regex;
+use std::sync::LazyLock;
 use std::collections::HashMap;
 
 /// Text categories emitted by the XML stream.
@@ -220,6 +221,27 @@ pub struct XmlParser {
 }
 
 impl XmlParser {
+    fn compile_event_matchers(
+        event_patterns: HashMap<String, crate::config::EventPattern>,
+    ) -> Vec<(Regex, crate::config::EventPattern)> {
+        let mut event_matchers = Vec::new();
+        for (name, pattern) in event_patterns {
+            if !pattern.enabled {
+                continue;
+            }
+
+            match Regex::new(&pattern.pattern) {
+                Ok(regex) => {
+                    event_matchers.push((regex, pattern));
+                }
+                Err(e) => {
+                    tracing::warn!("Invalid event pattern '{}': {}", name, e);
+                }
+            }
+        }
+        event_matchers
+    }
+
     /// Create a parser with empty preset/event tables.
     pub fn new() -> Self {
         Self::with_presets(vec![], HashMap::new())
@@ -238,21 +260,7 @@ impl XmlParser {
         }
 
         // Compile event pattern regexes
-        let mut event_matchers = Vec::new();
-        for (name, pattern) in event_patterns {
-            if !pattern.enabled {
-                continue;
-            }
-
-            match Regex::new(&pattern.pattern) {
-                Ok(regex) => {
-                    event_matchers.push((regex, pattern));
-                }
-                Err(e) => {
-                    tracing::warn!("Invalid event pattern '{}': {}", name, e);
-                }
-            }
-        }
+        let event_matchers = Self::compile_event_matchers(event_patterns);
 
         Self {
             current_stream: "main".to_string(),
@@ -279,6 +287,14 @@ impl XmlParser {
             presets.insert(id, (fg, bg));
         }
         self.presets = presets;
+    }
+
+    /// Update event patterns after reloading configuration
+    pub fn update_event_patterns(
+        &mut self,
+        event_patterns: HashMap<String, crate::config::EventPattern>,
+    ) {
+        self.event_matchers = Self::compile_event_matchers(event_patterns);
     }
 
     pub fn parse_line(&mut self, line: &str) -> Vec<ParsedElement> {
@@ -721,8 +737,9 @@ impl XmlParser {
     fn handle_compass(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <compass><dir value="n"/><dir value="e"/>...</compass>
         // Extract all direction values
-        let dir_regex = Regex::new(r#"<dir value="([^"]+)""#).unwrap();
-        let directions: Vec<String> = dir_regex
+        static DIR_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"<dir value="([^"]+)""#).expect("valid dir regex"));
+        let directions: Vec<String> = DIR_REGEX
             .captures_iter(tag)
             .map(|cap| cap[1].to_string())
             .collect();

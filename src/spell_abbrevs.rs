@@ -214,7 +214,6 @@ pub static SPELL_ABBREVIATIONS: LazyLock<HashMap<&'static str, &'static str>> = 
     m.insert("Interference", "Intf");
     m.insert("Blindness", "Blnd");
     m.insert("Confusion", "Cnfs");
-    m.insert("Heroism", "Hero");
     m.insert("Calm", "Calm");
     m.insert("Frenzy", "Frnz");
     m.insert("Mass Blind", "MsBd");

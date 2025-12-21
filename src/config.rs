@@ -1020,8 +1020,51 @@ pub struct SpellsWidgetData {
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {
-    pub pattern: String,   // Pattern to find (literal string match)
+    pub pattern: String,   // Pattern to find (regex if metacharacters detected)
     pub replace: String,   // Replacement text (empty string to remove)
+}
+
+/// Apply text replacements, auto-detecting regex patterns by metacharacters.
+pub fn apply_text_replacements(text: &str, replacements: &[TextReplacement]) -> String {
+    let mut result = text.to_string();
+    for replacement in replacements {
+        let pattern = replacement.pattern.as_str();
+        let is_regex = pattern.contains('\\')
+            || pattern.contains('^')
+            || pattern.contains('$')
+            || pattern.contains('.')
+            || pattern.contains('*')
+            || pattern.contains('+')
+            || pattern.contains('?')
+            || pattern.contains('(')
+            || pattern.contains(')')
+            || pattern.contains('[')
+            || pattern.contains(']')
+            || pattern.contains('{')
+            || pattern.contains('}')
+            || pattern.contains('|');
+
+        if is_regex {
+            match regex::Regex::new(pattern) {
+                Ok(re) => {
+                    result = re
+                        .replace_all(&result, replacement.replace.as_str())
+                        .into_owned();
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Invalid regex pattern '{}': {}, using literal match",
+                        pattern,
+                        e
+                    );
+                    result = result.replace(pattern, &replacement.replace);
+                }
+            }
+        } else {
+            result = result.replace(pattern, &replacement.replace);
+        }
+    }
+    result
 }
 
 /// Sort direction for perception entries
@@ -1323,10 +1366,6 @@ impl WindowDef {
             WindowDef::Perception { base, .. } => base,
         }
     }
-}
-
-fn default_widget_type() -> String {
-    "text".to_string()
 }
 
 fn default_rows() -> u16 {
@@ -5165,5 +5204,35 @@ visible = true
         // Should maintain separation
         assert!(a_end <= spacer_start, "A should not overlap spacer");
         assert!(spacer_end <= b_start, "Spacer should not overlap B");
+    }
+
+    #[test]
+    fn test_apply_text_replacements_literal() {
+        let replacements = vec![TextReplacement {
+            pattern: " roisaen".to_string(),
+            replace: "".to_string(),
+        }];
+        let result = apply_text_replacements("Fading roisaen", &replacements);
+        assert_eq!(result, "Fading");
+    }
+
+    #[test]
+    fn test_apply_text_replacements_regex() {
+        let replacements = vec![TextReplacement {
+            pattern: r"\(\d+\)".to_string(),
+            replace: "??".to_string(),
+        }];
+        let result = apply_text_replacements("Monkey (82)", &replacements);
+        assert_eq!(result, "Monkey ??");
+    }
+
+    #[test]
+    fn test_apply_text_replacements_invalid_regex_falls_back() {
+        let replacements = vec![TextReplacement {
+            pattern: "[".to_string(),
+            replace: "X".to_string(),
+        }];
+        let result = apply_text_replacements("a[b", &replacements);
+        assert_eq!(result, "aXb");
     }
 }

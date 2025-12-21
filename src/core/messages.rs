@@ -122,6 +122,26 @@ impl MessageProcessor {
         processor
     }
 
+    /// Refresh internal config, parser presets, and caches after a reload.
+    pub fn apply_config(&mut self, mut config: Config) {
+        crate::config::Config::compile_highlight_patterns(&mut config.highlights);
+        self.config = config;
+
+        let preset_list = self
+            .config
+            .colors
+            .presets
+            .iter()
+            .map(|(id, preset)| (id.clone(), preset.fg.clone(), preset.bg.clone()))
+            .collect();
+        self.parser.update_presets(preset_list);
+        self.parser
+            .update_event_patterns(self.config.event_patterns.clone());
+
+        self.update_squelch_patterns();
+        self.update_redirect_cache();
+    }
+
     /// Process a parsed XML element and update states
     pub fn process_element(
         &mut self,
@@ -165,15 +185,17 @@ impl MessageProcessor {
                 self.current_stream = id.clone();
 
                 // Check if this is a stream that should be discarded when window doesn't exist
-                // Streams like spells, bounty, inv, room should be discarded
-                // But streams like thoughts, speech should fallback to main window
-                let should_discard_if_no_window = matches!(id.as_str(), "spell" | "bounty" | "room");
+                // Streams like spells, bounty, room should be discarded
+                // Speech/talk/whisper should be dropped to avoid duplicate main stream lines
+                let should_discard_if_no_window = matches!(
+                    id.as_str(),
+                    "spell" | "bounty" | "room" | "speech" | "talk" | "whisper"
+                );
 
-                // Check if a window exists for this stream (map stream to window name first)
-                let window_name = self.map_stream_to_window(id);
-                if should_discard_if_no_window && ui_state.get_window(&window_name).is_none() {
+                // Check if any window exists for this stream (direct or tabbed)
+                if should_discard_if_no_window && !self.stream_has_target_window(ui_state, id) {
                     self.discard_current_stream = true;
-                    tracing::debug!("No window exists for stream '{}' (maps to window '{}'), discarding content", id, window_name);
+                    tracing::debug!("No window exists for stream '{}', discarding content", id);
                 } else {
                     self.discard_current_stream = false;
                 }
@@ -360,13 +382,9 @@ impl MessageProcessor {
                     );
                 }
 
-                // Track main stream text for prompt skip logic
-                if self.current_stream == "main" && !content.trim().is_empty() {
-                    self.chunk_has_main_text = true;
-                }
-
                 // Discard text if we're in a discarded stream (e.g., no Spells/inv/room window)
                 if self.discard_current_stream {
+                    self.chunk_has_silent_updates = true;
                     tracing::debug!(
                         "Discarding text from stream '{}': {:?}",
                         self.current_stream,
@@ -1023,6 +1041,23 @@ impl MessageProcessor {
             segments: std::mem::take(&mut self.current_segments),
             stream: self.current_stream.clone(),
         };
+
+        // Track main stream text for prompt skip logic.
+        // If a line contains any Speech spans, treat it as speech-only (even with trailing punctuation).
+        if self.current_stream == "main" {
+            let has_speech = line
+                .segments
+                .iter()
+                .any(|seg| seg.span_type == SpanType::Speech);
+            let has_non_speech_text = line
+                .segments
+                .iter()
+                .any(|seg| seg.span_type != SpanType::Speech && !seg.text.trim().is_empty());
+
+            if has_non_speech_text && !has_speech {
+                self.chunk_has_main_text = true;
+            }
+        }
 
         // Filter out Speech-typed segments ONLY when on a speech-related stream with no consumer
         // When on main stream, keep Speech segments even if no speech window (main displays full text)
@@ -1739,18 +1774,6 @@ impl MessageProcessor {
         }
 
         entries
-    }
-
-    /// Apply user-defined text replacements to a string
-    fn apply_text_replacements(
-        text: &str,
-        replacements: &[crate::config::TextReplacement],
-    ) -> String {
-        let mut result = text.to_string();
-        for replacement in replacements {
-            result = result.replace(&replacement.pattern, &replacement.replace);
-        }
-        result
     }
 
     /// Enqueue text for TTS if enabled and configured for this window

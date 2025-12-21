@@ -393,12 +393,6 @@ mod tests {
     // ========== DEFAULT_SOUNDS constant tests ==========
 
     #[test]
-    fn test_default_sounds_is_array() {
-        // Verify DEFAULT_SOUNDS is accessible and is a slice
-        assert!(DEFAULT_SOUNDS.len() >= 0); // Currently empty but valid
-    }
-
-    #[test]
     fn test_default_sounds_format() {
         // Each entry should be (filename, bytes)
         for (filename, bytes) in DEFAULT_SOUNDS {

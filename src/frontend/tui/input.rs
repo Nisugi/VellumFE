@@ -825,8 +825,12 @@ impl TuiFrontend {
                                 ));
                             } else {
                                 app_core.add_system_message("Highlights saved");
-                                app_core.message_processor.update_squelch_patterns();
-                                app_core.message_processor.update_redirect_cache();
+                                crate::config::Config::compile_highlight_patterns(
+                                    &mut app_core.config.highlights,
+                                );
+                                app_core
+                                    .message_processor
+                                    .apply_config(app_core.config.clone());
                                 self.refresh_highlights(&app_core.config);
                             }
                             self.highlight_browser = None;
@@ -865,8 +869,12 @@ impl TuiFrontend {
                                     ));
                                 } else {
                                     app_core.add_system_message("Highlights saved");
-                                    app_core.message_processor.update_squelch_patterns();
-                                    app_core.message_processor.update_redirect_cache();
+                                    crate::config::Config::compile_highlight_patterns(
+                                        &mut app_core.config.highlights,
+                                    );
+                                    app_core
+                                        .message_processor
+                                        .apply_config(app_core.config.clone());
                                     self.refresh_highlights(&app_core.config);
                                 }
                             }
@@ -1215,9 +1223,12 @@ impl TuiFrontend {
                                     ));
                                 } else {
                                     app_core.add_system_message("Highlights saved");
-                                    // Refresh caches that depend on highlights
-                                    app_core.message_processor.update_squelch_patterns();
-                                    app_core.message_processor.update_redirect_cache();
+                                    crate::config::Config::compile_highlight_patterns(
+                                        &mut app_core.config.highlights,
+                                    );
+                                    app_core
+                                        .message_processor
+                                        .apply_config(app_core.config.clone());
                                 }
                                 // Apply updated highlights to all text windows
                                 self.refresh_highlights(&app_core.config);
@@ -1303,6 +1314,12 @@ impl TuiFrontend {
                                     ));
                                 } else {
                                     app_core.add_system_message("Highlights saved");
+                                    crate::config::Config::compile_highlight_patterns(
+                                        &mut app_core.config.highlights,
+                                    );
+                                    app_core
+                                        .message_processor
+                                        .apply_config(app_core.config.clone());
                                 }
                                 // Apply updated highlights to all text windows
                                 self.refresh_highlights(&app_core.config);
@@ -1342,6 +1359,13 @@ impl TuiFrontend {
                                         if let Some(ref mut browser) = self.highlight_browser {
                                             browser.update_items(&app_core.config.highlights);
                                         }
+                                        crate::config::Config::compile_highlight_patterns(
+                                            &mut app_core.config.highlights,
+                                        );
+                                        app_core
+                                            .message_processor
+                                            .apply_config(app_core.config.clone());
+                                        self.refresh_highlights(&app_core.config);
                                         tracing::info!("Saved highlight: {}", name);
                                         self.highlight_form = None;
                                         app_core.ui_state.input_mode = if self.highlight_browser.is_some() {

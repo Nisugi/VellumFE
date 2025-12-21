@@ -3,40 +3,26 @@ use super::performance_stats;
 use super::colors::{blend_colors_hex, color_to_hex_string, normalize_color, parse_hex_color};
 use std::char;
 
-/// Apply a text replacement pattern, auto-detecting whether to use regex or literal matching.
-/// If the pattern contains regex metacharacters, it's compiled as a regex.
-/// Otherwise, simple string replacement is used.
-fn apply_text_replacement(text: &str, pattern: &str, replace: &str) -> String {
-    // Check for common regex metacharacters that indicate this should be a regex
-    let is_regex = pattern.contains('\\')
-        || pattern.contains('^')
-        || pattern.contains('$')
-        || pattern.contains('.')
-        || pattern.contains('*')
-        || pattern.contains('+')
-        || pattern.contains('?')
-        || pattern.contains('(')
-        || pattern.contains(')')
-        || pattern.contains('[')
-        || pattern.contains(']')
-        || pattern.contains('{')
-        || pattern.contains('}')
-        || pattern.contains('|');
+fn decode_icon(icon_str: &str) -> Option<String> {
+    let trimmed = icon_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
 
-    if is_regex {
-        // Try to compile as regex
-        match regex::Regex::new(pattern) {
-            Ok(re) => re.replace_all(text, replace).into_owned(),
-            Err(e) => {
-                // If regex fails to compile, fall back to literal match and log warning
-                tracing::warn!("Invalid regex pattern '{}': {}, using literal match", pattern, e);
-                text.replace(pattern, replace)
+    let hex = trimmed
+        .trim_start_matches("0x")
+        .trim_start_matches("\\u{")
+        .trim_end_matches('}');
+    if hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Ok(codepoint) = u32::from_str_radix(hex, 16) {
+            if let Some(ch) = char::from_u32(codepoint) {
+                return Some(ch.to_string());
             }
         }
-    } else {
-        // Simple literal string replacement
-        text.replace(pattern, replace)
     }
+
+    // Fallback: use the first character as-is
+    trimmed.chars().next().map(|c| c.to_string())
 }
 
 impl TuiFrontend {
@@ -112,25 +98,6 @@ impl TuiFrontend {
                     } else {
                         text_window.set_show_timestamps(app_core.config.ui.show_timestamps);
     }
-}
-
-fn decode_icon(icon_str: &str) -> Option<String> {
-    let trimmed = icon_str.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let hex = trimmed.trim_start_matches("0x").trim_start_matches("\\u{").trim_end_matches('}');
-    if hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        if let Ok(codepoint) = u32::from_str_radix(hex, 16) {
-            if let Some(ch) = char::from_u32(codepoint) {
-                return Some(ch.to_string());
-            }
-        }
-    }
-
-    // Fallback: use the first character as-is
-    trimmed.chars().next().map(|c| c.to_string())
 }
 
                 // Update width for proper wrapping
@@ -1753,7 +1720,7 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                         perception_window.set_background_color(colors.background.clone());
                         perception_window.set_text_color(colors.text.clone());
 
-                        let title_text = if def.base().show_title {
+                        let _title_text = if def.base().show_title {
                             def.base()
                                 .title
                                 .clone()
@@ -1790,9 +1757,7 @@ fn decode_icon(icon_str: &str) -> Option<String> {
                             }
 
                             // Apply user custom replacements (auto-detect regex vs literal)
-                            for replacement in text_replacements {
-                                text = apply_text_replacement(&text, &replacement.pattern, &replacement.replace);
-                            }
+                            text = crate::config::apply_text_replacements(&text, text_replacements);
 
                             // If the text becomes empty after replacements, filter it out
                             if text.trim().is_empty() {
@@ -1827,23 +1792,3 @@ fn decode_icon(icon_str: &str) -> Option<String> {
 
 }
 
-fn decode_icon(icon_str: &str) -> Option<String> {
-    let trimmed = icon_str.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let hex = trimmed
-        .trim_start_matches("0x")
-        .trim_start_matches("\\u{")
-        .trim_end_matches('}');
-    if hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        if let Ok(codepoint) = u32::from_str_radix(hex, 16) {
-            if let Some(ch) = char::from_u32(codepoint) {
-                return Some(ch.to_string());
-            }
-        }
-    }
-
-    trimmed.chars().next().map(|c| c.to_string())
-}

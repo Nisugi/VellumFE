@@ -137,13 +137,6 @@ pub struct AppCore {
 }
 
 impl AppCore {
-    fn available_themes_message(theme_presets: &HashMap<String, crate::theme::AppTheme>) -> String {
-        let mut names: Vec<_> = theme_presets.keys().cloned().collect();
-        names.sort();
-        format!("Available themes: {}", names.join(", "))
-    }
-
-
     /// Create a new AppCore instance
     pub fn new(config: Config) -> Result<Self> {
         // Load layout from file system
@@ -1109,33 +1102,6 @@ impl AppCore {
             .unwrap_or(0);
 
         format!("spacer_{}", max_number + 1)
-    }
-
-    /// List all loaded highlights
-    pub(super) fn list_highlights(&mut self) {
-        let count = self.config.highlights.len();
-
-        // Collect all highlight info first to avoid borrow checker issues
-        let mut lines = vec![format!("=== Highlights ({}) ===", count)];
-
-        for (name, pattern) in &self.config.highlights {
-            let mut info = format!("  {} - pattern: '{}'", name, pattern.pattern);
-            if let Some(ref fg) = pattern.fg {
-                info.push_str(&format!(" fg:{}", fg));
-            }
-            if let Some(ref bg) = pattern.bg {
-                info.push_str(&format!(" bg:{}", bg));
-            }
-            if pattern.bold {
-                info.push_str(" bold");
-            }
-            lines.push(info);
-        }
-
-        // Add all messages
-        for line in lines {
-            self.add_system_message(&line);
-        }
     }
 
     /// Add a system message to the main window
@@ -2486,8 +2452,8 @@ impl AppCore {
         match crate::config::Config::load_highlights(self.config.character.as_deref()) {
             Ok(highlights) => {
                 self.config.highlights = highlights;
-                // Rebuild message processor with new highlights
-                self.message_processor = crate::core::MessageProcessor::new(self.config.clone());
+                crate::config::Config::compile_highlight_patterns(&mut self.config.highlights);
+                self.message_processor.apply_config(self.config.clone());
                 self.add_system_message("Highlights reloaded");
             }
             Err(e) => {
@@ -2531,6 +2497,9 @@ impl AppCore {
                         self.config.sound = new_config.sound;
                         self.config.event_patterns = new_config.event_patterns;
                         self.config.layout_mappings = new_config.layout_mappings;
+                        self.parser
+                            .update_event_patterns(self.config.event_patterns.clone());
+                        self.message_processor.apply_config(self.config.clone());
                         self.add_system_message("Settings reloaded");
                     }
                     Err(e) => {
@@ -2558,6 +2527,7 @@ impl AppCore {
                     .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
                     .collect();
                 self.parser.update_presets(presets);
+                self.message_processor.apply_config(self.config.clone());
                 self.add_system_message("Colors reloaded");
             }
             Err(e) => {
@@ -3056,13 +3026,10 @@ impl AppCore {
                 let matches = if pattern.fast_parse {
                     // Fast parse: check if any of the pipe-separated patterns are in the text
                     pattern.pattern.split('|').any(|p| text.contains(p.trim()))
+                } else if let Some(ref regex) = pattern.compiled_regex {
+                    regex.is_match(text)
                 } else {
-                    // Regex parse
-                    if let Ok(regex) = regex::Regex::new(&pattern.pattern) {
-                        regex.is_match(text)
-                    } else {
-                        false
-                    }
+                    false
                 };
 
                 if matches {

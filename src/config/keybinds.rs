@@ -962,14 +962,6 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
     map
 }
 
-fn default_countdown_icon() -> String {
-    "\u{f0c8}".to_string() // Nerd Font square icon
-}
-
-fn default_poll_timeout_ms() -> u64 {
-    16 // 16ms = ~60 FPS, 8ms = ~120 FPS, 4ms = ~240 FPS
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

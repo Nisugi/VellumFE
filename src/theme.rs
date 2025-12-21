@@ -131,6 +131,7 @@ fn color_to_rgb_components(color: Color) -> (u8, u8, u8) {
     (color.r, color.g, color.b)
 }
 
+#[cfg(test)]
 fn indexed_color_to_rgb(index: u8) -> (u8, u8, u8) {
     const STANDARD_COLORS: [(u8, u8, u8); 16] = [
         (0, 0, 0),
@@ -3830,9 +3831,7 @@ mod tests {
     #[test]
     fn test_indexed_color_extended_range_end() {
         // Index 231 = last extended color
-        let (r, g, b) = indexed_color_to_rgb(231);
-        // Should be a valid color within the palette
-        assert!(r <= 255 && g <= 255 && b <= 255);
+        assert_eq!(indexed_color_to_rgb(231), (255, 255, 255));
     }
 
     #[test]
@@ -4056,8 +4055,7 @@ mod tests {
         let color = Color::rgb(0, 0, 255);
         let result = ColorFilter::TritanopiaSimulation.apply(color);
         // Blue-yellow colorblindness affects blue
-        // Just verify it's applied
-        assert!(result.b <= 255);
+        assert_eq!(result, Color::rgb(0, 12, 144));
     }
 
     // ==================== ColorFilter::name and description Tests ====================

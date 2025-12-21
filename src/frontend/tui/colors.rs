@@ -126,12 +126,10 @@ pub fn color_to_hex_string(color: &crate::frontend::common::Color) -> Option<Str
 }
 
 // OLD functions no longer needed after Phase 2 refactoring
-#[allow(dead_code)]
 pub(crate) fn _old_color_to_hex_string(color: &ratatui::style::Color) -> Option<String> {
     _old_color_to_rgb(color).map(|(r, g, b)| format!("#{:02x}{:02x}{:02x}", r, g, b))
 }
 
-#[allow(dead_code)]
 pub(crate) fn _old_color_to_rgb(color: &ratatui::style::Color) -> Option<(u8, u8, u8)> {
     use ratatui::style::Color;
 
