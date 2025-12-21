@@ -1,0 +1,731 @@
+# ============================================================
+# VellumFE Layout Template Reference
+# ============================================================
+# Complete reference for all widget types and their parameters.
+# This is a DOCUMENTATION FILE - examples are commented out.
+#
+# To use: Copy sections you need into your layout.toml file
+# (found in ~/.vellum-fe/ or per-character folder).
+#
+# Quick Start:
+#   1. Find the widget type you want below
+#   2. Copy the example (remove the "# " prefix from each line)
+#   3. Paste into your layout.toml
+#   4. Customize name, position, and widget-specific options
+#   5. Use .reload command in-game to apply changes
+#
+# ============================================================
+
+# ============================================================
+# ASCII Icon Fram
+# ============================================================
+# █▣◻◼▫▪◇◆☆★✧✦⚝✡⛤☽☾۞
+# ⚫⚪⬤◉◎⊘⊗⊛●○⬢❤⚠✗✓❄❆❅	
+# ▲▼⯇⯈◀▶△▽◁▷✚✖‡†☥ 
+# ←→↑↓↖↗↘↙⬅➡⬆⬇⬉⬈⬊⬋
+# ⇑⇓⇐⇒⟲⟳↺↻⮈⮊⮉⮋⚙⚛⚜
+# ☠☣☢⚠✴✵☀❂◐◔✇※⋈⧉⊞⌗⚘☘ 
+# ⚔🗡⚒⛏ ♬♫♪♩ ☮☸⚖⚰✉	 
+# ♠♤♡♥♦♢♣♧ πΩΔ∂∫∏∑√≥≤≠≈∞÷×±
+# 【】『』「」〈〉《》
+# ─│━┃┐┌ ┘└ ┤├ ┴ ┬ ┼ ╗╔ ╝╚║═	
+# ♔♕♖♗♘♙  ♚♛♜♝♞♟
+# 💧🔥⚡🌊🌲⚓💀🔔🔕🔊🔇⌛⌚🔪🏹
+# 🎲🎯🧀🍎🍞🍖🍷🍺☕🔐🔓🔒🗝🔑 
+# ============================================================
+
+# ============================================================
+# REQUIRED LAYOUT HEADER
+# ============================================================
+# Every layout.toml must start with terminal dimensions.
+# The layout engine uses these to calculate positions.
+#
+# terminal_width = 120
+# terminal_height = 40
+
+
+# ============================================================
+# BASE WINDOW PARAMETERS (All Widgets)
+# ============================================================
+# Every widget supports these common parameters. Widget-specific
+# parameters are documented in each widget's section below.
+#
+# --- Required Fields ---
+# name = "unique_name"      # Unique identifier (lowercase, no spaces)
+# widget_type = "text"      # Widget type (see sections below)
+#
+# --- Position & Size ---
+# row = 0                   # Top-left row position (0-based)
+# col = 0                   # Top-left column position (0-based)
+# rows = 10                 # Height in rows
+# cols = 40                 # Width in columns
+# min_rows = 3              # Minimum height constraint (optional)
+# max_rows = 20             # Maximum height constraint (optional)
+# min_cols = 10             # Minimum width constraint (optional)
+# max_cols = 80             # Maximum width constraint (optional)
+#
+# --- Visibility & Behavior ---
+# visible = true            # Show/hide window (default: true)
+# locked = false            # Prevent user resizing (default: false)
+#
+# --- Border & Title ---
+# show_border = true        # Display border (default: true)
+# border_style = "single"   # "single", "double", "rounded", "thick", "none"
+# border_color = "#808080"  # Hex color for border
+# show_title = true         # Display title bar (default: true)
+# title = "Window Title"    # Custom title (optional, uses name if omitted)
+# title_position = "top-left"  # "top-left", "top-center", "top-right",
+#                              # "bottom-left", "bottom-center", "bottom-right"
+#
+# --- Colors ---
+# background_color = "#000000"  # Window background (hex color)
+# text_color = "#ffffff"        # Default text color (hex color)
+# transparent_background = false  # Ignore background_color (default: false)
+
+
+# ============================================================
+# TEXT WIDGETS
+# ============================================================
+# Windows for displaying scrollable text content.
+
+# ------------------------------------------------------------
+# Text Window
+# ------------------------------------------------------------
+# Basic scrollable text window. Use for game messages, chat, etc.
+# Subscribes to one or more streams to receive content.
+#
+# Common streams: "main", "thoughts", "speech", "announcements",
+#                 "loot", "death", "logons", "familiar", "ambients",
+#                 "bounty", "society"
+#
+# [[windows]]
+# name = "my_text_window"
+# widget_type = "text"
+# row = 0
+# col = 0
+# rows = 20
+# cols = 60
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Text-specific options:
+# streams = ["main"]           # Stream IDs to subscribe to (required)
+# buffer_size = 1000           # Lines to keep in memory (default: 1000)
+# wordwrap = true              # Enable text wrapping (default: true)
+# show_timestamps = false      # Show timestamps on messages (default: false)
+
+
+# ------------------------------------------------------------
+# Tabbed Text Window
+# ------------------------------------------------------------
+# Multi-tab text window with switchable tabs. Each tab can
+# subscribe to different streams. Great for organizing chat.
+#
+# Navigation: Click tabs, or use Ctrl+Tab/Ctrl+Shift+Tab
+#
+# [[windows]]
+# name = "chat"
+# widget_type = "tabbedtext"
+# row = 0
+# col = 60
+# rows = 15
+# cols = 60
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Tabbed text-specific options:
+# buffer_size = 5000           # Lines per tab to keep (default: 5000)
+# tab_bar_position = "top"     # "top" or "bottom" (default: "top")
+# tab_separator = true         # Show separators between tabs (default: true)
+# tab_active_color = "#ffffff" # Color for active tab (optional)
+# tab_inactive_color = "#808080"  # Color for inactive tabs (optional)
+# tab_unread_color = "#ffff00" # Color for unread indicator (optional)
+# tab_unread_prefix = "*"      # Prefix for unread tabs (optional)
+#
+# # Tab definitions (required):
+# [[windows.tabs]]
+# name = "Thoughts"            # Tab display name
+# streams = ["thoughts"]       # Streams for this tab
+# show_timestamps = false      # Override global timestamp setting (optional)
+# ignore_activity = false      # Skip unread tracking (optional)
+#
+# [[windows.tabs]]
+# name = "Speech"
+# streams = ["speech"]
+#
+# [[windows.tabs]]
+# name = "All Chat"
+# streams = ["thoughts", "speech", "whispers"]
+
+
+# ============================================================
+# INFORMATION WIDGETS
+# ============================================================
+# Windows for displaying game information.
+
+# ------------------------------------------------------------
+# Room Window
+# ------------------------------------------------------------
+# Displays current room information: name, description, exits,
+# objects, and players present.
+#
+# [[windows]]
+# name = "room"
+# widget_type = "room"
+# row = 0
+# col = 80
+# rows = 12
+# cols = 40
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Room-specific options:
+# streams = []                 # Leave empty (auto-populated)
+# buffer_size = 100            # Lines to keep (default: 100)
+# show_desc = true             # Show room description (default: true)
+# show_objs = true             # Show objects in room (default: true)
+# show_players = true          # Show players in room (default: true)
+# show_exits = true            # Show available exits (default: true)
+# show_name = false            # Show room name in content (default: false)
+
+
+# ------------------------------------------------------------
+# Inventory Window
+# ------------------------------------------------------------
+# Displays character inventory with clickable items.
+#
+# [[windows]]
+# name = "inventory"
+# widget_type = "inventory"
+# row = 12
+# col = 80
+# rows = 15
+# cols = 40
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Inventory-specific options:
+# streams = ["inv"]            # Stream ID (default: ["inv"])
+# buffer_size = 0              # Not used for inventory
+# wordwrap = true              # Enable text wrapping (default: true)
+
+
+# ------------------------------------------------------------
+# Spells Window
+# ------------------------------------------------------------
+# Displays active spells with durations.
+#
+# [[windows]]
+# name = "spells"
+# widget_type = "spells"
+# row = 0
+# col = 100
+# rows = 10
+# cols = 20
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # No widget-specific options - auto-subscribes to "spells" stream
+
+
+# ------------------------------------------------------------
+# Perception Window
+# ------------------------------------------------------------
+# Displays perception buffs/debuffs with sorting and text replacements.
+#
+# [[windows]]
+# name = "perception"
+# widget_type = "perception"
+# row = 10
+# col = 100
+# rows = 10
+# cols = 20
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Perception-specific options:
+# stream = "percWindow"        # Stream ID (default: "percWindow")
+# buffer_size = 100            # Max entries to keep (default: 100)
+# sort_direction = "descending"  # "ascending" or "descending" (default: "descending")
+# use_short_spell_names = false  # Use abbreviated spell names (default: false)
+#
+# # Text replacements (optional):
+# [[windows.text_replacements]]
+# pattern = "Spirit Warding I"
+# replace = "SW1"
+#
+# [[windows.text_replacements]]
+# pattern = "Spirit Warding II"
+# replace = "SW2"
+
+
+# ============================================================
+# STATUS WIDGETS
+# ============================================================
+# Progress bars, timers, and status indicators.
+
+# ------------------------------------------------------------
+# Progress Bar
+# ------------------------------------------------------------
+# Displays a vital stat as a progress bar (health, mana, etc.).
+#
+# Common IDs: "health", "mana", "stamina", "spirit", "encumlevel",
+#             "pbarStance", "mindState"
+#
+# [[windows]]
+# name = "health"
+# widget_type = "progress"
+# row = 0
+# col = 0
+# rows = 1
+# cols = 20
+# show_border = false
+# visible = true
+#
+# # Progress-specific options:
+# id = "health"                # Feed ID from game XML (case-sensitive)
+# label = "HP"                 # Display label (optional)
+# color = "#ff0000"            # Bar color (optional)
+# numbers_only = false         # Show only numbers, hide label (default: false)
+# current_only = false         # Show only current value (default: false)
+
+
+# ------------------------------------------------------------
+# Countdown Timer
+# ------------------------------------------------------------
+# Displays a countdown timer (roundtime, cast time, etc.).
+#
+# Common IDs: "roundtime", "casttime", "stuntime"
+#
+# [[windows]]
+# name = "roundtime"
+# widget_type = "countdown"
+# row = 1
+# col = 0
+# rows = 1
+# cols = 20
+# show_border = false
+# visible = true
+#
+# # Countdown-specific options:
+# id = "roundtime"             # Feed ID from game XML (case-sensitive)
+# label = "RT"                 # Display label (optional)
+# icon = "◼"                   # Fill character (Nerd Font icon, optional)
+# color = "#ffff00"            # Timer color (optional)
+# background_color = "#333333" # Background color (optional)
+
+
+# ------------------------------------------------------------
+# Indicator
+# ------------------------------------------------------------
+# Single-icon status indicator (on/off state).
+#
+# Common IDs: "IconPOISONED", "IconBLEEDING", "IconDISEASED",
+#             "IconSTUNNED", "IconWEBBED", "IconHIDDEN",
+#             "IconINVISIBLE", "IconDEAD", "IconJOINED"
+#
+# [[windows]]
+# name = "poisoned"
+# widget_type = "indicator"
+# row = 2
+# col = 0
+# rows = 1
+# cols = 3
+# show_border = false
+# visible = true
+#
+# # Indicator-specific options:
+# icon = ""                   # Display icon (Nerd Font glyph)
+# indicator_id = "IconPOISONED"  # Feed ID for on/off state (case-sensitive)
+# inactive_color = "#555555"  # Color when inactive (default: "#555555")
+# active_color = "#00ff00"    # Color when active (default: "#00ff00")
+
+
+# ------------------------------------------------------------
+# Dashboard
+# ------------------------------------------------------------
+# Grid of multiple status indicators in one widget.
+#
+# [[windows]]
+# name = "status_dashboard"
+# widget_type = "dashboard"
+# row = 2
+# col = 0
+# rows = 3
+# cols = 20
+# show_border = true
+# border_style = "single"
+# visible = true
+#
+# # Dashboard-specific options:
+# dashboard_layout = "horizontal"  # "horizontal", "vertical", or "grid:RxC"
+# dashboard_spacing = 1            # Spacing between indicators (chars)
+# dashboard_hide_inactive = false  # Hide inactive indicators (default: false)
+#
+# # Indicator definitions (required):
+# [[windows.dashboard_indicators]]
+# id = "IconPOISONED"
+# icon = "☠"
+# colors = ["#555555", "#00ff00"]  # [inactive, active]
+#
+# [[windows.dashboard_indicators]]
+# id = "IconBLEEDING"
+# icon = "♥"
+# colors = ["#555555", "#ff0000"]
+#
+# [[windows.dashboard_indicators]]
+# id = "IconSTUNNED"
+# icon = "⚠"
+# colors = ["#555555", "#ffff00"]
+
+
+# ============================================================
+# TRACKING WIDGETS
+# ============================================================
+# Track targets, players, and active effects.
+
+# ------------------------------------------------------------
+# Targets
+# ------------------------------------------------------------
+# Displays tracked targets/monsters.
+#
+# [[windows]]
+# name = "targets"
+# widget_type = "targets"
+# row = 0
+# col = 100
+# rows = 8
+# cols = 20
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Targets-specific options:
+# entity_id = "targetcount"    # Entity ID to track (default: "targetcount")
+
+
+# ------------------------------------------------------------
+# Players
+# ------------------------------------------------------------
+# Displays players in current area.
+#
+# [[windows]]
+# name = "players"
+# widget_type = "players"
+# row = 8
+# col = 100
+# rows = 8
+# cols = 20
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Players-specific options:
+# entity_id = "playercount"    # Entity ID to track (default: "playercount")
+
+
+# ------------------------------------------------------------
+# Active Effects
+# ------------------------------------------------------------
+# Displays buffs, debuffs, cooldowns, or active spells.
+#
+# Categories: "Buffs", "Debuffs", "Cooldowns", "ActiveSpells"
+#
+# [[windows]]
+# name = "buffs"
+# widget_type = "active_effects"
+# row = 16
+# col = 100
+# rows = 8
+# cols = 20
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Active effects-specific options:
+# category = "Buffs"           # "Buffs", "Debuffs", "Cooldowns", "ActiveSpells"
+
+
+# ============================================================
+# HAND WIDGETS
+# ============================================================
+# Display items in hands and prepared spell.
+
+# ------------------------------------------------------------
+# Left Hand
+# ------------------------------------------------------------
+# [[windows]]
+# name = "left"
+# widget_type = "hand"
+# row = 36
+# col = 0
+# rows = 1
+# cols = 30
+# show_border = false
+# visible = true
+#
+# # Hand-specific options:
+# icon = "L:"                  # Prefix icon/text
+# icon_color = "#808080"       # Icon color (optional)
+# text_color = "#ffffff"       # Item text color (optional)
+
+
+# ------------------------------------------------------------
+# Right Hand
+# ------------------------------------------------------------
+# [[windows]]
+# name = "right"
+# widget_type = "hand"
+# row = 36
+# col = 30
+# rows = 1
+# cols = 30
+# show_border = false
+# visible = true
+#
+# # Hand-specific options:
+# icon = "R:"
+# icon_color = "#808080"
+# text_color = "#ffffff"
+
+
+# ------------------------------------------------------------
+# Spell Hand
+# ------------------------------------------------------------
+# [[windows]]
+# name = "spell"
+# widget_type = "hand"
+# row = 36
+# col = 60
+# rows = 1
+# cols = 30
+# show_border = false
+# visible = true
+#
+# # Hand-specific options:
+# icon = "S:"
+# icon_color = "#9370DB"       # Purple for spell
+# text_color = "#9370DB"
+
+
+# ============================================================
+# VISUAL WIDGETS
+# ============================================================
+# Graphical display widgets.
+
+# ------------------------------------------------------------
+# Compass
+# ------------------------------------------------------------
+# Navigation compass showing available exits.
+#
+# [[windows]]
+# name = "compass"
+# widget_type = "compass"
+# row = 0
+# col = 110
+# rows = 5
+# cols = 9
+# show_border = true
+# border_style = "single"
+# visible = true
+#
+# # Compass-specific options:
+# active_color = "#00ff00"     # Color for available exits (default: "#00FF00")
+# inactive_color = "#333333"   # Color for unavailable exits (default: "#333333")
+
+
+# ------------------------------------------------------------
+# Injury Doll
+# ------------------------------------------------------------
+# Body part injury visualization.
+#
+# [[windows]]
+# name = "injuries"
+# widget_type = "injury_doll"
+# row = 5
+# col = 110
+# rows = 7
+# cols = 9
+# show_border = true
+# border_style = "single"
+# visible = true
+#
+# # Injury doll-specific options (injury severity colors):
+# injury_default_color = "#333333"  # Level 0: no injury
+# injury1_color = "#aa5500"         # Level 1 injury
+# injury2_color = "#ff8800"         # Level 2 injury
+# injury3_color = "#ff0000"         # Level 3 injury
+# scar1_color = "#999999"           # Level 4 scar
+# scar2_color = "#777777"           # Level 5 scar
+# scar3_color = "#555555"           # Level 6 scar
+
+
+# ============================================================
+# UTILITY WIDGETS
+# ============================================================
+# Input, spacing, and debug widgets.
+
+# ------------------------------------------------------------
+# Command Input
+# ------------------------------------------------------------
+# Text input for game commands. Every layout needs one.
+#
+# [[windows]]
+# name = "command_input"
+# widget_type = "command_input"
+# row = 37
+# col = 0
+# rows = 3
+# cols = 120
+# min_rows = 3
+# max_rows = 3
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Command input-specific options:
+# streams = []                      # Leave empty
+# buffer_size = 100                 # Command history size
+# text_color = "#ffffff"            # Input text color (optional)
+# cursor_color = "#ffffff"          # Cursor color (optional)
+# cursor_background_color = "#808080"  # Cursor background (optional)
+# prompt_icon = ""                 # Prompt icon (optional, Nerd Font)
+# prompt_icon_color = "#00ff00"     # Prompt icon color (optional)
+
+
+# ------------------------------------------------------------
+# Spacer
+# ------------------------------------------------------------
+# Invisible spacing element for layout organization.
+# Minimum size: 1x1
+#
+# [[windows]]
+# name = "spacer1"
+# widget_type = "spacer"
+# row = 35
+# col = 0
+# rows = 1
+# cols = 120
+# show_border = false
+# visible = true
+#
+# # No widget-specific options
+
+
+# ------------------------------------------------------------
+# Performance Overlay
+# ------------------------------------------------------------
+# Debug widget showing FPS, frame times, memory, etc.
+# Toggle with F3 or .perf command.
+#
+# [[windows]]
+# name = "performance_overlay"
+# widget_type = "performance"
+# row = 0
+# col = 0
+# rows = 23
+# cols = 35
+# show_border = true
+# border_style = "single"
+# visible = false
+#
+# # Performance-specific options (all default: true):
+# enabled = true
+# show_fps = true              # FPS counter
+# show_frame_times = true      # Frame timing
+# show_render_times = true     # Render timing
+# show_ui_times = true         # UI timing
+# show_wrap_times = true       # Text wrapping timing
+# show_net = true              # Network stats
+# show_parse = true            # Parsing stats
+# show_events = true           # Event processing stats
+# show_memory = true           # Memory usage
+# show_lines = true            # Line counts
+# show_uptime = true           # Session uptime
+# show_jitter = true           # Frame jitter
+# show_frame_spikes = true     # Frame spike detection
+# show_event_lag = true        # Event processing lag
+# show_memory_delta = true     # Memory change tracking
+
+
+# ============================================================
+# TEMPLATE PRESETS
+# ============================================================
+# Ready-to-use window configurations. Copy entire blocks.
+
+# --- Minimal Status Bar ---
+# Health, mana, stamina in a row with roundtime
+#
+# [[windows]]
+# name = "health"
+# widget_type = "progress"
+# row = 0
+# col = 0
+# rows = 1
+# cols = 15
+# show_border = false
+# id = "health"
+# label = "HP"
+# color = "#ff0000"
+#
+# [[windows]]
+# name = "mana"
+# widget_type = "progress"
+# row = 0
+# col = 15
+# rows = 1
+# cols = 15
+# show_border = false
+# id = "mana"
+# label = "MP"
+# color = "#0066ff"
+#
+# [[windows]]
+# name = "stamina"
+# widget_type = "progress"
+# row = 0
+# col = 30
+# rows = 1
+# cols = 15
+# show_border = false
+# id = "stamina"
+# label = "ST"
+# color = "#00ff00"
+#
+# [[windows]]
+# name = "roundtime"
+# widget_type = "countdown"
+# row = 0
+# col = 45
+# rows = 1
+# cols = 15
+# show_border = false
+# id = "roundtime"
+# label = "RT"
+# color = "#ffff00"
+
+
+# ============================================================
+# END OF TEMPLATE REFERENCE
+# ============================================================
+# For more information:
+#   - VellumFE Documentation: https://github.com/your-repo
+#   - Nerd Fonts Icons: https://www.nerdfonts.com/cheat-sheet
+#   - Use .reload in-game to apply layout changes
+# ============================================================

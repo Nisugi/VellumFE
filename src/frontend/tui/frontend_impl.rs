@@ -234,27 +234,45 @@ impl Frontend for TuiFrontend {
                             }
                             .unwrap_or_default();
 
-                            // Build inline prompt with full help text (no borders)
-                            let help_text = "(Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate)";
-                            let prompt = format!("Search{} {}: ", search_info, help_text);
+                            // Build inline prompt with placeholder text (no borders)
+                            let prompt = format!("Search{}: ", search_info);
+                            let placeholder = "Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate";
 
                             // Split input into before/at/after cursor for proper cursor rendering
                             let input_text = &app_core.ui_state.search_input;
                             let cursor_pos = app_core.ui_state.search_cursor;
-                            let chars: Vec<char> = input_text.chars().collect();
-                            let before_cursor: String = chars.iter().take(cursor_pos).collect();
-                            let cursor_char = chars.get(cursor_pos).copied().unwrap_or(' ');
-                            let after_cursor: String = chars.iter().skip(cursor_pos + 1).collect();
 
-                            let search_line = Line::from(vec![
-                                Span::styled(prompt, Style::default().fg(Color::Yellow)),
-                                Span::raw(before_cursor),
-                                Span::styled(
-                                    cursor_char.to_string(),
-                                    Style::default().bg(Color::White).fg(Color::Black),
-                                ),
-                                Span::raw(after_cursor),
-                            ]);
+                            // Build spans: prompt + (placeholder OR user_text)
+                            let search_line = if input_text.is_empty() {
+                                // Show dimmed placeholder with cursor at start
+                                Line::from(vec![
+                                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                                    Span::styled(
+                                        " ".to_string(),
+                                        Style::default().bg(Color::White).fg(Color::DarkGray),
+                                    ),
+                                    Span::styled(
+                                        placeholder.to_string(),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                ])
+                            } else {
+                                // Show user input with cursor
+                                let chars: Vec<char> = input_text.chars().collect();
+                                let before_cursor: String = chars.iter().take(cursor_pos).collect();
+                                let cursor_char = chars.get(cursor_pos).copied().unwrap_or(' ');
+                                let after_cursor: String = chars.iter().skip(cursor_pos + 1).collect();
+
+                                Line::from(vec![
+                                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                                    Span::raw(before_cursor),
+                                    Span::styled(
+                                        cursor_char.to_string(),
+                                        Style::default().bg(Color::White).fg(Color::Black),
+                                    ),
+                                    Span::raw(after_cursor),
+                                ])
+                            };
 
                             // Render directly without Block wrapper - no borders
                             let search_paragraph = Paragraph::new(search_line);
