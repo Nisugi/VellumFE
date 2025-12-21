@@ -41,6 +41,17 @@ speak_thoughts = true    # Speak focused thoughts
 speak_whispers = true    # Speak whispers/speech
 speak_main = false       # Speak main window text (can be overwhelming)
 
+# Stream Routing Configuration
+# Controls how text streams are routed when no widget subscribes to them
+[streams]
+# Streams to silently discard if no widget subscribes
+# Example: drop_unsubscribed = ["speech", "bounty", "whisper"]
+drop_unsubscribed = []
+
+# Where to route orphaned streams that aren't in the drop list
+# Default: "main" - set to another window name to redirect all unknown streams
+fallback = "main"
+
 # NOTE: Keybindings are configured in keybinds.toml (not here!)
 # See defaults/keybinds.toml or ~/.vellum-fe/{character}/keybinds.toml
 # Use .keybinds or .addkeybind commands to manage them

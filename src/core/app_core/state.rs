@@ -656,6 +656,10 @@ impl AppCore {
             }
         }
 
+        // Update text stream subscriber map for routing (uses widget stream configs)
+        self.message_processor
+            .update_text_stream_subscribers(&self.ui_state);
+
         self.needs_render = true;
     }
 
@@ -885,6 +889,10 @@ impl AppCore {
             position.width,
             position.height
         );
+
+        // Update text stream subscriber map (new window may have stream subscriptions)
+        self.message_processor
+            .update_text_stream_subscribers(&self.ui_state);
     }
 
     /// Update an existing window's position without destroying content
@@ -925,6 +933,10 @@ impl AppCore {
         self.ui_state.remove_window(name);
         self.needs_render = true;
         tracing::info!("Removed window '{}'", name);
+
+        // Update text stream subscriber map (removed window may have had stream subscriptions)
+        self.message_processor
+            .update_text_stream_subscribers(&self.ui_state);
     }
 
     /// Process incoming XML data from server

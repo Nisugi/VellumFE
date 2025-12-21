@@ -127,6 +127,8 @@ pub struct Config {
     pub menu_keybinds: MenuKeybinds, // Keybinds for menu system (browsers, forms, editors)
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
+    #[serde(default)] // Use defaults for stream routing
+    pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
 }
 
 /// Terminal size range to layout mapping
@@ -1655,6 +1657,34 @@ impl Default for TtsConfig {
             speak_thoughts: default_tts_speak_thoughts(),
             speak_whispers: default_tts_speak_whispers(),
             speak_main: default_tts_speak_main(),
+        }
+    }
+}
+
+/// Configuration for text stream routing behavior.
+/// Controls how orphaned streams (no widget subscriber) are handled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamsConfig {
+    /// Streams to silently discard if no widget subscribes to them.
+    /// Example: ["speech", "bounty", "whisper"]
+    #[serde(default)]
+    pub drop_unsubscribed: Vec<String>,
+
+    /// Where to route orphaned streams that aren't in the drop list.
+    /// Default: "main"
+    #[serde(default = "default_streams_fallback")]
+    pub fallback: String,
+}
+
+fn default_streams_fallback() -> String {
+    "main".to_string()
+}
+
+impl Default for StreamsConfig {
+    fn default() -> Self {
+        Self {
+            drop_unsubscribed: Vec::new(),
+            fallback: default_streams_fallback(),
         }
     }
 }
@@ -4419,6 +4449,7 @@ impl Default for Config {
             colors: ColorConfig::default(), // Loaded from colors.toml
             sound: SoundConfig::default(),
             tts: TtsConfig::default(),
+            streams: StreamsConfig::default(), // Stream routing config
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

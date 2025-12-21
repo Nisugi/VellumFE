@@ -60,6 +60,10 @@ pub struct MessageProcessor {
 
     /// Redirect cache: true if any highlights have redirect_to configured (lazy check optimization)
     has_redirect_highlights: bool,
+
+    /// Text stream subscribers map: stream_id -> list of window names that subscribe
+    /// Built from widget configs at startup and on layout reload
+    text_stream_subscribers: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl MessageProcessor {
@@ -113,6 +117,7 @@ impl MessageProcessor {
             squelch_matcher: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
+            text_stream_subscribers: std::collections::HashMap::new(),
         };
 
         // Initialize squelch patterns from config
@@ -184,20 +189,31 @@ impl MessageProcessor {
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
                 self.current_stream = id.clone();
 
-                // Check if this is a stream that should be discarded when window doesn't exist
-                // Streams like spells, bounty, room should be discarded
-                // Speech/talk/whisper should be dropped to avoid duplicate main stream lines
-                let should_discard_if_no_window = matches!(
-                    id.as_str(),
-                    "spell" | "bounty" | "room" | "speech" | "talk" | "whisper"
-                );
-
-                // Check if any window exists for this stream (direct or tabbed)
-                if should_discard_if_no_window && !self.stream_has_target_window(ui_state, id) {
-                    self.discard_current_stream = true;
-                    tracing::debug!("No window exists for stream '{}', discarding content", id);
-                } else {
+                // Check if any widget subscribes to this stream (using pre-built subscriber map)
+                if self.stream_has_target_window(ui_state, id) {
+                    // Stream has subscribers - route normally
                     self.discard_current_stream = false;
+                } else {
+                    // No subscribers - check drop list vs fallback routing
+                    match self.resolve_orphaned_stream(id) {
+                        None => {
+                            // Stream is in drop_unsubscribed list - discard content
+                            self.discard_current_stream = true;
+                            tracing::debug!(
+                                "Stream '{}' has no subscribers and is in drop list, discarding content",
+                                id
+                            );
+                        }
+                        Some(fallback) => {
+                            // Not in drop list - will route to fallback window later
+                            self.discard_current_stream = false;
+                            tracing::debug!(
+                                "Stream '{}' has no subscribers, will route to fallback '{}'",
+                                id,
+                                fallback
+                            );
+                        }
+                    }
                 }
 
                 // Clear room components when room stream is pushed (only if window exists)
@@ -1340,30 +1356,45 @@ impl MessageProcessor {
             }
         }
 
-        // Fallback to main window if no other window handled the stream
-        // Exception: speech/talk/whisper streams send duplicate lines (one for dedicated window, one for main)
-        // If no dedicated window exists, drop the line instead of falling back (main gets its own copy)
+        // Fallback routing if no window handled the stream
+        // Uses config.streams settings: drop_unsubscribed list and fallback window
         if !text_added_to_any_window {
-            let is_duplicate_stream = matches!(
-                self.current_stream.to_lowercase().as_str(),
-                "speech" | "talk" | "whisper"
-            );
-
-            if is_duplicate_stream {
-                tracing::trace!(
-                    "Dropping line from stream '{}' (no dedicated window, main gets duplicate copy)",
-                    self.current_stream
-                );
-            } else {
-                tracing::trace!(
-                    "Window for stream '{}' not found, routing content to main window",
-                    self.current_stream
-                );
-                if let Some(main_window) = ui_state.get_window_mut("main") {
-                    if let WindowContent::Text(ref mut content) = main_window.content {
-                        content.add_line(line.clone());
-                        if let Some(tts_mgr) = tts_manager.as_deref_mut() {
-                            self.enqueue_tts(tts_mgr, "main", &line);
+            match self.resolve_orphaned_stream(&self.current_stream) {
+                None => {
+                    // Stream is in drop list - discard silently
+                    tracing::trace!(
+                        "Dropping line from stream '{}' (in drop_unsubscribed list)",
+                        self.current_stream
+                    );
+                    self.chunk_has_silent_updates = true;
+                }
+                Some(fallback_window) => {
+                    // Route to fallback window (defaults to "main")
+                    tracing::trace!(
+                        "Stream '{}' has no subscribers, routing to fallback '{}'",
+                        self.current_stream,
+                        fallback_window
+                    );
+                    if let Some(fallback) = ui_state.get_window_mut(&fallback_window) {
+                        if let WindowContent::Text(ref mut content) = fallback.content {
+                            content.add_line(line.clone());
+                            if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                self.enqueue_tts(tts_mgr, &fallback_window, &line);
+                            }
+                        }
+                    } else if fallback_window != "main" {
+                        // Fallback window doesn't exist, try main as last resort
+                        tracing::trace!(
+                            "Fallback window '{}' not found, routing to main",
+                            fallback_window
+                        );
+                        if let Some(main_window) = ui_state.get_window_mut("main") {
+                            if let WindowContent::Text(ref mut content) = main_window.content {
+                                content.add_line(line.clone());
+                                if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                    self.enqueue_tts(tts_mgr, "main", &line);
+                                }
+                            }
                         }
                     }
                 }
@@ -1856,28 +1887,24 @@ impl MessageProcessor {
         .to_string()
     }
 
-    /// Determine if a stream is already handled by any window (direct text window or tabbed text)
-    fn stream_has_target_window(&self, ui_state: &UiState, stream: &str) -> bool {
-        let mapped = self.map_stream_to_window(stream);
+    /// Determine if a stream is already handled by any window.
+    /// Uses the pre-built subscriber map for O(1) lookup.
+    fn stream_has_target_window(&self, _ui_state: &UiState, stream: &str) -> bool {
+        // Use the pre-built subscriber map
+        self.stream_has_subscribers(stream)
+    }
 
-        // Direct window match
-        if ui_state.get_window(&mapped).is_some() {
-            return true;
+    /// Determine what to do with an orphaned stream (no subscribers).
+    /// Returns: Some(window_name) to route to, or None to discard.
+    fn resolve_orphaned_stream(&self, stream: &str) -> Option<String> {
+        // Check if stream is in the drop list
+        if self.config.streams.drop_unsubscribed.iter().any(|s| s.eq_ignore_ascii_case(stream)) {
+            tracing::debug!("Stream '{}' is in drop_unsubscribed list, discarding", stream);
+            return None;
         }
 
-        // Any tabbed text window that subscribes to this stream
-        ui_state.windows.values().any(|w| {
-            if let WindowContent::TabbedText(tab_content) = &w.content {
-                tab_content.tabs.iter().any(|tab| {
-                    tab.definition
-                        .streams
-                        .iter()
-                        .any(|s| s.trim().eq_ignore_ascii_case(stream))
-                })
-            } else {
-                false
-            }
-        })
+        // Return the fallback window (defaults to "main")
+        Some(self.config.streams.fallback.clone())
     }
 
     /// Clear inventory cache to force next inventory update to render
@@ -1947,6 +1974,144 @@ impl MessageProcessor {
             "Updated redirect cache: has_redirect_highlights={}",
             self.has_redirect_highlights
         );
+    }
+
+    /// Build the text stream subscriber map from widget configurations.
+    /// Call this on startup and after layout reload to update routing.
+    pub fn update_text_stream_subscribers(&mut self, ui_state: &UiState) {
+        let mut subscribers: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        for (window_name, window) in &ui_state.windows {
+            match &window.content {
+                // Text windows have explicit streams field
+                WindowContent::Text(content) => {
+                    for stream in &content.streams {
+                        subscribers
+                            .entry(stream.clone())
+                            .or_default()
+                            .push(window_name.clone());
+                    }
+                }
+
+                // Tabbed text windows: each tab has its own streams
+                WindowContent::TabbedText(tabbed) => {
+                    for tab in &tabbed.tabs {
+                        for stream in &tab.definition.streams {
+                            subscribers
+                                .entry(stream.clone())
+                                .or_default()
+                                .push(window_name.clone());
+                        }
+                    }
+                }
+
+                // Inventory widget implicitly subscribes to "inv" stream
+                WindowContent::Inventory(_) => {
+                    subscribers
+                        .entry("inv".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // Spells widget implicitly subscribes to "Spells" stream
+                WindowContent::Spells(_) => {
+                    subscribers
+                        .entry("Spells".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // Perception widget implicitly subscribes to "percWindow" stream
+                WindowContent::Perception(_) => {
+                    subscribers
+                        .entry("percWindow".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // Hand widgets implicitly subscribe to left/right/spell streams
+                WindowContent::Hand { .. } => {
+                    // Hand type is determined by window name convention
+                    let hand_stream = match window_name.as_str() {
+                        "left" | "lefthand" | "left_hand" => Some("left"),
+                        "right" | "righthand" | "right_hand" => Some("right"),
+                        "spell" | "spellhand" | "spell_hand" => Some("spell"),
+                        _ => None,
+                    };
+                    if let Some(stream) = hand_stream {
+                        subscribers
+                            .entry(stream.to_string())
+                            .or_default()
+                            .push(window_name.clone());
+                    }
+                }
+
+                // Targets widget implicitly subscribes to "combat" stream
+                WindowContent::Targets { .. } => {
+                    subscribers
+                        .entry("combat".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // Players widget implicitly subscribes to "playerlist" stream
+                WindowContent::Players { .. } => {
+                    subscribers
+                        .entry("playerlist".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // Room widget implicitly subscribes to "room" stream
+                WindowContent::Room(_) => {
+                    subscribers
+                        .entry("room".to_string())
+                        .or_default()
+                        .push(window_name.clone());
+                }
+
+                // ActiveEffects implicitly subscribes to multiple streams
+                WindowContent::ActiveEffects(_) => {
+                    for stream in &["activespells", "buffs", "debuffs", "cooldowns"] {
+                        subscribers
+                            .entry(stream.to_string())
+                            .or_default()
+                            .push(window_name.clone());
+                    }
+                }
+
+                // Other widget types don't subscribe to text streams
+                _ => {}
+            }
+        }
+
+        let stream_count = subscribers.len();
+        let total_subscriptions: usize = subscribers.values().map(|v| v.len()).sum();
+
+        self.text_stream_subscribers = subscribers;
+
+        tracing::debug!(
+            "Updated text stream subscribers: {} streams, {} total subscriptions",
+            stream_count,
+            total_subscriptions
+        );
+    }
+
+    /// Get subscribers for a stream (returns empty vec if none)
+    pub fn get_stream_subscribers(&self, stream: &str) -> &[String] {
+        self.text_stream_subscribers
+            .get(stream)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Check if a stream has any subscribers
+    pub fn stream_has_subscribers(&self, stream: &str) -> bool {
+        self.text_stream_subscribers
+            .get(stream)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 
     /// Check if a line matches a redirect pattern
