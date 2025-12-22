@@ -67,7 +67,9 @@ struct Cli {
     #[arg(long, requires = "direct")]
     password: Option<String>,
 
-    /// Game world for direct connections (prime, platinum, shattered)
+    /// Game world for direct connections
+    /// GemStone IV: prime, platinum, shattered, test
+    /// DragonRealms: dr, drplatinum, drfallen, drtest
     #[arg(long, value_enum, requires = "direct")]
     game: Option<DirectGameArg>,
 
@@ -103,17 +105,31 @@ enum FrontendType {
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 enum DirectGameArg {
+    // GemStone IV
     Prime,
     Platinum,
     Shattered,
+    Test,
+    // DragonRealms
+    Dr,
+    DrPlatinum,
+    DrFallen,
+    DrTest,
 }
 
 impl DirectGameArg {
     fn code(self) -> &'static str {
         match self {
+            // GemStone IV
             DirectGameArg::Prime => "GS3",
             DirectGameArg::Platinum => "GSX",
             DirectGameArg::Shattered => "GSF",
+            DirectGameArg::Test => "GST",
+            // DragonRealms
+            DirectGameArg::Dr => "DR",
+            DirectGameArg::DrPlatinum => "DRX",
+            DirectGameArg::DrFallen => "DRF",
+            DirectGameArg::DrTest => "DRT",
         }
     }
 }

@@ -1457,7 +1457,7 @@ pub struct ConnectionConfig {
     /// Password for direct connection (OPTIONAL, stored in PLAIN TEXT - use CLI for security)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-    /// Game instance: "prime", "platinum", "shattered", "test"
+    /// Game instance: GS4: "prime", "platinum", "shattered", "test"; DR: "dr", "drplatinum", "drfallen", "drtest"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
 }
