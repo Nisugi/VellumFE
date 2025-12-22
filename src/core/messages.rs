@@ -2127,6 +2127,11 @@ impl MessageProcessor {
         &self,
         text: &str,
     ) -> Option<(String, crate::config::RedirectMode, usize)> {
+        // Check if redirects are globally enabled
+        if !self.config.highlight_settings.redirect_enabled {
+            return None;
+        }
+
         // Lazy check: skip if no redirects configured
         if !self.has_redirect_highlights {
             return None;

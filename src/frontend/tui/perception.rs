@@ -44,6 +44,11 @@ impl PerceptionWindow {
         self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.highlight_engine.set_replace_enabled(enabled);
+    }
+
     /// Update the perception entries (already sorted by weight)
     pub fn set_entries(&mut self, entries: Vec<PerceptionEntry>) {
         self.entries = entries;

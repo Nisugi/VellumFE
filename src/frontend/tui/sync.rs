@@ -58,16 +58,17 @@ impl TuiFrontend {
                         if let crate::config::WindowDef::Text { data, .. } = def {
                             tw.set_show_timestamps(data.show_timestamps);
                         } else {
-                            tw.set_show_timestamps(app_core.config.ui.show_timestamps);
+                            tw.set_show_timestamps(false); // Default to false for non-text windows
                         }
                     } else {
-                        tw.set_show_timestamps(app_core.config.ui.show_timestamps);
+                        tw.set_show_timestamps(false); // Default to false when no window def
                     }
 
                     // Set highlights from config
                     let highlights_vec: Vec<_> =
                         app_core.config.highlights.values().cloned().collect();
                     tw.set_highlights(highlights_vec);
+                    tw.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     tw
                 });
@@ -96,9 +97,9 @@ impl TuiFrontend {
                     if let crate::config::WindowDef::Text { data, .. } = def {
                         text_window.set_show_timestamps(data.show_timestamps);
                     } else {
-                        text_window.set_show_timestamps(app_core.config.ui.show_timestamps);
-    }
-}
+                        text_window.set_show_timestamps(false); // Default to false
+                    }
+                }
 
                 // Update width for proper wrapping
                 text_window.set_width(window.position.width);
@@ -362,6 +363,7 @@ impl TuiFrontend {
                     // Set highlight patterns
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     inv_window.set_highlights(highlights);
+                    inv_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
@@ -447,6 +449,7 @@ impl TuiFrontend {
                     // Set highlight patterns
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     spells_window.set_highlights(highlights);
+                    spells_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
@@ -769,6 +772,7 @@ impl TuiFrontend {
                         // Set up highlights from config
                         let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                         widget.set_highlights(highlights);
+                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     }
                 }
             }
@@ -914,6 +918,7 @@ impl TuiFrontend {
                         // Set up highlights from config
                         let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                         widget.set_highlights(highlights);
+                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         let base_title = window_def
                             .base()
@@ -972,6 +977,7 @@ impl TuiFrontend {
                         // Set up highlights from config
                         let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                         widget.set_highlights(highlights);
+                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         let base_title = window_def
                             .base()
@@ -1093,6 +1099,7 @@ impl TuiFrontend {
                     let mut widget =
                         tabbed_text_window::TabbedTextWindow::with_tabs(name, tabs, max_lines);
                     widget.set_highlights(&highlight_cache);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.tabbed_text_windows.insert(name.clone(), widget);
                 }
 
@@ -1562,6 +1569,7 @@ impl TuiFrontend {
                 // Set up highlights from config
                 let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                 room_window.set_highlights(highlights);
+                room_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                 if let crate::config::WindowDef::Room { data, .. } = window_def {
                     room_window.set_component_visible("room desc", data.show_desc);
@@ -1735,6 +1743,7 @@ impl TuiFrontend {
                     // Set up highlights from config
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     perception_window.set_highlights(highlights);
+                    perception_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     // Get settings from WindowDef if it's a Perception type
                     let (text_replacements, sort_direction, use_short_spell_names) =

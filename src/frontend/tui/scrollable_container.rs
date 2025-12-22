@@ -78,6 +78,11 @@ impl ScrollableContainer {
         self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.highlight_engine.set_replace_enabled(enabled);
+    }
+
     pub fn toggle_alternate_text(&mut self) {
         self.show_alternate_text = !self.show_alternate_text;
     }

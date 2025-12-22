@@ -38,6 +38,8 @@ pub struct HighlightEngine {
     highlight_regexes: Vec<Option<Regex>>,
     fast_matcher: Option<AhoCorasick>,
     fast_pattern_map: Vec<usize>,
+    /// Whether text replacement is enabled (from config.highlight_settings.replace_enabled)
+    replace_enabled: bool,
 }
 
 impl HighlightEngine {
@@ -87,7 +89,16 @@ impl HighlightEngine {
             highlight_regexes,
             fast_matcher,
             fast_pattern_map,
+            replace_enabled: true, // Enabled by default
         }
+    }
+
+    /// Set whether text replacement is enabled
+    ///
+    /// When disabled, highlight patterns will still apply coloring/styling
+    /// but the `replace` field will be ignored (no text substitution).
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.replace_enabled = enabled;
     }
 
     /// Apply highlights to Style-based spans (used by TextWindow)
@@ -202,23 +213,28 @@ impl HighlightEngine {
                 let fg = highlight.fg.as_ref().and_then(|h| Self::parse_hex_color(h));
                 let bg = highlight.bg.as_ref().and_then(|h| Self::parse_hex_color(h));
 
-                // If there's a replace template, use captures_iter to expand $1, $2, etc.
-                // Otherwise, use find_iter for simpler/faster matching
-                if let Some(ref replace_template) = highlight.replace {
-                    for caps in regex.captures_iter(&full_text) {
-                        if let Some(m) = caps.get(0) {
-                            // Expand capture groups in replacement template
-                            let mut expanded = String::new();
-                            caps.expand(replace_template, &mut expanded);
-                            matches.push(MatchInfo {
-                                start_byte: m.start(),
-                                end_byte: m.end(),
-                                fg,
-                                bg,
-                                bold: highlight.bold,
-                                color_entire_line: highlight.color_entire_line,
-                                replace: Some(expanded),
-                            });
+                // If there's a replace template AND replacement is enabled,
+                // use captures_iter to expand $1, $2, etc.
+                // Otherwise, use find_iter for simpler/faster matching (colors only)
+                let use_replacement = self.replace_enabled && highlight.replace.is_some();
+
+                if use_replacement {
+                    if let Some(ref replace_template) = highlight.replace {
+                        for caps in regex.captures_iter(&full_text) {
+                            if let Some(m) = caps.get(0) {
+                                // Expand capture groups in replacement template
+                                let mut expanded = String::new();
+                                caps.expand(replace_template, &mut expanded);
+                                matches.push(MatchInfo {
+                                    start_byte: m.start(),
+                                    end_byte: m.end(),
+                                    fg,
+                                    bg,
+                                    bold: highlight.bold,
+                                    color_entire_line: highlight.color_entire_line,
+                                    replace: Some(expanded),
+                                });
+                            }
                         }
                     }
                 } else {

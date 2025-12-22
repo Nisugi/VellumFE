@@ -98,6 +98,11 @@ impl RoomWindow {
         self.needs_rewrap = true; // Re-process content with new highlights
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.highlight_engine.set_replace_enabled(enabled);
+    }
+
     /// Clear all component buffers (called when room stream is pushed)
     pub fn clear_all_components(&mut self) {
         self.components.clear();

@@ -91,6 +91,13 @@ impl TabbedTextWindow {
         }
     }
 
+    /// Set whether text replacement is enabled for highlights in all tabs
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        for tab in self.tabs.iter_mut() {
+            tab.window.set_replace_enabled(enabled);
+        }
+    }
+
     pub fn with_tabs(
         title: &str,
         tabs: Vec<(String, Vec<String>, bool, bool)>,

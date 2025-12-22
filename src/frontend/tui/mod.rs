@@ -286,11 +286,14 @@ impl TuiFrontend {
     /// Refresh highlight patterns on all text-like windows after edits
     pub fn refresh_highlights(&mut self, config: &crate::config::Config) {
         let highlights: Vec<_> = config.highlights.values().cloned().collect();
+        let replace_enabled = config.highlight_settings.replace_enabled;
         for tw in self.widget_manager.text_windows.values_mut() {
             tw.set_highlights(highlights.clone());
+            tw.set_replace_enabled(replace_enabled);
         }
         for ttw in self.widget_manager.tabbed_text_windows.values_mut() {
             ttw.set_highlights(&highlights);
+            ttw.set_replace_enabled(replace_enabled);
         }
     }
 

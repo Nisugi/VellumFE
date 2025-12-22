@@ -467,9 +467,8 @@ impl AppCore {
                             .tabs
                             .iter()
                             .map(|tab| {
-                                let show_ts = tab
-                                    .show_timestamps
-                                    .unwrap_or(self.config.ui.show_timestamps);
+                                // show_timestamps defaults to false if not explicitly set per-tab
+                                let show_ts = tab.show_timestamps.unwrap_or(false);
                                 let ignore = tab.ignore_activity.unwrap_or(false);
                                 (tab.name.clone(), tab.get_streams(), show_ts, ignore)
                             })
@@ -484,7 +483,7 @@ impl AppCore {
                             vec![(
                                 "Default".to_string(),
                                 vec!["main".to_string()],
-                                self.config.ui.show_timestamps,
+                                false, // show_timestamps defaults to false
                                 false,
                             )],
                             1000,
@@ -723,8 +722,8 @@ impl AppCore {
                         .tabs
                         .iter()
                         .map(|tab| {
-                            let show_ts =
-                                tab.show_timestamps.unwrap_or(self.config.ui.show_timestamps);
+                            // show_timestamps defaults to false if not explicitly set per-tab
+                            let show_ts = tab.show_timestamps.unwrap_or(false);
                             let ignore = tab.ignore_activity.unwrap_or(false);
                             (tab.name.clone(), tab.get_streams(), show_ts, ignore)
                         })
@@ -739,7 +738,7 @@ impl AppCore {
                         vec![(
                             "Default".to_string(),
                             vec!["main".to_string()],
-                            self.config.ui.show_timestamps,
+                            false, // show_timestamps defaults to false
                             false,
                         )],
                         5000,
@@ -3041,6 +3040,11 @@ impl AppCore {
 
     /// Check if text matches any highlight patterns with sounds and play them
     pub fn check_sound_triggers(&self, text: &str) {
+        // Check if sounds are globally enabled
+        if !self.config.highlight_settings.sounds_enabled {
+            return;
+        }
+
         if let Some(ref sound_player) = self.sound_player {
             for pattern in self.config.highlights.values() {
                 // Skip if no sound configured for this pattern

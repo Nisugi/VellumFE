@@ -1445,15 +1445,27 @@ pub struct ConnectionConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Character name (used for Lich proxy profile and direct connect login)
     pub character: Option<String>,
+
+    // --- Direct Connection (all optional) ---
+    // Credentials can be stored here or passed via CLI. CLI arguments override these values.
+
+    /// Account name for direct connection
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// Password for direct connection (OPTIONAL, stored in PLAIN TEXT - use CLI for security)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Game instance: "prime", "platinum", "shattered", "test"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
-    #[serde(default)]
-    pub show_timestamps: bool,
     #[serde(default)]
     pub layout: LayoutConfig,
     #[serde(default = "default_border_style")]
@@ -1503,7 +1515,6 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             buffer_size: default_buffer_size(),
-            show_timestamps: false,
             layout: LayoutConfig::default(),
             border_style: default_border_style(),
             countdown_icon: default_countdown_icon(),
@@ -3505,7 +3516,7 @@ impl Config {
                         name: "Main".to_string(),
                         stream: None,
                         streams: vec!["main".to_string()],
-                        show_timestamps: Some(ui_defaults.show_timestamps),
+                        show_timestamps: None, // Per-tab setting, no global default
                         ignore_activity: Some(false),
                     }],
                     buffer_size: 5000,
@@ -4500,10 +4511,12 @@ impl Default for Config {
                 host: default_host(),
                 port: default_port(),
                 character: None,
+                account: None,
+                password: None,
+                game: None,
             },
             ui: UiConfig {
                 buffer_size: default_buffer_size(),
-                show_timestamps: false,
                 layout: LayoutConfig::default(),
                 border_style: default_border_style(),
                 countdown_icon: default_countdown_icon(),

@@ -34,7 +34,24 @@ pub struct DirectConnectConfig {
 }
 
 impl DirectConnectConfig {
+    /// Convert game name to game code
+    fn game_name_to_code(name: &str) -> &'static str {
+        match name.to_lowercase().as_str() {
+            "prime" | "gs3" => "GS3",
+            "platinum" | "gsx" => "GSX",
+            "shattered" | "gsf" => "GSF",
+            "test" | "gst" => "GST",
+            _ => "GS3", // Default to prime
+        }
+    }
+
     /// Build DirectConnectConfig from CLI arguments and config
+    ///
+    /// Resolution order for each field:
+    /// - account: CLI --account → config.connection.account → error
+    /// - password: CLI --password → config.connection.password → prompt user
+    /// - character: CLI --character → config.connection.character → error
+    /// - game: CLI --game → config.connection.game → "prime" (default)
     pub fn from_cli(
         direct_enabled: bool,
         direct_account: Option<String>,
@@ -44,16 +61,19 @@ impl DirectConnectConfig {
         direct_game: Option<&str>,
         config: &crate::config::Config,
     ) -> Result<Option<Self>> {
-        
-
         if !direct_enabled {
             return Ok(None);
         }
 
+        // Account: CLI → config → error
         let account = direct_account
-            .context("`--direct-account` is required when using --direct")?;
+            .or_else(|| config.connection.account.clone())
+            .context(
+                "Account required for --direct. Use --account or set connection.account in config",
+            )?;
 
-        let password = match direct_password {
+        // Password: CLI → config → prompt
+        let password = match direct_password.or_else(|| config.connection.password.clone()) {
             Some(pwd) => pwd,
             None => {
                 let prompt = format!("Password for account {}: ", account);
@@ -61,14 +81,22 @@ impl DirectConnectConfig {
             }
         };
 
+        // Character: CLI → fallback → config → error
         let character = direct_character
             .or(character_fallback)
             .or_else(|| config.connection.character.clone())
             .context(
-                "Specify --direct-character, --character, or set connection.character in config for direct mode",
+                "Character required for --direct. Use --character or set connection.character in config",
             )?;
 
-        let game_code = direct_game.unwrap_or("GS3").to_string();
+        // Game: CLI → config → "prime" default
+        let game_code = if let Some(game) = direct_game {
+            game.to_string()
+        } else if let Some(ref game_name) = config.connection.game {
+            Self::game_name_to_code(game_name).to_string()
+        } else {
+            "GS3".to_string() // Default to prime
+        };
 
         let data_dir = crate::config::Config::base_dir()?;
 

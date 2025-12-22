@@ -38,9 +38,17 @@ struct Cli {
     #[arg(short, long)]
     port: Option<u16>,
 
-    /// Character name (used for character-specific settings and direct connection login)
+    /// Character name (used for direct connection login)
+    /// When using --direct, this is the character to log in as.
+    /// For config directory, use --profile (defaults to --character if not specified).
     #[arg(long)]
     character: Option<String>,
+
+    /// Profile name for config directory selection.
+    /// Use this to separate config profiles from character login names.
+    /// If not specified, falls back to --character for config directory.
+    #[arg(long)]
+    profile: Option<String>,
 
     /// Custom data directory (default: ~/.vellum-fe)
     /// Can also be set via VELLUM_FE_DIR environment variable
@@ -253,12 +261,13 @@ fn main() -> Result<()> {
     }
 
     // Load configuration
+    // Profile (for config directory) uses --profile if specified, otherwise falls back to --character
     let port = cli.port.unwrap_or(8000);
-    let character = cli.character.as_deref();
+    let profile = cli.profile.as_deref().or(cli.character.as_deref());
     let mut config = if let Some(config_path) = &cli.config {
-        config::Config::load_from_path(config_path, character, port)?
+        config::Config::load_from_path(config_path, profile, port)?
     } else {
-        config::Config::load_with_options(character, port)?
+        config::Config::load_with_options(profile, port)?
     };
 
     // Apply CLI flag overrides
@@ -278,17 +287,19 @@ fn main() -> Result<()> {
     let setup_palette = cli.setup_palette;
 
     // Build direct connection config if enabled
+    // Uses --character for login (not --profile, which is only for config directory)
     let direct_config = network::DirectConnectConfig::from_cli(
         cli.direct,
         cli.account.clone(),
         cli.password.clone(),
-        cli.character.clone(),
-        cli.character.clone(),
+        cli.character.clone(), // Character for direct connect login
+        cli.character.clone(), // Fallback for character resolution
         cli.game.map(|g| g.code()),
         &config,
     )?;
 
     // Run appropriate frontend
+    // Character is used for Lich proxy selection and display (not profile)
     let character = cli.character.clone();
     match cli.frontend {
         FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette)?,

@@ -171,6 +171,11 @@ impl TextWindow {
         self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.highlight_engine.set_replace_enabled(enabled);
+    }
+
     pub fn with_border_config(
         mut self,
         show_border: bool,

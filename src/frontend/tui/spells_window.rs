@@ -71,6 +71,11 @@ impl SpellsWindow {
         self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.highlight_engine.set_replace_enabled(enabled);
+    }
+
     /// Clear all content (called when clearStream is received)
     pub fn clear(&mut self) {
         self.lines.clear();

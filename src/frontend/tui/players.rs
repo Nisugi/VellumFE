@@ -173,6 +173,11 @@ impl Players {
         self.container.set_highlights(highlights);
     }
 
+    /// Set whether text replacement is enabled for highlights
+    pub fn set_replace_enabled(&mut self, enabled: bool) {
+        self.container.set_replace_enabled(enabled);
+    }
+
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.container.render(area, buf);
     }

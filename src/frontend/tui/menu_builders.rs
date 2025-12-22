@@ -71,15 +71,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         name_width: None,
     });
 
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.show_timestamps".to_string(),
-        display_name: "Show Timestamps".to_string(),
-        value: SettingValue::Boolean(config.ui.show_timestamps),
-        description: Some("Display timestamps in text windows".to_string()),
-        editable: true,
-        name_width: None,
-    });
+    // NOTE: show_timestamps removed from global config - use per-window settings instead
 
     items.push(SettingItem {
         category: "UI".to_string(),
