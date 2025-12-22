@@ -132,9 +132,7 @@ impl Frontend for TuiFrontend {
         self.terminal.draw(|f| {
             use crate::data::WindowContent;
             use ratatui::layout::Rect;
-            use ratatui::style::{Color, Style};
-            use ratatui::text::{Line, Span};
-            use ratatui::widgets::{Block, Borders, Paragraph};
+            use ratatui::widgets::{Block, Borders};
 
             let theme = theme_for_render.clone();
             let screen_area = f.area();
@@ -197,86 +195,46 @@ impl Frontend for TuiFrontend {
 
                         // If in Search mode, render search input instead of command input
                         if app_core.ui_state.input_mode == InputMode::Search {
-                            // Get search info from focused window (if any)
-                            let search_info = if let Some(focused_name) =
-                                &app_core.ui_state.focused_window
-                            {
-                                if let Some(window) = app_core.ui_state.windows.get(focused_name) {
-                                    if let WindowContent::Text(_) = &window.content {
-                                        text_windows
-                                            .get(focused_name)
-                                            .and_then(|tw| tw.search_info())
-                                            .map(|(current, total)| {
-                                                format!(" [{}/{}]", current + 1, total)
-                                            })
+                            if let Some(cmd_input) = command_inputs.get(name) {
+                                // Get search info from focused window (if any)
+                                let search_info = if let Some(focused_name) =
+                                    &app_core.ui_state.focused_window
+                                {
+                                    if let Some(window) = app_core.ui_state.windows.get(focused_name) {
+                                        if let WindowContent::Text(_) = &window.content {
+                                            text_windows
+                                                .get(focused_name)
+                                                .and_then(|tw| tw.search_info())
+                                        } else {
+                                            None
+                                        }
                                     } else {
                                         None
                                     }
                                 } else {
-                                    None
-                                }
-                            } else {
-                                // No focused window, try main
-                                if let Some(window) = app_core.ui_state.windows.get("main") {
-                                    if let WindowContent::Text(_) = &window.content {
-                                        text_windows
-                                            .get("main")
-                                            .and_then(|tw| tw.search_info())
-                                            .map(|(current, total)| {
-                                                format!(" [{}/{}]", current + 1, total)
-                                            })
+                                    // No focused window, try main
+                                    if let Some(window) = app_core.ui_state.windows.get("main") {
+                                        if let WindowContent::Text(_) = &window.content {
+                                            text_windows
+                                                .get("main")
+                                                .and_then(|tw| tw.search_info())
+                                        } else {
+                                            None
+                                        }
                                     } else {
                                         None
                                     }
-                                } else {
-                                    None
-                                }
+                                };
+
+                                // Render search mode using command_input's visual settings
+                                cmd_input.render_search_mode(
+                                    area,
+                                    f.buffer_mut(),
+                                    &app_core.ui_state.search_input,
+                                    app_core.ui_state.search_cursor,
+                                    search_info,
+                                );
                             }
-                            .unwrap_or_default();
-
-                            // Build inline prompt with placeholder text (no borders)
-                            let prompt = format!("Search{}: ", search_info);
-                            let placeholder = "Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate";
-
-                            // Split input into before/at/after cursor for proper cursor rendering
-                            let input_text = &app_core.ui_state.search_input;
-                            let cursor_pos = app_core.ui_state.search_cursor;
-
-                            // Build spans: prompt + (placeholder OR user_text)
-                            let search_line = if input_text.is_empty() {
-                                // Show dimmed placeholder with cursor at start
-                                Line::from(vec![
-                                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
-                                    Span::styled(
-                                        " ".to_string(),
-                                        Style::default().bg(Color::White).fg(Color::DarkGray),
-                                    ),
-                                    Span::styled(
-                                        placeholder.to_string(),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                ])
-                            } else {
-                                // Show user input with cursor
-                                let chars: Vec<char> = input_text.chars().collect();
-                                let before_cursor: String = chars.iter().take(cursor_pos).collect();
-                                let cursor_char = chars.get(cursor_pos).copied().unwrap_or(' ');
-                                let after_cursor: String = chars.iter().skip(cursor_pos + 1).collect();
-
-                                Line::from(vec![
-                                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
-                                    Span::raw(before_cursor),
-                                    Span::styled(
-                                        cursor_char.to_string(),
-                                        Style::default().bg(Color::White).fg(Color::Black),
-                                    ),
-                                    Span::raw(after_cursor),
-                                ])
-                            };
-
-                            // Render directly without Block wrapper - no borders
-                            let search_paragraph = Paragraph::new(search_line);
-                            f.render_widget(search_paragraph, area);
                         } else {
                             // Normal mode - render command input
                             if let Some(cmd_input) = command_inputs.get(name) {

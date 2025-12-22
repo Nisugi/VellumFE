@@ -557,6 +557,116 @@ impl CommandInput {
         paragraph.render(text_area, buf);
     }
 
+    /// Render the command input area in search mode, inheriting all visual settings
+    /// (borders, background, etc.) from the command_input configuration.
+    pub fn render_search_mode(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        search_input: &str,
+        search_cursor: usize,
+        search_info: Option<(usize, usize)>, // (current_match, total_matches)
+    ) {
+        // Use the same border/background rendering logic as render_with_status
+        let border_is_none = self.border_style.as_ref().is_some_and(|s| s == "none");
+        let show_border = self.show_border && !border_is_none;
+
+        let borders = crossterm_bridge::to_ratatui_borders(&self.border_sides);
+        let border_type = match self.border_style.as_deref() {
+            Some("double") => BorderType::Double,
+            Some("rounded") => BorderType::Rounded,
+            Some("thick") => BorderType::Thick,
+            Some("quadrant_inside") => BorderType::QuadrantInside,
+            Some("quadrant_outside") => BorderType::QuadrantOutside,
+            _ => BorderType::Plain,
+        };
+
+        let mut border_style = Style::default();
+        if let Some(color_str) = &self.border_color {
+            if let Some(color) = self.parse_color(color_str) {
+                border_style = border_style.fg(color);
+            }
+        }
+
+        // Fill background if explicitly set
+        if let Some(ref color_hex) = self.background_color {
+            if let Some(bg_color) = self.parse_color(color_hex) {
+                for row in 0..area.height {
+                    for col in 0..area.width {
+                        let x = area.x + col;
+                        let y = area.y + row;
+                        if x < buf.area().width && y < buf.area().height {
+                            buf[(x, y)].set_char(' ').set_bg(bg_color);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clear area if no background and no border to prevent artifacts
+        if self.background_color.is_none() && (!self.show_border || border_is_none) {
+            for row in 0..area.height {
+                for col in 0..area.width {
+                    let x = area.x + col;
+                    let y = area.y + row;
+                    if x < buf.area().width && y < buf.area().height {
+                        buf[(x, y)].set_char(' ').reset();
+                    }
+                }
+            }
+        }
+
+        // Render block with borders (no title in search mode)
+        let inner = title_position::render_block_with_title(
+            area,
+            buf,
+            show_border,
+            borders,
+            &self.border_sides,
+            border_type,
+            border_style,
+            "", // No title in search mode
+            self.title_position,
+        );
+
+        // Build search prompt with match info
+        let search_info_text = match search_info {
+            Some((current, total)) => format!(" [{}/{}]", current + 1, total),
+            None => String::new(),
+        };
+        let prompt = format!("Search{}: ", search_info_text);
+        let placeholder = "Enter:Search, Esc:Cancel, Ctrl+PgUp/PgDn:Navigate";
+
+        // Build search line with cursor
+        let search_line = if search_input.is_empty() {
+            // Show dimmed placeholder with cursor at start
+            Line::from(vec![
+                Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                Span::styled(" ", Style::default().bg(Color::White).fg(Color::DarkGray)),
+                Span::styled(placeholder, Style::default().fg(Color::DarkGray)),
+            ])
+        } else {
+            // Show user input with cursor
+            let chars: Vec<char> = search_input.chars().collect();
+            let before_cursor: String = chars.iter().take(search_cursor).collect();
+            let cursor_char = chars.get(search_cursor).copied().unwrap_or(' ');
+            let after_cursor: String = chars.iter().skip(search_cursor + 1).collect();
+
+            Line::from(vec![
+                Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                Span::raw(before_cursor),
+                Span::styled(
+                    cursor_char.to_string(),
+                    Style::default().bg(Color::White).fg(Color::Black),
+                ),
+                Span::raw(after_cursor),
+            ])
+        };
+
+        let search_paragraph = Paragraph::new(search_line);
+        search_paragraph.render(inner, buf);
+    }
+
     /// Reset completion state
     fn reset_completion(&mut self) {
         self.completion_candidates.clear();
