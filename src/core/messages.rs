@@ -17,6 +17,9 @@ pub struct MessageProcessor {
     /// Parser for parsing XML content
     parser: crate::parser::XmlParser,
 
+    /// Core highlight engine - applies highlights once during message processing
+    highlight_engine: super::highlight_engine::CoreHighlightEngine,
+
     /// Current text stream (for multi-line messages)
     current_stream: String,
 
@@ -98,9 +101,15 @@ impl MessageProcessor {
         let event_patterns = config.event_patterns.clone();
         let parser = crate::parser::XmlParser::with_presets(preset_list, event_patterns);
 
+        // Build highlight engine from config
+        let highlights: Vec<_> = config.highlights.values().cloned().collect();
+        let mut highlight_engine = super::highlight_engine::CoreHighlightEngine::new(highlights);
+        highlight_engine.set_replace_enabled(config.highlight_settings.replace_enabled);
+
         let mut processor = Self {
             config,
             parser,
+            highlight_engine,
             current_stream: String::from("main"),
             current_segments: Vec::new(),
             chunk_has_main_text: false,
@@ -145,6 +154,18 @@ impl MessageProcessor {
 
         self.update_squelch_patterns();
         self.update_redirect_cache();
+
+        // Update highlight engine with new patterns
+        self.update_highlights();
+    }
+
+    /// Update the highlight engine with current config patterns.
+    /// Called on startup and when highlights are reloaded.
+    pub fn update_highlights(&mut self) {
+        let highlights: Vec<_> = self.config.highlights.values().cloned().collect();
+        self.highlight_engine.update_patterns(highlights);
+        self.highlight_engine
+            .set_replace_enabled(self.config.highlight_settings.replace_enabled);
     }
 
     /// Process a parsed XML element and update states
@@ -318,11 +339,12 @@ impl MessageProcessor {
                 }
 
                 // Decide whether to show this prompt based on chunk tracking
-                // Skip if: chunk had ONLY silent updates (no main text)
-                let should_skip = self.chunk_has_silent_updates && !self.chunk_has_main_text;
+                // Skip if: no main text was received since last prompt
+                // This handles both "silent updates only" and "empty chunk" cases
+                let should_skip = !self.chunk_has_main_text;
 
                 if should_skip {
-                    tracing::debug!("Skipping prompt '{}' - chunk had only silent updates", text);
+                    tracing::debug!("Skipping prompt '{}' - no main text since last prompt", text);
                 } else if !text.trim().is_empty() {
                     // Store the prompt in game state for command echoes
                     game_state.last_prompt = text.clone();
@@ -1124,6 +1146,17 @@ impl MessageProcessor {
                 should_send_to_original = false;
             }
         }
+
+        // Apply highlights ONCE here in core, before segments reach any widget.
+        // This ensures text arrives at widgets pre-colored.
+        let highlight_result = self
+            .highlight_engine
+            .apply_highlights(&self.current_segments, &self.current_stream);
+        self.current_segments = highlight_result.segments;
+
+        // TODO: Queue sounds for playback (highlight_result.sounds)
+        // For now, sounds are still triggered by frontend highlight engine
+        // This can be wired up once widget-level highlighting is removed
 
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
