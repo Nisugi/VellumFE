@@ -407,9 +407,11 @@
 # Track targets, players, and active effects.
 
 # ------------------------------------------------------------
-# Targets
+# Targets (Stream-based)
 # ------------------------------------------------------------
-# Displays tracked targets/monsters.
+# Displays tracked targets/monsters from the combat text stream.
+# Best for Lich users running ;targetlist script.
+# Includes creature status like [stu], [sit], [kneel].
 #
 # [[windows]]
 # name = "targets"
@@ -425,6 +427,87 @@
 #
 # # Targets-specific options:
 # entity_id = "targetcount"    # Entity ID to track (default: "targetcount")
+
+
+# ------------------------------------------------------------
+# Dropdown Targets (Direct-connect)
+# ------------------------------------------------------------
+# Displays creatures from the game's dDBTarget dropdown.
+# Best for DIRECT-CONNECT users (not using Lich).
+#
+# NOTE: Does NOT show creature status (stunned, sitting, etc.)
+# because the dropdown only provides names and IDs.
+# Use stream-based "targets" widget if you need status info.
+#
+# Updates automatically when creatures enter/leave room.
+#
+# [[windows]]
+# name = "dd_targets"
+# widget_type = "dropdown_targets"
+# title = "Targets"
+# row = 0
+# col = 100
+# rows = 8
+# cols = 25
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # No widget-specific options - reads from GameState.target_list
+
+
+# ------------------------------------------------------------
+# Container Window
+# ------------------------------------------------------------
+# Displays contents of a specific container (bag, backpack, etc.).
+# Specify the container by TITLE (case-insensitive), NOT by ID.
+# The title is matched against the game's container title text.
+#
+# How it works:
+#   1. LOOK IN your container in-game
+#   2. VellumFE captures the container title from the game
+#   3. Your window's container_title is matched (case-insensitive)
+#   4. Window updates automatically when you add/remove items
+#
+# The title matching supports partial matches, so "bandolier" will
+# match "a leather bandolier" or "Bandolier" etc.
+#
+# [[windows]]
+# name = "my_backpack"
+# widget_type = "container"
+# title = "Backpack"              # Display title (optional, uses container title if omitted)
+# container_title = "backpack"    # REQUIRED: container title to match (case-insensitive)
+# row = 10
+# col = 100
+# rows = 12
+# cols = 30
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Example: Multiple containers
+# # You can have multiple container windows for different bags:
+#
+# # [[windows]]
+# # name = "belt_pouch"
+# # widget_type = "container"
+# # title = "Belt"
+# # container_title = "belt"      # Matches any container with "belt" in the title
+# # row = 22
+# # col = 100
+# # rows = 6
+# # cols = 30
+#
+# # [[windows]]
+# # name = "bandolier"
+# # widget_type = "container"
+# # container_title = "bandolier"
+# # row = 28
+# # col = 100
+# # rows = 8
+# # cols = 30
 
 
 # ------------------------------------------------------------

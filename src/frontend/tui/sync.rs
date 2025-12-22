@@ -936,6 +936,120 @@ impl TuiFrontend {
         }
     }
 
+    /// Sync dropdown targets widget data from GameState.target_list
+    /// This is for direct-connect users who don't use Lich's ;targetlist script
+    pub(crate) fn sync_dropdown_targets_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if let crate::data::WindowContent::DropdownTargets = &window.content {
+                // Ensure widget exists
+                if !self.widget_manager.dropdown_targets_widgets.contains_key(name) {
+                    let widget = dropdown_targets::DropdownTargets::new(name);
+                    self.widget_manager.dropdown_targets_widgets.insert(name.clone(), widget);
+                }
+
+                // Update widget from GameState.target_list
+                if let Some(widget) = self.widget_manager.dropdown_targets_widgets.get_mut(name) {
+                    widget.update_from_state(&app_core.game_state.target_list);
+
+                    // Apply configuration
+                    if let Some(window_def) =
+                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                    {
+                        let colors = resolve_window_colors(window_def.base(), theme);
+                        widget.set_border_config(
+                            window_def.base().show_border,
+                            Some(window_def.base().border_style.clone()),
+                            colors.border.clone(),
+                        );
+                        widget.set_border_sides(window_def.base().border_sides.clone());
+                        widget.set_background_color(colors.background.clone());
+                        widget.set_text_color(colors.text.clone());
+                        widget.set_transparent_background(window_def.base().transparent_background);
+                        if let Some(ref color) = colors.text {
+                            widget.set_bar_color(color.clone());
+                        }
+
+                        // Set up highlights from config
+                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        widget.set_highlights(highlights);
+                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+
+                        let base_title = window_def
+                            .base()
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| name.clone());
+                        if window_def.base().show_title {
+                            widget.set_title(&base_title);
+                        } else {
+                            widget.set_title("");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sync container window widget data from GameState.container_cache
+    /// Looks up containers by title (case-insensitive), since container IDs change each session
+    pub(crate) fn sync_container_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if let crate::data::WindowContent::Container { container_title } = &window.content {
+                // Ensure widget exists - use title as the identifier since it's persistent
+                if !self.widget_manager.container_widgets.contains_key(name) {
+                    let display_title = name.clone(); // Default display title
+                    let widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
+                    self.widget_manager.container_widgets.insert(name.clone(), widget);
+                }
+
+                // Update widget from GameState.container_cache
+                if let Some(widget) = self.widget_manager.container_widgets.get_mut(name) {
+                    // Look up container by title (case-insensitive match)
+                    if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
+                        widget.update_from_cache(container_data);
+                    }
+
+                    // Apply configuration
+                    if let Some(window_def) =
+                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                    {
+                        let colors = resolve_window_colors(window_def.base(), theme);
+                        widget.set_border_config(
+                            window_def.base().show_border,
+                            colors.border.clone(),
+                        );
+                        widget.set_background_color(colors.background.clone());
+                        widget.set_text_color(colors.text.clone());
+                        widget.set_transparent_background(window_def.base().transparent_background);
+
+                        // Set up highlights from config
+                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        widget.set_highlights(highlights);
+                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+
+                        // Set title from window def or fall back to container title
+                        if window_def.base().show_title {
+                            if let Some(ref title) = window_def.base().title {
+                                widget.set_title(title.clone());
+                            }
+                            // Otherwise keep the title from container cache
+                        } else {
+                            widget.set_title(String::new());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Sync players widget data from AppCore to players widgets
     pub(crate) fn sync_players_widgets(
         &mut self,

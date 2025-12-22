@@ -96,7 +96,9 @@ impl Frontend for TuiFrontend {
         self.sync_spacer_widgets(app_core, &theme);
         self.sync_indicator_widgets(app_core, &theme);
         self.sync_targets_widgets(app_core, &theme);
+        self.sync_dropdown_targets_widgets(app_core, &theme);
         self.sync_players_widgets(app_core, &theme);
+        self.sync_container_widgets(app_core, &theme);
         self.sync_dashboard_widgets(app_core, &theme);
         self.sync_tabbed_text_windows(app_core, &theme);
         self.sync_compass_widgets(app_core, &theme);
@@ -117,7 +119,9 @@ impl Frontend for TuiFrontend {
         let mut spacer_widgets = std::mem::take(&mut self.widget_manager.spacer_widgets);
         let mut indicator_widgets = std::mem::take(&mut self.widget_manager.indicator_widgets);
         let mut targets_widgets = std::mem::take(&mut self.widget_manager.targets_widgets);
+        let mut dropdown_targets_widgets = std::mem::take(&mut self.widget_manager.dropdown_targets_widgets);
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
+        let mut container_widgets = std::mem::take(&mut self.widget_manager.container_widgets);
         let mut dashboard_widgets = std::mem::take(&mut self.widget_manager.dashboard_widgets);
         let mut tabbed_text_windows = std::mem::take(&mut self.widget_manager.tabbed_text_windows);
         let mut compass_widgets = std::mem::take(&mut self.widget_manager.compass_widgets);
@@ -309,6 +313,18 @@ impl Frontend for TuiFrontend {
                         // Use the Targets widget
                         if let Some(targets_widget) = targets_widgets.get_mut(name) {
                             targets_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::DropdownTargets => {
+                        // Use the DropdownTargets widget (reads from GameState.target_list)
+                        if let Some(dropdown_targets_widget) = dropdown_targets_widgets.get_mut(name) {
+                            dropdown_targets_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::Container { .. } => {
+                        // Use the ContainerWindow widget (reads from GameState.container_cache)
+                        if let Some(container_widget) = container_widgets.get_mut(name) {
+                            container_widget.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Players { .. } => {
@@ -557,7 +573,9 @@ impl Frontend for TuiFrontend {
         self.widget_manager.spacer_widgets = spacer_widgets;
         self.widget_manager.indicator_widgets = indicator_widgets;
         self.widget_manager.targets_widgets = targets_widgets;
+        self.widget_manager.dropdown_targets_widgets = dropdown_targets_widgets;
         self.widget_manager.players_widgets = players_widgets;
+        self.widget_manager.container_widgets = container_widgets;
         self.widget_manager.dashboard_widgets = dashboard_widgets;
         self.widget_manager.tabbed_text_windows = tabbed_text_windows;
         self.widget_manager.compass_widgets = compass_widgets;

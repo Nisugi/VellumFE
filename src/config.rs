@@ -1056,6 +1056,15 @@ pub struct PlayersWidgetData {
     pub entity_id: String,
 }
 
+/// Container widget specific data (for container windows like bags, backpacks)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContainerWidgetData {
+    /// Container title to display (e.g., "Bandolier", "Backpack")
+    /// Matched case-insensitively against container titles from the game
+    #[serde(default)]
+    pub container_title: String,
+}
+
 /// Spacer widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpacerWidgetData {
@@ -1292,6 +1301,22 @@ pub enum WindowDef {
         data: PlayersWidgetData,
     },
 
+    /// Dropdown-based target list (for direct-connect users without Lich)
+    #[serde(rename = "dropdown_targets")]
+    DropdownTargets {
+        #[serde(flatten)]
+        base: WindowBase,
+    },
+
+    /// Container window for displaying contents of bags, backpacks, etc.
+    #[serde(rename = "container")]
+    Container {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: ContainerWidgetData,
+    },
+
     #[serde(rename = "spacer")]
     Spacer {
         #[serde(flatten)]
@@ -1337,6 +1362,8 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => &base.name,
             WindowDef::Targets { base, .. } => &base.name,
             WindowDef::Players { base, .. } => &base.name,
+            WindowDef::DropdownTargets { base, .. } => &base.name,
+            WindowDef::Container { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
@@ -1362,6 +1389,8 @@ impl WindowDef {
             WindowDef::Performance { .. } => "performance",
             WindowDef::Targets { .. } => "targets",
             WindowDef::Players { .. } => "players",
+            WindowDef::DropdownTargets { .. } => "dropdown_targets",
+            WindowDef::Container { .. } => "container",
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Spells { .. } => "spells",
             WindowDef::Perception { .. } => "perception",
@@ -1387,6 +1416,8 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
+            WindowDef::DropdownTargets { base, .. } => base,
+            WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
@@ -1412,6 +1443,8 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
+            WindowDef::DropdownTargets { base, .. } => base,
+            WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,

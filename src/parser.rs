@@ -178,6 +178,27 @@ pub enum ParsedElement {
     LaunchURL {
         url: String, // URL path to append to https://www.play.net
     },
+    /// Target list from combat dialog dropdown (for direct-connect users)
+    TargetList {
+        current_target: String,  // from value attribute
+        targets: Vec<String>,    // from content_text (comma-split)
+        target_ids: Vec<String>, // from content_value (comma-split)
+    },
+    /// Container window definition
+    Container {
+        id: String,
+        title: String,
+        target: String,
+    },
+    /// Clear container contents
+    ClearContainer {
+        id: String,
+    },
+    /// Item in a container (from <inv id='X'> tags)
+    ContainerItem {
+        container_id: String,
+        content: String, // Full line with links preserved
+    },
 }
 
 /// Tracks the currently active foreground/background/bold settings while the
@@ -213,8 +234,8 @@ pub struct XmlParser {
     current_menu_id: Option<String>, // ID of menu being parsed
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
 
-    // Inventory tag tracking (to discard content)
-    in_inv_tag: bool, // True when inside <inv>...</inv> tags
+    // Container/Inventory tracking
+    current_container_id: Option<String>, // ID of container currently receiving items
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>, // Compiled regexes + patterns
@@ -275,7 +296,7 @@ impl XmlParser {
             current_preset_id: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
-            in_inv_tag: false,
+            current_container_id: None,
             event_matchers,
         }
     }
@@ -322,6 +343,7 @@ impl XmlParser {
                 "dialogData",
                 "component",
                 "compDef",
+                "inv",
             ] {
                 let start_pattern = format!("<{}", tag_name);
                 let end_pattern = format!("</{}>", tag_name);
@@ -336,8 +358,8 @@ impl XmlParser {
                     if let Some(tag_end_start) = remaining[tag_start..].find(&end_pattern) {
                         let tag_end = tag_start + tag_end_start + end_pattern.len();
 
-                        // Add text before the paired tag (unless inside inv tag)
-                        if tag_start > 0 && !self.in_inv_tag {
+                        // Add text before the paired tag
+                        if tag_start > 0 {
                             text_buffer.push_str(&remaining[..tag_start]);
                         }
 
@@ -358,8 +380,8 @@ impl XmlParser {
 
             // Find next single XML tag
             if let Some(tag_start) = remaining.find('<') {
-                // Add text before tag to buffer (unless we're inside an inv tag)
-                if tag_start > 0 && !self.in_inv_tag {
+                // Add text before tag to buffer
+                if tag_start > 0 {
                     text_buffer.push_str(&remaining[..tag_start]);
                 }
 
@@ -372,17 +394,13 @@ impl XmlParser {
 
                     remaining = &remaining[tag_start + tag_end + 1..];
                 } else {
-                    // No closing >, treat rest as text (unless inside inv tag)
-                    if !self.in_inv_tag {
-                        text_buffer.push_str(remaining);
-                    }
+                    // No closing >, treat rest as text
+                    text_buffer.push_str(remaining);
                     break;
                 }
             } else {
-                // No more tags, add remaining as text (unless inside inv tag)
-                if !self.in_inv_tag {
-                    text_buffer.push_str(remaining);
-                }
+                // No more tags, add remaining as text
+                text_buffer.push_str(remaining);
                 break;
             }
         }
@@ -551,31 +569,28 @@ impl XmlParser {
         } else if tag.starts_with("<LaunchURL ") {
             self.handle_launch_url(tag, elements);
         }
-        // Handle inventory tags - need to discard content between <inv> and </inv>
-        else if tag.starts_with("<inv ") {
-            // Flush text before entering inv tag
-            if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
-            }
-            // Set flag to discard content
-            self.in_inv_tag = true;
-        } else if tag == "</inv>" {
-            // Clear text buffer (discard inv content) and clear flag
-            text_buffer.clear();
-            self.in_inv_tag = false;
+        // Handle paired inv tags: <inv id='X'>content</inv>
+        else if tag.starts_with("<inv ") && tag.contains("</inv>") {
+            self.handle_inv_paired(tag, elements);
+        }
+        // Handle container tags
+        else if tag.starts_with("<container ") {
+            self.handle_container(tag, elements);
+        } else if tag.starts_with("<clearContainer ") {
+            self.handle_clear_container(tag, elements);
+        }
+        // Handle dropDownBox for target list
+        else if tag.starts_with("<dropDownBox ") {
+            self.handle_dropdown(tag, elements);
         }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ")
             || tag == "</compDef>"
             || tag.starts_with("<streamWindow ")
-            || tag.starts_with("<dropDownBox ")
             || tag.starts_with("<skin ")
-            || tag.starts_with("<clearContainer ")
-            || tag.starts_with("<container ")
             || tag.starts_with("<exposeContainer ")
         {
-            // Ignore these entirely (inventory window tags)
+            // Ignore these (UI layout tags)
         }
     }
 
@@ -1463,6 +1478,70 @@ impl XmlParser {
         }
 
         None
+    }
+
+    // ==================== Container/Inventory Handlers ====================
+
+    fn handle_inv_paired(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // Handle paired inv tag: <inv id='225766824'>content</inv>
+        // Extract container ID and content, emit ContainerItem
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            // Extract content between <inv ...> and </inv>
+            if let Some(start) = tag.find('>') {
+                if let Some(end) = tag.rfind("</inv>") {
+                    let content = tag[start + 1..end].to_string();
+                    elements.push(ParsedElement::ContainerItem {
+                        container_id: id,
+                        content,
+                    });
+                }
+            }
+        }
+    }
+
+    fn handle_container(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <container id='225766824' title='Bandolier' target='#225766824' location='right'/>
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            let title = Self::extract_attribute(tag, "title").unwrap_or_default();
+            let target = Self::extract_attribute(tag, "target").unwrap_or_default();
+            elements.push(ParsedElement::Container { id, title, target });
+        }
+    }
+
+    fn handle_clear_container(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <clearContainer id="225766824"/>
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            elements.push(ParsedElement::ClearContainer { id });
+        }
+    }
+
+    // ==================== Target List Handler ====================
+
+    fn handle_dropdown(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <dropDownBox id='dDBTarget' value="goblin" content_text="none,goblin,troll"
+        //              content_value="target help,#123,#456" .../>
+        // Only handle dDBTarget for target list - ignore other dropdowns
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            if id == "dDBTarget" {
+                let current_target = Self::extract_attribute(tag, "value").unwrap_or_default();
+                let content_text = Self::extract_attribute(tag, "content_text").unwrap_or_default();
+                let content_value =
+                    Self::extract_attribute(tag, "content_value").unwrap_or_default();
+
+                // Split by comma to get lists
+                let targets: Vec<String> =
+                    content_text.split(',').map(|s| s.trim().to_string()).collect();
+                let target_ids: Vec<String> =
+                    content_value.split(',').map(|s| s.trim().to_string()).collect();
+
+                elements.push(ParsedElement::TargetList {
+                    current_target,
+                    targets,
+                    target_ids,
+                });
+            }
+            // Other dropdowns (dDBStance, etc.) are silently ignored
+        }
     }
 }
 

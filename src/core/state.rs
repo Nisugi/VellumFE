@@ -66,6 +66,12 @@ pub struct GameState {
     /// Last prompt text (for command echoes)
     pub last_prompt: String,
 
+    /// Target list from dDBTarget dropdown (for direct-connect users)
+    pub target_list: TargetListState,
+
+    /// Container cache for bag/container contents
+    pub container_cache: ContainerCache,
+
     /// Estimated lag between system time and game server time (in milliseconds)
     /// Positive = system clock ahead of game, Negative = game ahead of system
     /// Recalculated periodically (every LAG_CHECK_INTERVAL_SECS)
@@ -100,6 +106,149 @@ pub struct Vitals {
     pub spirit: u8,
 }
 
+/// Target list state from dDBTarget dropdown (for direct-connect users)
+#[derive(Clone, Debug, Default)]
+pub struct TargetListState {
+    /// Currently selected target name
+    pub current_target: String,
+    /// List of creatures in the room
+    pub creatures: Vec<Creature>,
+}
+
+/// A creature in the target list
+#[derive(Clone, Debug)]
+pub struct Creature {
+    /// Creature display name
+    pub name: String,
+    /// Creature ID (e.g., "#146101714")
+    pub id: String,
+}
+
+/// Container cache for inventory containers (bags, backpacks, etc.)
+#[derive(Clone, Debug, Default)]
+pub struct ContainerCache {
+    /// Map of container ID to container data
+    pub containers: HashMap<String, ContainerData>,
+}
+
+/// Data for a single container
+#[derive(Clone, Debug)]
+pub struct ContainerData {
+    /// Container ID
+    pub id: String,
+    /// Container title (e.g., "Bandolier")
+    pub title: String,
+    /// Items in the container (raw content lines with links preserved)
+    pub items: Vec<String>,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl TargetListState {
+    /// Update the target list with new data from dDBTarget dropdown.
+    /// Compares new list with existing, removing creatures that disappeared
+    /// and adding new ones.
+    pub fn update(&mut self, current_target: String, names: Vec<String>, ids: Vec<String>) {
+        self.current_target = current_target;
+
+        // Build new creature list from paired names/ids
+        let mut new_creatures = Vec::new();
+        for (name, id) in names.into_iter().zip(ids.into_iter()) {
+            // Skip the "none" placeholder entry
+            if name.to_lowercase() == "none" || id.to_lowercase().contains("help") {
+                continue;
+            }
+            new_creatures.push(Creature { name, id });
+        }
+
+        self.creatures = new_creatures;
+    }
+
+    /// Clear the target list
+    pub fn clear(&mut self) {
+        self.current_target.clear();
+        self.creatures.clear();
+    }
+}
+
+impl ContainerCache {
+    /// Register a new container or update its metadata
+    pub fn register_container(&mut self, id: String, title: String) {
+        let entry = self.containers.entry(id.clone()).or_insert_with(|| ContainerData {
+            id,
+            title: title.clone(),
+            items: Vec::new(),
+            generation: 0,
+        });
+        // Update title if it changed
+        if entry.title != title {
+            entry.title = title;
+            entry.generation += 1;
+        }
+    }
+
+    /// Clear all items in a container (called on clearContainer tag)
+    pub fn clear_container(&mut self, id: &str) {
+        if let Some(container) = self.containers.get_mut(id) {
+            container.items.clear();
+            container.generation += 1;
+        }
+    }
+
+    /// Add an item to a container
+    pub fn add_item(&mut self, container_id: &str, content: String) {
+        if let Some(container) = self.containers.get_mut(container_id) {
+            container.items.push(content);
+            container.generation += 1;
+        } else {
+            // Container not registered yet - create it with unknown title
+            let container = ContainerData {
+                id: container_id.to_string(),
+                title: String::new(),
+                items: vec![content],
+                generation: 1,
+            };
+            self.containers.insert(container_id.to_string(), container);
+        }
+    }
+
+    /// Get a container by ID
+    pub fn get(&self, id: &str) -> Option<&ContainerData> {
+        self.containers.get(id)
+    }
+
+    /// Get all known container IDs
+    pub fn container_ids(&self) -> Vec<String> {
+        self.containers.keys().cloned().collect()
+    }
+
+    /// Find a container by its title (case-insensitive partial match)
+    /// Returns the first matching container's data
+    pub fn find_by_title(&self, title: &str) -> Option<&ContainerData> {
+        let title_lower = title.to_lowercase();
+        // First try exact match (case-insensitive)
+        for container in self.containers.values() {
+            if container.title.to_lowercase() == title_lower {
+                return Some(container);
+            }
+        }
+        // Then try partial match
+        for container in self.containers.values() {
+            if container.title.to_lowercase().contains(&title_lower) {
+                return Some(container);
+            }
+        }
+        None
+    }
+
+    /// Get all known containers sorted by title
+    pub fn list_containers(&self) -> Vec<&ContainerData> {
+        let mut containers: Vec<_> = self.containers.values().collect();
+        containers.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        containers
+    }
+}
+
 impl GameState {
     pub fn new() -> Self {
         Self {
@@ -121,6 +270,8 @@ impl GameState {
             active_effects: Vec::new(),
             compass_dirs: Vec::new(),
             last_prompt: String::from(">"), // Default prompt
+            target_list: TargetListState::default(),
+            container_cache: ContainerCache::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
         }

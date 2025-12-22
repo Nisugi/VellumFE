@@ -33,12 +33,14 @@ pub enum WidgetType {
     Hand,
     ActiveEffects,
     Targets,
+    DropdownTargets,
     Players,
     Map,
     Spells,
     Spacer,
     Performance,
     Perception,
+    Container,
 }
 
 impl WidgetType {
@@ -68,12 +70,14 @@ impl WidgetType {
             "hand" => Some(WidgetType::Hand),
             "active_effects" => Some(WidgetType::ActiveEffects),
             "targets" => Some(WidgetType::Targets),
+            "dropdown_targets" | "dropdowntargets" => Some(WidgetType::DropdownTargets),
             "players" => Some(WidgetType::Players),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),
             "performance" => Some(WidgetType::Performance),
             "spacer" => Some(WidgetType::Spacer),
             "map" => Some(WidgetType::Map),
+            "container" => Some(WidgetType::Container),
             _ => None,
         }
     }
@@ -82,8 +86,8 @@ impl WidgetType {
     pub const VALID_TYPES: &'static [&'static str] = &[
         "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
         "indicator", "room", "inventory", "command_input", "dashboard", "hand",
-        "active_effects", "targets", "players", "spells", "perception", "performance",
-        "spacer", "map",
+        "active_effects", "targets", "dropdown_targets", "players", "spells",
+        "perception", "performance", "spacer", "map", "container",
     ];
 }
 
@@ -116,6 +120,9 @@ pub enum WindowContent {
         count: Option<String>, // Raw count string from targetcount stream (e.g., "[03]")
         entity_id: String, // Stream id for counts (defaults to targetcount)
     },
+    /// Dropdown-based target list (for direct-connect users)
+    /// Reads from GameState.target_list (no data stored here)
+    DropdownTargets,
     Players {
         players_text: String, // Raw text from game (XML formatted)
         count: Option<String>, // Raw count string from playercount stream
@@ -126,6 +133,10 @@ pub enum WindowContent {
     },
     Performance,
     Perception(PerceptionData), // Perception window - sorted spells/buffs
+    /// Container window - displays contents of a specific container
+    Container {
+        container_title: String, // Title of the container to display (e.g., "Bandolier")
+    },
     Empty, // For spacers or not-yet-implemented widgets
 }
 

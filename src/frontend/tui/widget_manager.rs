@@ -33,8 +33,12 @@ pub struct WidgetManager {
     pub indicator_widgets: HashMap<String, super::indicator::Indicator>,
     /// Cache of Targets widgets per window name
     pub targets_widgets: HashMap<String, super::targets::Targets>,
+    /// Cache of DropdownTargets widgets per window name (for direct-connect users)
+    pub dropdown_targets_widgets: HashMap<String, super::dropdown_targets::DropdownTargets>,
     /// Cache of Players widgets per window name
     pub players_widgets: HashMap<String, super::players::Players>,
+    /// Cache of ContainerWindow widgets per window name
+    pub container_widgets: HashMap<String, super::container_window::ContainerWindow>,
     /// Cache of Dashboard widgets per window name
     pub dashboard_widgets: HashMap<String, super::dashboard::Dashboard>,
     /// Cache of TabbedTextWindow widgets per window name
@@ -68,7 +72,9 @@ impl WidgetManager {
             spacer_widgets: HashMap::new(),
             indicator_widgets: HashMap::new(),
             targets_widgets: HashMap::new(),
+            dropdown_targets_widgets: HashMap::new(),
             players_widgets: HashMap::new(),
+            container_widgets: HashMap::new(),
             dashboard_widgets: HashMap::new(),
             tabbed_text_windows: HashMap::new(),
             compass_widgets: HashMap::new(),

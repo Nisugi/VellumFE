@@ -618,6 +618,16 @@ impl AppCore {
                         entity_id,
                     }
                 }
+                WidgetType::DropdownTargets => WindowContent::DropdownTargets,
+                WidgetType::Container => {
+                    // Get container_title from window def if available
+                    let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
+                        data.container_title.clone()
+                    } else {
+                        String::new()
+                    };
+                    WindowContent::Container { container_title }
+                }
                 WidgetType::Dashboard => WindowContent::Dashboard {
                     indicators: Vec::new(),
                 },
@@ -849,6 +859,16 @@ impl AppCore {
                 count: None,
                 entity_id: crate::config::default_player_entity_id(),
             },
+            WidgetType::DropdownTargets => WindowContent::DropdownTargets,
+            WidgetType::Container => {
+                // Get container_title from window def if available
+                let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
+                    data.container_title.clone()
+                } else {
+                    String::new()
+                };
+                WindowContent::Container { container_title }
+            }
             WidgetType::Dashboard => WindowContent::Dashboard {
                 indicators: Vec::new(),
             },
