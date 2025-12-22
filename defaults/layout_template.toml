@@ -83,8 +83,13 @@
 #                              # "bottom-left", "bottom-center", "bottom-right"
 #
 # --- Colors ---
-# background_color = "#000000"  # Window background (hex color)
-# text_color = "#ffffff"        # Default text color (hex color)
+# Windows inherit colors from the active theme by default.
+# Set individual colors here to override theme settings.
+# Use "-" to explicitly use the theme default for that color.
+#
+# background_color = "#000000"  # Window background (hex color, or "-" for theme)
+# text_color = "#ffffff"        # Default text color (hex color, or "-" for theme)
+# border_color = "#808080"      # Border color (hex color, or "-" for theme)
 # transparent_background = false  # Ignore background_color (default: false)
 
 
