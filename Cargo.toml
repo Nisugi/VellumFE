@@ -35,9 +35,8 @@ aho-corasick = "1"  # Fast literal string matching for highlights
 quick-xml = "0.36"  # XML parsing
 include_dir = "0.7"  # Embed default config files
 rpassword = "7"
-# openssl = "0.10"
-openssl = "0.10"  # For local builds
-# openssl = { version = "0.10", features = ["vendored"] }  # For CI builds
+# openssl = "0.10"  # For local builds with system OpenSSL
+openssl = { version = "0.10", features = ["vendored"] }  # For CI builds - compiles OpenSSL from source
 
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
