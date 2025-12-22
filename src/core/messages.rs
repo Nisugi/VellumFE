@@ -646,12 +646,15 @@ impl MessageProcessor {
                 }
 
                 // Also update vitals if it's a known vital
-                match id.as_str() {
-                    "health" => game_state.vitals.health = (*value * 100 / *max) as u8,
-                    "mana" => game_state.vitals.mana = (*value * 100 / *max) as u8,
-                    "stamina" => game_state.vitals.stamina = (*value * 100 / *max) as u8,
-                    "spirit" => game_state.vitals.spirit = (*value * 100 / *max) as u8,
-                    _ => {}
+                // Guard against division by zero when max is 0
+                if *max > 0 {
+                    match id.as_str() {
+                        "health" => game_state.vitals.health = (*value * 100 / *max) as u8,
+                        "mana" => game_state.vitals.mana = (*value * 100 / *max) as u8,
+                        "stamina" => game_state.vitals.stamina = (*value * 100 / *max) as u8,
+                        "spirit" => game_state.vitals.spirit = (*value * 100 / *max) as u8,
+                        _ => {}
+                    }
                 }
             }
             ParsedElement::Spell { text } => {
