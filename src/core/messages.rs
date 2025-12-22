@@ -175,6 +175,7 @@ impl MessageProcessor {
                 self.handle_component(
                     id,
                     value,
+                    game_state,
                     room_components,
                     current_room_component,
                     room_window_dirty,
@@ -871,11 +872,12 @@ impl MessageProcessor {
         }
     }
 
-    /// Handle component data for room window
+    /// Handle component data for room window and exp window (DR)
     fn handle_component(
         &mut self,
         id: &str,
         value: &str,
+        game_state: &mut GameState,
         room_components: &mut std::collections::HashMap<String, Vec<Vec<TextSegment>>>,
         current_room_component: &mut Option<String>,
         room_window_dirty: &mut bool,
@@ -883,6 +885,25 @@ impl MessageProcessor {
         // Mark ALL components as silent updates (shouldn't trigger prompts in main window)
         // This includes DR experience components (exp Brawling, exp tdp, etc.)
         self.chunk_has_silent_updates = true;
+
+        // Handle DragonRealms experience components (exp Stealth, exp tdp, etc.)
+        if let Some(field_name) = id.strip_prefix("exp ") {
+            // Register the field order (will be a no-op after first occurrence)
+            game_state
+                .exp_components
+                .register_field(field_name.to_string());
+
+            // Update the value (only triggers generation bump if changed)
+            if game_state
+                .exp_components
+                .update_field(field_name, value.to_string())
+            {
+                tracing::debug!("Exp component updated: {} = {}", field_name, value);
+            } else {
+                tracing::trace!("Exp component unchanged: {}", field_name);
+            }
+            return;
+        }
 
         // Only process room-related components for room window updates
         if !id.starts_with("room ") {

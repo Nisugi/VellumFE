@@ -72,6 +72,9 @@ pub struct GameState {
     /// Container cache for bag/container contents
     pub container_cache: ContainerCache,
 
+    /// DragonRealms experience/skill component state
+    pub exp_components: ExpComponentState,
+
     /// Estimated lag between system time and game server time (in milliseconds)
     /// Positive = system clock ahead of game, Negative = game ahead of system
     /// Recalculated periodically (every LAG_CHECK_INTERVAL_SECS)
@@ -168,6 +171,63 @@ impl TargetListState {
     pub fn clear(&mut self) {
         self.current_target.clear();
         self.creatures.clear();
+    }
+}
+
+/// DragonRealms experience/skill component tracking state
+/// Stores values from `<component id='exp XXX'>` tags, ordered by `<compDef>` at login
+#[derive(Clone, Debug, Default)]
+pub struct ExpComponentState {
+    /// Ordered list of field names (from compDef tags at login)
+    /// e.g., ["Stealth", "Locksmithing", "Brawling", "tdp", ...]
+    pub field_order: Vec<String>,
+
+    /// Current values for each field (field_name -> value string)
+    /// Values are stored as-is from the XML, frontend handles parsing/display
+    pub values: HashMap<String, String>,
+
+    /// Generation counter for change detection by frontend
+    pub generation: u64,
+}
+
+impl ExpComponentState {
+    /// Register a field from compDef (establishes order)
+    pub fn register_field(&mut self, field_name: String) {
+        if !self.field_order.contains(&field_name) {
+            self.field_order.push(field_name);
+        }
+    }
+
+    /// Update a field value, returns true if value changed
+    pub fn update_field(&mut self, field_name: &str, value: String) -> bool {
+        // Only update if value actually changed
+        if let Some(existing) = self.values.get(field_name) {
+            if existing == &value {
+                return false;
+            }
+        }
+        self.values.insert(field_name.to_string(), value);
+        self.generation += 1;
+        true
+    }
+
+    /// Get fields with values in order (for display)
+    pub fn fields_with_values(&self) -> Vec<(&str, &str)> {
+        self.field_order
+            .iter()
+            .filter_map(|name| {
+                self.values
+                    .get(name)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| (name.as_str(), v.as_str()))
+            })
+            .collect()
+    }
+
+    /// Clear all values (on disconnect/login)
+    pub fn clear(&mut self) {
+        self.values.clear();
+        self.generation += 1;
     }
 }
 
@@ -272,6 +332,7 @@ impl GameState {
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),
             container_cache: ContainerCache::default(),
+            exp_components: ExpComponentState::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
         }
