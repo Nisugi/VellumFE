@@ -2894,6 +2894,29 @@ impl Config {
                 },
             }),
 
+            // DR-specific: Concentration bar (4th vital in DragonRealms)
+            "concentration" => Some(WindowDef::Progress {
+                base: WindowBase {
+                    name: "concentration".to_string(),
+                    title: Some("Concentration".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 3,
+                    cols: 20,
+                    show_border: true,
+                    min_rows: Some(1),
+                    max_rows: Some(3),
+                    ..base_defaults.clone()
+                },
+                data: ProgressWidgetData {
+                    id: Some("concentration".to_string()),
+                    label: Some("Conc".to_string()), // Short label for narrow bars
+                    color: Some("#00a0a0".to_string()), // Cyan/teal
+                    numbers_only: false,
+                    current_only: false,
+                },
+            }),
+
             "encumlevel" => Some(WindowDef::Progress {
                 base: WindowBase {
                     name: "encumlevel".to_string(),
@@ -3656,6 +3679,7 @@ impl Config {
             "mana".to_string(),
             "stamina".to_string(),
             "spirit".to_string(),
+            "concentration".to_string(), // DR-specific
             "encumlevel".to_string(),
             "pbarStance".to_string(),
             "mindState".to_string(),
