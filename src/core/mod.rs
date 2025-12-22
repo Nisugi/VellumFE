@@ -5,11 +5,13 @@
 //! Core updates data structures in the data layer, frontends read and render.
 
 pub mod app_core;
+pub mod highlight_engine;
 pub mod input_router;
 pub mod menu_actions;
 pub mod messages;
 pub mod state;
 
 pub use app_core::AppCore;
+pub use highlight_engine::CoreHighlightEngine;
 pub use messages::MessageProcessor;
 pub use state::GameState;
