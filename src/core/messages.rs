@@ -760,6 +760,51 @@ impl MessageProcessor {
                     }
                 }
             }
+            ParsedElement::TargetList {
+                current_target,
+                targets,
+                target_ids,
+            } => {
+                self.chunk_has_silent_updates = true; // Mark as silent update
+
+                // Update target list state (for direct-connect users)
+                game_state.target_list.update(
+                    current_target.clone(),
+                    targets.clone(),
+                    target_ids.clone(),
+                );
+
+                tracing::debug!(
+                    "Updated target list: current='{}', {} targets",
+                    current_target,
+                    targets.len()
+                );
+            }
+            ParsedElement::Container { id, title, .. } => {
+                self.chunk_has_silent_updates = true; // Mark as silent update
+
+                // Register container in cache
+                game_state.container_cache.register_container(id.clone(), title.clone());
+
+                tracing::debug!("Registered container: id='{}', title='{}'", id, title);
+            }
+            ParsedElement::ClearContainer { id } => {
+                self.chunk_has_silent_updates = true; // Mark as silent update
+
+                // Clear container contents
+                game_state.container_cache.clear_container(id);
+
+                tracing::debug!("Cleared container: id='{}'", id);
+            }
+            ParsedElement::ContainerItem { container_id, content } => {
+                self.chunk_has_silent_updates = true; // Mark as silent update
+
+                // Add item to container
+                game_state.container_cache.add_item(container_id, content.clone());
+
+                tracing::trace!("Added item to container '{}': {}", container_id,
+                    if content.len() > 50 { format!("{}...", &content[..50]) } else { content.clone() });
+            }
             _ => {
                 // Other elements handled elsewhere or not yet implemented
             }
@@ -835,7 +880,11 @@ impl MessageProcessor {
         current_room_component: &mut Option<String>,
         room_window_dirty: &mut bool,
     ) {
-        // Only handle room-related components
+        // Mark ALL components as silent updates (shouldn't trigger prompts in main window)
+        // This includes DR experience components (exp Brawling, exp tdp, etc.)
+        self.chunk_has_silent_updates = true;
+
+        // Only process room-related components for room window updates
         if !id.starts_with("room ") {
             tracing::trace!("Ignoring non-room component: {}", id);
             return;
@@ -846,9 +895,6 @@ impl MessageProcessor {
             tracing::debug!("Skipping room component {} - no room window exists", id);
             return;
         }
-
-        // Mark as silent update (room components shouldn't trigger prompts in main window)
-        self.chunk_has_silent_updates = true;
 
         // Check if component value has changed (avoid unnecessary processing)
         if let Some(previous_value) = self.previous_room_components.get(id) {
