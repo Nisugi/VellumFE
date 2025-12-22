@@ -42,6 +42,11 @@
 #
 # terminal_width = 120
 # terminal_height = 40
+# base_layout = "none"       # Base layout to inherit from (optional)
+# theme = "solarized-dark"   # Theme override for this layout (optional)
+#                            # Available: "default", "solarized-dark", "solarized-light",
+#                            #            "monokai", "dracula", "nord", "gruvbox-dark",
+#                            #            "gruvbox-light", "tokyo-night", "catppuccin"
 
 
 # ============================================================

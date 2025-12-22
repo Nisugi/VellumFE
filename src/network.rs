@@ -37,11 +37,17 @@ impl DirectConnectConfig {
     /// Convert game name to game code
     fn game_name_to_code(name: &str) -> &'static str {
         match name.to_lowercase().as_str() {
+            // GemStone IV
             "prime" | "gs3" => "GS3",
             "platinum" | "gsx" => "GSX",
             "shattered" | "gsf" => "GSF",
             "test" | "gst" => "GST",
-            _ => "GS3", // Default to prime
+            // DragonRealms
+            "dr" | "drprime" => "DR",
+            "drplatinum" | "drx" => "DRX",
+            "drfallen" | "drf" => "DRF",
+            "drtest" | "drt" => "DRT",
+            _ => "GS3", // Default to GemStone IV prime
         }
     }
 

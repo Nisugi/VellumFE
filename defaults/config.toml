@@ -37,7 +37,9 @@ port = 8001
 #
 # account = "your_account"
 # password = "your_password"  # OPTIONAL - stored in PLAIN TEXT, use CLI for security
-# game = "prime"  # Options: "prime", "platinum", "shattered", "test"
+# game = "prime"
+#   GemStone IV: "prime", "platinum", "shattered", "test"
+#   DragonRealms: "dr", "drplatinum", "drfallen", "drtest"
 
 
 # ------------------------------------------------------------
