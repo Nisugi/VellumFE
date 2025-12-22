@@ -1170,6 +1170,19 @@ pub struct PerceptionWidgetData {
     pub use_short_spell_names: bool,  // Use abbreviated spell names (Profanity-style)
 }
 
+/// DragonRealms experience widget data
+/// Displays skill/experience components from `<component id='exp XXX'>` tags
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ExperienceWidgetData {
+    /// Text alignment: "left", "center", or "right" (default: "left")
+    #[serde(default = "default_experience_align")]
+    pub align: String,
+}
+
+fn default_experience_align() -> String {
+    "left".to_string()
+}
+
 /// Window definition - enum with widget-specific variants
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "widget_type")]
@@ -1340,6 +1353,15 @@ pub enum WindowDef {
         #[serde(flatten)]
         data: PerceptionWidgetData,
     },
+
+    /// DragonRealms experience window (shows skill training status)
+    #[serde(rename = "experience")]
+    Experience {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: ExperienceWidgetData,
+    },
 }
 
 impl WindowDef {
@@ -1367,6 +1389,7 @@ impl WindowDef {
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
+            WindowDef::Experience { base, .. } => &base.name,
         }
     }
 
@@ -1394,6 +1417,7 @@ impl WindowDef {
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Spells { .. } => "spells",
             WindowDef::Perception { .. } => "perception",
+            WindowDef::Experience { .. } => "experience",
         }
     }
 
@@ -1421,6 +1445,7 @@ impl WindowDef {
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
+            WindowDef::Experience { base, .. } => base,
         }
     }
 
@@ -1448,6 +1473,7 @@ impl WindowDef {
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
+            WindowDef::Experience { base, .. } => base,
         }
     }
 }
@@ -3608,7 +3634,7 @@ impl Config {
                     cols: 40,
                     min_rows: Some(5),
                     min_cols: Some(20),
-                    ..base_defaults
+                    ..base_defaults.clone()
                 },
                 data: PerceptionWidgetData {
                     stream: "percWindow".to_string(),
@@ -3616,6 +3642,25 @@ impl Config {
                     sort_direction: SortDirection::Descending,
                     text_replacements: vec![],
                     use_short_spell_names: false,
+                },
+            }),
+
+            // DR-specific: Experience window (skill training status)
+            "experience" => Some(WindowDef::Experience {
+                base: WindowBase {
+                    name: "experience".to_string(),
+                    title: Some("Experience".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 20,
+                    cols: 35,
+                    min_rows: Some(5),
+                    min_cols: Some(20),
+                    show_border: true,
+                    ..base_defaults
+                },
+                data: ExperienceWidgetData {
+                    align: "left".to_string(),
                 },
             }),
 
@@ -3735,6 +3780,7 @@ impl Config {
             "spacer".to_string(),
             "performance".to_string(),
             "perception".to_string(),
+            "experience".to_string(), // DR-specific
             // command_input is NOT in this list - it's always present and can't be added/removed
         ];
 

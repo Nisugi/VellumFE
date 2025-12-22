@@ -1264,6 +1264,10 @@ impl WindowEditor {
                 fields.push(FieldRef::PerceptionUseShortSpellNames);
                 fields.push(FieldRef::PerceptionTextReplacements);
             }
+            WindowDef::Experience { .. } => {
+                // Experience widget - alignment is configurable via content_align in base
+                // No special fields beyond base settings
+            }
         }
 
         fields

@@ -51,6 +51,8 @@ pub struct WidgetManager {
     pub performance_widgets: HashMap<String, super::performance_stats::PerformanceStatsWidget>,
     /// Cache of Perception widgets per window name
     pub perception_windows: HashMap<String, super::perception::PerceptionWindow>,
+    /// Cache of Experience widgets per window name (DR skill training)
+    pub experience_widgets: HashMap<String, super::experience::Experience>,
     /// Track last synced generation per text window to know what's new
     /// Using generation instead of line count to handle buffer rotation at max_lines
     pub last_synced_generation: HashMap<String, u64>,
@@ -81,6 +83,7 @@ impl WidgetManager {
             injury_doll_widgets: HashMap::new(),
             performance_widgets: HashMap::new(),
             perception_windows: HashMap::new(),
+            experience_widgets: HashMap::new(),
             last_synced_generation: HashMap::new(),
         }
     }

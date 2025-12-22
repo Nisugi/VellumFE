@@ -41,6 +41,7 @@ pub enum WidgetType {
     Performance,
     Perception,
     Container,
+    Experience,
 }
 
 impl WidgetType {
@@ -78,6 +79,7 @@ impl WidgetType {
             "spacer" => Some(WidgetType::Spacer),
             "map" => Some(WidgetType::Map),
             "container" => Some(WidgetType::Container),
+            "experience" => Some(WidgetType::Experience),
             _ => None,
         }
     }
@@ -87,7 +89,7 @@ impl WidgetType {
         "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
         "indicator", "room", "inventory", "command_input", "dashboard", "hand",
         "active_effects", "targets", "dropdown_targets", "players", "spells",
-        "perception", "performance", "spacer", "map", "container",
+        "perception", "performance", "spacer", "map", "container", "experience",
     ];
 }
 
@@ -137,6 +139,9 @@ pub enum WindowContent {
     Container {
         container_title: String, // Title of the container to display (e.g., "Bandolier")
     },
+    /// Experience window - displays DR skill/experience components
+    /// Reads from GameState.exp_components (no data stored here)
+    Experience,
     Empty, // For spacers or not-yet-implemented widgets
 }
 

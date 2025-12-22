@@ -104,6 +104,7 @@ impl Frontend for TuiFrontend {
         self.sync_compass_widgets(app_core, &theme);
         self.sync_injury_doll_widgets(app_core, &theme);
         self.sync_performance_widgets(app_core, &theme);
+        self.sync_experience_widgets(app_core, &theme);
 
         // Temporarily take ownership of widgets to use in render
         let mut text_windows = std::mem::take(&mut self.widget_manager.text_windows);
@@ -127,6 +128,7 @@ impl Frontend for TuiFrontend {
         let mut compass_widgets = std::mem::take(&mut self.widget_manager.compass_widgets);
         let mut injury_doll_widgets = std::mem::take(&mut self.widget_manager.injury_doll_widgets);
         let mut performance_widgets = std::mem::take(&mut self.widget_manager.performance_widgets);
+        let mut experience_widgets = std::mem::take(&mut self.widget_manager.experience_widgets);
 
         // Clone cached theme for use in render closure (cheaper than HashMap lookup + clone per widget)
         let theme_for_render = theme.clone();
@@ -388,6 +390,11 @@ impl Frontend for TuiFrontend {
                             perception_window.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::Experience => {
+                        if let Some(experience_widget) = experience_widgets.get_mut(name) {
+                            experience_widget.render(area, f.buffer_mut());
+                        }
+                    }
                 }
             }
 
@@ -581,6 +588,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.compass_widgets = compass_widgets;
         self.widget_manager.injury_doll_widgets = injury_doll_widgets;
         self.widget_manager.performance_widgets = performance_widgets;
+        self.widget_manager.experience_widgets = experience_widgets;
 
         Ok(())
     }

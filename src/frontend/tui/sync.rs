@@ -1913,5 +1913,57 @@ impl TuiFrontend {
         }
     }
 
+    /// Sync experience widgets (DR skill training) from AppCore
+    pub(crate) fn sync_experience_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if let crate::data::WindowContent::Experience = &window.content {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get align config from WindowDef
+                let align = if let Some(crate::config::WindowDef::Experience { data, .. }) =
+                    window_def
+                {
+                    data.align.clone()
+                } else {
+                    "left".to_string()
+                };
+
+                // Get or create Experience widget for this window
+                let experience_widget = self
+                    .widget_manager
+                    .experience_widgets
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let title = window_def
+                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| name.clone()))
+                            .unwrap_or_else(|| name.clone());
+                        super::experience::Experience::new(&title, &align)
+                    });
+
+                // Apply theme colors
+                if let Some(def) = window_def {
+                    let colors = resolve_window_colors(def.base(), theme);
+                    if let Some(border_color) = &colors.border {
+                        if let Ok(c) = parse_hex_color(border_color) {
+                            experience_widget.set_border_color(c);
+                        }
+                    }
+                    if let Some(text_color) = &colors.text {
+                        if let Ok(c) = parse_hex_color(text_color) {
+                            experience_widget.set_text_color(c);
+                        }
+                    }
+                }
+
+                // Update from game state
+                experience_widget.update_from_state(&app_core.game_state.exp_components);
+            }
+        }
+    }
 }
 
