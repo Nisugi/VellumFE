@@ -717,6 +717,7 @@ impl BaseMut for WindowDef {
             WindowDef::Spacer { base, .. } => Some(base),
             WindowDef::Spells { base, .. } => Some(base),
             WindowDef::Perception { base, .. } => Some(base),
+            WindowDef::Experience { base, .. } => Some(base),
         }
     }
 }

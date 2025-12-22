@@ -40,13 +40,57 @@ pub struct HighlightEngine {
     fast_pattern_map: Vec<usize>,
     /// Whether text replacement is enabled (from config.highlight_settings.replace_enabled)
     replace_enabled: bool,
+    /// Hash of the highlights for change detection
+    highlights_hash: u64,
 }
 
 impl HighlightEngine {
+    /// Compute a hash of highlight patterns for change detection
+    pub fn compute_hash(highlights: &[HighlightPattern]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut hasher = DefaultHasher::new();
+        for h in highlights {
+            h.pattern.hash(&mut hasher);
+            h.fg.hash(&mut hasher);
+            h.bg.hash(&mut hasher);
+            h.bold.hash(&mut hasher);
+            h.fast_parse.hash(&mut hasher);
+            h.color_entire_line.hash(&mut hasher);
+            h.replace.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Get the hash of the current highlights
+    pub fn hash(&self) -> u64 {
+        self.highlights_hash
+    }
+
+    /// Check if the given highlights would produce a different hash
+    pub fn needs_update(&self, highlights: &[HighlightPattern]) -> bool {
+        Self::compute_hash(highlights) != self.highlights_hash
+    }
+
+    /// Update the engine only if highlights have changed.
+    /// Returns true if the engine was rebuilt.
+    pub fn update_if_changed(&mut self, highlights: Vec<HighlightPattern>) -> bool {
+        let new_hash = Self::compute_hash(&highlights);
+        if new_hash != self.highlights_hash {
+            *self = Self::new(highlights);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Create a new highlight engine from a list of patterns
     ///
     /// This compiles regexes and builds the Aho-Corasick automaton for fast matching.
     pub fn new(highlights: Vec<HighlightPattern>) -> Self {
+        let highlights_hash = Self::compute_hash(&highlights);
+
         // Separate fast_parse patterns from regex patterns
         let mut fast_patterns: Vec<String> = Vec::new();
         let mut fast_map: Vec<usize> = Vec::new();
@@ -90,6 +134,7 @@ impl HighlightEngine {
             fast_matcher,
             fast_pattern_map,
             replace_enabled: true, // Enabled by default
+            highlights_hash,
         }
     }
 

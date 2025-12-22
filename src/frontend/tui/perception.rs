@@ -2,6 +2,7 @@
 //!
 //! Parses percWindow stream data and displays entries sorted by weight.
 
+use crate::config::CompiledTextReplacement;
 use crate::data::widget::{PerceptionEntry, SpanType, TextSegment};
 use ratatui::{
     buffer::Buffer,
@@ -22,6 +23,10 @@ pub struct PerceptionWindow {
     scroll_offset: usize,
     /// Highlight engine for pattern matching and styling
     highlight_engine: super::highlight_utils::HighlightEngine,
+    /// Cached compiled text replacements (compiled once, used many times)
+    compiled_replacements: Vec<CompiledTextReplacement>,
+    /// Hash of the source replacements to detect changes
+    replacements_hash: u64,
 }
 
 impl PerceptionWindow {
@@ -36,17 +41,49 @@ impl PerceptionWindow {
             entries: Vec::new(),
             scroll_offset: 0,
             highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
+            compiled_replacements: Vec::new(),
+            replacements_hash: 0,
         }
     }
 
-    /// Set highlight patterns for this window
+    /// Set highlight patterns for this window (only recompiles if changed)
     pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
-        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
+        self.highlight_engine.update_if_changed(highlights);
     }
 
     /// Set whether text replacement is enabled for highlights
     pub fn set_replace_enabled(&mut self, enabled: bool) {
         self.highlight_engine.set_replace_enabled(enabled);
+    }
+
+    /// Update compiled text replacements if they have changed.
+    /// Uses a hash to avoid recompiling if replacements haven't changed.
+    pub fn update_compiled_replacements(&mut self, replacements: &[crate::config::TextReplacement]) {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        // Compute hash of the replacements
+        let mut hasher = DefaultHasher::new();
+        for r in replacements {
+            r.pattern.hash(&mut hasher);
+            r.replace.hash(&mut hasher);
+        }
+        let new_hash = hasher.finish();
+
+        // Only recompile if hash changed
+        if new_hash != self.replacements_hash {
+            self.compiled_replacements = crate::config::compile_text_replacements(replacements);
+            self.replacements_hash = new_hash;
+            tracing::debug!(
+                "Recompiled {} text replacements for perception window",
+                replacements.len()
+            );
+        }
+    }
+
+    /// Get the cached compiled replacements
+    pub fn compiled_replacements(&self) -> &[CompiledTextReplacement] {
+        &self.compiled_replacements
     }
 
     /// Update the perception entries (already sorted by weight)

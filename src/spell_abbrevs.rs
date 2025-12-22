@@ -3,7 +3,11 @@
 //! This module provides a mapping of full spell names to abbreviated versions,
 //! based on Profanity's spell abbreviation system. Used when `use_short_spell_names`
 //! is enabled in perception window settings.
+//!
+//! Uses Aho-Corasick for efficient O(n) multi-pattern matching instead of
+//! O(n * patterns) individual string replacements.
 
+use aho_corasick::AhoCorasick;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -381,15 +385,45 @@ pub static SPELL_ABBREVIATIONS: LazyLock<HashMap<&'static str, &'static str>> = 
     m
 });
 
+/// Pre-compiled Aho-Corasick automaton for efficient spell name matching
+/// Built once at first use, then reused for all subsequent calls.
+static SPELL_MATCHER: LazyLock<SpellMatcher> = LazyLock::new(|| {
+    let abbrevs = &*SPELL_ABBREVIATIONS;
+
+    // Build patterns and replacement lists in parallel
+    let mut patterns: Vec<&str> = Vec::with_capacity(abbrevs.len());
+    let mut replacements: Vec<&str> = Vec::with_capacity(abbrevs.len());
+
+    for (full, abbrev) in abbrevs.iter() {
+        patterns.push(*full);
+        replacements.push(*abbrev);
+    }
+
+    // Build Aho-Corasick automaton for O(n) matching
+    let ac = AhoCorasick::new(&patterns).expect("valid spell patterns");
+
+    SpellMatcher { ac, replacements }
+});
+
+/// Compiled spell matcher using Aho-Corasick
+struct SpellMatcher {
+    ac: AhoCorasick,
+    replacements: Vec<&'static str>,
+}
+
 /// Apply spell abbreviations to a string
 ///
 /// Replaces all known full spell names with their abbreviated forms.
-/// This function does a simple string replacement for each known spell.
+/// Uses Aho-Corasick for O(n) matching instead of O(n * patterns) individual replacements.
 pub fn abbreviate_spells(text: &str) -> String {
-    let mut result = text.to_string();
-    for (full, abbrev) in SPELL_ABBREVIATIONS.iter() {
-        result = result.replace(full, abbrev);
-    }
+    let matcher = &*SPELL_MATCHER;
+
+    // Use Aho-Corasick's replace_all_with for efficient multi-pattern replacement
+    let mut result = String::with_capacity(text.len());
+    matcher.ac.replace_all_with(text, &mut result, |mat, _, dst| {
+        dst.push_str(matcher.replacements[mat.pattern().as_usize()]);
+        true
+    });
     result
 }
 

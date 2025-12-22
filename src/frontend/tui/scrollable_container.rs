@@ -73,9 +73,9 @@ impl ScrollableContainer {
         }
     }
 
-    /// Set highlight patterns for this container
+    /// Set highlight patterns for this container (only recompiles if changed)
     pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
-        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
+        self.highlight_engine.update_if_changed(highlights);
     }
 
     /// Set whether text replacement is enabled for highlights

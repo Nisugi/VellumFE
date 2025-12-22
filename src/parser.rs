@@ -1460,20 +1460,25 @@ impl XmlParser {
     }
 
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
-        // Extract attribute value from tag
+        // Extract attribute value from tag using simple string parsing
+        // Much faster than regex compilation on every call
         // Handles both single and double quotes
-        let pattern_double = format!(r#"{}="([^"]*)""#, attr);
-        let pattern_single = format!(r#"{}='([^']*)'"#, attr);
 
-        if let Ok(re) = Regex::new(&pattern_double) {
-            if let Some(caps) = re.captures(tag) {
-                return Some(caps[1].to_string());
+        // Try double quotes: attr="value"
+        let pattern_double = format!("{}=\"", attr);
+        if let Some(start) = tag.find(&pattern_double) {
+            let value_start = start + pattern_double.len();
+            if let Some(end) = tag[value_start..].find('"') {
+                return Some(tag[value_start..value_start + end].to_string());
             }
         }
 
-        if let Ok(re) = Regex::new(&pattern_single) {
-            if let Some(caps) = re.captures(tag) {
-                return Some(caps[1].to_string());
+        // Try single quotes: attr='value'
+        let pattern_single = format!("{}='", attr);
+        if let Some(start) = tag.find(&pattern_single) {
+            let value_start = start + pattern_single.len();
+            if let Some(end) = tag[value_start..].find('\'') {
+                return Some(tag[value_start..value_start + end].to_string());
             }
         }
 

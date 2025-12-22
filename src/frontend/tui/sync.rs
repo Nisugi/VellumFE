@@ -334,8 +334,12 @@ impl TuiFrontend {
 
                 // Get or create InventoryWindow for this window
                 if !self.widget_manager.inventory_windows.contains_key(name) {
-                    let inv_window =
+                    let mut inv_window =
                         inventory_window::InventoryWindow::new(text_content.title.clone());
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    inv_window.set_highlights(highlights);
+                    inv_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.inventory_windows.insert(name.clone(), inv_window);
                     tracing::debug!("Created InventoryWindow widget for '{}'", name);
                 }
@@ -359,11 +363,6 @@ impl TuiFrontend {
                         };
                         inv_window.set_title(title_text);
                     }
-
-                    // Set highlight patterns
-                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                    inv_window.set_highlights(highlights);
-                    inv_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
@@ -415,8 +414,12 @@ impl TuiFrontend {
 
                 // Get or create SpellsWindow for this window
                 if !self.widget_manager.spells_windows.contains_key(name) {
-                    let spells_window =
+                    let mut spells_window =
                         spells_window::SpellsWindow::new(text_content.title.clone());
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    spells_window.set_highlights(highlights);
+                    spells_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.spells_windows.insert(name.clone(), spells_window);
                     tracing::debug!("Created SpellsWindow widget for '{}'", name);
                 }
@@ -445,11 +448,6 @@ impl TuiFrontend {
                     } else {
                         spells_window.set_title(text_content.title.clone());
                     }
-
-                    // Set highlight patterns
-                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                    spells_window.set_highlights(highlights);
-                    spells_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                     // Change detection: only sync if content changed (using generation)
                     let last_synced_gen =
@@ -721,10 +719,14 @@ impl TuiFrontend {
                         .cloned()
                         .unwrap_or_default();
 
-                    let widget = active_effects::ActiveEffects::new(
+                    let mut widget = active_effects::ActiveEffects::new(
                         &label,
                         effects_content.category.clone(),
                     );
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.active_effects_windows.insert(name.clone(), widget);
                     tracing::debug!("Created ActiveEffects widget for '{}'", name);
                 }
@@ -768,11 +770,6 @@ impl TuiFrontend {
                         widget.set_transparent_background(def.base().transparent_background);
                         widget.set_background_color(colors.background.clone());
                         widget.set_text_color(colors.text.clone());
-
-                        // Set up highlights from config
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                        widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     }
                 }
             }
@@ -889,7 +886,11 @@ impl TuiFrontend {
             {
                 // Ensure widget exists
                 if !self.widget_manager.targets_widgets.contains_key(name) {
-                    let widget = targets::Targets::new(name);
+                    let mut widget = targets::Targets::new(name);
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.targets_widgets.insert(name.clone(), widget);
                 }
 
@@ -914,11 +915,6 @@ impl TuiFrontend {
                         if let Some(ref color) = colors.text {
                             widget.set_bar_color(color.clone());
                         }
-
-                        // Set up highlights from config
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                        widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         let base_title = window_def
                             .base()
@@ -947,7 +943,11 @@ impl TuiFrontend {
             if let crate::data::WindowContent::DropdownTargets = &window.content {
                 // Ensure widget exists
                 if !self.widget_manager.dropdown_targets_widgets.contains_key(name) {
-                    let widget = dropdown_targets::DropdownTargets::new(name);
+                    let mut widget = dropdown_targets::DropdownTargets::new(name);
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.dropdown_targets_widgets.insert(name.clone(), widget);
                 }
 
@@ -972,11 +972,6 @@ impl TuiFrontend {
                         if let Some(ref color) = colors.text {
                             widget.set_bar_color(color.clone());
                         }
-
-                        // Set up highlights from config
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                        widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         let base_title = window_def
                             .base()
@@ -1006,7 +1001,11 @@ impl TuiFrontend {
                 // Ensure widget exists - use title as the identifier since it's persistent
                 if !self.widget_manager.container_widgets.contains_key(name) {
                     let display_title = name.clone(); // Default display title
-                    let widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
+                    let mut widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.container_widgets.insert(name.clone(), widget);
                 }
 
@@ -1029,11 +1028,6 @@ impl TuiFrontend {
                         widget.set_background_color(colors.background.clone());
                         widget.set_text_color(colors.text.clone());
                         widget.set_transparent_background(window_def.base().transparent_background);
-
-                        // Set up highlights from config
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                        widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         // Set title from window def or fall back to container title
                         if window_def.base().show_title {
@@ -1062,7 +1056,11 @@ impl TuiFrontend {
             {
                 // Ensure widget exists
                 if !self.widget_manager.players_widgets.contains_key(name) {
-                    let widget = players::Players::new(name);
+                    let mut widget = players::Players::new(name);
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.players_widgets.insert(name.clone(), widget);
                 }
 
@@ -1087,11 +1085,6 @@ impl TuiFrontend {
                         if let Some(ref color) = colors.text {
                             widget.set_bar_color(color.clone());
                         }
-
-                        // Set up highlights from config
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                        widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                         let base_title = window_def
                             .base()
@@ -1667,9 +1660,18 @@ impl TuiFrontend {
             .filter(|w| w.widget_type() == "room")
         {
             let window_name = window_def.name();
+            // Check if widget is new before creating it
+            let is_new = !self.widget_manager.room_windows.contains_key(window_name);
             self.ensure_room_window_exists(window_name, window_def);
 
             if let Some(room_window) = self.widget_manager.room_windows.get_mut(window_name) {
+                // Set highlight patterns once at creation (recompile on .reload)
+                if is_new {
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    room_window.set_highlights(highlights);
+                    room_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                }
+
                 let colors = resolve_window_colors(window_def.base(), theme);
                 room_window.set_border_config(
                     window_def.base().show_border,
@@ -1679,11 +1681,6 @@ impl TuiFrontend {
                 room_window.set_border_sides(window_def.base().border_sides.clone());
                 room_window.set_background_color(colors.background.clone());
                 room_window.set_text_color(colors.text.clone());
-
-                // Set up highlights from config
-                let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                room_window.set_highlights(highlights);
-                room_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
 
                 if let crate::config::WindowDef::Room { data, .. } = window_def {
                     room_window.set_component_visible("room desc", data.show_desc);
@@ -1828,7 +1825,11 @@ impl TuiFrontend {
                     let title = window_def
                         .and_then(|def| def.base().title.clone())
                         .unwrap_or_else(|| "Perceptions".to_string());
-                    let perception_window = super::perception::PerceptionWindow::new(title);
+                    let mut perception_window = super::perception::PerceptionWindow::new(title);
+                    // Set highlight patterns once at creation (recompile on .reload)
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    perception_window.set_highlights(highlights);
+                    perception_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.perception_windows.insert(name.clone(), perception_window);
                     tracing::debug!("Created PerceptionWindow widget for '{}'", name);
                 }
@@ -1854,11 +1855,6 @@ impl TuiFrontend {
                         // For now, title is set during creation
                     }
 
-                    // Set up highlights from config
-                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                    perception_window.set_highlights(highlights);
-                    perception_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-
                     // Get settings from WindowDef if it's a Perception type
                     let (text_replacements, sort_direction, use_short_spell_names) =
                         if let Some(crate::config::WindowDef::Perception { data, .. }) = window_def {
@@ -1866,6 +1862,10 @@ impl TuiFrontend {
                         } else {
                             (&[][..], crate::config::SortDirection::Descending, false)
                         };
+
+                    // Update compiled replacements cache (only recompiles if changed)
+                    perception_window.update_compiled_replacements(text_replacements);
+                    let compiled_replacements = perception_window.compiled_replacements();
 
                     // Process entries: apply spell abbreviations, then custom replacements
                     let mut processed_entries: Vec<crate::data::widget::PerceptionEntry> = perc_data
@@ -1875,12 +1875,14 @@ impl TuiFrontend {
                             let mut text = entry.raw_text.clone();
 
                             // Apply short spell names if enabled (BEFORE custom replacements)
+                            // Uses Aho-Corasick for O(n) matching instead of O(n * patterns)
                             if use_short_spell_names {
                                 text = crate::spell_abbrevs::abbreviate_spells(&text);
                             }
 
-                            // Apply user custom replacements (auto-detect regex vs literal)
-                            text = crate::config::apply_text_replacements(&text, text_replacements);
+                            // Apply user custom replacements using pre-compiled regex
+                            // (no regex compilation here - already compiled and cached)
+                            text = crate::config::apply_compiled_text_replacements(&text, compiled_replacements);
 
                             // If the text becomes empty after replacements, filter it out
                             if text.trim().is_empty() {

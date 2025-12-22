@@ -1084,7 +1084,88 @@ pub struct TextReplacement {
     pub replace: String,   // Replacement text (empty string to remove)
 }
 
+/// Pre-compiled text replacement for runtime use.
+/// Regex is compiled once at creation, not on every application.
+#[derive(Debug, Clone)]
+pub struct CompiledTextReplacement {
+    /// Original pattern string (for literal matching or error fallback)
+    pattern: String,
+    /// Replacement text
+    replace: String,
+    /// Pre-compiled regex (None if pattern is literal or invalid regex)
+    compiled_regex: Option<regex::Regex>,
+}
+
+impl CompiledTextReplacement {
+    /// Compile a TextReplacement into a CompiledTextReplacement
+    pub fn compile(replacement: &TextReplacement) -> Self {
+        let pattern = replacement.pattern.as_str();
+        let is_regex = pattern.contains('\\')
+            || pattern.contains('^')
+            || pattern.contains('$')
+            || pattern.contains('.')
+            || pattern.contains('*')
+            || pattern.contains('+')
+            || pattern.contains('?')
+            || pattern.contains('(')
+            || pattern.contains(')')
+            || pattern.contains('[')
+            || pattern.contains(']')
+            || pattern.contains('{')
+            || pattern.contains('}')
+            || pattern.contains('|');
+
+        let compiled_regex = if is_regex {
+            match regex::Regex::new(pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    tracing::warn!(
+                        "Invalid regex pattern '{}': {}, will use literal match",
+                        pattern,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Self {
+            pattern: replacement.pattern.clone(),
+            replace: replacement.replace.clone(),
+            compiled_regex,
+        }
+    }
+
+    /// Apply this replacement to the given text
+    pub fn apply(&self, text: &str) -> String {
+        if let Some(ref re) = self.compiled_regex {
+            re.replace_all(text, self.replace.as_str()).into_owned()
+        } else {
+            text.replace(&self.pattern, &self.replace)
+        }
+    }
+}
+
+/// Compile a slice of TextReplacements into CompiledTextReplacements.
+/// Call this once at config load or when replacements change.
+pub fn compile_text_replacements(replacements: &[TextReplacement]) -> Vec<CompiledTextReplacement> {
+    replacements.iter().map(CompiledTextReplacement::compile).collect()
+}
+
+/// Apply pre-compiled text replacements (efficient - no regex compilation).
+pub fn apply_compiled_text_replacements(text: &str, replacements: &[CompiledTextReplacement]) -> String {
+    let mut result = text.to_string();
+    for replacement in replacements {
+        result = replacement.apply(&result);
+    }
+    result
+}
+
 /// Apply text replacements, auto-detecting regex patterns by metacharacters.
+/// WARNING: This compiles regex on every call! Use apply_compiled_text_replacements for hot paths.
+#[deprecated(note = "Use compile_text_replacements + apply_compiled_text_replacements for better performance")]
 pub fn apply_text_replacements(text: &str, replacements: &[TextReplacement]) -> String {
     let mut result = text.to_string();
     for replacement in replacements {

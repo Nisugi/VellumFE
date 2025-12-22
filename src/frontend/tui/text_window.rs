@@ -167,8 +167,8 @@ impl TextWindow {
     }
 
     pub fn set_highlights(&mut self, highlights: Vec<HighlightPattern>) {
-        // Create new highlight engine with compiled patterns
-        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
+        // Update highlight engine only if patterns changed (avoids recompiling regex every frame)
+        self.highlight_engine.update_if_changed(highlights);
     }
 
     /// Set whether text replacement is enabled for highlights

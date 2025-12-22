@@ -92,10 +92,11 @@ impl RoomWindow {
         }
     }
 
-    /// Set highlight patterns for this window
+    /// Set highlight patterns for this window (only recompiles if changed)
     pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
-        self.highlight_engine = super::highlight_utils::HighlightEngine::new(highlights);
-        self.needs_rewrap = true; // Re-process content with new highlights
+        if self.highlight_engine.update_if_changed(highlights) {
+            self.needs_rewrap = true; // Re-process content with new highlights
+        }
     }
 
     /// Set whether text replacement is enabled for highlights
