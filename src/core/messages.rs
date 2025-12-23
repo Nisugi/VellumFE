@@ -44,12 +44,6 @@ pub struct MessageProcessor {
     /// Previous inventory buffer for comparison (avoid unnecessary updates)
     previous_inventory: Vec<Vec<TextSegment>>,
 
-    /// Buffer for accumulating combat stream lines (for targets widget)
-    combat_buffer: Vec<Vec<TextSegment>>,
-
-    /// Buffer for accumulating playerlist stream lines (for players widget)
-    playerlist_buffer: Vec<Vec<TextSegment>>,
-
     /// Buffer for accumulating perception stream lines (for perception widget)
     perception_buffer: Vec<Vec<TextSegment>>,
 
@@ -64,9 +58,19 @@ pub struct MessageProcessor {
     /// Redirect cache: true if any highlights have redirect_to configured (lazy check optimization)
     has_redirect_highlights: bool,
 
+    /// Warn-once cache for empty fast-parse redirect patterns
+    warned_empty_redirect_patterns: std::cell::RefCell<std::collections::HashSet<String>>,
+
     /// Text stream subscribers map: stream_id -> list of window names that subscribe
     /// Built from widget configs at startup and on layout reload
     text_stream_subscribers: std::collections::HashMap<String, Vec<String>>,
+
+    /// Newly registered container (for container discovery mode)
+    /// Set when a container is first seen, cleared after processing
+    pub newly_registered_container: Option<(String, String)>, // (id, title)
+
+    /// Pending sounds from highlight processing (to be transferred to GameState)
+    pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
 }
 
 impl MessageProcessor {
@@ -118,15 +122,16 @@ impl MessageProcessor {
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
-            combat_buffer: Vec::new(),
-            playerlist_buffer: Vec::new(),
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
             squelch_enabled: false,
             squelch_matcher: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
+            warned_empty_redirect_patterns: std::cell::RefCell::new(std::collections::HashSet::new()),
             text_stream_subscribers: std::collections::HashMap::new(),
+            newly_registered_container: None,
+            pending_sounds: Vec::new(),
         };
 
         // Initialize squelch patterns from config
@@ -141,6 +146,16 @@ impl MessageProcessor {
         crate::config::Config::compile_highlight_patterns(&mut config.highlights);
         self.config = config;
 
+        // Log loaded presets for debugging
+        for (id, preset) in &self.config.colors.presets {
+            tracing::debug!(
+                "Loaded preset '{}': fg={:?}, bg={:?}",
+                id,
+                preset.fg,
+                preset.bg
+            );
+        }
+
         let preset_list = self
             .config
             .colors
@@ -154,6 +169,7 @@ impl MessageProcessor {
 
         self.update_squelch_patterns();
         self.update_redirect_cache();
+        self.warned_empty_redirect_patterns.borrow_mut().clear();
 
         // Update highlight engine with new patterns
         self.update_highlights();
@@ -253,18 +269,6 @@ impl MessageProcessor {
                     tracing::debug!("Inventory stream pushed - cleared inventory buffer");
                 }
 
-                // Clear combat buffer when combat stream is pushed
-                if id == "combat" {
-                    self.combat_buffer.clear();
-                    tracing::debug!("Combat stream pushed - cleared combat buffer");
-                }
-
-                // Clear playerlist buffer when playerlist stream is pushed
-                if id == "playerlist" {
-                    self.playerlist_buffer.clear();
-                    tracing::debug!("Playerlist stream pushed - cleared playerlist buffer");
-                }
-
                 // Note: perception buffer is NOT cleared on pushStream
                 // It's cleared on clearStream (which comes before all entries)
                 // This allows entries from multiple push/pop pairs to accumulate
@@ -275,16 +279,6 @@ impl MessageProcessor {
                 // Flush inventory buffer if we're leaving inv stream
                 if self.current_stream == "inv" {
                     self.flush_inventory_buffer(ui_state);
-                }
-
-                // Flush combat buffer if we're leaving combat stream
-                if self.current_stream == "combat" {
-                    self.flush_combat_buffer(ui_state);
-                }
-
-                // Flush playerlist buffer if we're leaving playerlist stream
-                if self.current_stream == "playerlist" {
-                    self.flush_playerlist_buffer(ui_state);
                 }
 
                 // Note: perception buffer is NOT flushed on popStream
@@ -789,22 +783,18 @@ impl MessageProcessor {
             }
             ParsedElement::TargetList {
                 current_target,
-                targets,
-                target_ids,
+                targets: _,    // Ignore - creature list comes from room objs
+                target_ids: _, // Ignore - creature list comes from room objs
             } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Update target list state (for direct-connect users)
-                game_state.target_list.update(
-                    current_target.clone(),
-                    targets.clone(),
-                    target_ids.clone(),
-                );
+                // Dropdown only tells us which creature is currently targeted
+                // Creature list comes from room objs component
+                game_state.target_list.current_target = current_target.clone();
 
                 tracing::debug!(
-                    "Updated target list: current='{}', {} targets",
-                    current_target,
-                    targets.len()
+                    "Updated current target from dropdown: '{}'",
+                    current_target
                 );
             }
             ParsedElement::Container { id, title, .. } => {
@@ -813,7 +803,18 @@ impl MessageProcessor {
                 // Register container in cache
                 game_state.container_cache.register_container(id.clone(), title.clone());
 
-                tracing::debug!("Registered container: id='{}', title='{}'", id, title);
+                // Signal container for discovery mode (every LOOK IN triggers this)
+                // The runtime will check if a window already exists before creating
+                if !title.is_empty() {
+                    self.newly_registered_container = Some((id.clone(), title.clone()));
+                    tracing::debug!(
+                        "Container seen: id='{}', title='{}' (signaling for discovery)",
+                        id,
+                        title
+                    );
+                } else {
+                    tracing::debug!("Registered container: id='{}', title='{}'", id, title);
+                }
             }
             ParsedElement::ClearContainer { id } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
@@ -981,6 +982,184 @@ impl MessageProcessor {
         // Store current value for next comparison
         self.previous_room_components
             .insert(id.to_string(), value.to_string());
+
+        // Extract creatures from room objs (for dropdown_targets widget)
+        // Creatures are in bold: <b><pushBold/>a <a exist='ID' noun='...'>name</a><popBold/></b> (status)
+        if id == "room objs" {
+            game_state.room_creatures.clear();
+
+            let mut remaining = value;
+            while let Some(bold_start) = remaining.find("<b>") {
+                // Find the matching </b>
+                if let Some(bold_end_offset) = remaining[bold_start..].find("</b>") {
+                    let bold_end = bold_start + bold_end_offset;
+                    let bold_section = &remaining[bold_start..bold_end + 4]; // Include </b>
+
+                    // Extract <a exist='...' noun='...'>name</a> within the bold section
+                    if let Some(link_start) = bold_section.find("<a ") {
+                        if let Some(link_end) = bold_section[link_start..].find("</a>") {
+                            let link_tag_end = bold_section[link_start..link_start + link_end]
+                                .find('>')
+                                .unwrap_or(0);
+                            let link_tag = &bold_section[link_start..link_start + link_tag_end];
+                            let link_text_start = link_start + link_tag_end + 1;
+                            let link_text_end = link_start + link_end;
+                            let creature_name = &bold_section[link_text_start..link_text_end];
+
+                            // Extract exist ID from the link tag
+                            if let Some(exist_pos) = link_tag.find("exist=") {
+                                let after_exist = &link_tag[exist_pos + 6..];
+                                if let Some(quote) = after_exist.chars().next() {
+                                    if quote == '\'' || quote == '"' {
+                                        if let Some(end_quote) = after_exist[1..].find(quote) {
+                                            let exist_id = &after_exist[1..=end_quote];
+
+                                            // Extract noun from the link tag (optional)
+                                            let noun = if let Some(noun_pos) = link_tag.find("noun=") {
+                                                let after_noun = &link_tag[noun_pos + 5..];
+                                                if let Some(noun_quote) = after_noun.chars().next() {
+                                                    if noun_quote == '\'' || noun_quote == '"' {
+                                                        if let Some(noun_end_quote) = after_noun[1..].find(noun_quote) {
+                                                            Some(after_noun[1..=noun_end_quote].to_string())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            };
+
+                                            // Check for status after </b>: " (stunned)" or " (dead)"
+                                            let after_bold = &remaining[bold_end + 4..];
+                                            let status = if after_bold.trim_start().starts_with('(') {
+                                                // Extract text between ( and )
+                                                let after_paren = &after_bold[after_bold.find('(').unwrap() + 1..];
+                                                after_paren
+                                                    .find(')')
+                                                    .map(|end| after_paren[..end].to_string())
+                                            } else {
+                                                None
+                                            };
+
+                                            // Check if noun should be excluded (configurable filter for non-creatures)
+                                            if let Some(ref noun_val) = noun {
+                                                if self.config.target_list.excluded_nouns.iter()
+                                                    .any(|excluded| excluded.eq_ignore_ascii_case(noun_val)) {
+                                                    tracing::debug!(
+                                                        "Skipping creature with excluded noun: '{}' (name: '{}')",
+                                                        noun_val, creature_name
+                                                    );
+                                                    remaining = &remaining[bold_end + 4..];
+                                                    continue;
+                                                }
+                                            }
+
+                                            let creature = crate::core::state::Creature {
+                                                id: format!("#{}", exist_id),
+                                                name: creature_name.to_string(),
+                                                noun: noun.clone(),
+                                                status: status.clone(),
+                                            };
+
+                                            tracing::debug!(
+                                                "Parsed creature from room objs: name='{}', noun={:?}, id='{}', status={:?}",
+                                                creature.name, creature.noun, creature.id, creature.status
+                                            );
+
+                                            game_state.room_creatures.push(creature);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    remaining = &remaining[bold_end + 4..];
+                } else {
+                    break;
+                }
+            }
+
+            tracing::debug!(
+                "Extracted {} creatures from room objs",
+                game_state.room_creatures.len()
+            );
+        }
+
+        // Extract players from room players component
+        // Format: "Also here: <a exist='-ID' noun='Name'>Name</a> (prone), a stunned <a exist='...' noun='...'>Name2</a> (prone)"
+        if id == "room players" {
+            game_state.room_players.clear();
+
+            let mut remaining = value;
+
+            // Skip "Also here:" prefix if present
+            if let Some(pos) = remaining.find(':') {
+                remaining = &remaining[pos + 1..];
+            }
+
+            // Parse players - separated by commas or end of component
+            while let Some(link_start) = remaining.find("<a ") {
+                if let Some(link_end) = remaining[link_start..].find("</a>") {
+                    let link_section_end = link_start + link_end + 4;
+                    let link_section = &remaining[link_start..link_section_end];
+
+                    // Extract exist ID
+                    if let Some(exist_pos) = link_section.find("exist=") {
+                        let after_exist = &link_section[exist_pos + 6..];
+                        if let Some(quote) = after_exist.chars().next() {
+                            if quote == '\'' || quote == '"' {
+                                if let Some(end_quote) = after_exist[1..].find(quote) {
+                                    let exist_id = &after_exist[1..=end_quote];
+
+                                    // Extract player name
+                                    if let Some(name_start) = link_section.find('>') {
+                                        let name_end = link_section.find("</a>").unwrap();
+                                        let player_name = &link_section[name_start + 1..name_end];
+
+                                        // Parse prepended status (e.g., "a stunned")
+                                        let before_link = &remaining[..link_start];
+                                        let primary_status = Self::parse_prepended_status(before_link);
+
+                                        // Parse appended status (e.g., "(prone)")
+                                        let after_link = &remaining[link_section_end..];
+                                        let secondary_status = Self::parse_appended_status(after_link);
+
+                                        let player = crate::core::state::Player {
+                                            id: exist_id.to_string(),
+                                            name: player_name.to_string(),
+                                            primary_status,
+                                            secondary_status,
+                                        };
+
+                                        tracing::debug!(
+                                            "Parsed player from room players: name='{}', id='{}', primary={:?}, secondary={:?}",
+                                            player.name, player.id, player.primary_status, player.secondary_status
+                                        );
+
+                                        game_state.room_players.push(player);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    remaining = &remaining[link_section_end..];
+                } else {
+                    break;
+                }
+            }
+
+            tracing::debug!(
+                "Extracted {} players from room players",
+                game_state.room_players.len()
+            );
+        }
 
         // If we're starting a new component, finish the current one first
         if current_room_component
@@ -1180,9 +1359,8 @@ impl MessageProcessor {
         self.current_segments = highlight_result.segments;
         let deferred_replacements = highlight_result.deferred_replacements;
 
-        // TODO: Queue sounds for playback (highlight_result.sounds)
-        // For now, sounds are still triggered by frontend highlight engine
-        // This can be wired up once widget-level highlighting is removed
+        // Queue sounds from highlight processing
+        self.pending_sounds.extend(highlight_result.sounds);
 
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
@@ -1277,46 +1455,6 @@ impl MessageProcessor {
             return;
         }
 
-        // Special handling for combat stream - buffer for targets widget
-        // Combat stream is always a silent update (shouldn't trigger prompts in main window)
-        if self.current_stream == "combat" {
-            self.chunk_has_silent_updates = true;
-            // Check if ANY window has Targets content type
-            if !ui_state
-                .windows
-                .values()
-                .any(|w| matches!(w.content, WindowContent::Targets { .. }))
-            {
-                tracing::trace!("Discarding combat stream content - no targets window exists");
-                return;
-            }
-            // Add line to combat buffer instead of window
-            let num_segments = line.segments.len();
-            self.combat_buffer.push(line.segments);
-            tracing::trace!("Buffered combat line ({} segments)", num_segments);
-            return;
-        }
-
-        // Special handling for playerlist stream - buffer for players widget
-        // Playerlist stream is always a silent update (shouldn't trigger prompts in main window)
-        if self.current_stream == "playerlist" {
-            self.chunk_has_silent_updates = true;
-            // Check if ANY window has Players content type
-            if !ui_state
-                .windows
-                .values()
-                .any(|w| matches!(w.content, WindowContent::Players { .. }))
-            {
-                tracing::trace!("Discarding playerlist stream content - no players window exists");
-                return;
-            }
-            // Add line to playerlist buffer instead of window
-            let num_segments = line.segments.len();
-            self.playerlist_buffer.push(line.segments);
-            tracing::trace!("Buffered playerlist line ({} segments)", num_segments);
-            return;
-        }
-
         // Special handling for percWindow stream - buffer for perception widget
         // Perception stream is always a silent update (shouldn't trigger prompts in main window)
         if self.current_stream == "percWindow" {
@@ -1358,72 +1496,6 @@ impl MessageProcessor {
 
                 self.perception_buffer.push(vec![entry_segment]);
                 tracing::debug!("Buffered perception entry: '{}'", entry_text);
-            }
-            return;
-        }
-
-        // Special handling for targetcount stream - update targets window titles/counts
-        if ui_state
-            .windows
-            .values()
-            .filter_map(|w| {
-                if let WindowContent::Targets { entity_id, .. } = &w.content {
-                    Some(entity_id)
-                } else {
-                    None
-                }
-            })
-            .any(|id| id == &self.current_stream)
-        {
-            self.chunk_has_silent_updates = true;
-            let count_text: String = line
-                .segments
-                .iter()
-                .map(|seg| seg.text.as_str())
-                .collect::<String>()
-                .trim()
-                .to_string();
-
-            for (_name, window) in ui_state.windows.iter_mut() {
-                if let WindowContent::Targets { count, entity_id, .. } = &mut window.content {
-                    if *entity_id != self.current_stream {
-                        continue;
-                    }
-                    *count = Some(count_text.clone());
-                }
-            }
-            return;
-        }
-
-        // Special handling for playercount stream - update players window titles/counts
-        if ui_state
-            .windows
-            .values()
-            .filter_map(|w| {
-                if let WindowContent::Players { entity_id, .. } = &w.content {
-                    Some(entity_id)
-                } else {
-                    None
-                }
-            })
-            .any(|id| id == &self.current_stream)
-        {
-            self.chunk_has_silent_updates = true;
-            let count_text: String = line
-                .segments
-                .iter()
-                .map(|seg| seg.text.as_str())
-                .collect::<String>()
-                .trim()
-                .to_string();
-
-            for (_name, window) in ui_state.windows.iter_mut() {
-                if let WindowContent::Players { count, entity_id, .. } = &mut window.content {
-                    if *entity_id != self.current_stream {
-                        continue;
-                    }
-                    *count = Some(count_text.clone());
-                }
             }
             return;
         }
@@ -1717,104 +1789,6 @@ impl MessageProcessor {
         self.inventory_buffer.clear();
     }
 
-    /// Flush combat buffer to targets window
-    pub fn flush_combat_buffer(&mut self, ui_state: &mut UiState) {
-        // If buffer is empty, nothing to do
-        if self.combat_buffer.is_empty() {
-            return;
-        }
-
-        // Concatenate all text segments into a single string
-        let mut full_text = String::new();
-        for line_segments in &self.combat_buffer {
-            for segment in line_segments {
-                full_text.push_str(&segment.text);
-            }
-        }
-
-        tracing::debug!(
-            "Flushing combat buffer - {} lines, {} chars total",
-            self.combat_buffer.len(),
-            full_text.len()
-        );
-
-        // Find ALL targets windows and update them (supports multiple targets windows)
-        let mut updated_count = 0;
-        for (name, window) in ui_state.windows.iter_mut() {
-            if let WindowContent::Targets {
-                ref mut targets_text,
-                ..
-            } = window.content
-            {
-                *targets_text = full_text.clone();
-                tracing::debug!(
-                    "Updated targets window '{}' with {} chars",
-                    name,
-                    targets_text.len()
-                );
-                updated_count += 1;
-            }
-        }
-
-        if updated_count == 0 {
-            tracing::debug!("No targets windows found to update");
-        } else {
-            tracing::debug!("Updated {} targets window(s)", updated_count);
-        }
-
-        // Clear buffer for next update
-        self.combat_buffer.clear();
-    }
-
-    /// Flush playerlist buffer to players window
-    pub fn flush_playerlist_buffer(&mut self, ui_state: &mut UiState) {
-        // If buffer is empty, nothing to do
-        if self.playerlist_buffer.is_empty() {
-            return;
-        }
-
-        // Concatenate all text segments into a single string
-        let mut full_text = String::new();
-        for line_segments in &self.playerlist_buffer {
-            for segment in line_segments {
-                full_text.push_str(&segment.text);
-            }
-        }
-
-        tracing::debug!(
-            "Flushing playerlist buffer - {} lines, {} chars total",
-            self.playerlist_buffer.len(),
-            full_text.len()
-        );
-
-        // Find ALL players windows and update them (supports multiple players windows)
-        let mut updated_count = 0;
-        for (name, window) in ui_state.windows.iter_mut() {
-            if let WindowContent::Players {
-                ref mut players_text,
-                ..
-            } = window.content
-            {
-                *players_text = full_text.clone();
-                tracing::debug!(
-                    "Updated players window '{}' with {} chars",
-                    name,
-                    players_text.len()
-                );
-                updated_count += 1;
-            }
-        }
-
-        if updated_count == 0 {
-            tracing::debug!("No players windows found to update");
-        } else {
-            tracing::debug!("Updated {} players window(s)", updated_count);
-        }
-
-        // Clear buffer for next update
-        self.playerlist_buffer.clear();
-    }
-
     /// Flush perception buffer to perception window with parsing and sorting
     pub fn flush_perception_buffer(&mut self, ui_state: &mut UiState) {
         // If buffer is empty, nothing to do
@@ -2026,6 +2000,43 @@ impl MessageProcessor {
         entries
     }
 
+    /// Parse prepended status from text before player link
+    /// Format: "a stunned " -> Some("stunned")
+    /// Format: "an invisible " -> Some("invisible")
+    fn parse_prepended_status(text: &str) -> Option<String> {
+        let trimmed = text.trim_end();
+        if let Some(space_pos) = trimmed.rfind(' ') {
+            let potential_status = &trimmed[space_pos + 1..];
+            // Check if there's an article ("a " or "an ") before the status
+            if space_pos >= 2 {
+                let article_check = &trimmed[space_pos - 2..space_pos];
+                if article_check == "a " {
+                    return Some(potential_status.to_string());
+                }
+            }
+            if space_pos >= 3 {
+                let article_check = &trimmed[space_pos - 3..space_pos];
+                if article_check == "an " {
+                    return Some(potential_status.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Parse appended status from text after player link
+    /// Format: " (prone), " -> Some("prone")
+    /// Format: " (sitting)" -> Some("sitting")
+    fn parse_appended_status(text: &str) -> Option<String> {
+        let trimmed = text.trim_start();
+        if trimmed.starts_with('(') {
+            if let Some(end_paren) = trimmed.find(')') {
+                return Some(trimmed[1..end_paren].to_string());
+            }
+        }
+        None
+    }
+
     /// Enqueue text for TTS if enabled and configured for this window
     fn enqueue_tts(&self, tts_manager: &mut crate::tts::TtsManager, window_name: &str, line: &StyledLine) {
         // Early exit if TTS not enabled
@@ -2098,8 +2109,6 @@ impl MessageProcessor {
             "ambients" => "ambients",
             "bounty" => "bounty",
             "Spells" => "spells",
-            "combat" => "targets",
-            "playerlist" => "players",
             "percWindow" => "perception",
             _ => "main", // Default to main window
         }
@@ -2108,22 +2117,12 @@ impl MessageProcessor {
 
     /// Determine if a stream is already handled by any window.
     /// Uses the pre-built subscriber map for O(1) lookup.
-    /// Also checks Targets/Players widgets which use entity_id-based matching.
     fn stream_has_target_window(&self, ui_state: &UiState, stream: &str) -> bool {
         // First check the pre-built subscriber map (text windows, tabbed text, etc.)
         if self.stream_has_subscribers(stream) {
             return true;
         }
-
-        // Also check Targets/Players widgets which match by entity_id, not stream subscription
-        for window in ui_state.windows.values() {
-            match &window.content {
-                WindowContent::Targets { entity_id, .. } if entity_id == stream => return true,
-                WindowContent::Players { entity_id, .. } if entity_id == stream => return true,
-                _ => {}
-            }
-        }
-
+        let _ = ui_state;
         false
     }
 
@@ -2280,20 +2279,16 @@ impl MessageProcessor {
                     }
                 }
 
-                // Targets widget implicitly subscribes to "combat" stream
-                WindowContent::Targets { .. } => {
-                    subscribers
-                        .entry("combat".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                // Targets widget uses component-based approach (GameState.room_creatures)
+                // No stream subscription needed
+                WindowContent::Targets => {
+                    // No-op - component-based widget
                 }
 
-                // Players widget implicitly subscribes to "playerlist" stream
-                WindowContent::Players { .. } => {
-                    subscribers
-                        .entry("playerlist".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                // Players widget uses component-based approach (GameState.room_players)
+                // No stream subscription needed
+                WindowContent::Players => {
+                    // No-op - component-based widget
                 }
 
                 // Room widget implicitly subscribes to "room" stream
@@ -2379,18 +2374,40 @@ impl MessageProcessor {
             // Check if pattern matches
             let match_len = if pattern.fast_parse {
                 // Check literal substring match (split on |)
-                pattern
-                    .pattern
-                    .split('|')
-                    .filter_map(|literal| {
-                        let trimmed = literal.trim();
-                        if text.contains(trimmed) {
-                            Some(trimmed.len())
-                        } else {
-                            None
+                let mut saw_literal = false;
+                let mut longest_match: Option<usize> = None;
+
+                for literal in pattern.pattern.split('|') {
+                    let trimmed = literal.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    saw_literal = true;
+
+                    if text.contains(trimmed) {
+                        let len = trimmed.len();
+                        let should_replace = longest_match.map_or(true, |best| len > best);
+                        if should_replace {
+                            longest_match = Some(len);
                         }
-                    })
-                    .next()
+                    }
+                }
+
+                if !saw_literal {
+                    if self
+                        .warned_empty_redirect_patterns
+                        .borrow_mut()
+                        .insert(pattern.pattern.clone())
+                    {
+                        tracing::warn!(
+                            "Skipping fast-parse redirect with no usable literals: '{}'",
+                            pattern.pattern
+                        );
+                    }
+                    None
+                } else {
+                    longest_match
+                }
             } else {
                 // Check regex match
                 if let Some(ref regex) = pattern.compiled_regex {
@@ -2453,6 +2470,28 @@ mod tests {
         MessageProcessor::new(config)
     }
 
+    fn make_redirect_pattern(pattern: &str) -> crate::config::HighlightPattern {
+        crate::config::HighlightPattern {
+            pattern: pattern.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: true,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: Some("alerts".to_string()),
+            redirect_mode: crate::config::RedirectMode::RedirectOnly,
+            replace: None,
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }
+    }
+
     // ===========================================
     // map_stream_to_window tests - core game streams
     // ===========================================
@@ -2473,6 +2512,40 @@ mod tests {
     fn test_map_stream_inventory() {
         let processor = create_test_processor();
         assert_eq!(processor.map_stream_to_window("inv"), "inventory");
+    }
+
+    // ===========================================
+    // Redirect match tests
+    // ===========================================
+
+    #[test]
+    fn test_redirect_fast_parse_ignores_empty_literals() {
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        config
+            .highlights
+            .insert("empty_redirect".to_string(), make_redirect_pattern("||"));
+
+        let mut processor = MessageProcessor::new(config);
+        let result = processor.check_redirect_match("anything");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_redirect_fast_parse_longest_match_wins() {
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        config.highlights.insert(
+            "longest_redirect".to_string(),
+            make_redirect_pattern("a|ab|abc"),
+        );
+
+        let mut processor = MessageProcessor::new(config);
+        let result = processor.check_redirect_match("zz abc zz");
+        assert!(matches!(
+            result,
+            Some((_window, crate::config::RedirectMode::RedirectOnly, 3))
+        ));
     }
 
     #[test]
@@ -2501,16 +2574,6 @@ mod tests {
     fn test_map_stream_logons() {
         let processor = create_test_processor();
         assert_eq!(processor.map_stream_to_window("logons"), "logons");
-    }
-
-    // ===========================================
-    // map_stream_to_window tests - combat streams
-    // ===========================================
-
-    #[test]
-    fn test_map_stream_combat() {
-        let processor = create_test_processor();
-        assert_eq!(processor.map_stream_to_window("combat"), "targets");
     }
 
     #[test]
@@ -2552,12 +2615,6 @@ mod tests {
     fn test_map_stream_bounty() {
         let processor = create_test_processor();
         assert_eq!(processor.map_stream_to_window("bounty"), "bounty");
-    }
-
-    #[test]
-    fn test_map_stream_playerlist() {
-        let processor = create_test_processor();
-        assert_eq!(processor.map_stream_to_window("playerlist"), "players");
     }
 
     // ===========================================
@@ -2610,8 +2667,6 @@ mod tests {
     fn test_new_processor_buffers_empty() {
         let processor = create_test_processor();
         assert!(processor.inventory_buffer.is_empty());
-        assert!(processor.combat_buffer.is_empty());
-        assert!(processor.playerlist_buffer.is_empty());
     }
 
     #[test]
@@ -2679,8 +2734,6 @@ mod tests {
             ("ambients", "ambients"),
             ("bounty", "bounty"),
             ("Spells", "spells"),
-            ("combat", "targets"),
-            ("playerlist", "players"),
         ];
 
         for (stream, expected_window) in expected_mappings {

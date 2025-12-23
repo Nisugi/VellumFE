@@ -1,101 +1,87 @@
-//! Target list widget similar to the players view but with current-target cues.
+//! Dropdown-based target list widget for direct-connect users.
 //!
-//! Parses the `<target>` style text from the XML stream and highlights whichever
-//! entry is currently underlined.
+//! Reads target data from GameState.target_list (populated from dDBTarget dropdown)
+//! rather than parsing text from the combat stream. This widget is an alternative
+//! to the stream-based targets widget for users connecting directly to GemStone IV
+//! without Lich's `;targetlist` script.
+//!
+//! Note: This widget does NOT show creature status (stunned, sitting, etc.) because
+//! the dDBTarget dropdown only provides creature names and IDs, not status information.
 
 use super::scrollable_container::ScrollableContainer;
+use crate::core::state::TargetListState;
 use ratatui::{buffer::Buffer, layout::Rect};
 
-pub struct Targets {
+pub struct DropdownTargets {
     container: ScrollableContainer,
     count: u32,
     base_title: String,
-    count_override: Option<String>,
+    /// Track current target for highlighting
+    current_target: String,
+    /// Generation counter for change detection
+    generation: u64,
 }
 
-impl Targets {
+impl DropdownTargets {
     pub fn new(title: &str) -> Self {
         let mut container = ScrollableContainer::new(title);
-        // Targets widget hides values and percentages by default
+        // Dropdown targets widget hides values and percentages (no status info available)
         container.set_display_options(false, false);
 
         Self {
             container,
             count: 0,
             base_title: title.to_string(),
-            count_override: None,
+            current_target: String::new(),
+            generation: 0,
         }
     }
 
-    /// Parse targets from formatted game text
-    /// Format: "[stu] goblin, <b>[sit] troll</b>, <color ul='true'><b>bandit</b></color>"
-    pub fn set_targets_from_text(&mut self, text: &str) {
-        self.container.clear();
-        self.count = 0;
-
-        if text.is_empty() {
-            self.update_title();
-            return;
+    /// Update the widget from TargetListState.
+    /// Returns true if the display changed.
+    pub fn update_from_state(&mut self, target_list: &TargetListState) -> bool {
+        // Quick check: if current_target and creature count match, assume no change
+        // (This is a simple optimization; could be more sophisticated with full comparison)
+        let new_count = target_list.creatures.len() as u32;
+        if self.current_target == target_list.current_target && self.count == new_count {
+            return false;
         }
 
-        // Split by comma to get individual targets
-        let targets: Vec<&str> = text.split(',').map(|s| s.trim()).collect();
+        tracing::debug!(
+            "DropdownTargets[{}]::update_from_state - old_count={}, new_count={}, current='{}'",
+            self.base_title,
+            self.count,
+            new_count,
+            target_list.current_target
+        );
 
-        for (idx, target_str) in targets.iter().enumerate() {
-            if target_str.is_empty() {
-                continue;
-            }
+        self.container.clear();
+        self.count = 0;
+        self.current_target = target_list.current_target.clone();
 
-            // Check if this is the current target (has ul='true')
-            let is_current = target_str.contains("ul='true'") || target_str.contains("ul=\"true\"");
-
-            // Extract status prefix [xxx] if present
-            let status = if let Some(start) = target_str.find('[') {
-                if let Some(end) = target_str.find(']') {
-                    if end > start {
-                        Some(target_str[start..=end].to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // Strip all XML tags to get clean target name
-            let clean_name = Self::strip_xml_tags(target_str);
-
-            // Remove status prefix from the name if it was at the start
-            let clean_name = if let Some(ref s) = status {
-                clean_name.trim_start_matches(s).trim().to_string()
-            } else {
-                clean_name
-            };
-
-            if clean_name.is_empty() {
-                continue;
-            }
+        for creature in target_list.creatures.iter() {
+            // Check if this is the current target
+            let is_current = creature.name == target_list.current_target
+                || creature.id == target_list.current_target;
 
             // Add prefix for current target
             let display_name = if is_current {
-                format!("► {}", clean_name)
+                format!("► {}", creature.name)
             } else {
-                clean_name
+                creature.name.clone()
             };
 
-            // Create unique ID
-            let id = format!("target_{}", idx);
+            // Use creature ID as the unique identifier
+            let id = creature.id.clone();
 
-            // Add to container with status as suffix
+            // Add to container (no status suffix available from dropdown)
             self.container.add_or_update_item_full(
                 id,
                 display_name,
                 None,   // no alternate text
                 0,      // value (hidden)
                 1,      // max (hidden)
-                status, // suffix (status like "[sit]")
+                None,   // no suffix (status not available from dropdown)
                 None,   // no color override
                 None,
             );
@@ -103,38 +89,22 @@ impl Targets {
             self.count += 1;
         }
 
+        self.generation += 1;
+        self.update_title();
+        true
+    }
+
+    /// Clear all targets
+    pub fn clear(&mut self) {
+        self.container.clear();
+        self.count = 0;
+        self.current_target.clear();
+        self.generation += 1;
         self.update_title();
     }
 
-    /// Strip all XML tags from a string
-    fn strip_xml_tags(input: &str) -> String {
-        let mut result = String::new();
-        let mut in_tag = false;
-
-        for ch in input.chars() {
-            match ch {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ => {
-                    if !in_tag {
-                        result.push(ch);
-                    }
-                }
-            }
-        }
-
-        result.trim().to_string()
-    }
-
     fn update_title(&mut self) {
-        if let Some(ref override_count) = self.count_override {
-            let title = if self.base_title.is_empty() {
-                String::new()
-            } else {
-                format!("{} {}", self.base_title, override_count)
-            };
-            self.container.set_title(title);
-        } else if self.base_title.is_empty() {
+        if self.base_title.is_empty() {
             self.container.set_title(String::new());
         } else {
             let title = format!("{} [{:02}]", self.base_title, self.count);
@@ -142,10 +112,13 @@ impl Targets {
         }
     }
 
-    pub fn set_title_with_count(&mut self, base_title: &str, count: Option<&str>) {
-        self.base_title = base_title.to_string();
-        self.count_override = count.map(|c| c.to_string());
+    pub fn set_title(&mut self, title: &str) {
+        self.base_title = title.to_string();
         self.update_title();
+    }
+
+    pub fn get_generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -196,5 +169,206 @@ impl Targets {
 
     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         self.container.render_with_focus(area, buf, focused);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::state::Creature;
+
+    // ===========================================
+    // Constructor tests
+    // ===========================================
+
+    #[test]
+    fn test_new_defaults() {
+        let dt = DropdownTargets::new("Targets");
+        assert_eq!(dt.base_title, "Targets");
+        assert_eq!(dt.count, 0);
+        assert!(dt.current_target.is_empty());
+        assert_eq!(dt.generation, 0);
+    }
+
+    // ===========================================
+    // Title tests
+    // ===========================================
+
+    #[test]
+    fn test_set_title() {
+        let mut dt = DropdownTargets::new("Targets");
+        dt.set_title("Creatures");
+        assert_eq!(dt.base_title, "Creatures");
+    }
+
+    #[test]
+    fn test_update_title_with_count() {
+        let mut dt = DropdownTargets::new("Targets");
+        dt.count = 5;
+        dt.update_title();
+        // Title should include count: "Targets [05]"
+    }
+
+    #[test]
+    fn test_empty_title() {
+        let mut dt = DropdownTargets::new("");
+        dt.count = 3;
+        dt.update_title();
+        // Should not panic with empty title
+    }
+
+    // ===========================================
+    // Generation tests
+    // ===========================================
+
+    #[test]
+    fn test_get_generation() {
+        let dt = DropdownTargets::new("Targets");
+        assert_eq!(dt.get_generation(), 0);
+    }
+
+    #[test]
+    fn test_generation_increments_on_update() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "123".to_string(),
+                name: "a goblin".to_string(),
+            }],
+            current_target: "a goblin".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        assert_eq!(dt.get_generation(), 1);
+    }
+
+    // ===========================================
+    // Update from state tests
+    // ===========================================
+
+    #[test]
+    fn test_update_from_state_empty() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState::default();
+
+        // First update with empty state matches initial widget state, so no change
+        let changed = dt.update_from_state(&state);
+        assert!(!changed);
+        assert_eq!(dt.count, 0);
+    }
+
+    #[test]
+    fn test_update_from_state_with_creatures() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![
+                Creature {
+                    id: "1".to_string(),
+                    name: "a kobold".to_string(),
+                },
+                Creature {
+                    id: "2".to_string(),
+                    name: "a goblin".to_string(),
+                },
+            ],
+            current_target: "a kobold".to_string(),
+        };
+
+        let changed = dt.update_from_state(&state);
+        assert!(changed);
+        assert_eq!(dt.count, 2);
+        assert_eq!(dt.current_target, "a kobold");
+    }
+
+    #[test]
+    fn test_update_from_state_no_change() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            }],
+            current_target: "a kobold".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        let initial_gen = dt.get_generation();
+
+        // Same state again
+        let changed = dt.update_from_state(&state);
+        assert!(!changed);
+        assert_eq!(dt.get_generation(), initial_gen); // Generation unchanged
+    }
+
+    #[test]
+    fn test_update_from_state_current_target_change() {
+        let mut dt = DropdownTargets::new("Targets");
+        let creatures = vec![
+            Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            },
+            Creature {
+                id: "2".to_string(),
+                name: "a goblin".to_string(),
+            },
+        ];
+
+        let state1 = TargetListState {
+            creatures: creatures.clone(),
+            current_target: "a kobold".to_string(),
+        };
+        dt.update_from_state(&state1);
+
+        // Change current target
+        let state2 = TargetListState {
+            creatures,
+            current_target: "a goblin".to_string(),
+        };
+        let changed = dt.update_from_state(&state2);
+
+        assert!(changed);
+        assert_eq!(dt.current_target, "a goblin");
+    }
+
+    // ===========================================
+    // Clear tests
+    // ===========================================
+
+    #[test]
+    fn test_clear() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            }],
+            current_target: "a kobold".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        assert_eq!(dt.count, 1);
+
+        dt.clear();
+        assert_eq!(dt.count, 0);
+        assert!(dt.current_target.is_empty());
+    }
+
+    // ===========================================
+    // Scroll tests
+    // ===========================================
+
+    #[test]
+    fn test_scroll_up() {
+        let mut dt = DropdownTargets::new("Targets");
+        // Just verify it doesn't panic
+        dt.scroll_up(5);
+    }
+
+    #[test]
+    fn test_scroll_down() {
+        let mut dt = DropdownTargets::new("Targets");
+        // Just verify it doesn't panic
+        dt.scroll_down(5);
     }
 }

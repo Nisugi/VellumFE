@@ -5,8 +5,32 @@
 
 use std::collections::HashMap;
 
+use super::highlight_engine::SoundTrigger;
+
 /// How often to recalculate lag estimate (in seconds of game time)
 const LAG_CHECK_INTERVAL_SECS: i64 = 30;
+
+/// Queued sounds from highlight processing
+/// Pre-allocated with capacity for 5 sounds (typical is 2, but allows headroom)
+#[derive(Clone, Debug, Default)]
+pub struct SoundQueue {
+    sounds: Vec<QueuedSound>,
+}
+
+/// A sound that has been queued for playback
+#[derive(Clone, Debug)]
+pub struct QueuedSound {
+    pub file: String,
+    pub volume: Option<f32>,
+}
+
+impl SoundQueue {
+    pub fn new() -> Self {
+        Self {
+            sounds: Vec::with_capacity(5),
+        }
+    }
+}
 
 /// Game session state
 #[derive(Clone, Debug)]
@@ -69,6 +93,13 @@ pub struct GameState {
     /// Target list from dDBTarget dropdown (for direct-connect users)
     pub target_list: TargetListState,
 
+    /// Creatures currently in room (parsed from room objs component)
+    /// Primary source for dropdown_targets widget
+    pub room_creatures: Vec<Creature>,
+
+    /// Players currently in room (parsed from room players component)
+    pub room_players: Vec<Player>,
+
     /// Container cache for bag/container contents
     pub container_cache: ContainerCache,
 
@@ -82,6 +113,9 @@ pub struct GameState {
 
     /// Game time when we last calculated lag (for throttling)
     last_lag_check_time: i64,
+
+    /// Queued sounds from highlight processing
+    pub sound_queue: SoundQueue,
 }
 
 /// Player status information
@@ -110,12 +144,11 @@ pub struct Vitals {
 }
 
 /// Target list state from dDBTarget dropdown (for direct-connect users)
+/// Creature list is now in GameState.room_creatures (parsed from room objs)
 #[derive(Clone, Debug, Default)]
 pub struct TargetListState {
-    /// Currently selected target name
+    /// Currently selected target ID (e.g., "#146101714")
     pub current_target: String,
-    /// List of creatures in the room
-    pub creatures: Vec<Creature>,
 }
 
 /// A creature in the target list
@@ -123,8 +156,25 @@ pub struct TargetListState {
 pub struct Creature {
     /// Creature display name
     pub name: String,
+    /// Creature noun (short identifier, e.g., "hog" from "muddy hog")
+    pub noun: Option<String>,
     /// Creature ID (e.g., "#146101714")
     pub id: String,
+    /// Creature status (e.g., "stunned", "dead", "sitting")
+    pub status: Option<String>,
+}
+
+/// A player in the room (from room players component)
+#[derive(Clone, Debug)]
+pub struct Player {
+    /// Player display name
+    pub name: String,
+    /// Player ID from exist attribute (e.g., "-10154507")
+    pub id: String,
+    /// Primary status (prepended, e.g., "stunned" from "a stunned Player")
+    pub primary_status: Option<String>,
+    /// Secondary status (appended, e.g., "prone" from "Player (prone)")
+    pub secondary_status: Option<String>,
 }
 
 /// Container cache for inventory containers (bags, backpacks, etc.)
@@ -148,37 +198,9 @@ pub struct ContainerData {
 }
 
 impl TargetListState {
-    /// Update the target list with new data from dDBTarget dropdown.
-    /// Compares new list with existing, removing creatures that disappeared
-    /// and adding new ones.
-    pub fn update(&mut self, current_target: String, names: Vec<String>, ids: Vec<String>) {
-        let input_count = names.len();
-        self.current_target = current_target.clone();
-
-        // Build new creature list from paired names/ids
-        let mut new_creatures = Vec::new();
-        for (name, id) in names.into_iter().zip(ids.into_iter()) {
-            // Skip the "none" placeholder entry
-            if name.to_lowercase() == "none" || id.to_lowercase().contains("help") {
-                continue;
-            }
-            new_creatures.push(Creature { name, id });
-        }
-
-        tracing::debug!(
-            "TargetListState::update - current='{}', input={}, after_filter={}",
-            current_target,
-            input_count,
-            new_creatures.len()
-        );
-
-        self.creatures = new_creatures;
-    }
-
-    /// Clear the target list
+    /// Clear the current target
     pub fn clear(&mut self) {
         self.current_target.clear();
-        self.creatures.clear();
     }
 }
 
@@ -339,10 +361,13 @@ impl GameState {
             compass_dirs: Vec::new(),
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),
+            room_creatures: Vec::new(),
+            room_players: Vec::new(),
             container_cache: ContainerCache::default(),
             exp_components: ExpComponentState::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
+            sound_queue: SoundQueue::new(),
         }
     }
 
@@ -408,6 +433,20 @@ impl GameState {
     /// Get estimated lag in milliseconds, if available
     pub fn lag_ms(&self) -> Option<i64> {
         self.estimated_lag_ms
+    }
+
+    /// Queue a sound trigger from highlight processing
+    pub fn queue_sound(&mut self, trigger: SoundTrigger) {
+        self.sound_queue.sounds.push(QueuedSound {
+            file: trigger.file,
+            volume: trigger.volume,
+        });
+    }
+
+    /// Drain all queued sounds for playback
+    /// Returns the queued sounds and replaces the queue with a fresh pre-allocated vector
+    pub fn drain_sound_queue(&mut self) -> Vec<QueuedSound> {
+        std::mem::replace(&mut self.sound_queue.sounds, Vec::with_capacity(5))
     }
 }
 

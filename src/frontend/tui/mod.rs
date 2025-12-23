@@ -25,6 +25,7 @@ mod indicator;
 mod injury_doll;
 mod inventory_window;
 pub mod keybind_browser;
+mod list_widget;
 pub mod keybind_form;
 pub mod menu_actions;
 pub mod menu_builders;
@@ -37,6 +38,7 @@ mod room_window;
 mod room_window_ops;
 mod search;
 mod sync;
+mod sync_macros;
 mod scrollable_container;
 pub mod settings_editor;
 mod spacer;
@@ -46,7 +48,6 @@ mod spells_window;
 mod tabbed_text_window;
 mod title_position;
 mod targets;
-mod dropdown_targets;
 mod experience;
 mod text_window;
 mod container_window;
@@ -282,6 +283,16 @@ impl TuiFrontend {
                 tabbed_window.scroll_up(lines as usize);
             } else if lines < 0 {
                 tabbed_window.scroll_down((-lines) as usize);
+            }
+            return;
+        }
+
+        // Try container widget
+        if let Some(container_widget) = self.widget_manager.container_widgets.get_mut(window_name) {
+            if lines > 0 {
+                container_widget.scroll_up(lines as usize);
+            } else if lines < 0 {
+                container_widget.scroll_down((-lines) as usize);
             }
         }
     }

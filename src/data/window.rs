@@ -14,6 +14,8 @@ pub struct WindowState {
     pub visible: bool,
     pub focused: bool,
     pub content_align: Option<String>,
+    /// If true, this window is ephemeral (session-only, not saved to layout)
+    pub ephemeral: bool,
 }
 
 /// Types of widgets that can be displayed
@@ -32,10 +34,8 @@ pub enum WidgetType {
     InjuryDoll,
     Hand,
     ActiveEffects,
-    Targets,
-    DropdownTargets,
+    Targets,  // New component-based (default)
     Players,
-    Map,
     Spells,
     Spacer,
     Performance,
@@ -70,14 +70,12 @@ impl WidgetType {
             "dashboard" => Some(WidgetType::Dashboard),
             "hand" => Some(WidgetType::Hand),
             "active_effects" => Some(WidgetType::ActiveEffects),
-            "targets" => Some(WidgetType::Targets),
-            "dropdown_targets" | "dropdowntargets" => Some(WidgetType::DropdownTargets),
+            "targets" | "dropdown_targets" | "dropdowntargets" => Some(WidgetType::Targets),  // Component-based (default)
             "players" => Some(WidgetType::Players),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),
             "performance" => Some(WidgetType::Performance),
             "spacer" => Some(WidgetType::Spacer),
-            "map" => Some(WidgetType::Map),
             "container" => Some(WidgetType::Container),
             "experience" => Some(WidgetType::Experience),
             _ => None,
@@ -88,8 +86,8 @@ impl WidgetType {
     pub const VALID_TYPES: &'static [&'static str] = &[
         "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
         "indicator", "room", "inventory", "command_input", "dashboard", "hand",
-        "active_effects", "targets", "dropdown_targets", "players", "spells",
-        "perception", "performance", "spacer", "map", "container", "experience",
+        "active_effects", "targets", "players", "spells",
+        "perception", "performance", "spacer", "container", "experience",
     ];
 }
 
@@ -117,19 +115,12 @@ pub enum WindowContent {
     },
     Spells(TextContent), // Spells window - similar to Inventory but with link caching
     ActiveEffects(ActiveEffectsContent), // Active effects (buffs, debuffs, cooldowns, active spells)
-    Targets {
-        targets_text: String, // Raw text from game (XML formatted)
-        count: Option<String>, // Raw count string from targetcount stream (e.g., "[03]")
-        entity_id: String, // Stream id for counts (defaults to targetcount)
-    },
-    /// Dropdown-based target list (for direct-connect users)
-    /// Reads from GameState.target_list (no data stored here)
-    DropdownTargets,
-    Players {
-        players_text: String, // Raw text from game (XML formatted)
-        count: Option<String>, // Raw count string from playercount stream
-        entity_id: String, // Stream id for counts (defaults to playercount)
-    },
+    /// Component-based target list (room objs)
+    /// Reads from GameState.room_creatures
+    Targets,
+    /// Component-based players list (room players)
+    /// Reads from GameState.room_players
+    Players,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },
@@ -170,6 +161,7 @@ impl WindowState {
             visible: true,
             focused: false,
             content_align: None,
+            ephemeral: false,
         }
     }
 
@@ -192,6 +184,7 @@ impl WindowState {
             visible: true,
             focused: false,
             content_align: None,
+            ephemeral: false,
         }
     }
 }
@@ -281,7 +274,6 @@ mod tests {
             WidgetType::ActiveEffects,
             WidgetType::Targets,
             WidgetType::Players,
-            WidgetType::Map,
             WidgetType::Spells,
             WidgetType::Spacer,
             WidgetType::Performance,
@@ -475,32 +467,14 @@ mod tests {
 
     #[test]
     fn test_window_content_targets() {
-        let content = WindowContent::Targets {
-            targets_text: "<target>Orc</target>".to_string(),
-            count: None,
-            entity_id: "targetcount".to_string(),
-        };
-        match content {
-            WindowContent::Targets { targets_text, .. } => {
-                assert!(targets_text.contains("Orc"));
-            }
-            _ => panic!("Expected Targets content"),
-        }
+        let content = WindowContent::Targets;
+        assert!(matches!(content, WindowContent::Targets));
     }
 
     #[test]
     fn test_window_content_players() {
-        let content = WindowContent::Players {
-            players_text: "<player>Warrior</player>".to_string(),
-            count: None,
-            entity_id: "playercount".to_string(),
-        };
-        match content {
-            WindowContent::Players { players_text, .. } => {
-                assert!(players_text.contains("Warrior"));
-            }
-            _ => panic!("Expected Players content"),
-        }
+        let content = WindowContent::Players;
+        assert!(matches!(content, WindowContent::Players));
     }
 
     // ===========================================

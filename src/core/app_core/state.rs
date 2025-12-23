@@ -599,35 +599,8 @@ impl AppCore {
                         effects: Vec::new(),
                     })
                 }
-                WidgetType::Targets => {
-                    let entity_id = if let crate::config::WindowDef::Targets { data, .. } =
-                        window_def
-                    {
-                        data.entity_id.clone()
-                    } else {
-                        crate::config::default_target_entity_id()
-                    };
-                    WindowContent::Targets {
-                        targets_text: String::new(),
-                        count: None,
-                        entity_id,
-                    }
-                }
-                WidgetType::Players => {
-                    let entity_id = if let crate::config::WindowDef::Players { data, .. } =
-                        window_def
-                    {
-                        data.entity_id.clone()
-                    } else {
-                        crate::config::default_player_entity_id()
-                    };
-                    WindowContent::Players {
-                        players_text: String::new(),
-                        count: None,
-                        entity_id,
-                    }
-                }
-                WidgetType::DropdownTargets => WindowContent::DropdownTargets,
+                WidgetType::Targets => WindowContent::Targets,
+                WidgetType::Players => WindowContent::Players,
                 WidgetType::Container => {
                     // Get container_title from window def if available
                     let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
@@ -655,6 +628,7 @@ impl AppCore {
                 visible: true,
                 content_align: window_def.base().content_align.clone(),
                 focused: false,
+                ephemeral: false,
             };
 
             self.ui_state
@@ -861,17 +835,8 @@ impl AppCore {
                     effects: Vec::new(),
                 })
             }
-            WidgetType::Targets => WindowContent::Targets {
-                targets_text: String::new(),
-                count: None,
-                entity_id: crate::config::default_target_entity_id(),
-            },
-            WidgetType::Players => WindowContent::Players {
-                players_text: String::new(),
-                count: None,
-                entity_id: crate::config::default_player_entity_id(),
-            },
-            WidgetType::DropdownTargets => WindowContent::DropdownTargets,
+            WidgetType::Targets => WindowContent::Targets,
+            WidgetType::Players => WindowContent::Players,
             WidgetType::Container => {
                 // Get container_title from window def if available
                 let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
@@ -895,6 +860,7 @@ impl AppCore {
             visible: true,
             content_align: window_def.base().content_align.clone(),
             focused: false,
+            ephemeral: false,
         };
 
         self.ui_state
@@ -982,6 +948,12 @@ impl AppCore {
             }
             self.message_processor
                 .flush_current_stream_with_tts(&mut self.ui_state, Some(&mut self.tts_manager));
+
+            // Transfer pending sounds from MessageProcessor to GameState
+            for sound in self.message_processor.pending_sounds.drain(..) {
+                self.game_state.queue_sound(sound);
+            }
+
             return Ok(());
         }
 
@@ -1002,6 +974,11 @@ impl AppCore {
             // This ensures newlines from the game are preserved (like VellumFE does)
             self.message_processor
                 .flush_current_stream_with_tts(&mut self.ui_state, Some(&mut self.tts_manager));
+
+            // Transfer pending sounds from MessageProcessor to GameState
+            for sound in self.message_processor.pending_sounds.drain(..) {
+                self.game_state.queue_sound(sound);
+            }
         }
 
         Ok(())
@@ -1065,6 +1042,8 @@ impl AppCore {
             ".border".to_string(),
             ".editwindow".to_string(),
             ".editwin".to_string(),
+            ".hidewindow".to_string(),
+            ".hidewin".to_string(),
             // Highlight commands
             ".highlights".to_string(),
             ".hl".to_string(),
@@ -1099,6 +1078,8 @@ impl AppCore {
             ".spellcolors".to_string(),
             ".addspellcolor".to_string(),
             ".newspellcolor".to_string(),
+            ".setpalette".to_string(),
+            ".resetpalette".to_string(),
             // Theme commands
             ".themes".to_string(),
             ".settheme".to_string(),
@@ -1114,11 +1095,16 @@ impl AppCore {
             // Toggles
             ".toggleignores".to_string(),
             ".ignores".to_string(),
+            ".toggletransparency".to_string(),
+            ".transparency".to_string(),
             // Window locking
             ".lockwindows".to_string(),
             ".lockall".to_string(),
             ".unlockwindows".to_string(),
             ".unlockall".to_string(),
+            // Containers
+            ".containers".to_string(),
+            ".hidecontainers".to_string(),
             // Menu system
             ".menu".to_string(),
         ]
@@ -1580,6 +1566,108 @@ impl AppCore {
         self.hide_window(name);
     }
 
+    /// Create an ephemeral container window at screen center
+    pub fn create_ephemeral_container_window(
+        &mut self,
+        container_title: &str,
+        terminal_width: u16,
+        terminal_height: u16,
+    ) {
+        use crate::data::{WidgetType, WindowContent, WindowPosition, WindowState};
+
+        // Use simple lowercase name for internal tracking (e.g., "bandolier")
+        let window_name = container_title.replace(' ', "_").to_lowercase();
+
+        // Skip if already exists
+        if self.ui_state.windows.contains_key(&window_name) {
+            tracing::debug!(
+                "Container window '{}' already exists, skipping creation",
+                window_name
+            );
+            return;
+        }
+
+        // Center position with reasonable defaults
+        let (w, h) = (40u16, 15u16);
+        let x = terminal_width.saturating_sub(w) / 2;
+        let y = terminal_height.saturating_sub(h) / 2;
+
+        let window = WindowState {
+            name: window_name.clone(),
+            widget_type: WidgetType::Container,
+            content: WindowContent::Container {
+                container_title: container_title.to_string(),
+            },
+            position: WindowPosition {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+            visible: true,
+            focused: false,
+            content_align: None,
+            ephemeral: true,
+        };
+
+        self.ui_state.set_window(window_name.clone(), window);
+        self.ui_state.ephemeral_windows.insert(window_name);
+        self.add_system_message(&format!("Created container window: {}", container_title));
+        self.needs_render = true;
+
+        tracing::info!(
+            "Created ephemeral container window for '{}' at ({}, {})",
+            container_title,
+            x,
+            y
+        );
+    }
+
+    /// Close all ephemeral container windows
+    pub fn close_all_ephemeral_windows(&mut self) {
+        let names: Vec<_> = self.ui_state.ephemeral_windows.iter().cloned().collect();
+        let count = names.len();
+
+        for name in names {
+            self.ui_state.remove_window(&name);
+        }
+        self.ui_state.ephemeral_windows.clear();
+
+        if count > 0 {
+            self.add_system_message(&format!("Closed {} container window(s)", count));
+            self.needs_render = true;
+        } else {
+            self.add_system_message("No container windows to close");
+        }
+    }
+
+    /// Close ephemeral container window by title (case-insensitive partial match)
+    pub fn close_ephemeral_window_by_title(&mut self, title: &str) {
+        let title_lower = title.to_lowercase();
+
+        // Find matching ephemeral windows
+        let matches: Vec<_> = self
+            .ui_state
+            .ephemeral_windows
+            .iter()
+            .filter(|name| name.to_lowercase().contains(&title_lower))
+            .cloned()
+            .collect();
+
+        if matches.is_empty() {
+            self.add_system_message(&format!("No container window matching '{}'", title));
+            return;
+        }
+
+        for name in &matches {
+            self.ui_state.remove_window(name);
+            self.ui_state.ephemeral_windows.remove(name);
+        }
+
+        self.add_system_message(&format!("Closed {} container window(s)", matches.len()));
+        self.needs_render = true;
+    }
+
     /// Add a new window
     pub(super) fn add_window(
         &mut self,
@@ -1697,6 +1785,7 @@ impl AppCore {
             visible: true,
             content_align: None,
             focused: false,
+            ephemeral: false,
         };
 
         // Add to UI state
@@ -1873,6 +1962,31 @@ impl AppCore {
         } else {
             self.add_system_message(&format!("Window '{}' not found", window_name));
         }
+    }
+
+    /// Toggle transparent_background for all windows in the current layout.
+    pub(super) fn toggle_transparent_background_all(&mut self) {
+        if self.layout.windows.is_empty() {
+            self.add_system_message("No windows found in layout");
+            return;
+        }
+
+        let enable = self
+            .layout
+            .windows
+            .iter()
+            .any(|w| !w.base().transparent_background);
+
+        for window_def in &mut self.layout.windows {
+            window_def.base_mut().transparent_background = enable;
+        }
+
+        let status = if enable { "enabled" } else { "disabled" };
+        self.add_system_message(&format!(
+            "Background transparency {} for all windows",
+            status
+        ));
+        self.needs_render = true;
     }
 
     /// Handle terminal resize
@@ -2280,13 +2394,7 @@ impl AppCore {
                 self.menu_categories.insert(cat.clone(), items.clone());
 
                 // Add submenu entry to main menu
-                let cat_name = cat.split('_').nth(1).unwrap_or(cat).replace('-', " ");
-                let cat_name = cat_name
-                    .chars()
-                    .next()
-                    .map(|c| c.to_uppercase().to_string())
-                    .unwrap_or_default()
-                    + &cat_name[1..];
+                let cat_name = Self::format_category_label(cat);
                 menu_items.push(crate::data::ui_state::PopupMenuItem {
                     text: format!("{} >", cat_name),
                     command: format!("__SUBMENU__{}", cat),
@@ -2309,6 +2417,26 @@ impl AppCore {
             "Created context menu with {} items",
             self.ui_state.popup_menu.as_ref().unwrap().get_items().len()
         );
+    }
+
+    fn format_category_label(cat: &str) -> String {
+        let mut label = cat.split('_').nth(1).unwrap_or(cat).replace('-', " ");
+        if label.is_empty() {
+            label = cat.to_string();
+        }
+
+        if label.is_empty() {
+            return "Other".to_string();
+        }
+
+        let mut chars = label.chars();
+        let first = chars.next().unwrap();
+        let mut output = String::new();
+        for c in first.to_uppercase() {
+            output.push(c);
+        }
+        output.push_str(chars.as_str());
+        output
     }
 
     /// Format menu text by removing @ and # placeholders and substituting %
@@ -2482,6 +2610,13 @@ impl AppCore {
                 crate::config::Config::compile_highlight_patterns(&mut self.config.highlights);
                 self.message_processor.apply_config(self.config.clone());
                 self.add_system_message("Highlights reloaded");
+                match crate::spell_abbrevs::reload_spell_abbrevs() {
+                    Ok(()) => self.add_system_message("Spell abbreviations reloaded"),
+                    Err(e) => self.add_system_message(&format!(
+                        "Failed to reload spell abbreviations: {}",
+                        e
+                    )),
+                }
             }
             Err(e) => {
                 self.add_system_message(&format!("Failed to reload highlights: {}", e));
@@ -3044,42 +3179,6 @@ impl AppCore {
             .unwrap_or_else(|| name.to_string())
     }
 
-    /// Check if text matches any highlight patterns with sounds and play them
-    pub fn check_sound_triggers(&self, text: &str) {
-        // Check if sounds are globally enabled
-        if !self.config.highlight_settings.sounds_enabled {
-            return;
-        }
-
-        if let Some(ref sound_player) = self.sound_player {
-            for pattern in self.config.highlights.values() {
-                // Skip if no sound configured for this pattern
-                if pattern.sound.is_none() {
-                    continue;
-                }
-
-                let matches = if pattern.fast_parse {
-                    // Fast parse: check if any of the pipe-separated patterns are in the text
-                    pattern.pattern.split('|').any(|p| text.contains(p.trim()))
-                } else if let Some(ref regex) = pattern.compiled_regex {
-                    regex.is_match(text)
-                } else {
-                    false
-                };
-
-                if matches {
-                    if let Some(ref sound_file) = pattern.sound {
-                        // Play the sound
-                        if let Err(e) =
-                            sound_player.play_from_sounds_dir(sound_file, pattern.sound_volume)
-                        {
-                            tracing::warn!("Failed to play sound '{}': {}", sound_file, e);
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -3197,6 +3296,21 @@ mod tests {
 
         let name = AppCore::generate_spacer_name(&layout);
         assert_eq!(name, "spacer_4");
+    }
+
+    #[test]
+    fn test_format_category_label_standard() {
+        assert_eq!(AppCore::format_category_label("cat_tools"), "Tools");
+    }
+
+    #[test]
+    fn test_format_category_label_single_char() {
+        assert_eq!(AppCore::format_category_label("x"), "X");
+    }
+
+    #[test]
+    fn test_format_category_label_empty() {
+        assert_eq!(AppCore::format_category_label(""), "Other");
     }
 
     #[test]

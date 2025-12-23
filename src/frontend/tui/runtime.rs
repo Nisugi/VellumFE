@@ -36,11 +36,19 @@ async fn async_run(
     let host = config.connection.host.clone();
     let port = config.connection.port;
 
+    // Set global color mode BEFORE creating frontend or any widgets
+    // This ensures ALL color parsing respects the mode from config
+    let raw_logger = match crate::network::RawLogger::new(&config) {
+        Ok(logger) => logger,
+        Err(e) => {
+            tracing::error!("Failed to initialize raw logger: {}", e);
+            None
+        }
+    };
+
     // Create core application state
     let mut app_core = AppCore::new(config)?;
 
-    // Set global color mode BEFORE creating frontend or any widgets
-    // This ensures ALL color parsing respects the mode from config
     super::colors::set_global_color_mode(app_core.config.ui.color_mode);
 
     // Initialize palette lookup for Slot mode
@@ -81,7 +89,7 @@ async fn async_run(
     // Spawn network connection task
     let network_handle = match direct {
         Some(cfg) => tokio::spawn(async move {
-            if let Err(e) = DirectConnection::start(cfg, server_tx, command_rx).await {
+            if let Err(e) = DirectConnection::start(cfg, server_tx, command_rx, raw_logger).await {
                 tracing::error!(error = ?e, "Network connection error");
             }
         }),
@@ -89,7 +97,7 @@ async fn async_run(
             let host_clone = host.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    LichConnection::start(&host_clone, port, server_tx, command_rx).await
+                    LichConnection::start(&host_clone, port, server_tx, command_rx, raw_logger).await
                 {
                     tracing::error!(error = ?e, "Network connection error");
                 }
@@ -163,8 +171,32 @@ async fn async_run(
                     }
                     let parse_duration = parse_start.elapsed();
                     app_core.perf_stats.record_parse(parse_duration);
-                    // Check for highlight sound triggers
-                    app_core.check_sound_triggers(&line);
+
+                    // Play queued sounds from highlight processing
+                    for sound in app_core.game_state.drain_sound_queue() {
+                        if let Some(ref player) = app_core.sound_player {
+                            if let Err(e) = player.play_from_sounds_dir(&sound.file, sound.volume) {
+                                tracing::warn!("Failed to play sound '{}': {}", sound.file, e);
+                            }
+                        }
+                    }
+
+                    // Container discovery: auto-create window for new containers
+                    if app_core.ui_state.container_discovery_mode {
+                        if let Some((_, title)) =
+                            app_core.message_processor.newly_registered_container.take()
+                        {
+                            let (term_width, term_height) = frontend.size();
+                            app_core.create_ephemeral_container_window(
+                                &title,
+                                term_width,
+                                term_height,
+                            );
+                        }
+                    } else {
+                        // Clear any pending signal if discovery mode is off
+                        app_core.message_processor.newly_registered_container = None;
+                    }
                 }
                 ServerMessage::Connected => {
                     tracing::info!("Connected to game server");
