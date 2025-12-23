@@ -84,19 +84,7 @@ impl TabbedTextWindow {
         }
     }
 
-    /// Apply highlights to all tabs
-    pub fn set_highlights(&mut self, highlights: &[crate::config::HighlightPattern]) {
-        for tab in self.tabs.iter_mut() {
-            tab.window.set_highlights(highlights.to_vec());
-        }
-    }
-
-    /// Set whether text replacement is enabled for highlights in all tabs
-    pub fn set_replace_enabled(&mut self, enabled: bool) {
-        for tab in self.tabs.iter_mut() {
-            tab.window.set_replace_enabled(enabled);
-        }
-    }
+    // Note: set_highlights and set_replace_enabled removed - highlights now applied in core
 
     pub fn with_tabs(
         title: &str,

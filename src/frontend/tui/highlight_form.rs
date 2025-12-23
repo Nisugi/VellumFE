@@ -16,7 +16,7 @@ use tui_textarea::TextArea;
 
 // Keep popup geometry in one place so dragging + rendering stay in sync
 const POPUP_WIDTH: u16 = 70;
-const POPUP_HEIGHT: u16 = 20;
+const POPUP_HEIGHT: u16 = 21;
 
 /// Form mode - Create new or Edit existing
 #[derive(Debug, Clone, PartialEq)]
@@ -56,9 +56,10 @@ pub struct HighlightFormWidget {
     color_entire_line: bool,
     fast_parse: bool,
     squelch: bool,
+    silent_prompt: bool,
 
     // Form state
-    focused_field: usize, // 0-13: text fields + checkboxes + dropdown
+    focused_field: usize, // 0-14: text fields + checkboxes + dropdown
     status_message: String,
     pattern_error: Option<String>,
     mode: FormMode,
@@ -162,6 +163,7 @@ impl HighlightFormWidget {
             color_entire_line: false,
             fast_parse: false,
             squelch: false,
+            silent_prompt: false,
             focused_field: 0,
             status_message: "Ready".to_string(),
             pattern_error: None,
@@ -228,6 +230,7 @@ impl HighlightFormWidget {
         form.color_entire_line = pattern.color_entire_line;
         form.fast_parse = pattern.fast_parse;
         form.squelch = pattern.squelch;
+        form.silent_prompt = pattern.silent_prompt;
 
         // Load redirect settings
         if let Some(ref redirect_stream) = pattern.redirect_to {
@@ -256,13 +259,13 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 14; // 0-13
+        self.focused_field = (self.focused_field + 1) % 15; // 0-14
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            13
+            14
         } else {
             self.focused_field - 1
         };
@@ -407,6 +410,7 @@ impl HighlightFormWidget {
                     11 => self.color_entire_line = !self.color_entire_line,
                     12 => self.fast_parse = !self.fast_parse,
                     13 => self.squelch = !self.squelch,
+                    14 => self.silent_prompt = !self.silent_prompt,
                     _ => {}
                 }
                 None
@@ -542,12 +546,14 @@ impl HighlightFormWidget {
             color_entire_line: self.color_entire_line,
             fast_parse: self.fast_parse,
             squelch: self.squelch,
+            silent_prompt: self.silent_prompt,
             sound,
             sound_volume,
             redirect_to,
             redirect_mode,
             replace,
             stream: None, // TODO: Add UI for stream filtering
+            window: None, // TODO: Add UI for window filtering
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -1036,6 +1042,45 @@ impl HighlightFormWidget {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
                 .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 13 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        current_y += 1;
+
+        // Field 14: Silent Prompt checkbox
+        buf[(x + 2, current_y)]
+            .set_char('[')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(x + 3, current_y)]
+            .set_char(if self.silent_prompt { '✓' } else { ' ' })
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(x + 4, current_y)]
+            .set_char(']')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        let silent_label = " Silent Prompt (suppress prompt)";
+        for (i, ch) in silent_label.chars().enumerate() {
+            buf[(x + 5 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
                 theme.form_label_focused
             } else {
                 theme.form_label

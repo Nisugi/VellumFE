@@ -463,14 +463,16 @@ impl AppCore {
                 WidgetType::TabbedText => {
                     // Extract tab definitions and buffer size from window def
                     if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
-                        let tabs: Vec<(String, Vec<String>, bool, bool)> = data
+                        let global_ts_pos = self.config.ui.timestamp_position;
+                        let tabs: Vec<(String, Vec<String>, bool, bool, crate::config::TimestampPosition)> = data
                             .tabs
                             .iter()
                             .map(|tab| {
                                 // show_timestamps defaults to false if not explicitly set per-tab
                                 let show_ts = tab.show_timestamps.unwrap_or(false);
                                 let ignore = tab.ignore_activity.unwrap_or(false);
-                                (tab.name.clone(), tab.get_streams(), show_ts, ignore)
+                                let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
+                                (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
                             })
                             .collect();
                         WindowContent::TabbedText(crate::data::TabbedTextContent::new(
@@ -485,6 +487,7 @@ impl AppCore {
                                 vec!["main".to_string()],
                                 false, // show_timestamps defaults to false
                                 false,
+                                crate::config::TimestampPosition::End,
                             )],
                             1000,
                         ))
@@ -728,14 +731,16 @@ impl AppCore {
             WidgetType::TabbedText => {
                 // Extract tab definitions and buffer size from window def
                 if let crate::config::WindowDef::TabbedText { data, .. } = window_def {
-                    let tabs: Vec<(String, Vec<String>, bool, bool)> = data
+                    let global_ts_pos = self.config.ui.timestamp_position;
+                    let tabs: Vec<(String, Vec<String>, bool, bool, crate::config::TimestampPosition)> = data
                         .tabs
                         .iter()
                         .map(|tab| {
                             // show_timestamps defaults to false if not explicitly set per-tab
                             let show_ts = tab.show_timestamps.unwrap_or(false);
                             let ignore = tab.ignore_activity.unwrap_or(false);
-                            (tab.name.clone(), tab.get_streams(), show_ts, ignore)
+                            let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
+                            (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
                         })
                         .collect();
                     WindowContent::TabbedText(crate::data::TabbedTextContent::new(
@@ -750,6 +755,7 @@ impl AppCore {
                             vec!["main".to_string()],
                             false, // show_timestamps defaults to false
                             false,
+                            crate::config::TimestampPosition::End,
                         )],
                         5000,
                     ))
@@ -1728,6 +1734,7 @@ impl AppCore {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             },
             "room" => WindowDef::Room {
@@ -1754,6 +1761,7 @@ impl AppCore {
                         buffer_size: 1000,
                         wordwrap: true,
                         show_timestamps: false,
+                        timestamp_position: None,
                     },
                 }
             }
@@ -3223,6 +3231,7 @@ mod tests {
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
         let spacer1 = WindowDef::Spacer {

@@ -4,8 +4,8 @@
 //! logic in a way that mirrors Profanity/Vellum's behavior.
 
 use crate::frontend::tui::{crossterm_bridge, title_position::{self, TitlePosition}};
-use crate::config::HighlightPattern;
 use crate::data::{LinkData, SpanType};  // Use types from data module
+use crate::config::TimestampPosition;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -84,8 +84,6 @@ pub struct TextWindow {
     content_align: Option<String>,
     // Search functionality
     search_state: Option<SearchState>,
-    // Highlight engine for pattern matching and styling
-    highlight_engine: super::highlight_utils::HighlightEngine,
     // Link toggling
     links_enabled: bool,
     // Recent links cache for click detection
@@ -93,6 +91,7 @@ pub struct TextWindow {
     max_recent_links: usize,
     // Timestamp configuration
     show_timestamps: bool,
+    timestamp_position: TimestampPosition,
     // Stream name for current line being built (for stream-filtered highlights)
     current_line_stream: String,
 }
@@ -122,12 +121,11 @@ impl Clone for TextWindow {
             content_align: self.content_align.clone(),
             // Skip search_state (contains Regex which doesn't implement Clone)
             search_state: None,
-            // Create empty highlight engine (regexes/matchers don't clone)
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
             links_enabled: self.links_enabled,
             recent_links: self.recent_links.clone(),
             max_recent_links: self.max_recent_links,
             show_timestamps: self.show_timestamps,
+            timestamp_position: self.timestamp_position,
             current_line_stream: self.current_line_stream.clone(),
         }
     }
@@ -157,23 +155,13 @@ impl TextWindow {
             scroll_position: None,         // Start in live view mode
             last_visible_height: 20,       // Reasonable default
             search_state: None,            // No active search
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()), // Empty engine by default
             recent_links: VecDeque::new(), // No recent links yet
             max_recent_links: 100,         // Keep last 100 links
             show_timestamps: false,        // Timestamps off by default
+            timestamp_position: TimestampPosition::End, // Default to end of line
             links_enabled: true,           // Links enabled by default
             current_line_stream: String::new(), // No stream set yet
         }
-    }
-
-    pub fn set_highlights(&mut self, highlights: Vec<HighlightPattern>) {
-        // Update highlight engine only if patterns changed (avoids recompiling regex every frame)
-        self.highlight_engine.update_if_changed(highlights);
-    }
-
-    /// Set whether text replacement is enabled for highlights
-    pub fn set_replace_enabled(&mut self, enabled: bool) {
-        self.highlight_engine.set_replace_enabled(enabled);
     }
 
     pub fn with_border_config(
@@ -241,6 +229,10 @@ impl TextWindow {
         self.show_timestamps = show;
     }
 
+    pub fn set_timestamp_position(&mut self, position: TimestampPosition) {
+        self.timestamp_position = position;
+    }
+
     pub fn toggle_links(&mut self) {
         self.links_enabled = !self.links_enabled;
     }
@@ -254,10 +246,18 @@ impl TextWindow {
     }
 
     /// Format current time as timestamp (e.g., "[7:08 AM]")
-    fn format_timestamp() -> String {
+    /// Format timestamp for end of line (leading space)
+    fn format_timestamp_end() -> String {
         use chrono::Local;
         let now = Local::now();
         format!(" [{}]", now.format("%l:%M %p").to_string().trim())
+    }
+
+    /// Format timestamp for start of line (trailing space)
+    fn format_timestamp_start() -> String {
+        use chrono::Local;
+        let now = Local::now();
+        format!("[{}] ", now.format("%l:%M %p").to_string().trim())
     }
 
     /// Set the stream name for the current line being built
@@ -320,16 +320,23 @@ impl TextWindow {
         // Note: Blank line filtering is now handled in MessageProcessor
         // (flush_current_stream_with_tts) which knows about chunk context.
         // TextWindow just displays what it's given, including blank lines.
-
-        // Apply highlights before storing/wrapping
-        self.apply_highlights();
+        // Note: Highlights are now applied in core (MessageProcessor) before text reaches widgets.
 
         // Add timestamp if enabled (before storing/wrapping)
         if self.show_timestamps {
-            let timestamp = Self::format_timestamp();
             let timestamp_style = Style::default().fg(Color::DarkGray);
-            self.current_line_spans
-                .push((timestamp, timestamp_style, SpanType::Normal, None));
+            match self.timestamp_position {
+                TimestampPosition::Start => {
+                    let timestamp = Self::format_timestamp_start();
+                    self.current_line_spans
+                        .insert(0, (timestamp, timestamp_style, SpanType::Normal, None));
+                }
+                TimestampPosition::End => {
+                    let timestamp = Self::format_timestamp_end();
+                    self.current_line_spans
+                        .push((timestamp, timestamp_style, SpanType::Normal, None));
+                }
+            }
         }
 
         // Wrap this logical line first to get the count
@@ -383,17 +390,6 @@ impl TextWindow {
         }
 
         self.current_line_spans.clear();
-    }
-
-    /// Apply highlight patterns to current line spans with proper priority layering
-    fn apply_highlights(&mut self) {
-        // Delegate to the shared highlight engine
-        if let Some(highlighted) = self.highlight_engine.apply_highlights(
-            &self.current_line_spans,
-            &self.current_line_stream,
-        ) {
-            self.current_line_spans = highlighted;
-        }
     }
 
     // Wrap a series of styled spans into multiple display lines

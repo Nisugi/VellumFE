@@ -833,7 +833,7 @@ impl TuiFrontend {
                                 app_core
                                     .message_processor
                                     .apply_config(app_core.config.clone());
-                                self.refresh_highlights(&app_core.config);
+                                // Highlights now updated in core via apply_config()
                             }
                             self.highlight_browser = None;
                             app_core.ui_state.input_mode = InputMode::Normal;
@@ -877,7 +877,7 @@ impl TuiFrontend {
                                     app_core
                                         .message_processor
                                         .apply_config(app_core.config.clone());
-                                    self.refresh_highlights(&app_core.config);
+                                    // Highlights now updated in core via apply_config()
                                 }
                             }
                         }
@@ -1232,8 +1232,7 @@ impl TuiFrontend {
                                         .message_processor
                                         .apply_config(app_core.config.clone());
                                 }
-                                // Apply updated highlights to all text windows
-                                self.refresh_highlights(&app_core.config);
+                                // Highlights now updated in core via apply_config()
                                 tracing::info!("Saved highlight: {}", name);
                                 self.highlight_form = None;
                                 app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
@@ -1323,8 +1322,7 @@ impl TuiFrontend {
                                         .message_processor
                                         .apply_config(app_core.config.clone());
                                 }
-                                // Apply updated highlights to all text windows
-                                self.refresh_highlights(&app_core.config);
+                                // Highlights now updated in core via apply_config()
                                 tracing::info!("Saved highlight: {}", name);
                                 self.highlight_form = None;
                                 app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
@@ -1367,7 +1365,7 @@ impl TuiFrontend {
                                         app_core
                                             .message_processor
                                             .apply_config(app_core.config.clone());
-                                        self.refresh_highlights(&app_core.config);
+                                        // Highlights now updated in core via apply_config()
                                         tracing::info!("Saved highlight: {}", name);
                                         self.highlight_form = None;
                                         app_core.ui_state.input_mode = if self.highlight_browser.is_some() {

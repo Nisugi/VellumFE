@@ -39,6 +39,8 @@ pub struct HighlightPattern {
     pub category: Option<String>, // Category for grouping highlights (e.g., "Combat", "Healing", "Death")
     #[serde(default, skip_serializing_if = "is_false")]
     pub squelch: bool, // If true, completely hide lines matching this pattern (ignore/filter)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub silent_prompt: bool, // If true, lines matching don't trigger prompt display (prompt suppressed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_to: Option<String>, // Window name to redirect matching lines to
     #[serde(default)]
@@ -47,6 +49,8 @@ pub struct HighlightPattern {
     pub replace: Option<String>, // If set, replace matched text with this string (supports $1, $2 capture groups)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<String>, // If set, only apply this highlight to lines from this stream (e.g., "death", "thoughts")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>, // If set with replace, only apply replacement in this window (colors apply everywhere)
 
     // Performance optimization: cache compiled regex (not serialized)
     #[serde(skip)]
@@ -303,10 +307,12 @@ mod tests {
             sound_volume: None,
             category: None,
             squelch: false,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -329,10 +335,12 @@ mod tests {
             sound_volume: Some(0.8),
             category: Some("Combat".to_string()),
             squelch: false,
+            silent_prompt: false,
             redirect_to: Some("combat".to_string()),
             redirect_mode: RedirectMode::RedirectCopy,
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -358,10 +366,12 @@ mod tests {
             sound_volume: None,
             category: Some("Ignore".to_string()),
             squelch: true,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -381,10 +391,12 @@ mod tests {
             sound_volume: None,
             category: None,
             squelch: false,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -404,10 +416,12 @@ mod tests {
             sound_volume: None,
             category: Some("Test".to_string()),
             squelch: false,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -566,10 +580,12 @@ mod tests {
             sound_volume: None,
             category: None,
             squelch: false,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 
@@ -610,10 +626,12 @@ mod tests {
             sound_volume: None,
             category: None,
             squelch: false,
+            silent_prompt: false,
             redirect_to: Some("combat".to_string()),
             redirect_mode: RedirectMode::RedirectCopy,
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
         let toml_str = toml::to_string(&pattern).unwrap();
@@ -661,10 +679,12 @@ mod tests {
             sound_volume: None,
             category: None,
             squelch: false,
+            silent_prompt: false,
             redirect_to: None,
             redirect_mode: RedirectMode::default(),
             replace: None,
             stream: None,
+            window: None,
             compiled_regex: None,
         };
 

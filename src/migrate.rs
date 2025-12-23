@@ -80,7 +80,7 @@ pub fn run_migration(options: &MigrateOptions) -> Result<MigrationResult> {
 }
 
 /// Result of a migration run
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct MigrationResult {
     pub succeeded: usize,
     pub failed: usize,
@@ -90,6 +90,7 @@ pub struct MigrationResult {
 }
 
 /// Info about a migrated file
+#[derive(Debug)]
 pub struct MigratedFile {
     pub source: PathBuf,
     pub destination: PathBuf,
@@ -353,6 +354,7 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                             streams,
                             show_timestamps,
                             ignore_activity,
+                            timestamp_position: None,
                         })
                     })
                     .collect();
@@ -363,6 +365,7 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                     streams: v,
                     show_timestamps: None,
                     ignore_activity: None,
+                    timestamp_position: None,
                 }];
             }
         }
@@ -719,5 +722,583 @@ impl BaseMut for WindowDef {
             WindowDef::Perception { base, .. } => Some(base),
             WindowDef::Experience { base, .. } => Some(base),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ===========================================
+    // infer_size_from_filename tests
+    // ===========================================
+
+    #[test]
+    fn test_infer_size_from_filename_valid() {
+        let path = Path::new("/some/path/layout_120x40.toml");
+        let result = infer_size_from_filename(path);
+        assert_eq!(result, Some((120, 40)));
+    }
+
+    #[test]
+    fn test_infer_size_from_filename_different_dimensions() {
+        let path = Path::new("my_custom_layout_200x50.toml");
+        let result = infer_size_from_filename(path);
+        assert_eq!(result, Some((200, 50)));
+    }
+
+    #[test]
+    fn test_infer_size_from_filename_no_dimensions() {
+        let path = Path::new("/layouts/custom.toml");
+        let result = infer_size_from_filename(path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_infer_size_from_filename_partial_pattern() {
+        let path = Path::new("layout_120.toml");
+        let result = infer_size_from_filename(path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_infer_size_from_filename_invalid_numbers() {
+        // Very large numbers that can't fit in u16
+        let path = Path::new("layout_999999x999999.toml");
+        let result = infer_size_from_filename(path);
+        assert!(result.is_none());
+    }
+
+    // ===========================================
+    // is_current_layout tests
+    // ===========================================
+
+    #[test]
+    fn test_is_current_layout_with_windows_array() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.toml");
+        let content = r#"
+[[windows]]
+name = "main"
+
+[windows.base]
+row = 0
+col = 0
+"#;
+        std::fs::write(&path, content).unwrap();
+        assert!(is_current_layout(&path));
+    }
+
+    #[test]
+    fn test_is_current_layout_with_data_section() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.toml");
+        let content = r#"
+[[windows]]
+name = "main"
+
+[windows.data]
+streams = ["main"]
+"#;
+        std::fs::write(&path, content).unwrap();
+        assert!(is_current_layout(&path));
+    }
+
+    #[test]
+    fn test_is_current_layout_old_format() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.toml");
+        let content = r#"
+[[windows]]
+widget_type = "text"
+name = "main"
+row = 0
+col = 0
+"#;
+        std::fs::write(&path, content).unwrap();
+        // Old format doesn't have [windows.base] or [windows.data]
+        assert!(!is_current_layout(&path));
+    }
+
+    #[test]
+    fn test_is_current_layout_nonexistent_file() {
+        let path = Path::new("/nonexistent/file.toml");
+        assert!(!is_current_layout(path));
+    }
+
+    // ===========================================
+    // parse_border_sides tests
+    // ===========================================
+
+    #[test]
+    fn test_parse_border_sides_all() {
+        let arr = vec![
+            Value::String("top".to_string()),
+            Value::String("bottom".to_string()),
+            Value::String("left".to_string()),
+            Value::String("right".to_string()),
+        ];
+        let result = parse_border_sides(&arr);
+        assert!(result.top);
+        assert!(result.bottom);
+        assert!(result.left);
+        assert!(result.right);
+    }
+
+    #[test]
+    fn test_parse_border_sides_partial() {
+        let arr = vec![
+            Value::String("top".to_string()),
+            Value::String("left".to_string()),
+        ];
+        let result = parse_border_sides(&arr);
+        assert!(result.top);
+        assert!(!result.bottom);
+        assert!(result.left);
+        assert!(!result.right);
+    }
+
+    #[test]
+    fn test_parse_border_sides_empty() {
+        let arr: Vec<Value> = vec![];
+        let result = parse_border_sides(&arr);
+        assert!(!result.top);
+        assert!(!result.bottom);
+        assert!(!result.left);
+        assert!(!result.right);
+    }
+
+    #[test]
+    fn test_parse_border_sides_case_insensitive() {
+        let arr = vec![
+            Value::String("TOP".to_string()),
+            Value::String("Bottom".to_string()),
+        ];
+        let result = parse_border_sides(&arr);
+        assert!(result.top);
+        assert!(result.bottom);
+    }
+
+    #[test]
+    fn test_parse_border_sides_invalid_values() {
+        let arr = vec![
+            Value::String("invalid".to_string()),
+            Value::Integer(123),
+        ];
+        let result = parse_border_sides(&arr);
+        assert!(!result.top);
+        assert!(!result.bottom);
+        assert!(!result.left);
+        assert!(!result.right);
+    }
+
+    // ===========================================
+    // get_* helper function tests
+    // ===========================================
+
+    #[test]
+    fn test_get_str_present() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::String("value".to_string()));
+        let result = get_str(&table, "key").unwrap();
+        assert_eq!(result, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_get_str_missing() {
+        let table = toml::value::Table::new();
+        let result = get_str(&table, "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_str_wrong_type() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Integer(123));
+        let result = get_str(&table, "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_bool_true() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Boolean(true));
+        let result = get_bool(&table, "key").unwrap();
+        assert_eq!(result, Some(true));
+    }
+
+    #[test]
+    fn test_get_bool_false() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Boolean(false));
+        let result = get_bool(&table, "key").unwrap();
+        assert_eq!(result, Some(false));
+    }
+
+    #[test]
+    fn test_get_u16_valid() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Integer(42));
+        let result = get_u16(&table, "key").unwrap();
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn test_get_u16_overflow() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Integer(100000)); // > u16::MAX
+        let result = get_u16(&table, "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_u16_negative() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Integer(-5));
+        let result = get_u16(&table, "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_usize_valid() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Integer(1000));
+        let result = get_usize(&table, "key").unwrap();
+        assert_eq!(result, Some(1000));
+    }
+
+    #[test]
+    fn test_get_vec_str_valid() {
+        let mut table = toml::value::Table::new();
+        table.insert(
+            "key".to_string(),
+            Value::Array(vec![
+                Value::String("a".to_string()),
+                Value::String("b".to_string()),
+            ]),
+        );
+        let result = get_vec_str(&table, "key").unwrap();
+        assert_eq!(result, Some(vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn test_get_vec_str_empty() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::Array(vec![]));
+        let result = get_vec_str(&table, "key").unwrap();
+        assert_eq!(result, Some(vec![]));
+    }
+
+    #[test]
+    fn test_get_vec_str_mixed_types() {
+        let mut table = toml::value::Table::new();
+        table.insert(
+            "key".to_string(),
+            Value::Array(vec![
+                Value::String("valid".to_string()),
+                Value::Integer(123), // Will be filtered out
+            ]),
+        );
+        let result = get_vec_str(&table, "key").unwrap();
+        assert_eq!(result, Some(vec!["valid".to_string()]));
+    }
+
+    #[test]
+    fn test_get_char_valid() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::String("★".to_string()));
+        let result = get_char(&table, "key").unwrap();
+        assert_eq!(result, Some('★'));
+    }
+
+    #[test]
+    fn test_get_char_multi_char_takes_first() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::String("abc".to_string()));
+        let result = get_char(&table, "key").unwrap();
+        assert_eq!(result, Some('a'));
+    }
+
+    #[test]
+    fn test_get_char_empty_string() {
+        let mut table = toml::value::Table::new();
+        table.insert("key".to_string(), Value::String("".to_string()));
+        let result = get_char(&table, "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    // ===========================================
+    // map_widget_type tests
+    // ===========================================
+
+    #[test]
+    fn test_map_widget_type_text() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("text", "main", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "main");
+    }
+
+    #[test]
+    fn test_map_widget_type_compass() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("compass", "compass", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "compass");
+    }
+
+    #[test]
+    fn test_map_widget_type_hand_left() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("hand", "left_hand", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "left");
+    }
+
+    #[test]
+    fn test_map_widget_type_hand_right() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("hand", "right_hand", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "right");
+    }
+
+    #[test]
+    fn test_map_widget_type_hand_spell() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("hand", "spell", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "spell");
+    }
+
+    #[test]
+    fn test_map_widget_type_hand_default() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("hand", "some_hand", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "left"); // Default
+    }
+
+    #[test]
+    fn test_map_widget_type_lefthand_direct() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("lefthand", "lefthand", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "left");
+    }
+
+    #[test]
+    fn test_map_widget_type_righthand_direct() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("righthand", "righthand", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "right");
+    }
+
+    #[test]
+    fn test_map_widget_type_hands_skipped() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("hands", "hands", &table).unwrap();
+        assert!(result.skip);
+    }
+
+    #[test]
+    fn test_map_widget_type_entity_targets() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("entity", "targets", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "targets");
+    }
+
+    #[test]
+    fn test_map_widget_type_entity_players() {
+        let mut table = toml::value::Table::new();
+        table.insert(
+            "streams".to_string(),
+            Value::Array(vec![Value::String("players".to_string())]),
+        );
+        let result = map_widget_type("entity", "entity", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "players");
+    }
+
+    #[test]
+    fn test_map_widget_type_injury_doll() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("injury_doll", "injuries", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "injuries");
+    }
+
+    #[test]
+    fn test_map_widget_type_canonical_mindstate() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("progress", "mindstate", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "mindState");
+    }
+
+    #[test]
+    fn test_map_widget_type_canonical_stance() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("progress", "stance", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "pbarStance");
+    }
+
+    #[test]
+    fn test_map_widget_type_spacer() {
+        let table = toml::value::Table::new();
+        let result = map_widget_type("spacer", "spacer", &table).unwrap();
+        assert!(!result.skip);
+        assert_eq!(result.template_name, "spacer");
+    }
+
+    // ===========================================
+    // MigrationResult tests
+    // ===========================================
+
+    #[test]
+    fn test_migration_result_default() {
+        let result = MigrationResult::default();
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
+        assert!(result.files.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    // ===========================================
+    // run_migration tests
+    // ===========================================
+
+    #[test]
+    fn test_run_migration_nonexistent_source() {
+        let options = MigrateOptions {
+            src: PathBuf::from("/nonexistent/source/dir"),
+            out: PathBuf::from("/tmp/out"),
+            dry_run: true,
+            verbose: false,
+        };
+        let result = run_migration(&options);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_run_migration_source_is_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("file.toml");
+        std::fs::write(&file_path, "test").unwrap();
+
+        let options = MigrateOptions {
+            src: file_path,
+            out: dir.path().join("out"),
+            dry_run: true,
+            verbose: false,
+        };
+        let result = run_migration(&options);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a directory"));
+    }
+
+    #[test]
+    fn test_run_migration_empty_directory() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        let out = dir.path().join("out");
+        std::fs::create_dir(&src).unwrap();
+
+        let options = MigrateOptions {
+            src,
+            out,
+            dry_run: true,
+            verbose: false,
+        };
+        let result = run_migration(&options).unwrap();
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
+    }
+
+    #[test]
+    fn test_run_migration_skips_non_toml_files() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+
+        // Create a non-toml file
+        std::fs::write(src.join("readme.md"), "# Readme").unwrap();
+
+        let options = MigrateOptions {
+            src,
+            out: dir.path().join("out"),
+            dry_run: true,
+            verbose: false,
+        };
+        let result = run_migration(&options).unwrap();
+        assert_eq!(result.succeeded, 0);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
+    }
+
+    #[test]
+    fn test_run_migration_skips_current_format() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+
+        // Create a current format layout
+        let content = r#"
+[[windows]]
+name = "main"
+
+[windows.base]
+row = 0
+"#;
+        std::fs::write(src.join("layout.toml"), content).unwrap();
+
+        let options = MigrateOptions {
+            src,
+            out: dir.path().join("out"),
+            dry_run: true,
+            verbose: false,
+        };
+        let result = run_migration(&options).unwrap();
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.succeeded, 0);
+    }
+
+    #[test]
+    fn test_run_migration_dry_run_no_output() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        let out = dir.path().join("out");
+        std::fs::create_dir(&src).unwrap();
+
+        // Create an old format layout (simplified - may fail to convert but won't create output)
+        let content = r#"
+[[windows]]
+widget_type = "spacer"
+name = "spacer1"
+row = 0
+col = 0
+rows = 1
+cols = 1
+"#;
+        std::fs::write(src.join("old_layout.toml"), content).unwrap();
+
+        let options = MigrateOptions {
+            src,
+            out: out.clone(),
+            dry_run: true,
+            verbose: false,
+        };
+        let _result = run_migration(&options);
+
+        // Output directory should not be created in dry run
+        // (though run_migration might still create it before processing)
+        assert!(!out.join("old_layout.toml").exists());
     }
 }

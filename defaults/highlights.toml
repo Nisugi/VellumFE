@@ -90,3 +90,39 @@ pattern = '\b(\d+) damage\b'
 fg = "#ff0000"
 bold = true
 category = "Combat"
+
+# ===== WINDOW-SPECIFIC REPLACEMENTS =====
+# Use window = "window_name" to apply replacements only in a specific window.
+# Colors still apply everywhere, but the replacement text is window-specific.
+# This allows showing different text in different windows from the same stream.
+#
+# Example: Compact death messages only in the "deaths" window, while main shows full text
+#
+# [deaths_compact]
+# pattern = '^\s*\*\s*([A-Z][a-z]+) was just struck down.*'
+# window = "deaths"       # Only apply replacement in this window
+# stream = "death"        # Can combine with stream filter
+# replace = "$1"
+# fg = "#ff4444"
+# category = "Death"
+
+# ===== SILENT PROMPT PATTERNS =====
+# Use silent_prompt = true to suppress the game prompt when a line matches.
+# The prompt is only suppressed if the ENTIRE line is covered by silent_prompt patterns.
+# Useful for movement messages or other routine output where prompts are redundant.
+#
+# Note: The line itself still displays - only the trailing prompt is hidden.
+# If multiple lines appear between prompts and ANY line doesn't match, the prompt shows.
+#
+# Example - hide prompts after standard movement:
+# [movement_silent]
+# pattern = "^You (go|walk|run|climb|swim) "
+# silent_prompt = true
+# category = "Movement"
+#
+# Example - with color (gray out movement + suppress prompt):
+# [movement_quiet]
+# pattern = "^\\[.+\\]$"
+# fg = "#808080"
+# silent_prompt = true
+# category = "Movement"

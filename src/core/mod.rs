@@ -12,6 +12,8 @@ pub mod messages;
 pub mod state;
 
 pub use app_core::AppCore;
-pub use highlight_engine::CoreHighlightEngine;
+pub use highlight_engine::{
+    apply_deferred_for_window, CoreHighlightEngine, DeferredReplacement, HighlightResult,
+};
 pub use messages::MessageProcessor;
 pub use state::GameState;

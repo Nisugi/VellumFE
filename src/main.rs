@@ -165,11 +165,14 @@ enum Commands {
 
 fn main() -> Result<()> {
     // Initialize logging to file (use RUST_LOG env var to control level, e.g. RUST_LOG=debug)
-    // TUI apps can't log to stdout, so we write to a file
+    // TUI apps can't log to stdout, so we write to a file in the config directory (~/.vellum-fe/)
+    let log_dir = config::Config::base_dir()?;
+    std::fs::create_dir_all(&log_dir)?;
+    let log_path = log_dir.join("vellum-fe.log");
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("vellum-fe.log")?;
+        .open(&log_path)?;
 
     tracing_subscriber::fmt()
         .with_env_filter(

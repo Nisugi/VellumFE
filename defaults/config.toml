@@ -176,6 +176,14 @@ drop_unsubscribed = [
 # Default routes unknown streams to main window.
 fallback = "main"
 
+# Room text routing behavior (DragonRealms only - GemStone IV doesn't use streamWindow room).
+# When true (default): Room text (name, description, exits) appears in main window.
+#   The <streamWindow id='room'> tag does NOT change the active stream.
+#   This is correct because the room window displays components, not text.
+# When false: Legacy behavior where <streamWindow id='room'> pushes the stream,
+#   causing room text to be discarded (since room window uses components only).
+room_in_main = true
+
 
 # ============================================================
 # ADVANCED SETTINGS

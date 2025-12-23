@@ -5,6 +5,8 @@
 
 use std::collections::VecDeque;
 
+use crate::config::TimestampPosition;
+
 /// Styled text content for text-based widgets
 #[derive(Clone, Debug)]
 pub struct TextContent {
@@ -158,6 +160,7 @@ pub struct TabDefinition {
     pub streams: Vec<String>, // Stream IDs this tab listens to
     pub show_timestamps: bool, // Whether to render timestamps for this tab
     pub ignore_activity: bool, // Skip unread indicators/counts
+    pub timestamp_position: TimestampPosition, // Position of timestamps (start or end)
 }
 
 /// Holds the state for a single tab, including its definition and content.
@@ -177,17 +180,18 @@ pub struct TabbedTextContent {
 
 impl TabbedTextContent {
     pub fn new(
-        tabs: Vec<(String, Vec<String>, bool, bool)>,
+        tabs: Vec<(String, Vec<String>, bool, bool, TimestampPosition)>,
         max_lines_per_tab: usize,
     ) -> Self {
         let tabs = tabs
             .into_iter()
-            .map(|(name, streams, show_timestamps, ignore_activity)| {
+            .map(|(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
                 let definition = TabDefinition {
                     name: name.clone(),
                     streams,
                     show_timestamps,
                     ignore_activity,
+                    timestamp_position,
                 };
                 let content = TextContent::new(name, max_lines_per_tab);
                 TabState {
@@ -664,12 +668,13 @@ mod tests {
     #[test]
     fn test_tabbed_text_content_new() {
         let tabs = vec![
-            ("Main".to_string(), vec!["main".to_string()], false, false),
+            ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
             (
                 "Combat".to_string(),
                 vec!["combat".to_string(), "death".to_string()],
                 true,
                 true,
+                TimestampPosition::Start,
             ),
         ];
 
@@ -682,11 +687,13 @@ mod tests {
         assert_eq!(content.tabs[0].definition.streams, vec!["main"]);
         assert!(!content.tabs[0].definition.show_timestamps);
         assert!(!content.tabs[0].definition.ignore_activity);
+        assert_eq!(content.tabs[0].definition.timestamp_position, TimestampPosition::End);
 
         assert_eq!(content.tabs[1].definition.name, "Combat");
         assert_eq!(content.tabs[1].definition.streams, vec!["combat", "death"]);
         assert!(content.tabs[1].definition.show_timestamps);
         assert!(content.tabs[1].definition.ignore_activity);
+        assert_eq!(content.tabs[1].definition.timestamp_position, TimestampPosition::Start);
     }
 
     // ==================== ProgressData Tests ====================

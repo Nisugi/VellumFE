@@ -307,6 +307,7 @@ impl TabEditor {
                 streams: t.streams.clone(),
                 show_timestamps: Some(t.show_timestamps),
                 ignore_activity: Some(t.ignore_activity),
+                timestamp_position: None,
             })
             .collect()
     }
@@ -1792,6 +1793,7 @@ impl WindowEditor {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             },
             "room" => WindowDef::Room {
@@ -1841,6 +1843,7 @@ impl WindowEditor {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             },
         };

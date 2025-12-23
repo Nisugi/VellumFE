@@ -163,3 +163,204 @@ impl DropdownTargets {
         self.container.render_with_focus(area, buf, focused);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::state::Creature;
+
+    // ===========================================
+    // Constructor tests
+    // ===========================================
+
+    #[test]
+    fn test_new_defaults() {
+        let dt = DropdownTargets::new("Targets");
+        assert_eq!(dt.base_title, "Targets");
+        assert_eq!(dt.count, 0);
+        assert!(dt.current_target.is_empty());
+        assert_eq!(dt.generation, 0);
+    }
+
+    // ===========================================
+    // Title tests
+    // ===========================================
+
+    #[test]
+    fn test_set_title() {
+        let mut dt = DropdownTargets::new("Targets");
+        dt.set_title("Creatures");
+        assert_eq!(dt.base_title, "Creatures");
+    }
+
+    #[test]
+    fn test_update_title_with_count() {
+        let mut dt = DropdownTargets::new("Targets");
+        dt.count = 5;
+        dt.update_title();
+        // Title should include count: "Targets [05]"
+    }
+
+    #[test]
+    fn test_empty_title() {
+        let mut dt = DropdownTargets::new("");
+        dt.count = 3;
+        dt.update_title();
+        // Should not panic with empty title
+    }
+
+    // ===========================================
+    // Generation tests
+    // ===========================================
+
+    #[test]
+    fn test_get_generation() {
+        let dt = DropdownTargets::new("Targets");
+        assert_eq!(dt.get_generation(), 0);
+    }
+
+    #[test]
+    fn test_generation_increments_on_update() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "123".to_string(),
+                name: "a goblin".to_string(),
+            }],
+            current_target: "a goblin".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        assert_eq!(dt.get_generation(), 1);
+    }
+
+    // ===========================================
+    // Update from state tests
+    // ===========================================
+
+    #[test]
+    fn test_update_from_state_empty() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState::default();
+
+        // First update with empty state matches initial widget state, so no change
+        let changed = dt.update_from_state(&state);
+        assert!(!changed);
+        assert_eq!(dt.count, 0);
+    }
+
+    #[test]
+    fn test_update_from_state_with_creatures() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![
+                Creature {
+                    id: "1".to_string(),
+                    name: "a kobold".to_string(),
+                },
+                Creature {
+                    id: "2".to_string(),
+                    name: "a goblin".to_string(),
+                },
+            ],
+            current_target: "a kobold".to_string(),
+        };
+
+        let changed = dt.update_from_state(&state);
+        assert!(changed);
+        assert_eq!(dt.count, 2);
+        assert_eq!(dt.current_target, "a kobold");
+    }
+
+    #[test]
+    fn test_update_from_state_no_change() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            }],
+            current_target: "a kobold".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        let initial_gen = dt.get_generation();
+
+        // Same state again
+        let changed = dt.update_from_state(&state);
+        assert!(!changed);
+        assert_eq!(dt.get_generation(), initial_gen); // Generation unchanged
+    }
+
+    #[test]
+    fn test_update_from_state_current_target_change() {
+        let mut dt = DropdownTargets::new("Targets");
+        let creatures = vec![
+            Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            },
+            Creature {
+                id: "2".to_string(),
+                name: "a goblin".to_string(),
+            },
+        ];
+
+        let state1 = TargetListState {
+            creatures: creatures.clone(),
+            current_target: "a kobold".to_string(),
+        };
+        dt.update_from_state(&state1);
+
+        // Change current target
+        let state2 = TargetListState {
+            creatures,
+            current_target: "a goblin".to_string(),
+        };
+        let changed = dt.update_from_state(&state2);
+
+        assert!(changed);
+        assert_eq!(dt.current_target, "a goblin");
+    }
+
+    // ===========================================
+    // Clear tests
+    // ===========================================
+
+    #[test]
+    fn test_clear() {
+        let mut dt = DropdownTargets::new("Targets");
+        let state = TargetListState {
+            creatures: vec![Creature {
+                id: "1".to_string(),
+                name: "a kobold".to_string(),
+            }],
+            current_target: "a kobold".to_string(),
+        };
+
+        dt.update_from_state(&state);
+        assert_eq!(dt.count, 1);
+
+        dt.clear();
+        assert_eq!(dt.count, 0);
+        assert!(dt.current_target.is_empty());
+    }
+
+    // ===========================================
+    // Scroll tests
+    // ===========================================
+
+    #[test]
+    fn test_scroll_up() {
+        let mut dt = DropdownTargets::new("Targets");
+        // Just verify it doesn't panic
+        dt.scroll_up(5);
+    }
+
+    #[test]
+    fn test_scroll_down() {
+        let mut dt = DropdownTargets::new("Targets");
+        // Just verify it doesn't panic
+        dt.scroll_down(5);
+    }
+}

@@ -57,18 +57,18 @@ impl TuiFrontend {
                         ));
                         if let crate::config::WindowDef::Text { data, .. } = def {
                             tw.set_show_timestamps(data.show_timestamps);
+                            let ts_pos = data.timestamp_position
+                                .unwrap_or(app_core.config.ui.timestamp_position);
+                            tw.set_timestamp_position(ts_pos);
                         } else {
                             tw.set_show_timestamps(false); // Default to false for non-text windows
+                            tw.set_timestamp_position(app_core.config.ui.timestamp_position);
                         }
                     } else {
                         tw.set_show_timestamps(false); // Default to false when no window def
+                        tw.set_timestamp_position(crate::config::TimestampPosition::End);
                     }
-
-                    // Set highlights from config
-                    let highlights_vec: Vec<_> =
-                        app_core.config.highlights.values().cloned().collect();
-                    tw.set_highlights(highlights_vec);
-                    tw.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    // Note: Highlights are now applied in core (MessageProcessor)
 
                     tw
                 });
@@ -96,8 +96,12 @@ impl TuiFrontend {
                     ));
                     if let crate::config::WindowDef::Text { data, .. } = def {
                         text_window.set_show_timestamps(data.show_timestamps);
+                        let ts_pos = data.timestamp_position
+                            .unwrap_or(app_core.config.ui.timestamp_position);
+                        text_window.set_timestamp_position(ts_pos);
                     } else {
                         text_window.set_show_timestamps(false); // Default to false
+                        text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
                     }
                 }
 
@@ -336,7 +340,7 @@ impl TuiFrontend {
                 if !self.widget_manager.inventory_windows.contains_key(name) {
                     let mut inv_window =
                         inventory_window::InventoryWindow::new(text_content.title.clone());
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     inv_window.set_highlights(highlights);
                     inv_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -416,7 +420,7 @@ impl TuiFrontend {
                 if !self.widget_manager.spells_windows.contains_key(name) {
                     let mut spells_window =
                         spells_window::SpellsWindow::new(text_content.title.clone());
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     spells_window.set_highlights(highlights);
                     spells_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -723,7 +727,7 @@ impl TuiFrontend {
                         &label,
                         effects_content.category.clone(),
                     );
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -887,7 +891,7 @@ impl TuiFrontend {
                 // Ensure widget exists
                 if !self.widget_manager.targets_widgets.contains_key(name) {
                     let mut widget = targets::Targets::new(name);
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -944,7 +948,7 @@ impl TuiFrontend {
                 // Ensure widget exists
                 if !self.widget_manager.dropdown_targets_widgets.contains_key(name) {
                     let mut widget = dropdown_targets::DropdownTargets::new(name);
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -1002,7 +1006,7 @@ impl TuiFrontend {
                 if !self.widget_manager.container_widgets.contains_key(name) {
                     let display_title = name.clone(); // Default display title
                     let mut widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -1057,7 +1061,7 @@ impl TuiFrontend {
                 // Ensure widget exists
                 if !self.widget_manager.players_widgets.contains_key(name) {
                     let mut widget = players::Players::new(name);
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
@@ -1174,8 +1178,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
-        let highlight_cache: Vec<_> = app_core.config.highlights.values().cloned().collect();
-
+        // Note: Highlights are now applied in core (MessageProcessor)
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::TabbedText(tabbed_content) = &window.content {
                 let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
@@ -1203,10 +1206,9 @@ impl TuiFrontend {
                             1000 // fallback
                         };
 
-                    let mut widget =
+                    let widget =
                         tabbed_text_window::TabbedTextWindow::with_tabs(name, tabs, max_lines);
-                    widget.set_highlights(&highlight_cache);
-                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    // Note: Highlights are now applied in core (MessageProcessor)
                     self.widget_manager.tabbed_text_windows.insert(name.clone(), widget);
                 }
 
@@ -1261,6 +1263,8 @@ impl TuiFrontend {
                         if let Some(text_window) = widget.get_tab_window_mut(i) {
                             text_window
                                 .set_show_timestamps(tab_state.definition.show_timestamps);
+                            text_window
+                                .set_timestamp_position(tab_state.definition.timestamp_position);
                             let tab_sync_key = format!("{}:{}", name, tab_state.definition.name);
                             let last_synced_gen = self
                                 .widget_manager
@@ -1665,7 +1669,7 @@ impl TuiFrontend {
             self.ensure_room_window_exists(window_name, window_def);
 
             if let Some(room_window) = self.widget_manager.room_windows.get_mut(window_name) {
-                // Set highlight patterns once at creation (recompile on .reload)
+                // GameState widgets still need highlight patterns for item highlighting
                 if is_new {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     room_window.set_highlights(highlights);
@@ -1826,7 +1830,7 @@ impl TuiFrontend {
                         .and_then(|def| def.base().title.clone())
                         .unwrap_or_else(|| "Perceptions".to_string());
                     let mut perception_window = super::perception::PerceptionWindow::new(title);
-                    // Set highlight patterns once at creation (recompile on .reload)
+                    // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     perception_window.set_highlights(highlights);
                     perception_window.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);

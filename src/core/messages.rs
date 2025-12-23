@@ -343,14 +343,15 @@ impl MessageProcessor {
                 // This handles both "silent updates only" and "empty chunk" cases
                 let should_skip = !self.chunk_has_main_text;
 
+                // Always reset to main stream when a prompt is received
+                // (prompts mark the end of a server response, returning control to main)
+                self.current_stream = String::from("main");
+
                 if should_skip {
                     tracing::debug!("Skipping prompt '{}' - no main text since last prompt", text);
                 } else if !text.trim().is_empty() {
                     // Store the prompt in game state for command echoes
                     game_state.last_prompt = text.clone();
-
-                    // Reset to main stream
-                    self.current_stream = String::from("main");
 
                     // Render prompt with per-character coloring
                     for ch in text.chars() {
@@ -837,7 +838,16 @@ impl MessageProcessor {
         }
     }
 
-    /// Handle stream window (DO NOT auto-create windows!)
+    /// Handle stream window declaration.
+    ///
+    /// By default (room_in_main = true), <streamWindow> is treated as a window declaration
+    /// tag that does NOT change the current stream context. This allows room text to flow
+    /// to the main window (room window uses components, not text).
+    ///
+    /// When room_in_main = false (legacy mode), <streamWindow id='room'> will push the
+    /// stream to "room", causing room text to be discarded. The stream is reset on prompt.
+    ///
+    /// DragonRealms-specific - GemStone IV doesn't use streamWindow room.
     fn handle_stream_window(
         &mut self,
         id: &str,
@@ -846,53 +856,65 @@ impl MessageProcessor {
         room_subtitle_out: &mut Option<String>,
         room_window_dirty: &mut bool,
     ) {
-        // Push the stream (streamWindow acts like pushStream)
-        self.current_stream = id.to_string();
-
-        // Check if a window exists for this stream
-        // For inv and Spells streams, check by content type (allows any window name)
-        // For other streams, check by mapped window name
-        let has_target_window = match id {
-            "inv" => {
-                // Check if ANY window has Inventory content type
-                ui_state
-                    .windows
-                    .values()
-                    .any(|w| matches!(w.content, crate::data::WindowContent::Inventory(_)))
-            }
-            "Spells" => {
-                // Check if ANY window has Spells content type
-                ui_state
-                    .windows
-                    .values()
-                    .any(|w| matches!(w.content, crate::data::WindowContent::Spells(_)))
-            }
-            _ => {
-                // For other streams, check by mapped window name
-                let window_name = self.map_stream_to_window(id);
-                ui_state.get_window(&window_name).is_some()
-            }
+        // Decide whether to push the stream
+        // For room stream: only push if room_in_main is false (legacy behavior)
+        let should_push_stream = if id == "room" {
+            !self.config.streams.room_in_main
+        } else {
+            // Non-room streamWindow tags: keep existing behavior (don't push)
+            false
         };
 
-        if !has_target_window {
-            self.discard_current_stream = true;
-            tracing::debug!("No window exists for stream '{}', discarding content", id);
-        } else {
-            self.discard_current_stream = false;
+        if should_push_stream {
+            self.current_stream = id.to_string();
+
+            // Check stream subscribers for discard logic
+            if let Some(subscribers) = self.text_stream_subscribers.get(id) {
+                if !subscribers.is_empty() {
+                    self.discard_current_stream = false;
+                } else if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
+                    self.discard_current_stream = true;
+                    tracing::debug!("Discarding stream '{}' (in drop_unsubscribed list)", id);
+                } else {
+                    // Route to fallback
+                    self.discard_current_stream = false;
+                    tracing::debug!(
+                        "Routing stream '{}' to fallback '{}'",
+                        id,
+                        self.config.streams.fallback
+                    );
+                }
+            } else {
+                // No subscribers map entry - check drop list
+                if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
+                    self.discard_current_stream = true;
+                } else {
+                    self.discard_current_stream = false;
+                }
+            }
         }
 
-        // Update room subtitle if this is the room window AND window exists
-        if id == "room" && !self.discard_current_stream {
+        // Update room subtitle if this is the room window declaration (always, regardless of push)
+        if id == "room" {
             if let Some(subtitle_text) = subtitle {
                 // Remove leading " - " if present (matches VellumFE behavior)
                 let clean_subtitle = subtitle_text.trim_start_matches(" - ");
                 *room_subtitle_out = Some(clean_subtitle.to_string());
                 *room_window_dirty = true;
                 tracing::debug!(
-                    "Room subtitle updated: {} (cleaned from: {})",
+                    "Room subtitle updated from streamWindow: {} (cleaned from: {})",
                     clean_subtitle,
                     subtitle_text
                 );
+            }
+        }
+
+        // Update main window subtitle if applicable
+        if id == "main" {
+            if let Some(subtitle_text) = subtitle {
+                let clean_subtitle = subtitle_text.trim_start_matches(" - ");
+                tracing::debug!("Main window subtitle: {}", clean_subtitle);
+                // Could store this somewhere if needed for display
             }
         }
     }
@@ -1156,6 +1178,7 @@ impl MessageProcessor {
             .highlight_engine
             .apply_highlights(&self.current_segments, &self.current_stream);
         self.current_segments = highlight_result.segments;
+        let deferred_replacements = highlight_result.deferred_replacements;
 
         // TODO: Queue sounds for playback (highlight_result.sounds)
         // For now, sounds are still triggered by frontend highlight engine
@@ -1168,6 +1191,7 @@ impl MessageProcessor {
 
         // Track main stream text for prompt skip logic.
         // If a line contains any Speech spans, treat it as speech-only (even with trailing punctuation).
+        // If the entire line matched silent_prompt patterns, don't count it as main text.
         if self.current_stream == "main" {
             let has_speech = line
                 .segments
@@ -1178,7 +1202,7 @@ impl MessageProcessor {
                 .iter()
                 .any(|seg| seg.span_type != SpanType::Speech && !seg.text.trim().is_empty());
 
-            if has_non_speech_text && !has_speech {
+            if has_non_speech_text && !has_speech && !highlight_result.line_is_silent {
                 self.chunk_has_main_text = true;
             }
         }
@@ -1414,7 +1438,20 @@ impl MessageProcessor {
                 WindowContent::Text(content) => {
                     // Check if this text window listens to the current stream
                     if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
-                        content.add_line(line.clone());
+                        // Apply window-specific replacements if any
+                        let final_line = if deferred_replacements.is_empty() {
+                            line.clone()
+                        } else {
+                            StyledLine {
+                                segments: super::highlight_engine::apply_deferred_for_window(
+                                    &line.segments,
+                                    &deferred_replacements,
+                                    window_name,
+                                ),
+                                stream: line.stream.clone(),
+                            }
+                        };
+                        content.add_line(final_line);
                         added_here = true;
                     }
                 }
@@ -1441,7 +1478,29 @@ impl MessageProcessor {
                             .iter()
                             .any(|s| s.trim().eq_ignore_ascii_case(&self.current_stream))
                         {
-                            tab.content.add_line(line.clone());
+                            // Apply window-specific replacements if any
+                            // Check both parent window name and tab name
+                            let final_line = if deferred_replacements.is_empty() {
+                                line.clone()
+                            } else {
+                                // Try window name first, then tab name
+                                let mut segments = super::highlight_engine::apply_deferred_for_window(
+                                    &line.segments,
+                                    &deferred_replacements,
+                                    window_name,
+                                );
+                                // Also check tab name (allows targeting specific tabs)
+                                segments = super::highlight_engine::apply_deferred_for_window(
+                                    &segments,
+                                    &deferred_replacements,
+                                    &tab.definition.name,
+                                );
+                                StyledLine {
+                                    segments,
+                                    stream: line.stream.clone(),
+                                }
+                            };
+                            tab.content.add_line(final_line);
                             added_here = true;
                             // Mark tab as unread if it's not the active tab and activity tracking is enabled
                             if tab_index != active_tab_index && !tab.definition.ignore_activity {
@@ -1485,7 +1544,20 @@ impl MessageProcessor {
                     );
                     if let Some(fallback) = ui_state.get_window_mut(&fallback_window) {
                         if let WindowContent::Text(ref mut content) = fallback.content {
-                            content.add_line(line.clone());
+                            // Apply window-specific replacements if any
+                            let final_line = if deferred_replacements.is_empty() {
+                                line.clone()
+                            } else {
+                                StyledLine {
+                                    segments: super::highlight_engine::apply_deferred_for_window(
+                                        &line.segments,
+                                        &deferred_replacements,
+                                        &fallback_window,
+                                    ),
+                                    stream: line.stream.clone(),
+                                }
+                            };
+                            content.add_line(final_line);
                             if let Some(tts_mgr) = tts_manager.as_deref_mut() {
                                 self.enqueue_tts(tts_mgr, &fallback_window, &line);
                             }
@@ -1498,7 +1570,20 @@ impl MessageProcessor {
                         );
                         if let Some(main_window) = ui_state.get_window_mut("main") {
                             if let WindowContent::Text(ref mut content) = main_window.content {
-                                content.add_line(line.clone());
+                                // Apply window-specific replacements if any
+                                let final_line = if deferred_replacements.is_empty() {
+                                    line.clone()
+                                } else {
+                                    StyledLine {
+                                        segments: super::highlight_engine::apply_deferred_for_window(
+                                            &line.segments,
+                                            &deferred_replacements,
+                                            "main",
+                                        ),
+                                        stream: line.stream.clone(),
+                                    }
+                                };
+                                content.add_line(final_line);
                                 if let Some(tts_mgr) = tts_manager.as_deref_mut() {
                                     self.enqueue_tts(tts_mgr, "main", &line);
                                 }
@@ -1524,7 +1609,20 @@ impl MessageProcessor {
             if let Some(window) = ui_state.get_window_mut(&original_window_name) {
                 match window.content {
                     WindowContent::Text(ref mut content) => {
-                        content.add_line(line.clone());
+                        // Apply window-specific replacements if any
+                        let final_line = if deferred_replacements.is_empty() {
+                            line.clone()
+                        } else {
+                            StyledLine {
+                                segments: super::highlight_engine::apply_deferred_for_window(
+                                    &line.segments,
+                                    &deferred_replacements,
+                                    &original_window_name,
+                                ),
+                                stream: line.stream.clone(),
+                            }
+                        };
+                        content.add_line(final_line);
                     }
                     WindowContent::Inventory(ref mut content) => {
                         content.add_line(line.clone());
@@ -1538,7 +1636,20 @@ impl MessageProcessor {
                 // Fallback to main for original stream too
                 if let Some(main_window) = ui_state.get_window_mut("main") {
                     if let WindowContent::Text(ref mut content) = main_window.content {
-                        content.add_line(line.clone());
+                        // Apply window-specific replacements if any
+                        let final_line = if deferred_replacements.is_empty() {
+                            line.clone()
+                        } else {
+                            StyledLine {
+                                segments: super::highlight_engine::apply_deferred_for_window(
+                                    &line.segments,
+                                    &deferred_replacements,
+                                    "main",
+                                ),
+                                stream: line.stream.clone(),
+                            }
+                        };
+                        content.add_line(final_line);
                     }
                 }
             }
@@ -1997,9 +2108,23 @@ impl MessageProcessor {
 
     /// Determine if a stream is already handled by any window.
     /// Uses the pre-built subscriber map for O(1) lookup.
-    fn stream_has_target_window(&self, _ui_state: &UiState, stream: &str) -> bool {
-        // Use the pre-built subscriber map
-        self.stream_has_subscribers(stream)
+    /// Also checks Targets/Players widgets which use entity_id-based matching.
+    fn stream_has_target_window(&self, ui_state: &UiState, stream: &str) -> bool {
+        // First check the pre-built subscriber map (text windows, tabbed text, etc.)
+        if self.stream_has_subscribers(stream) {
+            return true;
+        }
+
+        // Also check Targets/Players widgets which match by entity_id, not stream subscription
+        for window in ui_state.windows.values() {
+            match &window.content {
+                WindowContent::Targets { entity_id, .. } if entity_id == stream => return true,
+                WindowContent::Players { entity_id, .. } if entity_id == stream => return true,
+                _ => {}
+            }
+        }
+
+        false
     }
 
     /// Determine what to do with an orphaned stream (no subscribers).

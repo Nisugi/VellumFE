@@ -105,3 +105,113 @@ impl Experience {
         paragraph.render(area, buf);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===========================================
+    // Constructor tests
+    // ===========================================
+
+    #[test]
+    fn test_new_default_alignment() {
+        let exp = Experience::new("Skills", "left");
+        assert_eq!(exp.title, "Skills");
+        assert_eq!(exp.align, Alignment::Left);
+        assert!(exp.lines.is_empty());
+        assert_eq!(exp.generation, 0);
+    }
+
+    #[test]
+    fn test_new_center_alignment() {
+        let exp = Experience::new("Skills", "center");
+        assert_eq!(exp.align, Alignment::Center);
+    }
+
+    #[test]
+    fn test_new_centre_alignment() {
+        let exp = Experience::new("Skills", "centre");
+        assert_eq!(exp.align, Alignment::Center);
+    }
+
+    #[test]
+    fn test_new_right_alignment() {
+        let exp = Experience::new("Skills", "right");
+        assert_eq!(exp.align, Alignment::Right);
+    }
+
+    #[test]
+    fn test_new_case_insensitive_alignment() {
+        let exp = Experience::new("Skills", "CENTER");
+        assert_eq!(exp.align, Alignment::Center);
+    }
+
+    #[test]
+    fn test_new_unknown_alignment_defaults_left() {
+        let exp = Experience::new("Skills", "unknown");
+        assert_eq!(exp.align, Alignment::Left);
+    }
+
+    // ===========================================
+    // Color tests
+    // ===========================================
+
+    #[test]
+    fn test_set_border_color() {
+        let mut exp = Experience::new("Test", "left");
+        assert_eq!(exp.border_color, Color::White);
+
+        exp.set_border_color(Color::Red);
+        assert_eq!(exp.border_color, Color::Red);
+    }
+
+    #[test]
+    fn test_set_text_color() {
+        let mut exp = Experience::new("Test", "left");
+        assert_eq!(exp.text_color, Color::White);
+
+        exp.set_text_color(Color::Green);
+        assert_eq!(exp.text_color, Color::Green);
+    }
+
+    // ===========================================
+    // State update tests
+    // ===========================================
+
+    #[test]
+    fn test_update_from_state_no_change() {
+        let mut exp = Experience::new("Skills", "left");
+        let state = ExpComponentState::default();
+
+        // First update with default state
+        let changed = exp.update_from_state(&state);
+        // Default state with generation 0 matches exp.generation 0, so no change
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_update_from_state_with_change() {
+        let mut exp = Experience::new("Skills", "left");
+        let mut state = ExpComponentState::default();
+        state.generation = 1; // Bump generation
+
+        let changed = exp.update_from_state(&state);
+        assert!(changed);
+        assert_eq!(exp.generation, 1);
+    }
+
+    #[test]
+    fn test_update_from_state_caches_generation() {
+        let mut exp = Experience::new("Skills", "left");
+        let mut state = ExpComponentState::default();
+        state.generation = 5;
+
+        exp.update_from_state(&state);
+        assert_eq!(exp.generation, 5);
+
+        // Same generation again - no update
+        let changed = exp.update_from_state(&state);
+        assert!(!changed);
+    }
+}

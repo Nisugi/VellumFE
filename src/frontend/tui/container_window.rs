@@ -433,3 +433,289 @@ impl ContainerWindow {
 fn parse_hex_color(input: &str) -> Option<Color> {
     parse_color_to_ratatui(input)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===========================================
+    // Constructor tests
+    // ===========================================
+
+    #[test]
+    fn test_new_defaults() {
+        let cw = ContainerWindow::new("my_bag".to_string(), "My Bag".to_string());
+        assert_eq!(cw.container_title, "my_bag");
+        assert_eq!(cw.title, "My Bag");
+        assert!(cw.show_border);
+        assert!(cw.lines.is_empty());
+        assert_eq!(cw.scroll_offset, 0);
+        assert_eq!(cw.last_generation, 0);
+    }
+
+    #[test]
+    fn test_get_container_title() {
+        let cw = ContainerWindow::new("backpack".to_string(), "Backpack".to_string());
+        assert_eq!(cw.get_container_title(), "backpack");
+    }
+
+    // ===========================================
+    // Configuration tests
+    // ===========================================
+
+    #[test]
+    fn test_set_title() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "".to_string());
+        cw.set_title("New Title".to_string());
+        assert_eq!(cw.title, "New Title");
+    }
+
+    #[test]
+    fn test_set_border_config() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        cw.set_border_config(false, None);
+        assert!(!cw.show_border);
+        assert!(cw.border_color.is_none());
+
+        cw.set_border_config(true, Some("#FF0000".to_string()));
+        assert!(cw.show_border);
+        assert!(cw.border_color.is_some());
+    }
+
+    #[test]
+    fn test_set_text_color() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        assert!(cw.text_color.is_none());
+
+        cw.set_text_color(Some("#00FF00".to_string()));
+        assert!(cw.text_color.is_some());
+    }
+
+    #[test]
+    fn test_set_transparent_background() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        assert!(!cw.transparent_background);
+
+        cw.set_transparent_background(true);
+        assert!(cw.transparent_background);
+    }
+
+    // ===========================================
+    // Scrolling tests
+    // ===========================================
+
+    #[test]
+    fn test_scroll_up_from_zero() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        assert_eq!(cw.scroll_offset, 0);
+
+        cw.scroll_up(5);
+        // With no lines, scroll should be capped at 0
+        assert_eq!(cw.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_down_from_zero() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        cw.scroll_offset = 5;
+
+        cw.scroll_down(3);
+        assert_eq!(cw.scroll_offset, 2);
+
+        cw.scroll_down(5);
+        assert_eq!(cw.scroll_offset, 0); // Saturates at 0
+    }
+
+    // ===========================================
+    // Clear tests
+    // ===========================================
+
+    #[test]
+    fn test_clear() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        cw.scroll_offset = 10;
+        cw.last_generation = 5;
+
+        cw.clear();
+        assert!(cw.lines.is_empty());
+        assert_eq!(cw.scroll_offset, 0);
+        assert_eq!(cw.last_generation, 0);
+    }
+
+    // ===========================================
+    // Inner size tests
+    // ===========================================
+
+    #[test]
+    fn test_update_inner_size_with_border() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        cw.show_border = true;
+
+        cw.update_inner_size(80, 24);
+        assert_eq!(cw.inner_width, 78); // 80 - 2 for borders
+        assert_eq!(cw.inner_height, 22); // 24 - 2 for borders
+    }
+
+    #[test]
+    fn test_update_inner_size_without_border() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        cw.show_border = false;
+
+        cw.update_inner_size(80, 24);
+        assert_eq!(cw.inner_width, 80);
+        assert_eq!(cw.inner_height, 24);
+    }
+
+    // ===========================================
+    // Extract attribute tests
+    // ===========================================
+
+    #[test]
+    fn test_extract_attribute_double_quotes() {
+        let tag = r#"<a exist="12345" noun="sword">"#;
+        let result = ContainerWindow::extract_attribute(tag, "exist");
+        assert_eq!(result, Some("12345".to_string()));
+    }
+
+    #[test]
+    fn test_extract_attribute_single_quotes() {
+        let tag = r#"<a exist='67890' noun='dagger'>"#;
+        let result = ContainerWindow::extract_attribute(tag, "noun");
+        assert_eq!(result, Some("dagger".to_string()));
+    }
+
+    #[test]
+    fn test_extract_attribute_missing() {
+        let tag = r#"<a exist="12345">"#;
+        let result = ContainerWindow::extract_attribute(tag, "noun");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_attribute_empty_value() {
+        let tag = r#"<a exist="" noun="test">"#;
+        let result = ContainerWindow::extract_attribute(tag, "exist");
+        assert_eq!(result, Some("".to_string()));
+    }
+
+    // ===========================================
+    // Parse container item tests
+    // ===========================================
+
+    #[test]
+    fn test_parse_container_item_plain_text() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let segments = cw.parse_container_item("a simple sword");
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "a simple sword");
+        assert!(segments[0].link_data.is_none());
+    }
+
+    #[test]
+    fn test_parse_container_item_with_link() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let segments = cw.parse_container_item(r#"a <a exist="123" noun="sword">gleaming sword</a>"#);
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text, "a ");
+        assert!(segments[0].link_data.is_none());
+
+        assert_eq!(segments[1].text, "gleaming sword");
+        assert!(segments[1].link_data.is_some());
+        let link = segments[1].link_data.as_ref().unwrap();
+        assert_eq!(link.exist_id, "123");
+        assert_eq!(link.noun, "sword");
+    }
+
+    #[test]
+    fn test_parse_container_item_multiple_links() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let segments = cw.parse_container_item(
+            r#"<a exist="1" noun="sword">sword</a> and <a exist="2" noun="shield">shield</a>"#,
+        );
+
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].text, "sword");
+        assert!(segments[0].link_data.is_some());
+
+        assert_eq!(segments[1].text, " and ");
+        assert!(segments[1].link_data.is_none());
+
+        assert_eq!(segments[2].text, "shield");
+        assert!(segments[2].link_data.is_some());
+    }
+
+    #[test]
+    fn test_parse_container_item_empty_string() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let segments = cw.parse_container_item("");
+        assert!(segments.is_empty());
+    }
+
+    // ===========================================
+    // Update from cache tests
+    // ===========================================
+
+    #[test]
+    fn test_update_from_cache_no_change() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let container = ContainerData {
+            id: "1".to_string(),
+            title: "Bag".to_string(),
+            items: vec![],
+            generation: 0,
+        };
+
+        // First call with generation 0 should return false (matches default)
+        let changed = cw.update_from_cache(&container);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_update_from_cache_with_change() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "".to_string());
+        let container = ContainerData {
+            id: "2".to_string(),
+            title: "My Bag".to_string(),
+            items: vec!["an item".to_string()],
+            generation: 1,
+        };
+
+        let changed = cw.update_from_cache(&container);
+        assert!(changed);
+        assert_eq!(cw.title, "My Bag"); // Title updated from container
+        assert_eq!(cw.lines.len(), 1);
+        assert_eq!(cw.last_generation, 1);
+    }
+
+    #[test]
+    fn test_update_from_cache_preserves_custom_title() {
+        let mut cw = ContainerWindow::new("bag".to_string(), "Custom Title".to_string());
+        let container = ContainerData {
+            id: "3".to_string(),
+            title: "Container Title".to_string(),
+            items: vec![],
+            generation: 1,
+        };
+
+        cw.update_from_cache(&container);
+        assert_eq!(cw.title, "Custom Title"); // Custom title preserved
+    }
+
+    // ===========================================
+    // Get lines tests
+    // ===========================================
+
+    #[test]
+    fn test_get_lines_empty() {
+        let cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        assert!(cw.get_lines().is_empty());
+    }
+
+    #[test]
+    fn test_get_start_line_empty() {
+        let cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        assert_eq!(cw.get_start_line(), 0);
+    }
+}

@@ -23,6 +23,9 @@ fn run_fixture(
     game_state: &mut GameState,
     parser: &mut XmlParser,
 ) {
+    // Update stream subscriber map from windows before processing
+    processor.update_text_stream_subscribers(ui_state);
+
     let mut room_components: HashMap<String, Vec<Vec<vellum_fe::data::TextSegment>>> = HashMap::new();
     let mut current_room_component: Option<String> = None;
     let mut room_window_dirty = false;
@@ -266,11 +269,18 @@ fn add_tabbed_window(
     tabs: Vec<(String, Vec<String>, bool, bool)>,
     max_lines: usize,
 ) {
+    // Convert 4-tuple to 5-tuple with default TimestampPosition
+    let tabs_with_timestamp: Vec<_> = tabs
+        .into_iter()
+        .map(|(name, streams, show_ts, ignore)| {
+            (name, streams, show_ts, ignore, vellum_fe::config::TimestampPosition::default())
+        })
+        .collect();
     let window = WindowState {
         name: name.to_string(),
         widget_type: WidgetType::TabbedText,
         content: WindowContent::TabbedText(vellum_fe::data::widget::TabbedTextContent::new(
-            tabs,
+            tabs_with_timestamp,
             max_lines,
         )),
         position: position(),
@@ -2184,4 +2194,620 @@ fn ui_updates_multiple_progress_variants() {
     assert_eq!(foo.0, 5);
     assert_eq!(foo.1, 10, "custom with max missing should still use parsed max when present");
     assert!(foo.2.contains("foo"));
+}
+
+// =============================================================================
+// Highlight Engine Integration Tests
+// =============================================================================
+
+use vellum_fe::config::{HighlightPattern, RedirectMode};
+use vellum_fe::core::highlight_engine::CoreHighlightEngine;
+use vellum_fe::data::SpanType;
+
+fn make_highlight_pattern(
+    pattern: &str,
+    fg: Option<&str>,
+    bg: Option<&str>,
+    bold: bool,
+    color_entire_line: bool,
+    fast_parse: bool,
+) -> HighlightPattern {
+    HighlightPattern {
+        pattern: pattern.to_string(),
+        fg: fg.map(String::from),
+        bg: bg.map(String::from),
+        bold,
+        color_entire_line,
+        fast_parse,
+        sound: None,
+        sound_volume: None,
+        category: None,
+        squelch: false,
+        silent_prompt: false,
+        redirect_to: None,
+        redirect_mode: RedirectMode::default(),
+        replace: None,
+        stream: None,
+        window: None,
+        compiled_regex: None,
+    }
+}
+
+fn make_segment(text: &str) -> TextSegment {
+    TextSegment {
+        text: text.to_string(),
+        fg: None,
+        bg: None,
+        bold: false,
+        span_type: SpanType::Normal,
+        link_data: None,
+    }
+}
+
+// ---------------- Basic Highlight Application ----------------
+
+#[test]
+fn highlight_engine_applies_color_to_matching_text() {
+    let patterns = vec![make_highlight_pattern(
+        "goblin",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("You see a goblin approaching.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    // Find the segment containing "goblin"
+    let goblin_segment = result
+        .segments
+        .iter()
+        .find(|s| s.text.contains("goblin"));
+    assert!(goblin_segment.is_some(), "Should have a segment with 'goblin'");
+    assert_eq!(
+        goblin_segment.unwrap().fg.as_deref(),
+        Some("red"),
+        "Goblin segment should have red foreground"
+    );
+}
+
+#[test]
+fn highlight_engine_applies_bold_style() {
+    let patterns = vec![make_highlight_pattern(
+        "attack",
+        None,
+        None,
+        true,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("The creature attack you!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let attack_segment = result.segments.iter().find(|s| s.text.contains("attack"));
+    assert!(attack_segment.is_some(), "Should have segment with 'attack'");
+    assert!(attack_segment.unwrap().bold, "Attack segment should be bold");
+}
+
+#[test]
+fn highlight_engine_applies_background_color() {
+    let patterns = vec![make_highlight_pattern(
+        "critical",
+        Some("white"),
+        Some("red"),
+        true,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("A critical hit!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let critical_segment = result.segments.iter().find(|s| s.text.contains("critical"));
+    assert!(critical_segment.is_some());
+    let seg = critical_segment.unwrap();
+    assert_eq!(seg.fg.as_deref(), Some("white"));
+    assert_eq!(seg.bg.as_deref(), Some("red"));
+    assert!(seg.bold);
+}
+
+// ---------------- Color Entire Line ----------------
+
+#[test]
+fn highlight_engine_color_entire_line_colors_all_segments() {
+    let patterns = vec![make_highlight_pattern(
+        "treasure",
+        Some("gold"),
+        None,
+        false,
+        true, // color_entire_line
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("You found a treasure chest!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    // All segments should be gold colored when color_entire_line is true
+    for seg in &result.segments {
+        if !seg.text.is_empty() {
+            assert_eq!(
+                seg.fg.as_deref(),
+                Some("gold"),
+                "All segments should be gold when color_entire_line is set: {:?}",
+                seg.text
+            );
+        }
+    }
+}
+
+#[test]
+fn highlight_engine_color_entire_line_with_multiple_segments() {
+    let patterns = vec![make_highlight_pattern(
+        "hit",
+        Some("yellow"),
+        None,
+        false,
+        true, // color_entire_line
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![
+        make_segment("You swing and "),
+        make_segment("hit "),
+        make_segment("the target!"),
+    ];
+    let result = engine.apply_highlights(&segments, "main");
+
+    // All non-empty segments should be yellow
+    for seg in &result.segments {
+        if !seg.text.is_empty() {
+            assert_eq!(
+                seg.fg.as_deref(),
+                Some("yellow"),
+                "Segment '{}' should be yellow",
+                seg.text
+            );
+        }
+    }
+}
+
+// ---------------- Fast Parse (Aho-Corasick) ----------------
+
+#[test]
+fn highlight_engine_fast_parse_matches_literals() {
+    let patterns = vec![make_highlight_pattern(
+        "troll|orc|goblin",
+        Some("red"),
+        None,
+        false,
+        false,
+        true, // fast_parse
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("A troll and an orc attack!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let troll_segment = result.segments.iter().find(|s| s.text.contains("troll"));
+    let orc_segment = result.segments.iter().find(|s| s.text.contains("orc"));
+
+    assert!(troll_segment.is_some());
+    assert_eq!(troll_segment.unwrap().fg.as_deref(), Some("red"));
+    assert!(orc_segment.is_some());
+    assert_eq!(orc_segment.unwrap().fg.as_deref(), Some("red"));
+}
+
+#[test]
+fn highlight_engine_fast_parse_handles_multiple_matches_in_line() {
+    let patterns = vec![make_highlight_pattern(
+        "coin",
+        Some("gold"),
+        None,
+        false,
+        false,
+        true, // fast_parse
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("coin coin coin")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    // Count how many segments are gold colored
+    let gold_count = result
+        .segments
+        .iter()
+        .filter(|s| s.fg.as_deref() == Some("gold"))
+        .count();
+    assert!(gold_count >= 3, "Should have at least 3 gold-colored 'coin' segments");
+}
+
+// ---------------- Regex Pattern Matching ----------------
+
+#[test]
+fn highlight_engine_regex_captures_patterns() {
+    let patterns = vec![make_highlight_pattern(
+        r"\d+ silver",
+        Some("silver"),
+        None,
+        false,
+        false,
+        false, // regex mode
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("You receive 50 silver coins.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let silver_segment = result.segments.iter().find(|s| s.text.contains("silver"));
+    assert!(silver_segment.is_some());
+    assert_eq!(silver_segment.unwrap().fg.as_deref(), Some("silver"));
+}
+
+#[test]
+fn highlight_engine_regex_case_insensitive() {
+    let patterns = vec![make_highlight_pattern(
+        "(?i)warning",
+        Some("orange"),
+        None,
+        false,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("WARNING: Danger ahead!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let warning_segment = result.segments.iter().find(|s| s.text.contains("WARNING"));
+    assert!(warning_segment.is_some());
+    assert_eq!(warning_segment.unwrap().fg.as_deref(), Some("orange"));
+}
+
+// ---------------- Multiple Patterns ----------------
+
+#[test]
+fn highlight_engine_applies_multiple_patterns() {
+    let patterns = vec![
+        make_highlight_pattern("health", Some("green"), None, false, false, true),
+        make_highlight_pattern("mana", Some("blue"), None, false, false, true),
+        make_highlight_pattern("stamina", Some("yellow"), None, false, false, true),
+    ];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("health: 100, mana: 50, stamina: 75")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let health_seg = result.segments.iter().find(|s| s.text.contains("health"));
+    let mana_seg = result.segments.iter().find(|s| s.text.contains("mana"));
+    let stamina_seg = result.segments.iter().find(|s| s.text.contains("stamina"));
+
+    assert!(health_seg.is_some());
+    assert_eq!(health_seg.unwrap().fg.as_deref(), Some("green"));
+    assert!(mana_seg.is_some());
+    assert_eq!(mana_seg.unwrap().fg.as_deref(), Some("blue"));
+    assert!(stamina_seg.is_some());
+    assert_eq!(stamina_seg.unwrap().fg.as_deref(), Some("yellow"));
+}
+
+#[test]
+fn highlight_engine_first_pattern_wins() {
+    // When multiple patterns match the same text, first one wins
+    let patterns = vec![
+        make_highlight_pattern("attack", Some("red"), None, false, false, true),
+        make_highlight_pattern("attack", Some("blue"), None, false, false, true),
+    ];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("You attack!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let attack_seg = result.segments.iter().find(|s| s.text.contains("attack"));
+    assert!(attack_seg.is_some());
+    assert_eq!(
+        attack_seg.unwrap().fg.as_deref(),
+        Some("red"),
+        "First pattern should win"
+    );
+}
+
+// ---------------- System Span Preservation ----------------
+
+#[test]
+fn highlight_engine_preserves_system_spans() {
+    let patterns = vec![make_highlight_pattern(
+        "test",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let mut system_segment = make_segment("test message");
+    system_segment.span_type = SpanType::System;
+    let segments = vec![system_segment];
+
+    let result = engine.apply_highlights(&segments, "main");
+
+    // System spans should not be modified
+    assert_eq!(result.segments.len(), 1);
+    assert!(
+        result.segments[0].fg.is_none(),
+        "System span should not have highlight applied"
+    );
+}
+
+// ---------------- Empty and Edge Cases ----------------
+
+#[test]
+fn highlight_engine_handles_empty_segments() {
+    let patterns = vec![make_highlight_pattern(
+        "test",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments: Vec<TextSegment> = vec![];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert!(result.segments.is_empty());
+}
+
+#[test]
+fn highlight_engine_handles_no_match() {
+    let patterns = vec![make_highlight_pattern(
+        "goblin",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("A peaceful meadow.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    // All segments should have no color applied
+    for seg in &result.segments {
+        assert!(seg.fg.is_none(), "No pattern matched, should have no color");
+    }
+}
+
+#[test]
+fn highlight_engine_handles_empty_pattern_list() {
+    let patterns: Vec<HighlightPattern> = vec![];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("Some text here.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert_eq!(result.segments.len(), 1);
+    assert_eq!(result.segments[0].text, "Some text here.");
+}
+
+// ---------------- Replacement Tests ----------------
+
+#[test]
+fn highlight_engine_applies_replacement() {
+    let mut pattern = make_highlight_pattern(
+        "Fading roisaen",
+        Some("cyan"),
+        None,
+        false,
+        false,
+        false,
+    );
+    pattern.replace = Some("★ Fading roisaen".to_string());
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("Fading roisaen (42)")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    let combined_text: String = result.segments.iter().map(|s| s.text.as_str()).collect();
+    assert!(
+        combined_text.contains("★"),
+        "Replacement should add the star prefix: {}",
+        combined_text
+    );
+}
+
+// ---------------- Sound Trigger Tests ----------------
+
+#[test]
+fn highlight_engine_returns_sound_triggers() {
+    let mut pattern = make_highlight_pattern(
+        "level up",
+        Some("gold"),
+        None,
+        true,
+        false,
+        false,
+    );
+    pattern.sound = Some("fanfare.wav".to_string());
+    pattern.sound_volume = Some(0.8);
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let segments = vec![make_segment("Congratulations! You level up!")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert_eq!(result.sounds.len(), 1, "Should have one sound trigger");
+    assert_eq!(result.sounds[0].file, "fanfare.wav");
+    assert_eq!(result.sounds[0].volume, Some(0.8));
+}
+
+// ---------------- Get First Match Color ----------------
+
+#[test]
+fn highlight_engine_get_first_match_color_returns_matching_color() {
+    let patterns = vec![
+        make_highlight_pattern("enemy", Some("red"), None, false, false, true),
+        make_highlight_pattern("ally", Some("green"), None, false, false, true),
+    ];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let color = engine.get_first_match_color("An enemy approaches!");
+    assert_eq!(color, Some("red".to_string()));
+
+    let color2 = engine.get_first_match_color("Your ally arrives.");
+    assert_eq!(color2, Some("green".to_string()));
+}
+
+#[test]
+fn highlight_engine_get_first_match_color_returns_none_when_no_match() {
+    let patterns = vec![make_highlight_pattern(
+        "goblin",
+        Some("red"),
+        None,
+        false,
+        false,
+        true,
+    )];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    let color = engine.get_first_match_color("A peaceful day.");
+    assert!(color.is_none());
+}
+
+// ---------------- Stream Filter Tests ----------------
+
+#[test]
+fn highlight_engine_stream_filter_applies_to_matching_stream() {
+    let mut pattern = make_highlight_pattern(
+        "combat text",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    );
+    pattern.stream = Some("combat".to_string());
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    // Test with matching stream
+    let segments = vec![make_segment("combat text here")];
+    let result = engine.apply_highlights(&segments, "combat");
+
+    let colored = result.segments.iter().find(|s| s.fg.as_deref() == Some("red"));
+    assert!(colored.is_some(), "Pattern should apply to matching stream");
+}
+
+#[test]
+fn highlight_engine_stream_filter_skips_non_matching_stream() {
+    let mut pattern = make_highlight_pattern(
+        "combat text",
+        Some("red"),
+        None,
+        false,
+        false,
+        false,
+    );
+    pattern.stream = Some("combat".to_string());
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    // Test with non-matching stream
+    let segments = vec![make_segment("combat text here")];
+    let result = engine.apply_highlights(&segments, "thoughts");
+
+    // Should not apply color since stream doesn't match
+    let colored = result.segments.iter().find(|s| s.fg.as_deref() == Some("red"));
+    assert!(colored.is_none(), "Pattern should NOT apply to non-matching stream");
+}
+
+// ---------------- Silent Prompt Tests ----------------
+
+#[test]
+fn highlight_engine_silent_prompt_marks_fully_covered_line_as_silent() {
+    let mut pattern = make_highlight_pattern(
+        "You go east.",
+        None,
+        None,
+        false,
+        false,
+        true, // fast_parse
+    );
+    pattern.silent_prompt = true;
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    // Test with exact match
+    let segments = vec![make_segment("You go east.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert!(
+        result.line_is_silent,
+        "Line should be marked as silent when entire line is covered by silent_prompt pattern"
+    );
+}
+
+#[test]
+fn highlight_engine_silent_prompt_non_matching_line_is_not_silent() {
+    let mut pattern = make_highlight_pattern(
+        "You go east.",
+        None,
+        None,
+        false,
+        false,
+        true, // fast_parse
+    );
+    pattern.silent_prompt = true;
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    // Test with non-matching text
+    let segments = vec![make_segment("You go west.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert!(
+        !result.line_is_silent,
+        "Line should NOT be marked as silent when pattern doesn't match"
+    );
+}
+
+#[test]
+fn highlight_engine_silent_prompt_partial_match_is_not_silent() {
+    let mut pattern = make_highlight_pattern(
+        "east",
+        None,
+        None,
+        false,
+        false,
+        true, // fast_parse
+    );
+    pattern.silent_prompt = true;
+
+    let patterns = vec![pattern];
+    let engine = CoreHighlightEngine::new(patterns);
+
+    // Test with partial match - "east" matches but doesn't cover the whole line
+    let segments = vec![make_segment("You go east.")];
+    let result = engine.apply_highlights(&segments, "main");
+
+    assert!(
+        !result.line_is_silent,
+        "Line should NOT be marked as silent when pattern only partially covers it"
+    );
 }

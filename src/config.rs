@@ -108,6 +108,26 @@ impl std::fmt::Display for ColorMode {
     }
 }
 
+/// Position of timestamps relative to line content
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TimestampPosition {
+    /// Append timestamp at end of line (default, e.g., "text [7:08 AM]")
+    #[default]
+    End,
+    /// Prepend timestamp at start of line (e.g., "[7:08 AM] text")
+    Start,
+}
+
+impl std::fmt::Display for TimestampPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TimestampPosition::End => write!(f, "end"),
+            TimestampPosition::Start => write!(f, "start"),
+        }
+    }
+}
+
 // Default functions for HighlightsConfig
 fn default_highlights_enabled() -> bool {
     true
@@ -655,6 +675,9 @@ pub struct TextWidgetData {
     pub wordwrap: bool,
     #[serde(default)]
     pub show_timestamps: bool,
+    /// Timestamp position (overrides ui.timestamp_position if Some)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_position: Option<TimestampPosition>,
 }
 
 /// Room widget specific data
@@ -754,6 +777,9 @@ pub struct TabbedTextTab {
     /// Ignore activity/unread indicators for this tab
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore_activity: Option<bool>,
+    /// Timestamp position (overrides ui.timestamp_position if Some)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_position: Option<TimestampPosition>,
 }
 
 impl TabbedTextTab {
@@ -1649,6 +1675,9 @@ pub struct UiConfig {
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
+    // Timestamp position (start or end of line)
+    #[serde(default)]
+    pub timestamp_position: TimestampPosition, // "start" or "end" (default: end)
 }
 
 impl Default for UiConfig {
@@ -1672,6 +1701,7 @@ impl Default for UiConfig {
             perf_stats_height: default_perf_stats_height(),
             ignores_enabled: default_ignores_enabled(),
             color_mode: ColorMode::default(),
+            timestamp_position: TimestampPosition::default(),
         }
     }
 }
@@ -1877,17 +1907,39 @@ pub struct StreamsConfig {
     /// Default: "main"
     #[serde(default = "default_streams_fallback")]
     pub fallback: String,
+
+    /// When true (default), <streamWindow id='room'> does NOT change current_stream.
+    /// Room text will flow to main window (room window uses components, not text).
+    /// Set to false for legacy behavior where streamWindow pushes the stream.
+    /// DragonRealms-specific - GemStone IV doesn't use streamWindow room.
+    #[serde(default = "default_room_in_main")]
+    pub room_in_main: bool,
 }
 
 fn default_streams_fallback() -> String {
     "main".to_string()
 }
 
+fn default_room_in_main() -> bool {
+    true
+}
+
 impl Default for StreamsConfig {
     fn default() -> Self {
         Self {
-            drop_unsubscribed: Vec::new(),
+            // Match defaults/config.toml - drop streams that duplicate main content
+            drop_unsubscribed: vec![
+                "targetcount".to_string(),
+                "playercount".to_string(),
+                "targetlist".to_string(),
+                "playerlist".to_string(),
+                "speech".to_string(),
+                "whisper".to_string(),
+                "talk".to_string(),
+                "conversation".to_string(),
+            ],
             fallback: default_streams_fallback(),
+            room_in_main: default_room_in_main(),
         }
     }
 }
@@ -2638,6 +2690,7 @@ impl Config {
                     buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3414,6 +3467,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3432,6 +3486,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3450,6 +3505,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3468,6 +3524,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3486,6 +3543,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3504,6 +3562,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3522,6 +3581,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3540,6 +3600,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3558,6 +3619,7 @@ impl Config {
                     buffer_size: 0, // VellumFE uses 0 - content is cleared and replaced
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3576,6 +3638,7 @@ impl Config {
                     buffer_size: 500,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3593,6 +3656,7 @@ impl Config {
                     buffer_size: 1000,
                     wordwrap: true,
                     show_timestamps: false,
+                    timestamp_position: None,
                 },
             }),
 
@@ -3626,6 +3690,7 @@ impl Config {
                             streams: vec!["thoughts".to_string()],
                             show_timestamps: None,
                             ignore_activity: Some(false),
+                            timestamp_position: None,
                         },
                         TabbedTextTab {
                             name: "Speech".to_string(),
@@ -3633,6 +3698,7 @@ impl Config {
                             streams: vec!["speech".to_string()],
                             show_timestamps: None,
                             ignore_activity: Some(false),
+                            timestamp_position: None,
                         },
                         TabbedTextTab {
                             name: "Announcements".to_string(),
@@ -3640,6 +3706,7 @@ impl Config {
                             streams: vec!["announcements".to_string()],
                             show_timestamps: None,
                             ignore_activity: Some(false),
+                            timestamp_position: None,
                         },
                         TabbedTextTab {
                             name: "Loot".to_string(),
@@ -3647,6 +3714,7 @@ impl Config {
                             streams: vec!["loot".to_string()],
                             show_timestamps: None,
                             ignore_activity: Some(false),
+                            timestamp_position: None,
                         },
                         TabbedTextTab {
                             name: "Ambients".to_string(),
@@ -3654,6 +3722,7 @@ impl Config {
                             streams: vec!["ambients".to_string()],
                             show_timestamps: None,
                             ignore_activity: Some(false),
+                            timestamp_position: None,
                         },
                     ],
                     buffer_size: 5000,
@@ -3681,6 +3750,7 @@ impl Config {
                         streams: vec!["main".to_string()],
                         show_timestamps: None, // Per-tab setting, no global default
                         ignore_activity: Some(false),
+                        timestamp_position: None,
                     }],
                     buffer_size: 5000,
                     tab_bar_position: "top".to_string(),
@@ -4718,6 +4788,7 @@ impl Default for Config {
                 perf_stats_height: default_perf_stats_height(),
                 ignores_enabled: default_ignores_enabled(),
                 color_mode: ColorMode::default(),
+                timestamp_position: TimestampPosition::default(),
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
@@ -5176,6 +5247,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
@@ -5237,6 +5309,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
@@ -5293,6 +5366,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
@@ -5354,6 +5428,7 @@ visible = true
                 buffer_size: 1000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
@@ -5423,6 +5498,7 @@ visible = true
                 buffer_size: 5000,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
@@ -5484,6 +5560,7 @@ visible = true
                 buffer_size: 100,
                 wordwrap: true,
                 show_timestamps: false,
+                timestamp_position: None,
             },
         };
 
