@@ -188,6 +188,13 @@ async fn async_run(
         // Sample system/process metrics (rate-limited internally)
         app_core.perf_stats.sample_sysinfo();
 
+        // Reset widget caches if layout was reloaded
+        if app_core.ui_state.needs_widget_reset {
+            frontend.widget_manager.clear();
+            app_core.ui_state.needs_widget_reset = false;
+            tracing::debug!("Widget caches cleared after layout reload");
+        }
+
         // Render if needed
         if app_core.needs_render {
             frontend.render(&mut app_core)?;

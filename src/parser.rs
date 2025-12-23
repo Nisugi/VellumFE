@@ -581,7 +581,12 @@ impl XmlParser {
         }
         // Handle dropDownBox for target list
         else if tag.starts_with("<dropDownBox ") {
+            tracing::debug!("Parser: Matched dropDownBox tag: {}", &tag[..tag.len().min(100)]);
             self.handle_dropdown(tag, elements);
+        }
+        // Debug: catch any dropdown-related tags we might be missing
+        else if tag.to_lowercase().contains("dropdown") || tag.contains("dDB") {
+            tracing::warn!("Parser: Unhandled dropdown-like tag: {}", &tag[..tag.len().min(100)]);
         }
         // Silently ignore these tags
         else if tag.starts_with("<compDef ")
@@ -940,6 +945,22 @@ impl XmlParser {
                     remaining = &remaining[pb_start + pb_end + 2..];
                 } else {
                     break;
+                }
+            }
+        }
+
+        // Extract dropDownBox tags from within dialogData (for combat targets)
+        // <dialogData id='combat'><dropDownBox id='dDBTarget' .../></dialogData>
+        if tag.contains("<dropDownBox ") {
+            if let Some(db_start) = tag.find("<dropDownBox ") {
+                // Find the end of the dropDownBox tag (self-closing with />)
+                if let Some(db_end) = tag[db_start..].find("/>") {
+                    let db_tag = &tag[db_start..db_start + db_end + 2];
+                    tracing::debug!(
+                        "Parser: Found dropDownBox inside dialogData: {}",
+                        &db_tag[..db_tag.len().min(80)]
+                    );
+                    self.handle_dropdown(db_tag, elements);
                 }
             }
         }
@@ -1538,6 +1559,13 @@ impl XmlParser {
                     content_text.split(',').map(|s| s.trim().to_string()).collect();
                 let target_ids: Vec<String> =
                     content_value.split(',').map(|s| s.trim().to_string()).collect();
+
+                tracing::debug!(
+                    "Parser: dDBTarget dropdown received - current='{}', {} targets, {} ids",
+                    current_target,
+                    targets.len(),
+                    target_ids.len()
+                );
 
                 elements.push(ParsedElement::TargetList {
                     current_target,

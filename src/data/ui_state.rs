@@ -57,6 +57,9 @@ pub struct UiState {
 
     /// Pending link click (released without drag = send _menu)
     pub pending_link_click: Option<PendingLinkClick>,
+
+    /// Set true after layout reload to signal frontend to reset widget caches
+    pub needs_widget_reset: bool,
 }
 
 /// Mouse drag state for window operations
@@ -170,6 +173,7 @@ impl UiState {
             selection_drag_start: None,
             link_drag_state: None,
             pending_link_click: None,
+            needs_widget_reset: false,
         }
     }
 

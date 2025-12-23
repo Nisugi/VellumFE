@@ -152,7 +152,8 @@ impl TargetListState {
     /// Compares new list with existing, removing creatures that disappeared
     /// and adding new ones.
     pub fn update(&mut self, current_target: String, names: Vec<String>, ids: Vec<String>) {
-        self.current_target = current_target;
+        let input_count = names.len();
+        self.current_target = current_target.clone();
 
         // Build new creature list from paired names/ids
         let mut new_creatures = Vec::new();
@@ -163,6 +164,13 @@ impl TargetListState {
             }
             new_creatures.push(Creature { name, id });
         }
+
+        tracing::debug!(
+            "TargetListState::update - current='{}', input={}, after_filter={}",
+            current_target,
+            input_count,
+            new_creatures.len()
+        );
 
         self.creatures = new_creatures;
     }

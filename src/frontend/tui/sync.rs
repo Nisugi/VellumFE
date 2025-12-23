@@ -947,6 +947,10 @@ impl TuiFrontend {
             if let crate::data::WindowContent::DropdownTargets = &window.content {
                 // Ensure widget exists
                 if !self.widget_manager.dropdown_targets_widgets.contains_key(name) {
+                    tracing::debug!(
+                        "sync_dropdown_targets_widgets: Creating new widget '{}'",
+                        name
+                    );
                     let mut widget = dropdown_targets::DropdownTargets::new(name);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
@@ -957,6 +961,12 @@ impl TuiFrontend {
 
                 // Update widget from GameState.target_list
                 if let Some(widget) = self.widget_manager.dropdown_targets_widgets.get_mut(name) {
+                    let creature_count = app_core.game_state.target_list.creatures.len();
+                    tracing::trace!(
+                        "sync_dropdown_targets_widgets: Updating '{}' with {} creatures",
+                        name,
+                        creature_count
+                    );
                     widget.update_from_state(&app_core.game_state.target_list);
 
                     // Apply configuration

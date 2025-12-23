@@ -1110,6 +1110,9 @@ impl AppCore {
                 // Reinitialize windows from new layout with actual terminal size
                 self.init_windows(width, height);
                 self.needs_render = true;
+
+                // Signal frontend to reset widget caches
+                self.ui_state.needs_widget_reset = true;
             }
             Err(e) => self.add_system_message(&format!("Failed to load layout: {}", e)),
         }
@@ -1290,6 +1293,9 @@ impl AppCore {
         self.layout_modified_since_save = true;
         self.init_windows(terminal_width, terminal_height);
         self.needs_render = true;
+
+        // Signal frontend to reset widget caches
+        self.ui_state.needs_widget_reset = true;
 
         self.add_system_message(&format!(
             "Layout resized to {}x{} (delta: {:+}x{:+})",

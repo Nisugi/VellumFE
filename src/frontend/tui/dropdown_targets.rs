@@ -47,6 +47,14 @@ impl DropdownTargets {
             return false;
         }
 
+        tracing::debug!(
+            "DropdownTargets[{}]::update_from_state - old_count={}, new_count={}, current='{}'",
+            self.base_title,
+            self.count,
+            new_count,
+            target_list.current_target
+        );
+
         self.container.clear();
         self.count = 0;
         self.current_target = target_list.current_target.clone();

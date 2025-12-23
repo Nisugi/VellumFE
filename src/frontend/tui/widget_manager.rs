@@ -87,6 +87,33 @@ impl WidgetManager {
             last_synced_generation: HashMap::new(),
         }
     }
+
+    /// Clear all widget caches - call after layout reload to reset state
+    pub fn clear(&mut self) {
+        self.text_windows.clear();
+        self.command_inputs.clear();
+        self.room_windows.clear();
+        self.inventory_windows.clear();
+        self.spells_windows.clear();
+        self.progress_bars.clear();
+        self.countdowns.clear();
+        self.active_effects_windows.clear();
+        self.hand_widgets.clear();
+        self.spacer_widgets.clear();
+        self.indicator_widgets.clear();
+        self.targets_widgets.clear();
+        self.dropdown_targets_widgets.clear();
+        self.players_widgets.clear();
+        self.container_widgets.clear();
+        self.dashboard_widgets.clear();
+        self.tabbed_text_windows.clear();
+        self.compass_widgets.clear();
+        self.injury_doll_widgets.clear();
+        self.performance_widgets.clear();
+        self.perception_windows.clear();
+        self.experience_widgets.clear();
+        self.last_synced_generation.clear();
+    }
 }
 
 impl Default for WidgetManager {

@@ -422,6 +422,12 @@ impl AppCore {
         // Calculate window positions from layout
         let positions = self.calculate_window_positions(terminal_width, terminal_height);
 
+        // Log all widget types being loaded for debugging
+        let widget_types: Vec<_> = self.layout.windows.iter()
+            .map(|w| format!("{}:{}", w.name(), w.widget_type()))
+            .collect();
+        tracing::info!("init_windows: Loading {} windows: {:?}", widget_types.len(), widget_types);
+
         // Create windows based on layout (only visible ones)
         for window_def in &self.layout.windows {
             // Skip hidden windows
@@ -1887,113 +1893,82 @@ impl AppCore {
     /// Calculate window positions based on layout and terminal size
     fn calculate_window_positions(
         &self,
-        width: u16,
-        height: u16,
+        _width: u16,
+        _height: u16,
     ) -> HashMap<String, WindowPosition> {
         let mut positions = HashMap::new();
 
-        // Use layout file values directly (row, col, rows, cols from layout)
-        // Scale if terminal size differs from layout's expected terminal size
-        let layout_width = self.layout.terminal_width.unwrap_or(width) as f32;
-        let layout_height = self.layout.terminal_height.unwrap_or(height) as f32;
-        let actual_width = width as f32;
-        let actual_height = height as f32;
-
-        // Calculate scale factors (don't scale if layout size is 0 or terminal size matches)
-        let scale_x = if layout_width > 0.0 && (layout_width - actual_width).abs() > 1.0 {
-            actual_width / layout_width
-        } else {
-            1.0
-        };
-        let scale_y = if layout_height > 0.0 && (layout_height - actual_height).abs() > 1.0 {
-            actual_height / layout_height
-        } else {
-            1.0
-        };
-
-        tracing::debug!(
-            "Layout terminal size: {}x{}, actual: {}x{}, scale: {:.2}x{:.2}",
-            layout_width,
-            layout_height,
-            actual_width,
-            actual_height,
-            scale_x,
-            scale_y
-        );
+        // Use exact layout file values (row, col, rows, cols) without any scaling
+        // Windows may be offscreen if terminal is smaller than saved layout size
+        // User can manually run .resize if they want to redistribute windows
 
         for window_def in &self.layout.windows {
-            // Scale window position and size
-            let scaled_x = (window_def.base().col as f32 * scale_x) as u16;
-            let scaled_y = (window_def.base().row as f32 * scale_y) as u16;
-            let mut scaled_width = (window_def.base().cols as f32 * scale_x).max(1.0) as u16;
-            let mut scaled_height = (window_def.base().rows as f32 * scale_y).max(1.0) as u16;
+            // Use exact position and size from layout
+            let mut window_width = window_def.base().cols;
+            let mut window_height = window_def.base().rows;
 
             // Apply min/max constraints from window settings
             if let Some(min_cols) = window_def.base().min_cols {
-                if scaled_width < min_cols {
+                if window_width < min_cols {
                     tracing::debug!(
                         "Window '{}': enforcing min_cols={} (was {})",
                         window_def.name(),
                         min_cols,
-                        scaled_width
+                        window_width
                     );
-                    scaled_width = min_cols;
+                    window_width = min_cols;
                 }
             }
             if let Some(max_cols) = window_def.base().max_cols {
-                if scaled_width > max_cols {
+                if window_width > max_cols {
                     tracing::debug!(
                         "Window '{}': enforcing max_cols={} (was {})",
                         window_def.name(),
                         max_cols,
-                        scaled_width
+                        window_width
                     );
-                    scaled_width = max_cols;
+                    window_width = max_cols;
                 }
             }
             if let Some(min_rows) = window_def.base().min_rows {
-                if scaled_height < min_rows {
+                if window_height < min_rows {
                     tracing::debug!(
                         "Window '{}': enforcing min_rows={} (was {})",
                         window_def.name(),
                         min_rows,
-                        scaled_height
+                        window_height
                     );
-                    scaled_height = min_rows;
+                    window_height = min_rows;
                 }
             }
             if let Some(max_rows) = window_def.base().max_rows {
-                if scaled_height > max_rows {
+                if window_height > max_rows {
                     tracing::debug!(
                         "Window '{}': enforcing max_rows={} (was {})",
                         window_def.name(),
                         max_rows,
-                        scaled_height
+                        window_height
                     );
-                    scaled_height = max_rows;
+                    window_height = max_rows;
                 }
             }
 
             tracing::debug!(
-                "Window '{}': layout pos=({},{}) size={}x{}, scaled pos=({},{}) size={}x{}",
+                "Window '{}': pos=({},{}) size={}x{}",
                 window_def.name(),
                 window_def.base().col,
                 window_def.base().row,
-                window_def.base().cols,
-                window_def.base().rows,
-                scaled_x,
-                scaled_y,
-                scaled_width,
-                scaled_height
+                window_width,
+                window_height
             );
 
             positions.insert(
                 window_def.name().to_string(),
                 WindowPosition {
-                    x: scaled_x,
-                    y: scaled_y,
-                    width: scaled_width,
-                    height: scaled_height,
+                    x: window_def.base().col,
+                    y: window_def.base().row,
+                    width: window_width,
+                    height: window_height,
                 },
             );
         }
@@ -2627,6 +2602,9 @@ impl AppCore {
                 // Reinitialize windows with current terminal size
                 self.init_windows(width, height);
                 self.needs_render = true;
+
+                // Signal frontend to reset widget caches
+                self.ui_state.needs_widget_reset = true;
 
                 self.add_system_message("Layout reloaded from disk");
             }

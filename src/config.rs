@@ -2856,6 +2856,19 @@ impl Config {
                     entity_id: default_target_entity_id(),
                 },
             }),
+            "dropdown_targets" | "dd_targets" => Some(WindowDef::DropdownTargets {
+                base: WindowBase {
+                    name: "dropdown_targets".to_string(),
+                    title: Some("Targets".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 8,
+                    cols: 25,
+                    min_rows: Some(4),
+                    min_cols: Some(20),
+                    ..base_defaults.clone()
+                },
+            }),
             "players" => Some(WindowDef::Players {
                 base: WindowBase {
                     name: "players".to_string(),
@@ -3932,6 +3945,10 @@ impl Config {
             "performance".to_string(),
             "perception".to_string(),
             "experience".to_string(), // DR-specific
+            // Target tracking
+            "targets".to_string(),       // Lich-based target list
+            "dropdown_targets".to_string(), // Game's built-in dropdown target list
+            "players".to_string(),       // Player list
             // command_input is NOT in this list - it's always present and can't be added/removed
         ];
 
