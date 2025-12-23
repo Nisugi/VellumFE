@@ -36,45 +36,37 @@ impl TuiFrontend {
                 KeyCode::Char(c) => {
                     if modifiers.contains(KeyModifiers::CONTROL) {
                         match c {
-                            'a' => cmd_input.move_cursor_home(),
-                            'e' => cmd_input.move_cursor_end(),
-                            'u' => cmd_input.clear(),
-                            'w' => {
-                                // Delete word backwards (Ctrl+W)
-                                // Get current input state
-                                if let Some(input) = cmd_input.get_input() {
-                                    let chars: Vec<char> = input.chars().collect();
-                                    let mut count = 0;
-
-                                    // Count characters to delete
-                                    let mut pos = chars.len();
-
-                                    // Skip trailing whitespace
-                                    while pos > 0
-                                        && chars
-                                            .get(pos.saturating_sub(1))
-                                            .is_some_and(|c| c.is_whitespace())
-                                    {
-                                        count += 1;
-                                        pos -= 1;
-                                    }
-
-                                    // Delete word
-                                    while pos > 0
-                                        && chars
-                                            .get(pos.saturating_sub(1))
-                                            .is_some_and(|c| !c.is_whitespace())
-                                    {
-                                        count += 1;
-                                        pos -= 1;
-                                    }
-
-                                    // Delete the counted characters
-                                    for _ in 0..count {
-                                        cmd_input.delete_char();
+                            'a' => cmd_input.select_all(),
+                            'c' => {
+                                if let Some(selected) = cmd_input.get_selected_text() {
+                                    if let Err(e) = crate::clipboard::copy(&selected) {
+                                        tracing::warn!("Failed to copy to clipboard: {}", e);
                                     }
                                 }
                             }
+                            'x' => {
+                                if let Some(selected) = cmd_input.get_selected_text() {
+                                    if let Err(e) = crate::clipboard::copy(&selected) {
+                                        tracing::warn!("Failed to copy to clipboard: {}", e);
+                                    } else {
+                                        cmd_input.delete_selection();
+                                    }
+                                }
+                            }
+                            'v' => match crate::clipboard::paste() {
+                                Ok(text) => cmd_input.insert_text(&text),
+                                Err(e) => tracing::warn!("Failed to paste from clipboard: {}", e),
+                            },
+                            'z' => {
+                                if modifiers.contains(KeyModifiers::SHIFT) {
+                                    cmd_input.redo();
+                                } else {
+                                    cmd_input.undo();
+                                }
+                            }
+                            'e' => cmd_input.move_cursor_end(false),
+                            'u' => cmd_input.clear(),
+                            'w' => cmd_input.delete_word_backward(),
                             _ => {}
                         }
                     } else {
@@ -84,21 +76,23 @@ impl TuiFrontend {
                 KeyCode::Backspace => cmd_input.delete_char(),
                 KeyCode::Delete => cmd_input.delete_word(), // Delete forward is delete word
                 KeyCode::Left => {
+                    let extend = modifiers.contains(KeyModifiers::SHIFT);
                     if modifiers.contains(KeyModifiers::CONTROL) {
-                        cmd_input.move_cursor_word_left();
+                        cmd_input.move_cursor_word_left(extend);
                     } else {
-                        cmd_input.move_cursor_left();
+                        cmd_input.move_cursor_left(extend);
                     }
                 }
                 KeyCode::Right => {
+                    let extend = modifiers.contains(KeyModifiers::SHIFT);
                     if modifiers.contains(KeyModifiers::CONTROL) {
-                        cmd_input.move_cursor_word_right();
+                        cmd_input.move_cursor_word_right(extend);
                     } else {
-                        cmd_input.move_cursor_right();
+                        cmd_input.move_cursor_right(extend);
                     }
                 }
-                KeyCode::Home => cmd_input.move_cursor_home(),
-                KeyCode::End => cmd_input.move_cursor_end(),
+                KeyCode::Home => cmd_input.move_cursor_home(modifiers.contains(KeyModifiers::SHIFT)),
+                KeyCode::End => cmd_input.move_cursor_end(modifiers.contains(KeyModifiers::SHIFT)),
                 KeyCode::Up => cmd_input.history_previous(),
                 KeyCode::Down => cmd_input.history_next(),
                 KeyCode::Tab => {

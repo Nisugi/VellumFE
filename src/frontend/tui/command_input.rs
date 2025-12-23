@@ -8,6 +8,7 @@ use crate::frontend::tui::{
     title_position::{self, TitlePosition},
 };
 use crate::config::BorderSides;
+use crate::frontend::common::CommandInputModel;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -15,18 +16,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::{BorderType, Paragraph, Widget},
 };
-use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader, Write as _};
 use std::path::PathBuf;
 
 pub struct CommandInput {
-    input: String,
-    cursor_pos: usize,
-    history: VecDeque<String>,
-    history_index: Option<usize>,
-    max_history: usize,
-    min_command_length: usize, // Minimum command length to save to history
+    model: CommandInputModel,
     show_border: bool,
     border_style: Option<String>,
     border_color: Option<String>,
@@ -40,22 +35,12 @@ pub struct CommandInput {
     cursor_bg_color: Option<String>,    // Cursor background color
     prompt_icon: Option<String>,        // Optional prompt icon shown before input
     prompt_icon_color: Option<String>,  // Color for prompt icon
-    completion_candidates: Vec<String>, // Current completion candidates
-    completion_index: Option<usize>,    // Index of current completion
-    completion_prefix: Option<String>,  // Original text before completion started
-    is_user_typed: bool,                // True if current text was typed by user (not from history)
-    selection_start: Option<usize>,     // Start of selection (None if no selection)
 }
 
 impl CommandInput {
     pub fn new(max_history: usize) -> Self {
         Self {
-            input: String::new(),
-            cursor_pos: 0,
-            history: VecDeque::with_capacity(max_history),
-            history_index: None,
-            max_history,
-            min_command_length: 3, // Default to 3 characters
+            model: CommandInputModel::new(max_history),
             show_border: true,
             border_style: None,
             border_color: None,
@@ -69,16 +54,11 @@ impl CommandInput {
             cursor_bg_color: None, // Default: white
             prompt_icon: None,
             prompt_icon_color: None,
-            completion_candidates: Vec::new(),
-            completion_index: None,
-            completion_prefix: None,
-            is_user_typed: false,
-            selection_start: None,
         }
     }
 
     pub fn set_min_command_length(&mut self, min_length: usize) {
-        self.min_command_length = min_length;
+        self.model.set_min_command_length(min_length);
     }
 
     pub fn set_border_config(
@@ -130,125 +110,45 @@ impl CommandInput {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        // Find the byte index for cursor position
-        let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos);
-        self.input.insert(byte_idx, c);
-        self.cursor_pos += 1;
-        // Reset completion state when typing
-        self.reset_completion();
-        // Mark as user-typed
-        self.is_user_typed = true;
+        self.model.insert_char(c);
         tracing::debug!(
             "CommandInput: inserted '{}', input now: '{}', cursor at {}",
             c,
-            self.input,
-            self.cursor_pos
+            self.model.text(),
+            self.model.cursor_pos()
         );
     }
 
     pub fn delete_char(&mut self) {
-        if self.cursor_pos > 0 {
-            let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos - 1);
-            self.input.remove(byte_idx);
-            self.cursor_pos -= 1;
-        }
+        self.model.delete_char();
     }
 
-    pub fn move_cursor_left(&mut self) {
-        if self.cursor_pos > 0 {
-            self.cursor_pos -= 1;
-        }
+    pub fn move_cursor_left(&mut self, extend: bool) {
+        self.model.move_cursor_left(extend);
     }
 
-    pub fn move_cursor_right(&mut self) {
-        let char_count = self.input.chars().count();
-        if self.cursor_pos < char_count {
-            self.cursor_pos += 1;
-        }
+    pub fn move_cursor_right(&mut self, extend: bool) {
+        self.model.move_cursor_right(extend);
     }
 
-    pub fn move_cursor_home(&mut self) {
-        self.cursor_pos = 0;
+    pub fn move_cursor_home(&mut self, extend: bool) {
+        self.model.move_cursor_home(extend);
     }
 
-    pub fn move_cursor_end(&mut self) {
-        self.cursor_pos = self.input.chars().count();
+    pub fn move_cursor_end(&mut self, extend: bool) {
+        self.model.move_cursor_end(extend);
     }
 
-    pub fn move_cursor_word_left(&mut self) {
-        if self.cursor_pos == 0 {
-            return;
-        }
-
-        let chars: Vec<char> = self.input.chars().collect();
-        let mut pos = self.cursor_pos;
-
-        // Skip spaces to the left
-        while pos > 0 && chars[pos - 1].is_whitespace() {
-            pos -= 1;
-        }
-
-        // Skip word characters to the left
-        while pos > 0 && !chars[pos - 1].is_whitespace() {
-            pos -= 1;
-        }
-
-        self.cursor_pos = pos;
+    pub fn move_cursor_word_left(&mut self, extend: bool) {
+        self.model.move_cursor_word_left(extend);
     }
 
-    pub fn move_cursor_word_right(&mut self) {
-        let chars: Vec<char> = self.input.chars().collect();
-        let char_count = chars.len();
-
-        if self.cursor_pos >= char_count {
-            return;
-        }
-
-        let mut pos = self.cursor_pos;
-
-        // Skip word characters to the right
-        while pos < char_count && !chars[pos].is_whitespace() {
-            pos += 1;
-        }
-
-        // Skip spaces to the right
-        while pos < char_count && chars[pos].is_whitespace() {
-            pos += 1;
-        }
-
-        self.cursor_pos = pos;
+    pub fn move_cursor_word_right(&mut self, extend: bool) {
+        self.model.move_cursor_word_right(extend);
     }
 
     pub fn delete_word(&mut self) {
-        // Delete from cursor to end of current word
-        let chars: Vec<char> = self.input.chars().collect();
-        let char_count = chars.len();
-
-        if self.cursor_pos >= char_count {
-            return;
-        }
-
-        let mut end_pos = self.cursor_pos;
-
-        // Skip word characters
-        while end_pos < char_count && !chars[end_pos].is_whitespace() {
-            end_pos += 1;
-        }
-
-        // Convert positions to byte indices
-        let start_byte = self.char_pos_to_byte_idx(self.cursor_pos);
-        let end_byte = self.char_pos_to_byte_idx(end_pos);
-
-        self.input.drain(start_byte..end_byte);
-    }
-
-    /// Convert character position to byte index
-    fn char_pos_to_byte_idx(&self, char_pos: usize) -> usize {
-        self.input
-            .char_indices()
-            .nth(char_pos)
-            .map(|(idx, _)| idx)
-            .unwrap_or(self.input.len())
+        self.model.delete_word_forward();
     }
 
     /// Parse color string (hex or named) using centralized parser
@@ -257,102 +157,31 @@ impl CommandInput {
     }
 
     pub fn clear(&mut self) {
-        self.input.clear();
-        self.cursor_pos = 0;
-        self.history_index = None;
-        self.is_user_typed = false;
+        self.model.clear();
     }
 
     pub fn get_input(&self) -> Option<String> {
-        if self.input.is_empty() {
-            None
-        } else {
-            Some(self.input.clone())
-        }
+        self.model.get_input()
     }
 
     pub fn get_last_command(&self) -> Option<String> {
-        self.history.front().cloned()
+        self.model.get_last_command()
     }
 
     pub fn get_second_last_command(&self) -> Option<String> {
-        self.history.get(1).cloned()
+        self.model.get_second_last_command()
     }
 
     pub fn submit(&mut self) -> Option<String> {
-        if self.input.is_empty() {
-            return None;
-        }
-
-        let command = self.input.clone();
-
-        // Add to history only if:
-        // 1. Command meets minimum length requirement
-        // 2. Command is different from the last command in history (avoid consecutive duplicates)
-        if command.len() >= self.min_command_length {
-            let should_add = self
-                .history
-                .front()
-                .map(|last_cmd| last_cmd != &command)
-                .unwrap_or(true); // If history is empty, add the command
-
-            if should_add {
-                self.history.push_front(command.clone());
-                if self.history.len() > self.max_history {
-                    self.history.pop_back();
-                }
-            }
-        }
-
-        self.clear();
-        Some(command)
+        self.model.submit()
     }
 
     pub fn history_previous(&mut self) {
-        if self.history.is_empty() {
-            return;
-        }
-
-        let new_index = match self.history_index {
-            None => 0,
-            Some(idx) if idx < self.history.len() - 1 => idx + 1,
-            Some(idx) => idx,
-        };
-
-        if let Some(cmd) = self.history.get(new_index) {
-            self.input = cmd.clone();
-            self.cursor_pos = self.input.chars().count();
-            self.history_index = Some(new_index);
-            self.is_user_typed = false; // Text is now from history
-        }
+        self.model.history_previous();
     }
 
     pub fn history_next(&mut self) {
-        match self.history_index {
-            None => {
-                // Not in history navigation - if user typed something, clear it
-                if self.is_user_typed && !self.input.is_empty() {
-                    self.clear();
-                }
-            }
-            Some(0) => {
-                // At most recent history entry, go back to empty
-                self.input.clear();
-                self.cursor_pos = 0;
-                self.history_index = None;
-                self.is_user_typed = false;
-            }
-            Some(idx) => {
-                // Cycle down through history
-                let new_index = idx - 1;
-                if let Some(cmd) = self.history.get(new_index) {
-                    self.input = cmd.clone();
-                    self.cursor_pos = self.input.chars().count();
-                    self.history_index = Some(new_index);
-                    self.is_user_typed = false;
-                }
-            }
-        }
+        self.model.history_next();
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -478,8 +307,9 @@ impl CommandInput {
         }
 
         let available_width = text_area.width as usize;
-        let chars: Vec<char> = self.input.chars().collect();
+        let chars: Vec<char> = self.model.text().chars().collect();
         let total_chars = chars.len();
+        let selection = self.model.selection_range();
 
         // We need space for: text before cursor + cursor block + text after cursor
         // The cursor block takes 1 position, so max visible cursor position is (available_width - 1)
@@ -496,17 +326,17 @@ impl CommandInput {
             let target_cursor_pos = (available_width * 3 / 10).min(max_visible_cursor_pos);
 
             // Calculate scroll to position cursor at target_cursor_pos from left
-            if self.cursor_pos < target_cursor_pos {
+            if self.model.cursor_pos() < target_cursor_pos {
                 // Near start - show from beginning
                 0
-            } else if self.cursor_pos
+            } else if self.model.cursor_pos()
                 >= total_chars.saturating_sub(available_width - target_cursor_pos)
             {
                 // Near end - anchor to end, ensuring cursor stays within bounds
                 total_chars.saturating_sub(available_width)
             } else {
                 // Middle - keep cursor at target position from left
-                self.cursor_pos.saturating_sub(target_cursor_pos)
+                self.model.cursor_pos().saturating_sub(target_cursor_pos)
             }
         };
 
@@ -520,17 +350,10 @@ impl CommandInput {
             .collect();
 
         // Adjust cursor position relative to visible window
-        let visible_cursor_pos = self.cursor_pos.saturating_sub(scroll_offset);
+        let visible_cursor_pos = self.model.cursor_pos().saturating_sub(scroll_offset);
 
         // Ensure cursor position doesn't exceed available space
         let visible_cursor_pos = visible_cursor_pos.min(available_width.saturating_sub(1));
-
-        let before_cursor: String = visible_chars.iter().take(visible_cursor_pos).collect();
-        let cursor_char = visible_chars
-            .get(visible_cursor_pos)
-            .copied()
-            .unwrap_or(' ');
-        let after_cursor: String = visible_chars.iter().skip(visible_cursor_pos + 1).collect();
 
         // Get cursor colors
         let cursor_fg = self
@@ -544,14 +367,35 @@ impl CommandInput {
             .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::White);
 
-        let line = Line::from(vec![
-            Span::styled(before_cursor, Style::default().fg(text_color)),
-            Span::styled(
-                cursor_char.to_string(),
+        let selection_bg = self
+            .cursor_bg_color
+            .as_ref()
+            .and_then(|c| self.parse_color(c))
+            .unwrap_or(Color::DarkGray);
+
+        let mut spans = Vec::new();
+        if visible_chars.is_empty() {
+            spans.push(Span::styled(
+                " ",
                 Style::default().bg(cursor_bg).fg(cursor_fg),
-            ),
-            Span::styled(after_cursor, Style::default().fg(text_color)),
-        ]);
+            ));
+        } else {
+            for (i, ch) in visible_chars.iter().enumerate() {
+                let mut style = Style::default().fg(text_color);
+                if let Some((start, end)) = selection {
+                    let global_idx = scroll_offset + i;
+                    if global_idx >= start && global_idx < end {
+                        style = style.bg(selection_bg);
+                    }
+                }
+                if i == visible_cursor_pos {
+                    style = Style::default().bg(cursor_bg).fg(cursor_fg);
+                }
+                spans.push(Span::styled(ch.to_string(), style));
+            }
+        }
+
+        let line = Line::from(spans);
 
         let paragraph = Paragraph::new(line);
         paragraph.render(text_area, buf);
@@ -667,88 +511,16 @@ impl CommandInput {
         search_paragraph.render(inner, buf);
     }
 
-    /// Reset completion state
-    fn reset_completion(&mut self) {
-        self.completion_candidates.clear();
-        self.completion_index = None;
-        self.completion_prefix = None;
-    }
-
-    /// Try to complete the current input
-    /// Returns true if a completion was performed
+    /// Try to complete the current input.
+    /// Returns true if a completion was performed.
     pub fn try_complete(
         &mut self,
         available_commands: &[String],
         available_names: &[String],
     ) -> bool {
-        // Only complete if cursor is at the end
-        if self.cursor_pos != self.input.chars().count() {
-            return false;
-        }
-
-        // If we're not in a completion session, start one
-        if self.completion_candidates.is_empty() {
-            let input = self.input.trim();
-
-            // Find what we're trying to complete
-            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
-                // Completing a word after a space (e.g., ".createwindow mai" -> complete "mai")
-                let prefix = &input[..=pos];
-                let word = &input[pos + 1..];
-                (prefix.to_string(), word)
-            } else {
-                // Completing the first word (e.g., ".createw" -> complete ".createw")
-                ("".to_string(), input)
-            };
-
-            if word_to_complete.is_empty() {
-                return false;
-            }
-
-            // Find candidates
-            let mut candidates = Vec::new();
-
-            // If completing a dot command (starts with .)
-            if word_to_complete.starts_with('.') {
-                for cmd in available_commands {
-                    if cmd.starts_with(word_to_complete) {
-                        candidates.push(cmd.clone());
-                    }
-                }
-            } else {
-                // Completing a window/template name
-                for name in available_names {
-                    if name.starts_with(word_to_complete) {
-                        candidates.push(name.clone());
-                    }
-                }
-            }
-
-            if candidates.is_empty() {
-                return false;
-            }
-
-            candidates.sort();
-            self.completion_candidates = candidates;
-            self.completion_prefix = Some(prefix);
-            self.completion_index = Some(0);
-        } else {
-            // Already in completion session, cycle to next candidate
-            if let Some(ref mut index) = self.completion_index {
-                *index = (*index + 1) % self.completion_candidates.len();
-            }
-        }
-
-        // Apply the current completion
-        if let (Some(index), Some(ref prefix)) = (self.completion_index, &self.completion_prefix) {
-            if let Some(candidate) = self.completion_candidates.get(index) {
-                self.input = format!("{}{}", prefix, candidate);
-                self.cursor_pos = self.input.chars().count();
-                return true;
-            }
-        }
-
-        false
+        let before = self.model.text().to_string();
+        self.model.try_complete(available_commands, available_names);
+        before != self.model.text()
     }
 
     /// Get the history file path (~/.vellum-fe/history/<character>.txt or default.txt)
@@ -769,19 +541,19 @@ impl CommandInput {
         let file = fs::File::open(&history_path)?;
         let reader = BufReader::new(file);
 
-        self.history.clear();
+        self.model.history_mut().clear();
 
         for line in reader.lines() {
             let line = line?;
             if !line.trim().is_empty() {
-                self.history.push_back(line);
-                if self.history.len() > self.max_history {
-                    self.history.pop_front();
+                self.model.history_mut().push_back(line);
+                if self.model.history().len() > self.model.max_history() {
+                    self.model.history_mut().pop_front();
                 }
             }
         }
 
-        tracing::debug!("Loaded {} commands from history", self.history.len());
+        tracing::debug!("Loaded {} commands from history", self.model.history().len());
         Ok(())
     }
 
@@ -792,40 +564,50 @@ impl CommandInput {
         let mut file = fs::File::create(&history_path)?;
 
         // Save in reverse order (most recent first in file)
-        for cmd in &self.history {
+        for cmd in self.model.history() {
             writeln!(file, "{}", cmd)?;
         }
 
-        tracing::debug!("Saved {} commands to history", self.history.len());
+        tracing::debug!("Saved {} commands to history", self.model.history().len());
         Ok(())
     }
 
     /// Select all text in the input
     pub fn select_all(&mut self) {
-        if !self.input.is_empty() {
-            self.selection_start = Some(0);
-            self.cursor_pos = self.input.len();
-        }
+        self.model.select_all();
     }
 
     /// Get the currently selected text (if any)
     pub fn get_selected_text(&self) -> Option<String> {
-        if let Some(start) = self.selection_start {
-            let end = self.cursor_pos;
-            if start != end {
-                let (from, to) = if start < end {
-                    (start, end)
-                } else {
-                    (end, start)
-                };
-                return Some(self.input.chars().skip(from).take(to - from).collect());
-            }
-        }
-        None
+        self.model.get_selected_text()
     }
 
     /// Clear the current selection
     pub fn clear_selection(&mut self) {
-        self.selection_start = None;
+        self.model.clear_selection();
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.model.has_selection()
+    }
+
+    pub fn delete_selection(&mut self) -> bool {
+        self.model.delete_selection()
+    }
+
+    pub fn insert_text(&mut self, text: &str) {
+        self.model.insert_text(text);
+    }
+
+    pub fn delete_word_backward(&mut self) {
+        self.model.delete_word_backward();
+    }
+
+    pub fn undo(&mut self) -> bool {
+        self.model.undo()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.model.redo()
     }
 }
