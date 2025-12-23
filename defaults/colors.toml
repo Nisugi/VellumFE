@@ -28,7 +28,10 @@ fg = "ANSI Green"
 fg = "ANSI Green"
 
 [presets.monsterbold]
-fg = "ANSI Yellow"
+fg = "#FFFF00"  # ANSI Yellow - used for creature names
+
+[presets.target_indicator]
+fg = "#FFFFFF"  # ANSI Bright White - used for current target indicator
 
 [presets.familiar]
 fg = "Familiar"

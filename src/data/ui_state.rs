@@ -60,6 +60,12 @@ pub struct UiState {
 
     /// Set true after layout reload to signal frontend to reset widget caches
     pub needs_widget_reset: bool,
+
+    /// Container discovery mode - when ON, auto-creates windows for LOOK IN containers
+    pub container_discovery_mode: bool,
+
+    /// Set of ephemeral window names (session-only, not saved to layout)
+    pub ephemeral_windows: std::collections::HashSet<String>,
 }
 
 /// Mouse drag state for window operations
@@ -174,6 +180,8 @@ impl UiState {
             link_drag_state: None,
             pending_link_click: None,
             needs_widget_reset: false,
+            container_discovery_mode: false,
+            ephemeral_windows: std::collections::HashSet::new(),
         }
     }
 

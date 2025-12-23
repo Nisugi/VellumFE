@@ -50,8 +50,6 @@ pub struct MessageProcessor {
     /// Previous room component values (for change detection to avoid unnecessary processing)
     previous_room_components: std::collections::HashMap<String, String>,
 
-    /// Squelch/ignore system for filtering unwanted lines
-    squelch_enabled: bool,
     squelch_matcher: Option<aho_corasick::AhoCorasick>,
     squelch_regexes: Vec<regex::Regex>,
 
@@ -124,7 +122,6 @@ impl MessageProcessor {
             previous_inventory: Vec::new(),
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
-            squelch_enabled: false,
             squelch_matcher: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
@@ -2148,8 +2145,6 @@ impl MessageProcessor {
 
     /// Update squelch pattern matching infrastructure from config
     pub fn update_squelch_patterns(&mut self) {
-        self.squelch_enabled = self.config.highlight_settings.ignores_enabled;
-
         // Collect all squelch patterns
         let squelch_patterns: Vec<_> = self
             .config
@@ -2187,10 +2182,9 @@ impl MessageProcessor {
             .collect();
 
         tracing::debug!(
-            "Updated squelch patterns: {} fast patterns, {} regex patterns, enabled={}",
+            "Updated squelch patterns: {} fast patterns, {} regex patterns",
             fast_patterns.len(),
-            self.squelch_regexes.len(),
-            self.squelch_enabled
+            self.squelch_regexes.len()
         );
     }
 
@@ -2435,10 +2429,6 @@ impl MessageProcessor {
 
     /// Check if a line should be squelched (ignored/filtered)
     fn should_squelch_line(&self, text: &str) -> bool {
-        if !self.squelch_enabled {
-            return false;
-        }
-
         // Check Aho-Corasick fast patterns
         if let Some(ref matcher) = self.squelch_matcher {
             if matcher.is_match(text) {
@@ -2679,13 +2669,6 @@ mod tests {
     fn test_new_processor_server_time_offset_zero() {
         let processor = create_test_processor();
         assert_eq!(processor.server_time_offset, 0);
-    }
-
-    #[test]
-    fn test_new_processor_squelch_enabled_by_default() {
-        let processor = create_test_processor();
-        // Squelch enabled by default (ignores_enabled = true in config)
-        assert!(processor.squelch_enabled);
     }
 
     // ===========================================

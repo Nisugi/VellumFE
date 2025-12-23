@@ -1549,7 +1549,7 @@ impl XmlParser {
         // Only handle dDBTarget for target list - ignore other dropdowns
         if let Some(id) = Self::extract_attribute(tag, "id") {
             if id == "dDBTarget" {
-                let current_target = Self::extract_attribute(tag, "value").unwrap_or_default();
+                let current_target_name = Self::extract_attribute(tag, "value").unwrap_or_default();
                 let content_text = Self::extract_attribute(tag, "content_text").unwrap_or_default();
                 let content_value =
                     Self::extract_attribute(tag, "content_value").unwrap_or_default();
@@ -1560,8 +1560,24 @@ impl XmlParser {
                 let target_ids: Vec<String> =
                     content_value.split(',').map(|s| s.trim().to_string()).collect();
 
+                // Find ID of current target by matching name to content_text
+                // The first matching entry's corresponding ID is the current target
+                // Only accept valid creature IDs (start with #), reject "target help" etc.
+                let current_target = if !current_target_name.is_empty() {
+                    targets
+                        .iter()
+                        .position(|name| name == &current_target_name)
+                        .and_then(|idx| target_ids.get(idx))
+                        .filter(|id| id.starts_with('#'))
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
                 tracing::debug!(
-                    "Parser: dDBTarget dropdown received - current='{}', {} targets, {} ids",
+                    "Parser: dDBTarget dropdown received - current_name='{}', current_id='{}', {} targets, {} ids",
+                    current_target_name,
                     current_target,
                     targets.len(),
                     target_ids.len()

@@ -878,18 +878,21 @@ impl TuiFrontend {
         }
     }
 
-    /// Sync targets widget data from AppCore to targets widgets
+    /// Sync targets widget data from GameState.room_creatures
+    /// Uses component-based parsing (room objs) for creature data
     pub(crate) fn sync_targets_widgets(
         &mut self,
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
         for (name, window) in &app_core.ui_state.windows {
-            if let crate::data::WindowContent::Targets { targets_text, count, .. } =
-                &window.content
-            {
+            if let crate::data::WindowContent::Targets = &window.content {
                 // Ensure widget exists
                 if !self.widget_manager.targets_widgets.contains_key(name) {
+                    tracing::debug!(
+                        "sync_targets_widgets: Creating new widget '{}'",
+                        name
+                    );
                     let mut widget = targets::Targets::new(name);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
@@ -898,76 +901,30 @@ impl TuiFrontend {
                     self.widget_manager.targets_widgets.insert(name.clone(), widget);
                 }
 
-                // Update widget
+                // Update widget from GameState.room_creatures
                 if let Some(widget) = self.widget_manager.targets_widgets.get_mut(name) {
-                    widget.set_targets_from_text(targets_text);
-
-                    // Apply configuration
-                    if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
-                    {
-                        let colors = resolve_window_colors(window_def.base(), theme);
-                        widget.set_border_config(
-                            window_def.base().show_border,
-                            Some(window_def.base().border_style.clone()),
-                            colors.border.clone(),
-                        );
-                        widget.set_border_sides(window_def.base().border_sides.clone());
-                        widget.set_background_color(colors.background.clone());
-                        widget.set_text_color(colors.text.clone());
-                        widget.set_transparent_background(window_def.base().transparent_background);
-                        if let Some(ref color) = colors.text {
-                            widget.set_bar_color(color.clone());
-                        }
-
-                        let base_title = window_def
-                            .base()
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| name.clone());
-                        if window_def.base().show_title {
-                            widget.set_title_with_count(&base_title, count.as_deref());
-                        } else {
-                            widget.set_title_with_count("", None);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Sync dropdown targets widget data from GameState.target_list
-    /// This is for direct-connect users who don't use Lich's ;targetlist script
-    pub(crate) fn sync_dropdown_targets_widgets(
-        &mut self,
-        app_core: &crate::core::AppCore,
-        theme: &crate::theme::AppTheme,
-    ) {
-        for (name, window) in &app_core.ui_state.windows {
-            if let crate::data::WindowContent::DropdownTargets = &window.content {
-                // Ensure widget exists
-                if !self.widget_manager.dropdown_targets_widgets.contains_key(name) {
-                    tracing::debug!(
-                        "sync_dropdown_targets_widgets: Creating new widget '{}'",
-                        name
-                    );
-                    let mut widget = dropdown_targets::DropdownTargets::new(name);
-                    // GameState widgets still need highlight patterns for item highlighting
-                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
-                    widget.set_highlights(highlights);
-                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    self.widget_manager.dropdown_targets_widgets.insert(name.clone(), widget);
-                }
-
-                // Update widget from GameState.target_list
-                if let Some(widget) = self.widget_manager.dropdown_targets_widgets.get_mut(name) {
-                    let creature_count = app_core.game_state.target_list.creatures.len();
+                    let creature_count = app_core.game_state.room_creatures.len();
                     tracing::trace!(
-                        "sync_dropdown_targets_widgets: Updating '{}' with {} creatures",
+                        "sync_targets_widgets: Updating '{}' with {} creatures",
                         name,
                         creature_count
                     );
-                    widget.update_from_state(&app_core.game_state.target_list);
+
+                    // Get widget width from window definition
+                    let widget_width = app_core
+                        .layout
+                        .windows
+                        .iter()
+                        .find(|w| w.name() == name)
+                        .map(|w| w.base().cols)
+                        .unwrap_or(20); // Fallback width if not found
+
+                    widget.update_from_state(
+                        &app_core.game_state.room_creatures,
+                        &app_core.game_state.target_list.current_target,
+                        &app_core.config.target_list,
+                        widget_width,
+                    );
 
                     // Apply configuration
                     if let Some(window_def) =
@@ -981,11 +938,53 @@ impl TuiFrontend {
                         );
                         widget.set_border_sides(window_def.base().border_sides.clone());
                         widget.set_background_color(colors.background.clone());
-                        widget.set_text_color(colors.text.clone());
+
+                        // Use monsterbold preset as default text color for creatures,
+                        // unless user explicitly set text_color in window config.
+                        // Filter out "-" which means "use default" in the config system.
+                        let explicit_text_color = window_def
+                            .base()
+                            .text_color
+                            .clone()
+                            .filter(|c| c != "-" && !c.is_empty());
+                        let monsterbold_preset = app_core
+                            .config
+                            .colors
+                            .presets
+                            .get("monsterbold");
+                        let monsterbold_fg = monsterbold_preset.and_then(|p| p.fg.clone());
+
+                        tracing::debug!(
+                            "targets colors: explicit={:?}, monsterbold_preset={:?}, monsterbold_fg={:?}",
+                            explicit_text_color,
+                            monsterbold_preset,
+                            monsterbold_fg
+                        );
+
+                        let creature_text_color = explicit_text_color.or(monsterbold_fg);
+                        tracing::debug!(
+                            "targets final creature_text_color={:?}",
+                            creature_text_color
+                        );
+                        widget.set_text_color(creature_text_color.clone());
+
+                        // Set indicator color for current target (►)
+                        let indicator_color = app_core
+                            .config
+                            .colors
+                            .presets
+                            .get("target_indicator")
+                            .and_then(|p| p.fg.clone());
+
+                        tracing::debug!(
+                            "Targets: setting indicator_color = {:?} (from preset 'target_indicator')",
+                            indicator_color
+                        );
+
+                        widget.set_indicator_color(indicator_color);
+
+                        // Respect user's transparent_background setting from window config
                         widget.set_transparent_background(window_def.base().transparent_background);
-                        if let Some(ref color) = colors.text {
-                            widget.set_bar_color(color.clone());
-                        }
 
                         let base_title = window_def
                             .base()
@@ -1014,17 +1013,28 @@ impl TuiFrontend {
             if let crate::data::WindowContent::Container { container_title } = &window.content {
                 // Ensure widget exists - use title as the identifier since it's persistent
                 if !self.widget_manager.container_widgets.contains_key(name) {
-                    let display_title = name.clone(); // Default display title
+                    // Use the container title from cache if available, otherwise use the container_title from config
+                    let display_title = app_core
+                        .game_state
+                        .container_cache
+                        .find_by_title(container_title)
+                        .map(|c| c.title.clone())
+                        .unwrap_or_else(|| container_title.clone());
                     let mut widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    // Set link color from theme before first update
+                    widget.set_link_color(color_to_hex_string(&theme.link_color));
                     self.widget_manager.container_widgets.insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.container_cache
                 if let Some(widget) = self.widget_manager.container_widgets.get_mut(name) {
+                    // Apply link color from theme (must be set before update_from_cache for correct parsing)
+                    widget.set_link_color(color_to_hex_string(&theme.link_color));
+
                     // Look up container by title (case-insensitive match)
                     if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
                         widget.update_from_cache(container_data);
@@ -1052,37 +1062,46 @@ impl TuiFrontend {
                         } else {
                             widget.set_title(String::new());
                         }
+                    } else {
+                        // Ephemeral container windows (from .showcontainers) - apply theme defaults
+                        widget.set_border_config(
+                            true,
+                            color_to_hex_string(&theme.window_border),
+                        );
+                        widget.set_background_color(color_to_hex_string(&theme.window_background));
+                        widget.set_text_color(color_to_hex_string(&theme.text_primary));
                     }
                 }
             }
         }
     }
 
-    /// Sync players widget data from AppCore to players widgets
+    /// Sync players widget data from AppCore to players widgets (component-based)
     pub(crate) fn sync_players_widgets(
         &mut self,
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
         for (name, window) in &app_core.ui_state.windows {
-            if let crate::data::WindowContent::Players { players_text, count, .. } =
-                &window.content
-            {
+            if matches!(window.content, crate::data::WindowContent::Players) {
                 // Ensure widget exists
                 if !self.widget_manager.players_widgets.contains_key(name) {
                     let mut widget = players::Players::new(name);
-                    // GameState widgets still need highlight patterns for item highlighting
+                    // Apply highlight patterns for text highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
                     self.widget_manager.players_widgets.insert(name.clone(), widget);
                 }
 
-                // Update widget
+                // Update widget from GameState.room_players
                 if let Some(widget) = self.widget_manager.players_widgets.get_mut(name) {
-                    widget.set_players_from_text(players_text);
+                    widget.update_from_state(
+                        &app_core.game_state.room_players,
+                        &app_core.config.target_list,
+                    );
 
-                    // Apply configuration
+                    // Apply configuration (borders, colors, title)
                     if let Some(window_def) =
                         app_core.layout.windows.iter().find(|w| w.name() == name)
                     {
@@ -1096,9 +1115,6 @@ impl TuiFrontend {
                         widget.set_background_color(colors.background.clone());
                         widget.set_text_color(colors.text.clone());
                         widget.set_transparent_background(window_def.base().transparent_background);
-                        if let Some(ref color) = colors.text {
-                            widget.set_bar_color(color.clone());
-                        }
 
                         let base_title = window_def
                             .base()
@@ -1106,9 +1122,9 @@ impl TuiFrontend {
                             .clone()
                             .unwrap_or_else(|| name.clone());
                         if window_def.base().show_title {
-                            widget.set_title_with_count(&base_title, count.as_deref());
+                            widget.set_title(&base_title);
                         } else {
-                            widget.set_title_with_count("", None);
+                            widget.set_title("");
                         }
                     }
                 }

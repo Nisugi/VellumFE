@@ -327,6 +327,109 @@ impl TuiFrontend {
             }
         }
 
+        // Try container widget
+        if let Some(container_widget) = self.widget_manager.container_widgets.get(window_name) {
+            tracing::debug!(
+                "Checking container window '{}' for link at ({}, {})",
+                window_name,
+                mouse_col,
+                mouse_row
+            );
+            let border_offset = if container_widget.has_border() { 1 } else { 0 };
+
+            // Bounds check within content area
+            if mouse_col < window_rect.x + border_offset
+                || mouse_col >= window_rect.x + window_rect.width - border_offset
+                || mouse_row < window_rect.y + border_offset
+                || mouse_row >= window_rect.y + window_rect.height - border_offset
+            {
+                tracing::debug!("Mouse click outside container window content area");
+                return None;
+            }
+
+            let wrapped_lines = container_widget.get_wrapped_lines();
+            let start_line = container_widget.get_start_line(); // Get scroll offset
+            tracing::debug!(
+                "Container window has {} lines, start_line={}",
+                wrapped_lines.len(),
+                start_line
+            );
+
+            // Map visual row to actual line index (accounting for scroll/overflow)
+            let visual_line_idx = (mouse_row - window_rect.y - border_offset) as usize;
+            let line_idx = start_line + visual_line_idx;
+            let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+            if line_idx >= wrapped_lines.len() {
+                tracing::debug!(
+                    "Line index {} (visual={}, start={}) out of range",
+                    line_idx,
+                    visual_line_idx,
+                    start_line
+                );
+                return None;
+            }
+
+            let line = &wrapped_lines[line_idx];
+            tracing::debug!(
+                "Checking line {} with {} segments, col_offset={}",
+                line_idx,
+                line.len(),
+                col_offset
+            );
+            let mut col = 0usize;
+            for (seg_idx, seg) in line.iter().enumerate() {
+                let seg_len = seg.text.chars().count();
+                tracing::debug!(
+                    "  Segment {}: text='{}', col={}, len={}, has_link={}",
+                    seg_idx,
+                    seg.text,
+                    col,
+                    seg_len,
+                    seg.link_data.is_some()
+                );
+
+                if col_offset >= col && col_offset < col + seg_len {
+                    // Inside this segment
+                    tracing::debug!("  Click is inside this segment!");
+                    if let Some(link) = seg.link_data.clone() {
+                        tracing::debug!(
+                            "  Found link: exist_id={}, noun={}",
+                            link.exist_id,
+                            link.noun
+                        );
+                        let data_link = crate::data::LinkData {
+                            exist_id: link.exist_id.clone(),
+                            noun: link.noun.clone(),
+                            text: link.text.clone(),
+                            coord: link.coord.clone(),
+                        };
+                        return Some(data_link);
+                    }
+                    tracing::debug!("  Segment has no link data");
+                    return None;
+                }
+                col += seg_len;
+            }
+
+            tracing::debug!("No segment matched at col_offset={}", col_offset);
+            return None;
+        }
+
+        // Try targets widget (component-based, for direct targeting)
+        if let Some(targets_widget) = self.widget_manager.targets_widgets.get(window_name) {
+            // handle_click returns "target #id" command if creature clicked
+            if let Some(command) = targets_widget.handle_click(mouse_row, window_rect) {
+                // Return as direct command link (like <d> tags)
+                return Some(crate::data::LinkData {
+                    exist_id: "_direct_".to_string(),
+                    noun: command, // "target #123456"
+                    text: String::new(),
+                    coord: None,
+                });
+            }
+        }
+
         None
     }
 }

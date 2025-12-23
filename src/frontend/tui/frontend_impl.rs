@@ -95,8 +95,7 @@ impl Frontend for TuiFrontend {
         self.sync_hand_widgets(app_core, &theme);
         self.sync_spacer_widgets(app_core, &theme);
         self.sync_indicator_widgets(app_core, &theme);
-        self.sync_targets_widgets(app_core, &theme);
-        self.sync_dropdown_targets_widgets(app_core, &theme);
+        self.sync_targets_widgets(app_core, &theme);  // New component-based
         self.sync_players_widgets(app_core, &theme);
         self.sync_container_widgets(app_core, &theme);
         self.sync_dashboard_widgets(app_core, &theme);
@@ -120,7 +119,6 @@ impl Frontend for TuiFrontend {
         let mut spacer_widgets = std::mem::take(&mut self.widget_manager.spacer_widgets);
         let mut indicator_widgets = std::mem::take(&mut self.widget_manager.indicator_widgets);
         let mut targets_widgets = std::mem::take(&mut self.widget_manager.targets_widgets);
-        let mut dropdown_targets_widgets = std::mem::take(&mut self.widget_manager.dropdown_targets_widgets);
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
         let mut container_widgets = std::mem::take(&mut self.widget_manager.container_widgets);
         let mut dashboard_widgets = std::mem::take(&mut self.widget_manager.dashboard_widgets);
@@ -143,9 +141,21 @@ impl Frontend for TuiFrontend {
             let theme = theme_for_render.clone();
             let screen_area = f.area();
 
-            // Stable render order: sort by name, but draw the performance overlay last so it sits on top
+            // Stable render order: sort by name, then move ephemeral windows and performance_overlay to end
+            // so they render on top of other windows
             let mut window_order: Vec<&String> = app_core.ui_state.windows.keys().collect();
             window_order.sort();
+
+            // Move ephemeral container windows to end (they should render on top of regular windows)
+            let ephemeral_names: Vec<_> = window_order
+                .iter()
+                .filter(|n| app_core.ui_state.ephemeral_windows.contains(**n))
+                .cloned()
+                .collect();
+            window_order.retain(|n| !app_core.ui_state.ephemeral_windows.contains(*n));
+            window_order.extend(ephemeral_names);
+
+            // Performance overlay renders last (on very top)
             if let Some(pos) = window_order.iter().position(|n| n.as_str() == "performance_overlay") {
                 let overlay = window_order.remove(pos);
                 window_order.push(overlay);
@@ -311,16 +321,10 @@ impl Frontend for TuiFrontend {
                             spells_window.render_themed(area, f.buffer_mut(), &theme);
                         }
                     }
-                    WindowContent::Targets { .. } => {
-                        // Use the Targets widget
+                    WindowContent::Targets => {
+                        // Use the Targets widget (component-based, reads from GameState.room_creatures)
                         if let Some(targets_widget) = targets_widgets.get_mut(name) {
                             targets_widget.render(area, f.buffer_mut());
-                        }
-                    }
-                    WindowContent::DropdownTargets => {
-                        // Use the DropdownTargets widget (reads from GameState.target_list)
-                        if let Some(dropdown_targets_widget) = dropdown_targets_widgets.get_mut(name) {
-                            dropdown_targets_widget.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Container { .. } => {
@@ -580,7 +584,6 @@ impl Frontend for TuiFrontend {
         self.widget_manager.spacer_widgets = spacer_widgets;
         self.widget_manager.indicator_widgets = indicator_widgets;
         self.widget_manager.targets_widgets = targets_widgets;
-        self.widget_manager.dropdown_targets_widgets = dropdown_targets_widgets;
         self.widget_manager.players_widgets = players_widgets;
         self.widget_manager.container_widgets = container_widgets;
         self.widget_manager.dashboard_widgets = dashboard_widgets;

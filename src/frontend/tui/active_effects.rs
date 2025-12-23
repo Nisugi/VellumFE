@@ -64,6 +64,7 @@ impl ActiveEffects {
             Some(duration_str),
             bar_color,
             text_color,
+            None, // no link data
         );
     }
 

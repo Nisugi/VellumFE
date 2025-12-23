@@ -1093,8 +1093,6 @@ impl AppCore {
             // Settings
             ".settings".to_string(),
             // Toggles
-            ".toggleignores".to_string(),
-            ".ignores".to_string(),
             ".toggletransparency".to_string(),
             ".transparency".to_string(),
             // Window locking
@@ -1284,8 +1282,6 @@ impl AppCore {
 
         // Toggles
         self.add_system_message("TOGGLES:");
-        self.add_system_message("  .toggleignores          - Toggle squelch patterns on/off");
-        self.add_system_message("  .ignores                - Alias for .toggleignores");
         self.add_system_message("");
 
         // Window locking

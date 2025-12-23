@@ -1,0 +1,2772 @@
+warning: unused variable: `ui_defaults`
+    --> src\config.rs:2818:13
+     |
+2818 |         let ui_defaults = UiConfig::default();
+     |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ui_defaults`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `ui_state`
+   --> src\core\messages.rs:867:9
+    |
+867 |         ui_state: &mut UiState,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ui_state`
+
+warning: unused variable: `id`
+   --> src\frontend\tui\targets.rs:147:17
+    |
+147 |             let id = creature.id.clone();
+    |                 ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: unused variable: `idx`
+  --> src\frontend\tui\targets_stream.rs:41:14
+   |
+41 |         for (idx, target_str) in targets.iter().enumerate() {
+   |              ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: fields `sound` and `sound_volume` are never read
+  --> src\core\highlight_engine.rs:67:5
+   |
+59 | struct MatchInfo {
+   |        --------- fields in this struct
+...
+67 |     sound: Option<String>,
+   |     ^^^^^
+68 |     sound_volume: Option<f32>,
+   |     ^^^^^^^^^^^^
+   |
+   = note: `MatchInfo` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: fields `popup_menu`, `submenu`, and `menu_categories` are never read
+  --> src\frontend\tui\mod.rs:81:5
+   |
+76 | pub struct TuiFrontend {
+   |            ----------- fields in this struct
+...
+81 |     popup_menu: Option<popup_menu::PopupMenu>,
+   |     ^^^^^^^^^^
+82 |     /// Active submenu (if any)
+83 |     submenu: Option<popup_menu::PopupMenu>,
+   |     ^^^^^^^
+84 |     /// Cached submenu items for the main menu
+85 |     menu_categories: HashMap<String, Vec<popup_menu::MenuItem>>,
+   |     ^^^^^^^^^^^^^^^
+
+warning: field `effect_category` is never read
+  --> src\frontend\tui\active_effects.rs:12:5
+   |
+10 | pub struct ActiveEffects {
+   |            ------------- field in this struct
+11 |     container: ScrollableContainer,
+12 |     effect_category: String, // "spell", "disease", etc.
+   |     ^^^^^^^^^^^^^^^
+
+warning: methods `remove_effect`, `toggle_display`, `get_category`, `set_bar_color`, and `render_with_focus` are never used
+   --> src\frontend\tui\active_effects.rs:71:12
+    |
+ 15 | impl ActiveEffects {
+    | ------------------ methods in this implementation
+...
+ 71 |     pub fn remove_effect(&mut self, id: &str) {
+    |            ^^^^^^^^^^^^^
+...
+ 79 |     pub fn toggle_display(&mut self) {
+    |            ^^^^^^^^^^^^^^
+...
+ 83 |     pub fn get_category(&self) -> &str {
+    |            ^^^^^^^^^^^^
+...
+111 |     pub fn set_bar_color(&mut self, color: String) {
+    |            ^^^^^^^^^^^^^
+...
+145 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: struct `ColorPicker` is never constructed
+  --> src\frontend\tui\color_picker.rs:16:12
+   |
+16 | pub struct ColorPicker {
+   |            ^^^^^^^^^^^
+
+warning: multiple associated items are never used
+   --> src\frontend\tui\color_picker.rs:26:12
+    |
+ 25 | impl ColorPicker {
+    | ---------------- associated items in this implementation
+ 26 |     pub fn new(palette: Vec<PaletteColor>) -> Self {
+    |            ^^^
+...
+ 38 |     pub fn set_filter(&mut self, filter: String) {
+    |            ^^^^^^^^^^
+...
+ 44 |     pub fn filtered_colors(&self) -> Vec<&PaletteColor> {
+    |            ^^^^^^^^^^^^^^^
+...
+ 91 |     pub fn get_selected(&self) -> Option<&PaletteColor> {
+    |            ^^^^^^^^^^^^
+...
+ 97 |     pub fn get_selected_name(&self) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^
+...
+102 |     pub fn tab_complete(&mut self) -> Option<String> {
+    |            ^^^^^^^^^^^^
+...
+114 |     pub fn previous(&mut self) {
+    |            ^^^^^^^^
+...
+122 |     pub fn next(&mut self) {
+    |            ^^^^
+...
+130 |     pub fn mark_recent(&mut self, color_name: &str) {
+    |            ^^^^^^^^^^^
+...
+140 |     pub fn show(&mut self) {
+    |            ^^^^
+...
+145 |     pub fn hide(&mut self) {
+    |            ^^^^
+...
+152 |     pub fn is_visible(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+159 |     pub fn render(&self, x: u16, y: u16, width: u16, buf: &mut Buffer, area: Rect) {
+    |            ^^^^^^
+...
+263 |     fn draw_border(&self, area: Rect, buf: &mut Buffer, style: Style) {
+    |        ^^^^^^^^^^^
+...
+310 |     fn parse_hex_color(input: &str) -> Option<Color> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `parse_hex_color_with_mode` is never used
+   --> src\frontend\tui\colors.rs:111:8
+    |
+111 | pub fn parse_hex_color_with_mode(hex: &str, mode: ColorMode) -> Result<ratatui::style::Color> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `indexed_color_to_rgb` is never used
+   --> src\frontend\tui\colors.rs:168:4
+    |
+168 | fn indexed_color_to_rgb(index: u8) -> (u8, u8, u8) {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_color_to_ratatui_with_mode` is never used
+   --> src\frontend\tui\colors.rs:435:8
+    |
+435 | pub fn parse_color_to_ratatui_with_mode(input: &str, mode: ColorMode) -> Option<ratatui::style::Color> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `selection_start` is never read
+  --> src\frontend\tui\command_input.rs:47:5
+   |
+23 | pub struct CommandInput {
+   |            ------------ field in this struct
+...
+47 |     selection_start: Option<usize>,     // Start of selection (None if no selection)
+   |     ^^^^^^^^^^^^^^^
+
+warning: methods `set_min_command_length`, `get_last_command`, `get_second_last_command`, `select_all`, `get_selected_text`, and `clear_selection` are never used
+   --> src\frontend\tui\command_input.rs:80:12
+    |
+ 50 | impl CommandInput {
+    | ----------------- methods in this implementation
+...
+ 80 |     pub fn set_min_command_length(&mut self, min_length: usize) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+274 |     pub fn get_last_command(&self) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^
+...
+278 |     pub fn get_second_last_command(&self) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+804 |     pub fn select_all(&mut self) {
+    |            ^^^^^^^^^^
+...
+812 |     pub fn get_selected_text(&self) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^
+...
+828 |     pub fn clear_selection(&mut self) {
+    |            ^^^^^^^^^^^^^^^
+
+warning: field `id` is never read
+  --> src\frontend\tui\dashboard.rs:52:9
+   |
+51 | pub struct DashboardIndicator {
+   |            ------------------ field in this struct
+52 |     pub id: String,
+   |         ^^
+   |
+   = note: `DashboardIndicator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `hand_type` is never read
+  --> src\frontend\tui\hand.rs:20:5
+   |
+18 | pub struct Hand {
+   |            ---- field in this struct
+19 |     label: String,
+20 |     hand_type: HandType,
+   |     ^^^^^^^^^
+
+warning: method `render_with_focus` is never used
+   --> src\frontend\tui\hand.rs:287:12
+    |
+ 42 | impl Hand {
+    | --------- method in this implementation
+...
+287 |     pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `hash` and `needs_update` are never used
+  --> src\frontend\tui\highlight_utils.rs:67:12
+   |
+47 | impl HighlightEngine {
+   | -------------------- methods in this implementation
+...
+67 |     pub fn hash(&self) -> u64 {
+   |            ^^^^
+...
+72 |     pub fn needs_update(&self, highlights: &[HighlightPattern]) -> bool {
+   |            ^^^^^^^^^^^^
+
+warning: methods `set_status` and `render_with_focus` are never used
+   --> src\frontend\tui\indicator.rs:72:12
+    |
+ 31 | impl Indicator {
+    | -------------- methods in this implementation
+...
+ 72 |     pub fn set_status(&mut self, status: &str) {
+    |            ^^^^^^^^^^
+...
+208 |     pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `update_inner_size`, `scroll_to_bottom`, and `get_lines` are never used
+  --> src\frontend\tui\inventory_window.rs:63:12
+   |
+19 | impl InventoryWindow {
+   | -------------------- methods in this implementation
+...
+63 |     pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
+   |            ^^^^^^^^^^^^^^^^^
+...
+78 |     pub fn scroll_to_bottom(&mut self) {
+   |            ^^^^^^^^^^^^^^^^
+...
+83 |     pub fn get_lines(&self) -> &[Vec<TextSegment>] {
+   |            ^^^^^^^^^
+
+warning: field `num_sections` is never read
+  --> src\frontend\tui\keybind_browser.rs:29:5
+   |
+25 | pub struct KeybindBrowser {
+   |            -------------- field in this struct
+...
+29 |     num_sections: usize, // Number of section headers (for scroll calculation)
+   |     ^^^^^^^^^^^^
+
+warning: methods `scroll_to_bottom` and `find_link_by_word` are never used
+   --> src\frontend\tui\list_widget.rs:276:12
+    |
+ 60 | impl ListWidget {
+    | --------------- methods in this implementation
+...
+276 |     pub fn scroll_to_bottom(&mut self) {
+    |            ^^^^^^^^^^^^^^^^
+...
+686 |     pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `scroll_offset`, `set_scroll_offset`, `scroll_up`, and `scroll_down` are never used
+   --> src\frontend\tui\perception.rs:115:12
+    |
+ 32 | impl PerceptionWindow {
+    | --------------------- methods in this implementation
+...
+115 |     pub fn scroll_offset(&self) -> usize {
+    |            ^^^^^^^^^^^^^
+...
+120 |     pub fn set_scroll_offset(&mut self, offset: usize) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+125 |     pub fn scroll_up(&mut self) {
+    |            ^^^^^^^^^
+...
+130 |     pub fn scroll_down(&mut self) {
+    |            ^^^^^^^^^^^
+
+warning: methods `get_generation`, `render_with_focus`, and `handle_click` are never used
+   --> src\frontend\tui\players.rs:129:12
+    |
+ 19 | impl Players {
+    | ------------ methods in this implementation
+...
+129 |     pub fn get_generation(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^
+...
+175 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+181 |     pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
+    |            ^^^^^^^^^^^^
+
+warning: field `command` is never read
+  --> src\frontend\tui\popup_menu.rs:18:9
+   |
+16 | pub struct MenuItem {
+   |            -------- field in this struct
+17 |     pub text: String,
+18 |     pub command: String,
+   |         ^^^^^^^
+   |
+   = note: `MenuItem` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: multiple associated items are never used
+  --> src\frontend\tui\popup_menu.rs:29:12
+   |
+28 | impl PopupMenu {
+   | -------------- associated items in this implementation
+29 |     pub fn new(items: Vec<MenuItem>, position: (u16, u16)) -> Self {
+   |            ^^^
+...
+47 |     pub fn select_next(&mut self) {
+   |            ^^^^^^^^^^^
+...
+56 |     pub fn select_previous(&mut self) {
+   |            ^^^^^^^^^^^^^^^
+...
+64 |     pub fn get_selected_command(&self) -> Option<String> {
+   |            ^^^^^^^^^^^^^^^^^^^^
+...
+70 |     pub fn get_selected_index(&self) -> usize {
+   |            ^^^^^^^^^^^^^^^^^^
+...
+74 |     pub fn get_position(&self) -> (u16, u16) {
+   |            ^^^^^^^^^^^^
+...
+78 |     pub fn get_items(&self) -> &[MenuItem] {
+   |            ^^^^^^^^^
+...
+84 |     pub fn check_click(&self, click_x: u16, click_y: u16, menu_rect: Rect) -> Option<usize> {
+   |            ^^^^^^^^^^^
+
+warning: field `preserve_text_color` is never read
+  --> src\frontend\tui\progress_bar.rs:31:5
+   |
+15 | pub struct ProgressBar {
+   |            ----------- field in this struct
+...
+31 |     preserve_text_color: bool,
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: method `render_with_focus` is never used
+   --> src\frontend\tui\progress_bar.rs:320:12
+    |
+ 34 | impl ProgressBar {
+    | ---------------- method in this implementation
+...
+320 |     pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `scroll_to_bottom`, `get_component_visibility`, and `set_all_component_visibility` are never used
+   --> src\frontend\tui\room_window.rs:394:12
+    |
+ 62 | impl RoomWindow {
+    | --------------- methods in this implementation
+...
+394 |     pub fn scroll_to_bottom(&mut self) {
+    |            ^^^^^^^^^^^^^^^^
+...
+569 |     pub fn get_component_visibility(&self) -> HashMap<String, bool> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+574 |     pub fn set_all_component_visibility(&mut self, visibility: HashMap<String, bool>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `id` and `link_data` are never read
+  --> src\frontend\tui\scrollable_container.rs:19:9
+   |
+18 | pub struct ScrollableItem {
+   |            -------------- fields in this struct
+19 |     pub id: String,
+   |         ^^
+...
+27 |     pub link_data: Option<LinkData>, // Link metadata for clickable items
+   |         ^^^^^^^^^
+   |
+   = note: `ScrollableItem` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: multiple methods are never used
+   --> src\frontend\tui\scrollable_container.rs:88:12
+    |
+ 53 | impl ScrollableContainer {
+    | ------------------------ methods in this implementation
+...
+ 88 |     pub fn toggle_alternate_text(&mut self) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+ 92 |     pub fn set_visible_count(&mut self, count: Option<usize>) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+131 |     pub fn add_or_update_item(&mut self, id: String, text: String, value: u32, max: u32) {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+135 |     pub fn add_or_update_item_with_suffix(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+178 |     pub fn remove_item(&mut self, id: &str) {
+    |            ^^^^^^^^^^^
+...
+208 |     pub fn set_bar_color(&mut self, color: String) {
+    |            ^^^^^^^^^^^^^
+...
+432 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+439 |     pub fn get_item_at_y(&self, y: u16, area: Rect) -> Option<&ScrollableItem> {
+    |            ^^^^^^^^^^^^^
+
+warning: methods `set_border_config`, `set_border_sides`, `set_title`, and `render_with_focus` are never used
+  --> src\frontend\tui\spacer.rs:38:12
+   |
+18 | impl Spacer {
+   | ----------- methods in this implementation
+...
+38 |     pub fn set_border_config(
+   |            ^^^^^^^^^^^^^^^^^
+...
+47 |     pub fn set_border_sides(&mut self, _sides: crate::config::BorderSides) {
+   |            ^^^^^^^^^^^^^^^^
+...
+51 |     pub fn set_title(&mut self, _title: String) {
+   |            ^^^^^^^^^
+...
+94 |     pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: field `drag_offset` is never read
+  --> src\frontend\tui\spell_color_browser.rs:29:5
+   |
+23 | pub struct SpellColorBrowser {
+   |            ----------------- field in this struct
+...
+29 |     drag_offset: (i16, i16),
+   |     ^^^^^^^^^^^
+
+warning: field `drag_offset` is never read
+  --> src\frontend\tui\spell_color_form.rs:40:5
+   |
+31 | pub struct SpellColorFormWidget {
+   |            -------------------- field in this struct
+...
+40 |     drag_offset: (i16, i16),
+   |     ^^^^^^^^^^^
+
+warning: methods `find_link_by_word`, `update_inner_size`, and `get_lines` are never used
+  --> src\frontend\tui\spells_window.rs:61:12
+   |
+19 | impl SpellsWindow {
+   | ----------------- methods in this implementation
+...
+61 |     pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
+   |            ^^^^^^^^^^^^^^^^^
+...
+67 |     pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
+   |            ^^^^^^^^^^^^^^^^^
+...
+82 |     pub fn get_lines(&self) -> &[Vec<crate::data::TextSegment>] {
+   |            ^^^^^^^^^
+
+warning: field `streams` is never read
+  --> src\frontend\tui\tabbed_text_window.rs:37:5
+   |
+35 | struct TabInfo {
+   |        ------- field in this struct
+36 |     name: String,
+37 |     streams: Vec<String>,
+   |     ^^^^^^^
+
+warning: multiple methods are never used
+   --> src\frontend\tui\tabbed_text_window.rs:107:12
+    |
+ 64 | impl TabbedTextWindow {
+    | --------------------- methods in this implementation
+...
+107 |     pub fn with_border_config(
+    |            ^^^^^^^^^^^^^^^^^^
+...
+119 |     pub fn with_tab_bar_position(mut self, position: TabBarPosition) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+124 |     pub fn with_title_position(mut self, position: TitlePosition) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+133 |     pub fn with_tab_colors(
+    |            ^^^^^^^^^^^^^^^
+...
+145 |     pub fn with_unread_prefix(mut self, prefix: String) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+241 |     pub fn remove_tab(&mut self, name: &str) -> bool {
+    |            ^^^^^^^^^^
+...
+260 |     pub fn rename_tab(&mut self, old_name: &str, new_name: String) -> bool {
+    |            ^^^^^^^^^^
+...
+280 |     pub fn switch_to_tab_by_name(&mut self, name: &str) {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+286 |     pub fn get_tab_names(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^
+...
+358 |     pub fn has_unread_tabs(&self) -> bool {
+    |            ^^^^^^^^^^^^^^^
+...
+370 |     pub fn reorder_tabs(&mut self, new_order: &[String]) {
+    |            ^^^^^^^^^^^^
+...
+404 |     pub fn add_text_to_stream(&mut self, stream: &str, styled: super::text_window::StyledText) {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+418 |     pub fn finish_line_for_stream(&mut self, stream: &str, width: u16) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+426 |     pub fn add_text_to_tab(&mut self, tab_name: &str, styled: super::text_window::StyledText) {
+    |            ^^^^^^^^^^^^^^^
+...
+443 |     pub fn finish_line_for_tab(&mut self, tab_name: &str, width: u16) {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+449 |     pub fn get_all_streams(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^^^
+...
+453 |     pub fn clear_stream(&mut self, stream: &str) {
+    |            ^^^^^^^^^^^^
+...
+475 |     pub fn start_search(&mut self, pattern: &str) -> Result<usize, regex::Error> {
+    |            ^^^^^^^^^^^^
+...
+483 |     pub fn clear_search(&mut self) {
+    |            ^^^^^^^^^^^^
+...
+489 |     pub fn next_match(&mut self) -> bool {
+    |            ^^^^^^^^^^
+...
+497 |     pub fn prev_match(&mut self) -> bool {
+    |            ^^^^^^^^^^
+...
+505 |     pub fn search_info(&self) -> Option<(usize, usize)> {
+    |            ^^^^^^^^^^^
+...
+849 |     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+    |            ^^^^^^
+
+warning: methods `clear`, `get_generation`, `set_bar_color`, and `render_with_focus` are never used
+   --> src\frontend\tui\targets.rs:199:12
+    |
+ 24 | impl Targets {
+    | ------------ methods in this implementation
+...
+199 |     pub fn clear(&mut self) {
+    |            ^^^^^
+...
+222 |     pub fn get_generation(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^
+...
+242 |     pub fn set_bar_color(&mut self, _color: String) {
+    |            ^^^^^^^^^^^^^
+...
+272 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `scroll_up`, `scroll_down`, and `render_with_focus` are never used
+   --> src\frontend\tui\targets_stream.rs:143:12
+    |
+ 17 | impl Targets {
+    | ------------ methods in this implementation
+...
+143 |     pub fn scroll_up(&mut self, amount: usize) {
+    |            ^^^^^^^^^
+...
+147 |     pub fn scroll_down(&mut self, amount: usize) {
+    |            ^^^^^^^^^^^
+...
+189 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: field `regex` is never read
+  --> src\frontend\tui\text_window.rs:52:5
+   |
+51 | struct SearchState {
+   |        ----------- field in this struct
+52 |     regex: Regex,
+   |     ^^^^^
+
+warning: field `container_title` is never read
+  --> src\frontend\tui\container_window.rs:19:5
+   |
+15 | pub struct ContainerWindow {
+   |            --------------- field in this struct
+...
+19 |     container_title: String,
+   |     ^^^^^^^^^^^^^^^
+
+warning: methods `get_container_title`, `clear`, `get_lines`, `update_inner_size`, and `render_with_focus` are never used
+   --> src\frontend\tui\container_window.rs:42:12
+    |
+ 28 | impl ContainerWindow {
+    | -------------------- methods in this implementation
+...
+ 42 |     pub fn get_container_title(&self) -> &str {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+204 |     pub fn clear(&mut self) {
+    |            ^^^^^
+...
+220 |     pub fn get_lines(&self) -> &[Vec<TextSegment>] {
+    |            ^^^^^^^^^
+...
+243 |     pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+304 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: method `get_theme_id` is never used
+  --> src\frontend\tui\theme_cache.rs:37:12
+   |
+16 | impl ThemeCache {
+   | --------------- method in this implementation
+...
+37 |     pub fn get_theme_id(&self) -> &str {
+   |            ^^^^^^^^^^^^
+
+warning: variant `Form` is never constructed
+   --> src\frontend\tui\window_editor.rs:577:5
+    |
+575 | enum IndicatorEditorMode {
+    |      ------------------- variant in this enum
+576 |     List,
+577 |     Form,
+    |     ^^^^
+    |
+    = note: `IndicatorEditorMode` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `start_add` and `start_edit` are never used
+   --> src\frontend\tui\window_editor.rs:747:8
+    |
+662 | impl IndicatorEditor {
+    | -------------------- methods in this implementation
+...
+747 |     fn start_add(&mut self) {
+    |        ^^^^^^^^^
+...
+782 |     fn start_edit(&mut self) {
+    |        ^^^^^^^^^^
+
+warning: methods `is_command_input`, `render_textarea`, `render_textarea_with_preview`, `render_checkbox`, `render_checkbox_row`, and `render_dropdown` are never used
+    --> src\frontend\tui\window_editor.rs:2078:8
+     |
+1005 | impl WindowEditor {
+     | ----------------- methods in this implementation
+...
+2078 |     fn is_command_input(&self) -> bool {
+     |        ^^^^^^^^^^^^^^^^
+...
+5498 |     fn render_textarea(
+     |        ^^^^^^^^^^^^^^^
+...
+5534 |     fn render_textarea_with_preview(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+5580 |     fn render_checkbox(
+     |        ^^^^^^^^^^^^^^^
+...
+5603 |     fn render_checkbox_row(
+     |        ^^^^^^^^^^^^^^^^^^^
+...
+5675 |     fn render_dropdown(
+     |        ^^^^^^^^^^^^^^^
+
+warning: field `character` is never read
+   --> src\network.rs:482:13
+    |
+477 |     pub struct LaunchTicket {
+    |                ------------ field in this struct
+...
+482 |         pub character: String,
+    |             ^^^^^^^^^
+    |
+    = note: `LaunchTicket` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `bold` is never read
+   --> src\parser.rs:211:5
+    |
+208 | pub(crate) struct ColorStyle {
+    |                   ---------- field in this struct
+...
+211 |     bold: bool,
+    |     ^^^^
+    |
+    = note: `ColorStyle` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `current_container_id` is never read
+   --> src\parser.rs:238:5
+    |
+218 | pub struct XmlParser {
+    |            --------- field in this struct
+...
+238 |     current_container_id: Option<String>, // ID of container currently receiving items
+    |     ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `XmlParser` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: `vellum-fe` (lib) generated 50 warnings
+warning: unused imports: `CoreHighlightEngine`, `DeferredReplacement`, `HighlightResult`, and `apply_deferred_for_window`
+  --> src\core\mod.rs:16:5
+   |
+16 |     apply_deferred_for_window, CoreHighlightEngine, DeferredReplacement, HighlightResult,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: field `coord` is never read
+  --> src\cmdlist.rs:15:9
+   |
+14 | pub struct CmdListEntry {
+   |            ------------ field in this struct
+15 |     pub coord: String,    // e.g., "2524,2061"
+   |         ^^^^^
+   |
+   = note: `CmdListEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: associated function `substitute_menu` is never used
+   --> src\cmdlist.rs:143:12
+    |
+ 27 | impl CmdList {
+    | ------------ associated function in this implementation
+...
+143 |     pub fn substitute_menu(menu: &str, noun: &str) -> String {
+    |            ^^^^^^^^^^^^^^^
+
+warning: method `matches` is never used
+   --> src\config.rs:220:12
+    |
+218 | impl LayoutMapping {
+    | ------------------ method in this implementation
+219 |     /// Check if terminal size matches this mapping
+220 |     pub fn matches(&self, width: u16, height: u16) -> bool {
+    |            ^^^^^^^
+
+warning: associated functions `new` and `with_slot` are never used
+   --> src\config.rs:248:12
+    |
+247 | impl PaletteColor {
+    | ----------------- associated functions in this implementation
+248 |     pub fn new(name: &str, color: &str, category: &str) -> Self {
+    |            ^^^
+...
+259 |     pub fn with_slot(name: &str, color: &str, category: &str, slot: u8) -> Self {
+    |            ^^^^^^^^^
+
+warning: methods `content_rows` and `content_cols` are never used
+   --> src\config.rs:573:12
+    |
+547 | impl WindowBase {
+    | --------------- methods in this implementation
+...
+573 |     pub fn content_rows(&self) -> u16 {
+    |            ^^^^^^^^^^^^
+...
+578 |     pub fn content_cols(&self) -> u16 {
+    |            ^^^^^^^^^^^^
+
+warning: function `apply_text_replacements` is never used
+    --> src\config.rs:1212:8
+     |
+1212 | pub fn apply_text_replacements(text: &str, replacements: &[TextReplacement]) -> String {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `find_layout_for_size`, `available_window_templates`, `list_visible_windows`, `load`, `get_log_path`, and `widget_state_path` are never used
+    --> src\config.rs:2728:12
+     |
+2725 | impl Config {
+     | ----------- associated items in this implementation
+...
+2728 |     pub fn find_layout_for_size(&self, width: u16, height: u16) -> Option<String> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4137 |     pub fn available_window_templates() -> Vec<String> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4420 |     pub fn list_visible_windows(layout: &crate::config::Layout) -> Vec<String> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4429 |     pub fn load() -> Result<Self> {
+     |            ^^^^
+...
+4806 |     pub fn get_log_path(character: Option<&str>) -> Result<PathBuf> {
+     |            ^^^^^^^^^^^^
+...
+4818 |     pub fn widget_state_path(character: Option<&str>) -> Result<PathBuf> {
+     |            ^^^^^^^^^^^^^^^^^
+
+warning: method `is_valid` is never used
+  --> src\config\menu_keybind_validator.rs:64:12
+   |
+63 | impl ValidationResult {
+   | --------------------- method in this implementation
+64 |     pub fn is_valid(&self) -> bool {
+   |            ^^^^^^^^
+
+warning: associated functions `save_common_highlight` and `delete_common_highlight` are never used
+   --> src\config\highlights.rs:172:12
+    |
+ 96 | impl Config {
+    | ----------- associated functions in this implementation
+...
+172 |     pub fn save_common_highlight(name: &str, pattern: &HighlightPattern) -> Result<()> {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+...
+196 |     pub fn delete_common_highlight(name: &str) -> Result<()> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `SendMacro` is never constructed
+   --> src\config\keybinds.rs:137:5
+    |
+ 75 | pub enum KeyAction {
+    |          --------- variant in this enum
+...
+137 |     SendMacro(String),
+    |     ^^^^^^^^^
+    |
+    = note: `KeyAction` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: multiple fields are never read
+   --> src\core\app_core\state.rs:51:9
+    |
+ 24 | pub struct AppCore {
+    |            ------- fields in this struct
+...
+ 51 |     pub current_stream: String,
+    |         ^^^^^^^^^^^^^^
+...
+ 54 |     pub discard_current_stream: bool,
+    |         ^^^^^^^^^^^^^^^^^^^^^^
+...
+ 57 |     pub stream_buffer: String,
+    |         ^^^^^^^^^^^^^
+...
+ 61 |     pub server_time_offset: i64,
+    |         ^^^^^^^^^^^^^^^^^^
+...
+ 83 |     pub show_perf_stats: bool,
+    |         ^^^^^^^^^^^^^^^
+...
+119 |     pub chunk_has_main_text: bool,
+    |         ^^^^^^^^^^^^^^^^^^^
+...
+122 |     pub chunk_has_silent_updates: bool,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `remove_window`, `resize`, `save_config`, `start_search_mode`, and `clear_search_mode` are never used
+    --> src\core\app_core\state.rs:947:12
+     |
+ 139 | impl AppCore {
+     | ------------ methods in this implementation
+...
+ 947 |     pub fn remove_window(&mut self, name: &str) {
+     |            ^^^^^^^^^^^^^
+...
+2001 |     pub fn resize(&mut self, width: u16, height: u16) {
+     |            ^^^^^^
+...
+2589 |     pub fn save_config(&mut self) -> Result<()> {
+     |            ^^^^^^^^^^^
+...
+2761 |     pub fn start_search_mode(&mut self) {
+     |            ^^^^^^^^^^^^^^^^^
+...
+2777 |     pub fn clear_search_mode(&mut self) {
+     |            ^^^^^^^^^^^^^^^^^
+
+warning: method `load_layout_with_size` is never used
+    --> src\core\app_core\layout.rs:1090:12
+     |
+   8 | impl AppCore {
+     | ------------ method in this implementation
+...
+1090 |     pub fn load_layout_with_size(&mut self, name: &str, width: u16, height: u16) {
+     |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `file` and `volume` are never read
+  --> src\core\highlight_engine.rs:17:9
+   |
+16 | pub struct SoundTrigger {
+   |            ------------ fields in this struct
+17 |     pub file: String,
+   |         ^^^^
+18 |     pub volume: Option<f32>,
+   |         ^^^^^^
+   |
+   = note: `SoundTrigger` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `end_char` is never read
+  --> src\core\highlight_engine.rs:26:9
+   |
+23 | pub struct DeferredReplacement {
+   |            ------------------- field in this struct
+...
+26 |     pub end_char: usize,
+   |         ^^^^^^^^
+   |
+   = note: `DeferredReplacement` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `sounds` is never read
+  --> src\core\highlight_engine.rs:41:9
+   |
+37 | pub struct HighlightResult {
+   |            --------------- field in this struct
+...
+41 |     pub sounds: Vec<SoundTrigger>,
+   |         ^^^^^^
+   |
+   = note: `HighlightResult` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `sound` and `sound_volume` are never read
+  --> src\core\highlight_engine.rs:67:5
+   |
+59 | struct MatchInfo {
+   |        --------- fields in this struct
+...
+67 |     sound: Option<String>,
+   |     ^^^^^
+68 |     sound_volume: Option<f32>,
+   |     ^^^^^^^^^^^^
+   |
+   = note: `MatchInfo` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: method `get_first_match_color` is never used
+   --> src\core\highlight_engine.rs:577:12
+    |
+ 86 | impl CoreHighlightEngine {
+    | ------------------------ method in this implementation
+...
+577 |     pub fn get_first_match_color(&self, text: &str) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `has_priority_window` is never used
+  --> src\core\input_router.rs:58:8
+   |
+58 | pub fn has_priority_window(mode: &InputMode) -> bool {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `should_use_menu_keybinds` is never used
+  --> src\core\input_router.rs:64:8
+   |
+64 | pub fn should_use_menu_keybinds(mode: &InputMode) -> bool {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `NextItem`, `PreviousItem`, `NextPage`, `PreviousPage`, and `New` are never constructed
+  --> src\core\menu_actions.rs:22:5
+   |
+10 | pub enum MenuAction {
+   |          ---------- variants in this enum
+...
+22 |     NextItem,     // Same as NavigateDown for browser context
+   |     ^^^^^^^^
+23 |     PreviousItem, // Same as NavigateUp for browser context
+   |     ^^^^^^^^^^^^
+24 |     NextPage,     // Same as PageDown for browser context
+   |     ^^^^^^^^
+25 |     PreviousPage, // Same as PageUp for browser context
+   |     ^^^^^^^^^^^^
+...
+58 |     New,  // 'N' - Alternative naming for Add
+   |     ^^^
+   |
+   = note: `MenuAction` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `TextInput` and `Dropdown` are never constructed
+  --> src\core\menu_actions.rs:69:5
+   |
+66 | pub enum ActionContext {
+   |          ------------- variants in this enum
+...
+69 |     TextInput,      // Focused on a TextArea field (clipboard ops)
+   |     ^^^^^^^^^
+70 |     Dropdown,       // Focused on dropdown field (up/down cycles)
+   |     ^^^^^^^^
+   |
+   = note: `ActionContext` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `get_stream_subscribers` is never used
+    --> src\core\messages.rs:2462:12
+     |
+  76 | impl MessageProcessor {
+     | --------------------- method in this implementation
+...
+2462 |     pub fn get_stream_subscribers(&self, stream: &str) -> &[String] {
+     |            ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `LAG_CHECK_INTERVAL_SECS` is never used
+ --> src\core\state.rs:9:7
+  |
+9 | const LAG_CHECK_INTERVAL_SECS: i64 = 30;
+  |       ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: multiple fields are never read
+  --> src\core\state.rs:18:9
+   |
+13 | pub struct GameState {
+   |            --------- fields in this struct
+...
+18 |     pub character_name: Option<String>,
+   |         ^^^^^^^^^^^^^^
+...
+21 |     pub room_id: Option<String>,
+   |         ^^^^^^^
+...
+24 |     pub room_name: Option<String>,
+   |         ^^^^^^^^^
+...
+27 |     pub exits: Vec<String>,
+   |         ^^^^^
+...
+43 |     pub active_streams: HashMap<String, bool>,
+   |         ^^^^^^^^^^^^^^
+...
+52 |     pub inventory: Vec<String>,
+   |         ^^^^^^^^^
+...
+61 |     pub active_effects: Vec<String>,
+   |         ^^^^^^^^^^^^^^
+...
+88 |     pub estimated_lag_ms: Option<i64>,
+   |         ^^^^^^^^^^^^^^^^
+...
+91 |     last_lag_check_time: i64,
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `GameState` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `standing`, `kneeling`, `sitting`, `prone`, and `joined` are never read
+   --> src\core\state.rs:97:9
+    |
+ 96 | pub struct StatusInfo {
+    |            ---------- fields in this struct
+ 97 |     pub standing: bool,
+    |         ^^^^^^^^
+ 98 |     pub kneeling: bool,
+    |         ^^^^^^^^
+ 99 |     pub sitting: bool,
+    |         ^^^^^^^
+100 |     pub prone: bool,
+    |         ^^^^^
+...
+106 |     pub joined: bool,
+    |         ^^^^^^
+    |
+    = note: `StatusInfo` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+   --> src\core\state.rs:164:9
+    |
+162 | pub struct ContainerData {
+    |            ------------- field in this struct
+163 |     /// Container ID
+164 |     pub id: String,
+    |         ^^
+    |
+    = note: `ContainerData` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `clear` is never used
+   --> src\core\state.rs:175:12
+    |
+173 | impl TargetListState {
+    | -------------------- method in this implementation
+174 |     /// Clear the current target
+175 |     pub fn clear(&mut self) {
+    |            ^^^^^
+
+warning: method `clear` is never used
+   --> src\core\state.rs:231:12
+    |
+196 | impl ExpComponentState {
+    | ---------------------- method in this implementation
+...
+231 |     pub fn clear(&mut self) {
+    |            ^^^^^
+
+warning: methods `get`, `container_ids`, and `list_containers` are never used
+   --> src\core\state.rs:279:12
+    |
+237 | impl ContainerCache {
+    | ------------------- methods in this implementation
+...
+279 |     pub fn get(&self, id: &str) -> Option<&ContainerData> {
+    |            ^^^
+...
+284 |     pub fn container_ids(&self) -> Vec<String> {
+    |            ^^^^^^^^^^^^^
+...
+308 |     pub fn list_containers(&self) -> Vec<&ContainerData> {
+    |            ^^^^^^^^^^^^^^^
+
+warning: methods `update_game_time`, `in_roundtime`, `in_casttime`, `roundtime_remaining`, `casttime_remaining`, and `lag_ms` are never used
+   --> src\core\state.rs:348:12
+    |
+315 | impl GameState {
+    | -------------- methods in this implementation
+...
+348 |     pub fn update_game_time(&mut self, prompt_time: i64) {
+    |            ^^^^^^^^^^^^^^^^
+...
+369 |     pub fn in_roundtime(&self) -> bool {
+    |            ^^^^^^^^^^^^
+...
+379 |     pub fn in_casttime(&self) -> bool {
+    |            ^^^^^^^^^^^
+...
+388 |     pub fn roundtime_remaining(&self) -> i64 {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+397 |     pub fn casttime_remaining(&self) -> i64 {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+406 |     pub fn lag_ms(&self) -> Option<i64> {
+    |            ^^^^^^
+
+warning: field `status_text` is never read
+  --> src\data\ui_state.rs:44:9
+   |
+13 | pub struct UiState {
+   |            ------- field in this struct
+...
+44 |     pub status_text: String,
+   |         ^^^^^^^^^^^
+   |
+   = note: `UiState` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Navigation` and `History` are never constructed
+   --> src\data\ui_state.rs:110:5
+    |
+106 | pub enum InputMode {
+    |          --------- variants in this enum
+...
+110 |     Navigation,
+    |     ^^^^^^^^^^
+111 |     /// Scrolling through history
+112 |     History,
+    |     ^^^^^^^
+    |
+    = note: `InputMode` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `get_window_by_type`, `focused_window`, and `focused_window_mut` are never used
+   --> src\data\ui_state.rs:228:12
+    |
+163 | impl UiState {
+    | ------------ methods in this implementation
+...
+228 |     pub fn get_window_by_type(
+    |            ^^^^^^^^^^^^^^^^^^
+...
+290 |     pub fn focused_window(&self) -> Option<&WindowState> {
+    |            ^^^^^^^^^^^^^^
+...
+297 |     pub fn focused_window_mut(&mut self) -> Option<&mut WindowState> {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: methods `get_selected` and `get_selected_index` are never used
+   --> src\data\ui_state.rs:338:12
+    |
+309 | impl PopupMenu {
+    | -------------- methods in this implementation
+...
+338 |     pub fn get_selected(&self) -> Option<&PopupMenuItem> {
+    |            ^^^^^^^^^^^^
+...
+350 |     pub fn get_selected_index(&self) -> usize {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: field `label` is never read
+  --> src\data\widget.rs:83:9
+   |
+81 | pub struct CountdownData {
+   |            ------------- field in this struct
+82 |     pub end_time: i64, // Unix timestamp when timer expires
+83 |     pub label: String, // Display label
+   |         ^^^^^
+   |
+   = note: `CountdownData` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `get_injury` and `clear_all` are never used
+   --> src\data\widget.rs:111:12
+    |
+100 | impl InjuryDollData {
+    | ------------------- methods in this implementation
+...
+111 |     pub fn get_injury(&self, body_part: &str) -> u8 {
+    |            ^^^^^^^^^^
+...
+115 |     pub fn clear_all(&mut self) {
+    |            ^^^^^^^^^
+
+warning: fields `name`, `description`, `exits`, `players`, and `objects` are never read
+   --> src\data\widget.rs:131:9
+    |
+130 | pub struct RoomContent {
+    |            ----------- fields in this struct
+131 |     pub name: String,
+    |         ^^^^
+132 |     pub description: Vec<StyledLine>,
+    |         ^^^^^^^^^^^
+133 |     pub exits: Vec<String>,
+    |         ^^^^^
+134 |     pub players: Vec<String>,
+    |         ^^^^^^^
+135 |     pub objects: Vec<String>,
+    |         ^^^^^^^
+    |
+    = note: `RoomContent` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: methods `mark_tab_unread`, `clear_tab_unread`, `clear_active_tab_unread`, and `next_unread_tab` are never used
+   --> src\data\widget.rs:211:12
+    |
+181 | impl TabbedTextContent {
+    | ---------------------- methods in this implementation
+...
+211 |     pub fn mark_tab_unread(&mut self, tab_index: usize) {
+    |            ^^^^^^^^^^^^^^^
+...
+221 |     pub fn clear_tab_unread(&mut self, tab_index: usize) {
+    |            ^^^^^^^^^^^^^^^^
+...
+228 |     pub fn clear_active_tab_unread(&mut self) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+233 |     pub fn next_unread_tab(&self) -> Option<usize> {
+    |            ^^^^^^^^^^^^^^^
+
+warning: associated functions `from_text` and `from_text_with_stream` are never used
+   --> src\data\widget.rs:297:12
+    |
+296 | impl StyledLine {
+    | --------------- associated functions in this implementation
+297 |     pub fn from_text(text: impl Into<String>) -> Self {
+    |            ^^^^^^^^^
+...
+312 |     pub fn from_text_with_stream(text: impl Into<String>, stream: impl Into<String>) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `name`, `content_align`, and `ephemeral` are never read
+  --> src\data\window.rs:10:9
+   |
+ 9 | pub struct WindowState {
+   |            ----------- fields in this struct
+10 |     pub name: String,
+   |         ^^^^
+...
+16 |     pub content_align: Option<String>,
+   |         ^^^^^^^^^^^^^
+17 |     /// If true, this window is ephemeral (session-only, not saved to layout)
+18 |     pub ephemeral: bool,
+   |         ^^^^^^^^^
+   |
+   = note: `WindowState` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `text`, `cursor`, `history`, and `history_index` are never read
+   --> src\data\window.rs:111:9
+    |
+110 |     CommandInput {
+    |     ------------ fields in this variant
+111 |         text: String,
+    |         ^^^^
+112 |         cursor: usize,
+    |         ^^^^^^
+113 |         history: Vec<String>,
+    |         ^^^^^^^
+114 |         history_index: Option<usize>,
+    |         ^^^^^^^^^^^^^
+    |
+    = note: `WindowContent` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variant `Experience` is never constructed
+   --> src\data\window.rs:145:5
+    |
+100 | pub enum WindowContent {
+    |          ------------- variant in this enum
+...
+145 |     Experience,
+    |     ^^^^^^^^^^
+    |
+    = note: `WindowContent` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: associated functions `new_text` and `new_command_input` are never used
+   --> src\data\window.rs:159:12
+    |
+158 | impl WindowState {
+    | ---------------- associated functions in this implementation
+159 |     pub fn new_text(name: impl Into<String>, max_lines: usize) -> Self {
+    |            ^^^^^^^^
+...
+178 |     pub fn new_command_input(name: impl Into<String>) -> Self {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `size` and `as_any_mut` are never used
+  --> src\frontend\mod.rs:66:8
+   |
+21 | pub trait Frontend {
+   |           -------- methods in this trait
+...
+66 |     fn size(&self) -> (u16, u16);
+   |        ^^^^
+...
+69 |     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+   |        ^^^^^^^^^^
+
+warning: enum `NamedColor` is never used
+  --> src\frontend\common\color.rs:63:10
+   |
+63 | pub enum NamedColor {
+   |          ^^^^^^^^^^
+
+warning: method `to_rgb` is never used
+  --> src\frontend\common\color.rs:94:12
+   |
+92 | impl NamedColor {
+   | --------------- method in this implementation
+93 |     /// Convert to RGB color
+94 |     pub fn to_rgb(&self) -> Color {
+   |            ^^^^^^
+
+warning: associated functions `new` and `from_code` are never used
+  --> src\frontend\common\input.rs:88:12
+   |
+86 | impl KeyEvent {
+   | ------------- associated functions in this implementation
+87 |     /// Create a new key event
+88 |     pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+   |            ^^^
+...
+93 |     pub fn from_code(code: KeyCode) -> Self {
+   |            ^^^^^^^^^
+
+warning: associated items `CTRL`, `SHIFT`, `ALT`, `is_empty`, `contains_ctrl`, and `contains_alt` are never used
+   --> src\frontend\common\input.rs:118:15
+    |
+109 | impl KeyModifiers {
+    | ----------------- associated items in this implementation
+...
+118 |     pub const CTRL: Self = KeyModifiers {
+    |               ^^^^
+...
+125 |     pub const SHIFT: Self = KeyModifiers {
+    |               ^^^^^
+...
+132 |     pub const ALT: Self = KeyModifiers {
+    |               ^^^
+...
+139 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+...
+144 |     pub fn contains_ctrl(&self) -> bool {
+    |            ^^^^^^^^^^^^^
+...
+154 |     pub fn contains_alt(&self) -> bool {
+    |            ^^^^^^^^^^^^
+
+warning: methods `button`, `is_left_click`, and `is_right_click` are never used
+   --> src\frontend\common\input.rs:205:12
+    |
+193 | impl MouseEvent {
+    | --------------- methods in this implementation
+...
+205 |     pub fn button(&self) -> Option<MouseButton> {
+    |            ^^^^^^
+...
+215 |     pub fn is_left_click(&self) -> bool {
+    |            ^^^^^^^^^^^^^
+...
+220 |     pub fn is_right_click(&self) -> bool {
+    |            ^^^^^^^^^^^^^^
+
+warning: struct `Rect` is never constructed
+  --> src\frontend\common\rect.rs:12:12
+   |
+12 | pub struct Rect {
+   |            ^^^^
+
+warning: associated items `new`, `contains`, `right`, and `bottom` are never used
+  --> src\frontend\common\rect.rs:25:12
+   |
+23 | impl Rect {
+   | --------- associated items in this implementation
+24 |     /// Create a new rectangle with the given position and dimensions
+25 |     pub fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+   |            ^^^
+...
+35 |     pub fn contains(&self, x: u16, y: u16) -> bool {
+   |            ^^^^^^^^
+...
+43 |     pub fn right(&self) -> u16 {
+   |            ^^^^^
+...
+48 |     pub fn bottom(&self) -> u16 {
+   |            ^^^^^^
+
+warning: enum `CursorMove` is never used
+  --> src\frontend\common\text_input.rs:10:10
+   |
+10 | pub enum CursorMove {
+   |          ^^^^^^^^^^
+
+warning: trait `TextInput` is never used
+  --> src\frontend\common\text_input.rs:44:11
+   |
+44 | pub trait TextInput {
+   |           ^^^^^^^^^
+
+warning: trait `TextEditor` is never used
+   --> src\frontend\common\text_input.rs:123:11
+    |
+123 | pub trait TextEditor: TextInput {
+    |           ^^^^^^^^^^
+
+warning: function `handle_text_input_key` is never used
+   --> src\frontend\common\text_input.rs:169:8
+    |
+169 | pub fn handle_text_input_key(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `BorderConfig` is never constructed
+  --> src\frontend\common\widget_data.rs:11:12
+   |
+11 | pub struct BorderConfig {
+   |            ^^^^^^^^^^^^
+
+warning: struct `ColorConfig` is never constructed
+  --> src\frontend\common\widget_data.rs:29:12
+   |
+29 | pub struct ColorConfig {
+   |            ^^^^^^^^^^^
+
+warning: struct `ProgressBarData` is never constructed
+  --> src\frontend\common\widget_data.rs:47:12
+   |
+47 | pub struct ProgressBarData {
+   |            ^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `with_border`, and `with_colors` are never used
+  --> src\frontend\common\widget_data.rs:64:12
+   |
+62 | impl ProgressBarData {
+   | -------------------- associated items in this implementation
+63 |     /// Create progress bar data from raw values
+64 |     pub fn new(label: String, current: u32, max: u32, custom_text: Option<String>) -> Self {
+   |            ^^^
+...
+91 |     pub fn with_border(mut self, border: BorderConfig) -> Self {
+   |            ^^^^^^^^^^^
+...
+96 |     pub fn with_colors(
+   |            ^^^^^^^^^^^
+
+warning: struct `IndicatorData` is never constructed
+   --> src\frontend\common\widget_data.rs:109:12
+    |
+109 | pub struct IndicatorData {
+    |            ^^^^^^^^^^^^^
+
+warning: associated items `new` and `with_colors` are never used
+   --> src\frontend\common\widget_data.rs:120:12
+    |
+119 | impl IndicatorData {
+    | ------------------ associated items in this implementation
+120 |     pub fn new(label: String, active: bool) -> Self {
+    |            ^^^
+...
+132 |     pub fn with_colors(mut self, off_color: String, on_color: String) -> Self {
+    |            ^^^^^^^^^^^
+
+warning: struct `CountdownData` is never constructed
+   --> src\frontend\common\widget_data.rs:141:12
+    |
+141 | pub struct CountdownData {
+    |            ^^^^^^^^^^^^^
+
+warning: associated items `new` and `with_border` are never used
+   --> src\frontend\common\widget_data.rs:155:12
+    |
+153 | impl CountdownData {
+    | ------------------ associated items in this implementation
+154 |     /// Create countdown data from remaining seconds and available width
+155 |     pub fn new(
+    |            ^^^
+...
+187 |     pub fn with_border(mut self, border: BorderConfig) -> Self {
+    |            ^^^^^^^^^^^
+
+warning: enum `HandType` is never used
+   --> src\frontend\common\widget_data.rs:195:10
+    |
+195 | pub enum HandType {
+    |          ^^^^^^^^
+
+warning: struct `HandData` is never constructed
+   --> src\frontend\common\widget_data.rs:203:12
+    |
+203 | pub struct HandData {
+    |            ^^^^^^^^
+
+warning: associated items `new`, `with_icon`, and `with_colors` are never used
+   --> src\frontend\common\widget_data.rs:217:12
+    |
+216 | impl HandData {
+    | ------------- associated items in this implementation
+217 |     pub fn new(label: String, hand_type: HandType, content: String) -> Self {
+    |            ^^^
+...
+245 |     pub fn with_icon(mut self, icon: String) -> Self {
+    |            ^^^^^^^^^
+...
+250 |     pub fn with_colors(
+    |            ^^^^^^^^^^^
+
+warning: variant `Quit` is never constructed
+  --> src\frontend\events.rs:24:5
+   |
+11 | pub enum FrontendEvent {
+   |          ------------- variant in this enum
+...
+24 |     Quit,
+   |     ^^^^
+   |
+   = note: `FrontendEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated functions `key`, `mouse`, `resize`, `paste`, and `quit` are never used
+  --> src\frontend\events.rs:29:12
+   |
+27 | impl FrontendEvent {
+   | ------------------ associated functions in this implementation
+28 |     /// Create a key event
+29 |     pub fn key(code: KeyCode, modifiers: KeyModifiers) -> Self {
+   |            ^^^
+...
+34 |     pub fn mouse(event: MouseEvent) -> Self {
+   |            ^^^^^
+...
+39 |     pub fn resize(width: u16, height: u16) -> Self {
+   |            ^^^^^^
+...
+44 |     pub fn paste(text: String) -> Self {
+   |            ^^^^^
+...
+49 |     pub fn quit() -> Self {
+   |            ^^^^
+
+warning: function `convert_key_event` is never used
+  --> src\frontend\tui\crossterm_bridge.rs:69:8
+   |
+69 | pub fn convert_key_event(event: ct::KeyEvent) -> Option<KeyEvent> {
+   |        ^^^^^^^^^^^^^^^^^
+
+warning: function `to_crossterm_key_event` is never used
+   --> src\frontend\tui\crossterm_bridge.rs:164:8
+    |
+164 | pub fn to_crossterm_key_event(event: &KeyEvent) -> ct::KeyEvent {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `from_ratatui_color` is never used
+   --> src\frontend\tui\crossterm_bridge.rs:182:8
+    |
+182 | pub fn from_ratatui_color(color: ratatui_style::Color) -> Color {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `named_to_ratatui` is never used
+   --> src\frontend\tui\crossterm_bridge.rs:210:8
+    |
+210 | pub fn named_to_ratatui(color: NamedColor) -> ratatui_style::Color {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `to_ratatui_rect` is never used
+   --> src\frontend\tui\crossterm_bridge.rs:269:8
+    |
+269 | pub fn to_ratatui_rect(rect: crate::frontend::common::Rect) -> ratatui::layout::Rect {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `from_ratatui_rect` is never used
+   --> src\frontend\tui\crossterm_bridge.rs:279:8
+    |
+279 | pub fn from_ratatui_rect(rect: ratatui::layout::Rect) -> crate::frontend::common::Rect {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: fields `is_dragging`, `drag_offset_x`, and `drag_offset_y` are never read
+  --> src\frontend\tui\color_form.rs:44:9
+   |
+29 | pub struct ColorForm {
+   |            --------- fields in this struct
+...
+44 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+45 |     pub drag_offset_x: u16,
+   |         ^^^^^^^^^^^^^
+46 |     pub drag_offset_y: u16,
+   |         ^^^^^^^^^^^^^
+
+warning: methods `handle_mouse` and `get_original_name` are never used
+   --> src\frontend\tui\color_form.rs:242:12
+    |
+ 49 | impl ColorForm {
+    | -------------- methods in this implementation
+...
+242 |     pub fn handle_mouse(
+    |            ^^^^^^^^^^^^
+...
+613 |     pub fn get_original_name(&self) -> Option<String> {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> src\frontend\tui\color_form.rs:632:11
+    |
+632 |     Error(String),
+    |     ----- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `FormAction` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+632 -     Error(String),
+632 +     Error(()),
+    |
+
+warning: variants `Delete` and `Cancel` are never constructed
+   --> src\frontend\tui\color_form.rs:630:5
+    |
+625 | pub enum FormAction {
+    |          ---------- variants in this enum
+...
+630 |     Delete,
+    |     ^^^^^^
+631 |     Cancel,
+    |     ^^^^^^
+    |
+    = note: `FormAction` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `is_dragging`, `drag_offset_x`, and `drag_offset_y` are never read
+  --> src\frontend\tui\color_palette_browser.rs:26:9
+   |
+17 | pub struct ColorPaletteBrowser {
+   |            ------------------- fields in this struct
+...
+26 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+27 |     pub drag_offset_x: u16,
+   |         ^^^^^^^^^^^^^
+28 |     pub drag_offset_y: u16,
+   |         ^^^^^^^^^^^^^
+
+warning: methods `set_filter`, `get_colors`, `page_up`, `page_down`, `toggle_favorite`, and `handle_mouse` are never used
+   --> src\frontend\tui\color_palette_browser.rs:54:12
+    |
+ 31 | impl ColorPaletteBrowser {
+    | ------------------------ methods in this implementation
+...
+ 54 |     pub fn set_filter(&mut self, filter: String) {
+    |            ^^^^^^^^^^
+...
+ 74 |     pub fn get_colors(&self) -> &Vec<PaletteColor> {
+    |            ^^^^^^^^^^
+...
+ 94 |     pub fn page_up(&mut self) {
+    |            ^^^^^^^
+...
+103 |     pub fn page_down(&mut self) {
+    |            ^^^^^^^^^
+...
+155 |     pub fn toggle_favorite(&mut self) {
+    |            ^^^^^^^^^^^^^^^
+...
+165 |     pub fn handle_mouse(
+    |            ^^^^^^^^^^^^
+
+warning: field `pattern` is never read
+  --> src\frontend\tui\highlight_browser.rs:20:9
+   |
+18 | pub struct HighlightEntry {
+   |            -------------- field in this struct
+19 |     pub name: String,
+20 |     pub pattern: String,
+   |         ^^^^^^^
+   |
+   = note: `HighlightEntry` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: method `set_category_filter` is never used
+  --> src\frontend\tui\highlight_browser.rs:89:12
+   |
+46 | impl HighlightBrowser {
+   | --------------------- method in this implementation
+...
+89 |     pub fn set_category_filter(&mut self, category: Option<String>) {
+   |            ^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Delete` is never constructed
+  --> src\frontend\tui\highlight_form.rs:35:5
+   |
+30 | pub enum FormResult {
+   |          ---------- variant in this enum
+...
+35 |     Delete {
+   |     ^^^^^^
+   |
+   = note: `FormResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `with_pattern` is never used
+   --> src\frontend\tui\highlight_form.rs:256:12
+    |
+ 82 | impl HighlightFormWidget {
+    | ------------------------ associated function in this implementation
+...
+256 |     pub fn with_pattern(name: String, pattern: HighlightPattern) -> Self {
+    |            ^^^^^^^^^^^^
+
+warning: method `handle_paste` is never used
+   --> src\frontend\tui\indicator_template_editor.rs:203:12
+    |
+ 54 | impl IndicatorTemplateEditor {
+    | ---------------------------- method in this implementation
+...
+203 |     pub fn handle_paste(&mut self, text: &str) {
+    |            ^^^^^^^^^^^^
+
+warning: fields `num_sections`, `is_dragging`, `drag_offset_x`, and `drag_offset_y` are never read
+  --> src\frontend\tui\keybind_browser.rs:29:5
+   |
+25 | pub struct KeybindBrowser {
+   |            -------------- fields in this struct
+...
+29 |     num_sections: usize, // Number of section headers (for scroll calculation)
+   |     ^^^^^^^^^^^^
+...
+34 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+35 |     pub drag_offset_x: u16,
+   |         ^^^^^^^^^^^^^
+36 |     pub drag_offset_y: u16,
+   |         ^^^^^^^^^^^^^
+
+warning: method `handle_mouse` is never used
+   --> src\frontend\tui\keybind_browser.rs:169:12
+    |
+ 39 | impl KeybindBrowser {
+    | ------------------- method in this implementation
+...
+169 |     pub fn handle_mouse(
+    |            ^^^^^^^^^^^^
+
+warning: variant `Cancel` is never constructed
+  --> src\frontend\tui\keybind_form.rs:27:5
+   |
+18 | pub enum KeybindFormResult {
+   |          ----------------- variant in this enum
+...
+27 |     Cancel,
+   |     ^^^^^^
+   |
+   = note: `KeybindFormResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `is_dragging`, `drag_offset_x`, and `drag_offset_y` are never read
+  --> src\frontend\tui\keybind_form.rs:65:9
+   |
+51 | pub struct KeybindFormWidget {
+   |            ----------------- fields in this struct
+...
+65 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+66 |     pub drag_offset_x: u16,
+   |         ^^^^^^^^^^^^^
+67 |     pub drag_offset_y: u16,
+   |         ^^^^^^^^^^^^^
+
+warning: methods `handle_mouse` and `get_current_section` are never used
+   --> src\frontend\tui\keybind_form.rs:716:12
+    |
+104 | impl KeybindFormWidget {
+    | ---------------------- methods in this implementation
+...
+716 |     pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
+    |            ^^^^^^^^^^^^
+...
+774 |     pub fn get_current_section(&self) -> ActionSection {
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_hidewindow_picker` is never used
+   --> src\frontend\tui\menu_builders.rs:224:8
+    |
+224 | pub fn build_hidewindow_picker(app_core: &AppCore) -> Vec<PopupMenuItem> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `room_window_clear_components`, `room_window_start_component`, `room_window_add_segment`, `room_window_finish_line`, `room_window_finish_component`, and `room_window_set_title` are never used
+  --> src\frontend\tui\room_window_ops.rs:29:12
+   |
+ 3 | impl TuiFrontend {
+   | ---------------- methods in this implementation
+...
+29 |     pub fn room_window_clear_components(&mut self, window_name: &str) {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+37 |     pub fn room_window_start_component(&mut self, window_name: &str, component_id: String) {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+44 |     pub fn room_window_add_segment(
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+55 |     pub fn room_window_finish_line(&mut self, window_name: &str) {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+62 |     pub fn room_window_finish_component(&mut self, window_name: &str) {
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+69 |     pub fn room_window_set_title(&mut self, window_name: &str, title: String) {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `get_search_info` is never used
+  --> src\frontend\tui\search.rs:89:12
+   |
+ 3 | impl TuiFrontend {
+   | ---------------- method in this implementation
+...
+89 |     pub fn get_search_info(&self, window_name: &str) -> Option<(usize, usize)> {
+   |            ^^^^^^^^^^^^^^^
+
+warning: variant `Color` is never constructed
+  --> src\frontend\tui\settings_editor.rs:21:5
+   |
+16 | pub enum SettingValue {
+   |          ------------ variant in this enum
+...
+21 |     Color(String),
+   |     ^^^^^
+   |
+   = note: `SettingValue` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `parse_from_string` is never used
+  --> src\frontend\tui\settings_editor.rs:37:12
+   |
+25 | impl SettingValue {
+   | ----------------- method in this implementation
+...
+37 |     pub fn parse_from_string(&self, s: &str) -> Option<SettingValue> {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: fields `key`, `description`, and `editable` are never read
+  --> src\frontend\tui\settings_editor.rs:69:9
+   |
+67 | pub struct SettingItem {
+   |            ----------- fields in this struct
+68 |     pub category: String,
+69 |     pub key: String,
+   |         ^^^
+...
+72 |     pub description: Option<String>,
+   |         ^^^^^^^^^^^
+73 |     pub editable: bool,
+   |         ^^^^^^^^
+   |
+   = note: `SettingItem` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `is_dragging`, `drag_offset_x`, and `drag_offset_y` are never read
+  --> src\frontend\tui\settings_editor.rs:88:9
+   |
+77 | pub struct SettingsEditor {
+   |            -------------- fields in this struct
+...
+88 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+89 |     drag_offset_x: u16,
+   |     ^^^^^^^^^^^^^
+90 |     drag_offset_y: u16,
+   |     ^^^^^^^^^^^^^
+
+warning: multiple methods are never used
+   --> src\frontend\tui\settings_editor.rs:110:12
+    |
+ 93 | impl SettingsEditor {
+    | ------------------- methods in this implementation
+...
+110 |     pub fn set_category_filter(&mut self, category: Option<String>) {
+    |            ^^^^^^^^^^^^^^^^^^^
+...
+211 |     pub fn start_editing(&mut self) {
+    |            ^^^^^^^^^^^^^
+...
+242 |     pub fn stop_editing(&mut self, save: bool) {
+    |            ^^^^^^^^^^^^
+...
+256 |     pub fn is_editing(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+268 |     fn cycle_enum(&mut self, forward: bool) {
+    |        ^^^^^^^^^^
+...
+285 |     pub fn handle_input(&mut self, key: KeyEvent) -> bool {
+    |            ^^^^^^^^^^^^
+...
+371 |     pub fn handle_mouse(
+    |            ^^^^^^^^^^^^
+
+warning: field `text_color` is never read
+  --> src\frontend\tui\spell_color_browser.rs:19:9
+   |
+15 | pub struct SpellColorEntry {
+   |            --------------- field in this struct
+...
+19 |     pub text_color: String,
+   |         ^^^^^^^^^^
+
+warning: fields `is_dragging` and `drag_offset` are never read
+  --> src\frontend\tui\spell_color_browser.rs:28:9
+   |
+23 | pub struct SpellColorBrowser {
+   |            ----------------- fields in this struct
+...
+28 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+29 |     drag_offset: (i16, i16),
+   |     ^^^^^^^^^^^
+
+warning: variant `Cancel` is never constructed
+  --> src\frontend\tui\spell_color_form.rs:28:5
+   |
+25 | pub enum SpellColorFormResult {
+   |          -------------------- variant in this enum
+...
+28 |     Cancel,
+   |     ^^^^^^
+   |
+   = note: `SpellColorFormResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `is_dragging` and `drag_offset` are never read
+  --> src\frontend\tui\spell_color_form.rs:39:9
+   |
+31 | pub struct SpellColorFormWidget {
+   |            -------------------- fields in this struct
+...
+39 |     pub is_dragging: bool,
+   |         ^^^^^^^^^^^
+40 |     drag_offset: (i16, i16),
+   |     ^^^^^^^^^^^
+
+warning: variant `Cancel` is never constructed
+  --> src\frontend\tui\theme_editor.rs:23:5
+   |
+21 | pub enum ThemeEditorResult {
+   |          ----------------- variant in this enum
+22 |     Save(ThemeData),
+23 |     Cancel,
+   |     ^^^^^^
+   |
+   = note: `ThemeEditorResult` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `new` is never used
+  --> src\frontend\tui\theme_editor.rs:57:12
+   |
+56 | impl ThemeEditor {
+   | ---------------- associated function in this implementation
+57 |     pub fn new() -> Self {
+   |            ^^^
+
+warning: enum `UIColorEditorResult` is never used
+  --> src\frontend\tui\uicolors_browser.rs:25:10
+   |
+25 | pub enum UIColorEditorResult {
+   |          ^^^^^^^^^^^^^^^^^^^
+
+warning: field `entry_type` is never read
+  --> src\frontend\tui\uicolors_browser.rs:39:9
+   |
+34 | pub struct UIColorEntry {
+   |            ------------ field in this struct
+...
+39 |     pub entry_type: UIColorEntryType,
+   |         ^^^^^^^^^^
+   |
+   = note: `UIColorEntry` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: multiple fields are never read
+  --> src\frontend\tui\uicolors_browser.rs:44:5
+   |
+43 | pub struct UIColorEditor {
+   |            ------------- fields in this struct
+44 |     asset_name: String,
+   |     ^^^^^^^^^^
+45 |     color_fg: TextArea<'static>,
+   |     ^^^^^^^^
+46 |     color_bg: TextArea<'static>,
+   |     ^^^^^^^^
+47 |     focused_field: usize, // 0 = fg, 1 = bg
+   |     ^^^^^^^^^^^^^
+48 |     popup_x: u16,
+   |     ^^^^^^^
+49 |     popup_y: u16,
+   |     ^^^^^^^
+50 |     pub dragging: bool,
+   |         ^^^^^^^^
+51 |     drag_offset_x: u16,
+   |     ^^^^^^^^^^^^^
+52 |     drag_offset_y: u16,
+   |     ^^^^^^^^^^^^^
+53 |     textarea_bg_color: Color,
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `parse_color_static`, `handle_key`, `handle_mouse`, `render`, and `parse_color` are never used
+   --> src\frontend\tui\uicolors_browser.rs:57:12
+    |
+ 56 | impl UIColorEditor {
+    | ------------------ associated items in this implementation
+ 57 |     pub fn new(entry: &UIColorEntry, textarea_bg: &str) -> Self {
+    |            ^^^
+...
+ 89 |     fn parse_color_static(color_str: &str) -> Color {
+    |        ^^^^^^^^^^^^^^^^^^
+...
+105 |     pub fn handle_key(&mut self, key: KeyEvent) -> Option<UIColorEditorResult> {
+    |            ^^^^^^^^^^
+...
+155 |     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) {
+    |            ^^^^^^^^^^^^
+...
+184 |     pub fn render(
+    |            ^^^^^^
+...
+404 |     fn parse_color(&self, color_str: &str) -> Color {
+    |        ^^^^^^^^^^^
+
+warning: fields `dragging`, `drag_offset_x`, `drag_offset_y`, and `editor` are never read
+   --> src\frontend\tui\uicolors_browser.rs:427:9
+    |
+421 | pub struct UIColorsBrowser {
+    |            --------------- fields in this struct
+...
+427 |     pub dragging: bool,
+    |         ^^^^^^^^
+428 |     drag_offset_x: u16,
+    |     ^^^^^^^^^^^^^
+429 |     drag_offset_y: u16,
+    |     ^^^^^^^^^^^^^
+...
+432 |     pub editor: Option<UIColorEditor>,
+    |         ^^^^^^
+
+warning: methods `open_editor`, `close_editor`, `save_editor`, and `handle_mouse` are never used
+   --> src\frontend\tui\uicolors_browser.rs:602:12
+    |
+435 | impl UIColorsBrowser {
+    | -------------------- methods in this implementation
+...
+602 |     pub fn open_editor(&mut self, textarea_bg: &str) {
+    |            ^^^^^^^^^^^
+...
+608 |     pub fn close_editor(&mut self) {
+    |            ^^^^^^^^^^^^
+...
+612 |     pub fn save_editor(&mut self) -> Option<(String, String, Option<String>, Option<String>)> {
+    |            ^^^^^^^^^^^
+...
+628 |     pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) {
+    |            ^^^^^^^^^^^^
+
+warning: multiple methods are never used
+    --> src\frontend\tui\window_editor.rs:2078:8
+     |
+1005 | impl WindowEditor {
+     | ----------------- methods in this implementation
+...
+2078 |     fn is_command_input(&self) -> bool {
+     |        ^^^^^^^^^^^^^^^^
+...
+3017 |     pub fn handle_sub_editor_reorder(&mut self, down: bool) -> bool {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3742 |     pub fn cancel(&mut self) {
+     |            ^^^^^^
+...
+3747 |     pub fn get_editor_geometry(&self) -> (u16, u16, u16, u16) {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+5498 |     fn render_textarea(
+     |        ^^^^^^^^^^^^^^^
+...
+5534 |     fn render_textarea_with_preview(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+5580 |     fn render_checkbox(
+     |        ^^^^^^^^^^^^^^^
+...
+5603 |     fn render_checkbox_row(
+     |        ^^^^^^^^^^^^^^^^^^^
+...
+5675 |     fn render_dropdown(
+     |        ^^^^^^^^^^^^^^^
+
+warning: methods `page_up`, `page_down`, `home`, and `end` are never used
+  --> src\frontend\tui\widget_traits.rs:18:8
+   |
+10 | pub trait Navigable {
+   |           --------- methods in this trait
+...
+18 |     fn page_up(&mut self);
+   |        ^^^^^^^
+...
+21 |     fn page_down(&mut self);
+   |        ^^^^^^^^^
+...
+24 |     fn home(&mut self) {}
+   |        ^^^^
+...
+27 |     fn end(&mut self) {}
+   |        ^^^
+
+warning: trait `Selectable` is never used
+  --> src\frontend\tui\widget_traits.rs:31:11
+   |
+31 | pub trait Selectable {
+   |           ^^^^^^^^^^
+
+warning: trait `Cyclable` is never used
+   --> src\frontend\tui\widget_traits.rs:102:11
+    |
+102 | pub trait Cyclable {
+    |           ^^^^^^^^
+
+warning: methods `field_count` and `current_field` are never used
+   --> src\frontend\tui\widget_traits.rs:119:8
+    |
+111 | pub trait FieldNavigable {
+    |           -------------- methods in this trait
+...
+119 |     fn field_count(&self) -> usize;
+    |        ^^^^^^^^^^^
+...
+122 |     fn current_field(&self) -> usize;
+    |        ^^^^^^^^^^^^^
+
+warning: trait `Saveable` is never used
+   --> src\frontend\tui\widget_traits.rs:127:11
+    |
+127 | pub trait Saveable {
+    |           ^^^^^^^^
+
+warning: trait `Reorderable` is never used
+   --> src\frontend\tui\widget_traits.rs:142:11
+    |
+142 | pub trait Reorderable {
+    |           ^^^^^^^^^^^
+
+warning: trait `ListManageable` is never used
+   --> src\frontend\tui\widget_traits.rs:151:11
+    |
+151 | pub trait ListManageable {
+    |           ^^^^^^^^^^^^^^
+
+warning: fields `source`, `destination`, `windows_converted`, and `windows_skipped` are never read
+  --> src\migrate.rs:95:9
+   |
+94 | pub struct MigratedFile {
+   |            ------------ fields in this struct
+95 |     pub source: PathBuf,
+   |         ^^^^^^
+96 |     pub destination: PathBuf,
+   |         ^^^^^^^^^^^
+97 |     pub windows_converted: usize,
+   |         ^^^^^^^^^^^^^^^^^
+98 |     pub windows_skipped: usize,
+   |         ^^^^^^^^^^^^^^^
+   |
+   = note: `MigratedFile` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: variant `System` is never constructed
+  --> src\parser.rs:21:5
+   |
+15 | pub enum SpanType {
+   |          -------- variant in this enum
+...
+21 |     System,      // Client/system messages (not produced by parser; used for UI echoes)
+   |     ^^^^^^
+   |
+   = note: `SpanType` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: struct `ParsedSpan` is never constructed
+  --> src\parser.rs:71:12
+   |
+71 | pub struct ParsedSpan {
+   |            ^^^^^^^^^^
+
+warning: field `stream` is never read
+  --> src\parser.rs:86:9
+   |
+84 |     Text {
+   |     ---- field in this variant
+85 |         content: String,
+86 |         stream: String,
+   |         ^^^^^^
+   |
+   = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `id` and `value` are never read
+   --> src\parser.rs:124:9
+    |
+123 |     Label {
+    |     ----- fields in this variant
+124 |         id: String,
+    |         ^^
+125 |         value: String,
+    |         ^^^^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+   --> src\parser.rs:142:9
+    |
+141 |     ClearDialogData {
+    |     --------------- field in this variant
+142 |         id: String,
+    |         ^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `event_type`, `action`, and `duration` are never read
+   --> src\parser.rs:174:9
+    |
+173 |     Event {
+    |     ----- fields in this variant
+174 |         event_type: String,  // "stun", "webbed", "prone", etc.
+    |         ^^^^^^^^^^
+175 |         action: EventAction, // Set/Clear/Increment
+    |         ^^^^^^
+176 |         duration: u32,       // Duration in seconds (for countdowns)
+    |         ^^^^^^^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `url` is never read
+   --> src\parser.rs:179:9
+    |
+178 |     LaunchURL {
+    |     --------- field in this variant
+179 |         url: String, // URL path to append to https://www.play.net
+    |         ^^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `targets` and `target_ids` are never read
+   --> src\parser.rs:184:9
+    |
+182 |     TargetList {
+    |     ---------- fields in this variant
+183 |         current_target: String,  // from value attribute
+184 |         targets: Vec<String>,    // from content_text (comma-split)
+    |         ^^^^^^^
+185 |         target_ids: Vec<String>, // from content_value (comma-split)
+    |         ^^^^^^^^^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `target` is never read
+   --> src\parser.rs:191:9
+    |
+188 |     Container {
+    |     --------- field in this variant
+...
+191 |         target: String,
+    |         ^^^^^^
+    |
+    = note: `ParsedElement` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `render_spike_threshold_ms` is never read
+  --> src\performance.rs:50:5
+   |
+13 | pub struct PerformanceStats {
+   |            ---------------- field in this struct
+...
+50 |     render_spike_threshold_ms: f64,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `PerformanceStats` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: multiple methods are never used
+   --> src\performance.rs:243:12
+    |
+ 86 | impl PerformanceStats {
+    | --------------------- methods in this implementation
+...
+243 |     pub fn avg_frame_time_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^^^
+...
+253 |     pub fn min_frame_time_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^^^
+...
+262 |     pub fn max_frame_time_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^^^
+...
+486 |     pub fn last_event_queue_depth(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+496 |     pub fn total_events_processed(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+541 |     pub fn frame_jitter_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^
+...
+563 |     pub fn frame_spike_count(&self) -> usize {
+    |            ^^^^^^^^^^^^^^^^^
+...
+575 |     pub fn event_lag_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^
+...
+586 |     pub fn memory_delta_mb(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^
+
+warning: function `screen_to_window_coords` is never used
+   --> src\selection.rs:106:8
+    |
+106 | pub fn screen_to_window_coords(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `set_enabled` and `set_volume` are never used
+  --> src\sound.rs:73:12
+   |
+34 | impl SoundPlayer {
+   | ---------------- methods in this implementation
+...
+73 |     pub fn set_enabled(&mut self, enabled: bool) {
+   |            ^^^^^^^^^^^
+...
+79 |     pub fn set_volume(&mut self, volume: f32) {
+   |            ^^^^^^^^^^
+
+warning: variants `UtteranceStarted` and `UtteranceStopped` are never constructed
+  --> src\tts\mod.rs:19:5
+   |
+18 | pub enum TtsEvent {
+   |          -------- variants in this enum
+19 |     UtteranceStarted,
+   |     ^^^^^^^^^^^^^^^^
+20 |     UtteranceEnded,
+21 |     UtteranceStopped,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `TtsEvent` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variant `Critical` is never constructed
+  --> src\tts\mod.rs:29:5
+   |
+26 | pub enum Priority {
+   |          -------- variant in this enum
+...
+29 |     Critical = 2, // Damage warnings, death, critical alerts
+   |     ^^^^^^^^
+   |
+   = note: `Priority` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `auto_play_next`, `clear_queue`, `queue_size`, `is_enabled`, and `set_enabled` are never used
+   --> src\tts\mod.rs:308:12
+    |
+ 82 | impl TtsManager {
+    | --------------- methods in this implementation
+...
+308 |     pub fn auto_play_next(&mut self) -> Result<()> {
+    |            ^^^^^^^^^^^^^^
+...
+386 |     pub fn clear_queue(&mut self) {
+    |            ^^^^^^^^^^^
+...
+393 |     pub fn queue_size(&self) -> usize {
+    |            ^^^^^^^^^^
+...
+403 |     pub fn is_enabled(&self) -> bool {
+    |            ^^^^^^^^^^
+...
+408 |     pub fn set_enabled(&mut self, enabled: bool) {
+    |            ^^^^^^^^^^^
+
+warning: `vellum-fe` (bin "vellum-fe") generated 182 warnings (45 duplicates) (run `cargo fix --bin "vellum-fe"` to apply 1 suggestion)
+warning: use of deprecated function `config::apply_text_replacements`: Use compile_text_replacements + apply_compiled_text_replacements for better performance
+    --> src\config.rs:5788:22
+     |
+5788 |         let result = apply_text_replacements("Fading roisaen", &replacements);
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `config::apply_text_replacements`: Use compile_text_replacements + apply_compiled_text_replacements for better performance
+    --> src\config.rs:5798:22
+     |
+5798 |         let result = apply_text_replacements("Monkey (82)", &replacements);
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `config::apply_text_replacements`: Use compile_text_replacements + apply_compiled_text_replacements for better performance
+    --> src\config.rs:5808:22
+     |
+5808 |         let result = apply_text_replacements("a[b", &replacements);
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src\core\messages.rs:2661:13
+     |
+2661 |         let mut processor = MessageProcessor::new(config);
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` on by default
+
+warning: variable does not need to be mutable
+    --> src\core\messages.rs:2675:13
+     |
+2675 |         let mut processor = MessageProcessor::new(config);
+     |             ----^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: method `set_scroll_offset` is never used
+   --> src\frontend\tui\perception.rs:120:12
+    |
+ 32 | impl PerceptionWindow {
+    | --------------------- method in this implementation
+...
+120 |     pub fn set_scroll_offset(&mut self, offset: usize) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: methods `set_bar_color` and `render_with_focus` are never used
+   --> src\frontend\tui\targets.rs:242:12
+    |
+ 24 | impl Targets {
+    | ------------ methods in this implementation
+...
+242 |     pub fn set_bar_color(&mut self, _color: String) {
+    |            ^^^^^^^^^^^^^
+...
+272 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+warning: method `render_with_focus` is never used
+   --> src\frontend\tui\container_window.rs:304:12
+    |
+ 28 | impl ContainerWindow {
+    | -------------------- method in this implementation
+...
+304 |     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    |            ^^^^^^^^^^^^^^^^^
+
+   Compiling vellum-fe v0.1.0 (C:\Gemstone\Projects\VellumFE)
+warning: method `matches` is never used
+   --> src\config.rs:220:12
+    |
+218 | impl LayoutMapping {
+    | ------------------ method in this implementation
+219 |     /// Check if terminal size matches this mapping
+220 |     pub fn matches(&self, width: u16, height: u16) -> bool {
+    |            ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: methods `get_window_by_type` and `focused_window_mut` are never used
+   --> src\data\ui_state.rs:228:12
+    |
+163 | impl UiState {
+    | ------------ methods in this implementation
+...
+228 |     pub fn get_window_by_type(
+    |            ^^^^^^^^^^^^^^^^^^
+...
+297 |     pub fn focused_window_mut(&mut self) -> Option<&mut WindowState> {
+    |            ^^^^^^^^^^^^^^^^^^
+
+warning: associated function `from_text_with_stream` is never used
+   --> src\data\widget.rs:312:12
+    |
+296 | impl StyledLine {
+    | --------------- associated function in this implementation
+...
+312 |     pub fn from_text_with_stream(text: impl Into<String>, stream: impl Into<String>) -> Self {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `ephemeral` is never read
+  --> src\data\window.rs:18:9
+   |
+ 9 | pub struct WindowState {
+   |            ----------- field in this struct
+...
+18 |     pub ephemeral: bool,
+   |         ^^^^^^^^^
+   |
+   = note: `WindowState` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: multiple methods are never used
+   --> src\frontend\common\text_input.rs:52:8
+    |
+ 44 | pub trait TextInput {
+    |           --------- methods in this trait
+...
+ 52 |     fn set_text(&mut self, text: String);
+    |        ^^^^^^^^
+...
+ 73 |     fn delete_current_line(&mut self);
+    |        ^^^^^^^^^^^^^^^^^^^
+...
+ 85 |     fn cursor_position(&self) -> (u16, u16);
+    |        ^^^^^^^^^^^^^^^
+...
+ 91 |     fn cancel_selection(&mut self);
+    |        ^^^^^^^^^^^^^^^^
+...
+ 94 |     fn has_selection(&self) -> bool;
+    |        ^^^^^^^^^^^^^
+...
+100 |     fn yank_text(&self) -> String;
+    |        ^^^^^^^^^
+...
+106 |     fn clear(&mut self);
+    |        ^^^^^
+
+warning: method `cut` is never used
+   --> src\frontend\common\text_input.rs:141:8
+    |
+123 | pub trait TextEditor: TextInput {
+    |           ---------- method in this trait
+...
+141 |     fn cut(&mut self) -> String {
+    |        ^^^
+
+warning: field `cursor_pos` is never read
+   --> src\frontend\common\text_input.rs:351:9
+    |
+349 |     struct MockTextInput {
+    |            ------------- field in this struct
+350 |         text: String,
+351 |         cursor_pos: (u16, u16),
+    |         ^^^^^^^^^^
+
+warning: field `window_background_color` is never read
+  --> src\frontend\common\widget_data.rs:58:9
+   |
+47 | pub struct ProgressBarData {
+   |            --------------- field in this struct
+...
+58 |     pub window_background_color: Option<String>,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `ProgressBarData` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `border_sides` is never read
+   --> src\frontend\common\widget_data.rs:209:9
+    |
+203 | pub struct HandData {
+    |            -------- field in this struct
+...
+209 |     pub border_sides: crate::config::BorderSides,
+    |         ^^^^^^^^^^^^
+    |
+    = note: `HandData` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `paste` is never used
+  --> src\frontend\events.rs:44:12
+   |
+27 | impl FrontendEvent {
+   | ------------------ associated function in this implementation
+...
+44 |     pub fn paste(text: String) -> Self {
+   |            ^^^^^
+
+warning: methods `last_event_queue_depth`, `frame_jitter_ms`, `frame_spike_count`, `event_lag_ms`, and `memory_delta_mb` are never used
+   --> src\performance.rs:486:12
+    |
+ 86 | impl PerformanceStats {
+    | --------------------- methods in this implementation
+...
+486 |     pub fn last_event_queue_depth(&self) -> u64 {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+541 |     pub fn frame_jitter_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^
+...
+563 |     pub fn frame_spike_count(&self) -> usize {
+    |            ^^^^^^^^^^^^^^^^^
+...
+575 |     pub fn event_lag_ms(&self) -> f64 {
+    |            ^^^^^^^^^^^^
+...
+586 |     pub fn memory_delta_mb(&self) -> f64 {
+    |            ^^^^^^^^^^^^^^^
+
+warning: `vellum-fe` (lib test) generated 53 warnings (45 duplicates) (run `cargo fix --lib -p vellum-fe --tests` to apply 2 suggestions)
+warning: `vellum-fe` (bin "vellum-fe" test) generated 145 warnings (134 duplicates)
+error[E0559]: variant `WindowContent::Targets` has no field named `targets_text`
+   --> tests\ui_integration.rs:135:13
+    |
+135 |             targets_text: String::new(),
+    |             ^^^^^^^^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Targets` has no field named `count`
+   --> tests\ui_integration.rs:136:13
+    |
+136 |             count: None,
+    |             ^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Targets` has no field named `entity_id`
+   --> tests\ui_integration.rs:137:13
+    |
+137 |             entity_id: "targetcount".to_string(),
+    |             ^^^^^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Targets` has no field named `targets_text`
+   --> tests\ui_integration.rs:153:13
+    |
+153 |             targets_text: String::new(),
+    |             ^^^^^^^^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Targets` has no field named `count`
+   --> tests\ui_integration.rs:154:13
+    |
+154 |             count: None,
+    |             ^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Targets` has no field named `entity_id`
+   --> tests\ui_integration.rs:155:13
+    |
+155 |             entity_id: entity_id.to_string(),
+    |             ^^^^^^^^^ `WindowContent::Targets` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `players_text`
+   --> tests\ui_integration.rs:171:13
+    |
+171 |             players_text: String::new(),
+    |             ^^^^^^^^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `count`
+   --> tests\ui_integration.rs:172:13
+    |
+172 |             count: None,
+    |             ^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `entity_id`
+   --> tests\ui_integration.rs:173:13
+    |
+173 |             entity_id: "playercount".to_string(),
+    |             ^^^^^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `players_text`
+   --> tests\ui_integration.rs:189:13
+    |
+189 |             players_text: String::new(),
+    |             ^^^^^^^^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `count`
+   --> tests\ui_integration.rs:190:13
+    |
+190 |             count: None,
+    |             ^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0559]: variant `WindowContent::Players` has no field named `entity_id`
+   --> tests\ui_integration.rs:191:13
+    |
+191 |             entity_id: entity_id.to_string(),
+    |             ^^^^^^^^^ `WindowContent::Players` does not have this field
+    |
+    = note: all struct fields are already assigned
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `count`
+    --> tests\ui_integration.rs:1676:62
+     |
+1676 |             if let vellum_fe::data::WindowContent::Targets { count, .. } = &w.content {
+     |                                                              ^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `count`
+    --> tests\ui_integration.rs:1703:45
+     |
+1703 |             if let WindowContent::Targets { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `count`
+    --> tests\ui_integration.rs:1714:45
+     |
+1714 |             if let WindowContent::Targets { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Players` does not have a field named `count`
+    --> tests\ui_integration.rs:1725:45
+     |
+1725 |             if let WindowContent::Players { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Players` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Players` does not have a field named `count`
+    --> tests\ui_integration.rs:1736:45
+     |
+1736 |             if let WindowContent::Players { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Players` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `count`
+    --> tests\ui_integration.rs:1782:45
+     |
+1782 |             if let WindowContent::Targets { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Players` does not have a field named `count`
+    --> tests\ui_integration.rs:1794:45
+     |
+1794 |             if let WindowContent::Players { count, .. } = &w.content {
+     |                                             ^^^^^ variant `vellum_fe::data::WindowContent::Players` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `targets_text`
+    --> tests\ui_integration.rs:1825:62
+     |
+1825 |             if let vellum_fe::data::WindowContent::Targets { targets_text, .. } = &w.content {
+     |                                                              ^^^^^^^^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Players` does not have fields named `count`, `players_text`
+    --> tests\ui_integration.rs:1853:62
+     |
+1853 |             if let vellum_fe::data::WindowContent::Players { count, players_text, .. } = &w.content {
+     |                                                              ^^^^^  ^^^^^^^^^^^^ variant `vellum_fe::data::WindowContent::Players` does not have these fields
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Targets` does not have a field named `count`
+    --> tests\ui_integration.rs:1897:62
+     |
+1897 |             if let vellum_fe::data::WindowContent::Targets { count, .. } = &w.content {
+     |                                                              ^^^^^ variant `vellum_fe::data::WindowContent::Targets` does not have this field
+
+error[E0026]: variant `vellum_fe::data::WindowContent::Players` does not have a field named `count`
+    --> tests\ui_integration.rs:1911:62
+     |
+1911 |             if let vellum_fe::data::WindowContent::Players { count, .. } = &w.content {
+     |                                                              ^^^^^ variant `vellum_fe::data::WindowContent::Players` does not have this field
+
+Some errors have detailed explanations: E0026, E0559.
+For more information about an error, try `rustc --explain E0026`.
+error: could not compile `vellum-fe` (test "ui_integration") due to 23 previous errors

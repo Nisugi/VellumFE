@@ -8,10 +8,17 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{debug, error, info};
 
-use std::path::PathBuf;
+use chrono::Local;
+use std::fs::{self, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc as std_mpsc, Arc};
+use std::thread;
+use std::time::Duration as StdDuration;
 
 /// Messages emitted by the TCP reader task.
 #[derive(Debug, Clone)]
@@ -31,6 +38,167 @@ pub struct DirectConnectConfig {
     pub character: String,
     pub game_code: String,
     pub data_dir: PathBuf,
+}
+
+struct LogWriterSettings {
+    dir: PathBuf,
+    buffer_lines: usize,
+    flush_interval: StdDuration,
+    max_lines_per_file: usize,
+    timestamps: bool,
+}
+
+/// Raw XML logger for network input (pre-parse).
+#[derive(Clone)]
+pub struct RawLogger {
+    tx: std_mpsc::SyncSender<String>,
+    dropped: Arc<AtomicUsize>,
+}
+
+impl RawLogger {
+    pub fn new(config: &crate::config::Config) -> Result<Option<Self>> {
+        if !config.logging.enabled {
+            return Ok(None);
+        }
+
+        let dir = config.logging.resolve_dir(config.character.as_deref())?;
+        let buffer_lines = config.logging.buffer_lines.max(1);
+        let flush_interval =
+            StdDuration::from_millis(config.logging.flush_interval_ms.max(1));
+        let max_lines_per_file = config.logging.max_lines_per_file.max(1);
+        let timestamps = config.logging.timestamps;
+
+        let capacity = buffer_lines.saturating_mul(4).max(100);
+        let (tx, rx) = std_mpsc::sync_channel::<String>(capacity);
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let dropped_clone = dropped.clone();
+
+        let settings = LogWriterSettings {
+            dir,
+            buffer_lines,
+            flush_interval,
+            max_lines_per_file,
+            timestamps,
+        };
+
+        thread::spawn(move || {
+            if let Err(err) = run_log_writer(rx, dropped_clone, settings) {
+                error!("Raw logger exited with error: {}", err);
+            }
+        });
+
+        Ok(Some(Self { tx, dropped }))
+    }
+
+    pub fn log_line(&self, line: &str) {
+        match self.tx.try_send(line.to_string()) {
+            Ok(()) => {}
+            Err(std_mpsc::TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(std_mpsc::TrySendError::Disconnected(_)) => {}
+        }
+    }
+}
+
+fn run_log_writer(
+    rx: std_mpsc::Receiver<String>,
+    dropped: Arc<AtomicUsize>,
+    settings: LogWriterSettings,
+) -> Result<()> {
+    fs::create_dir_all(&settings.dir).context("Failed to create log directory")?;
+
+    let mut writer = open_log_writer(&settings.dir)?;
+    let mut buffer: Vec<String> = Vec::with_capacity(settings.buffer_lines);
+    let mut lines_written: usize = 0;
+
+    loop {
+        match rx.recv_timeout(settings.flush_interval) {
+            Ok(line) => {
+                buffer.push(line);
+                if buffer.len() >= settings.buffer_lines {
+                    flush_log_buffer(
+                        &mut writer,
+                        &mut buffer,
+                        &mut lines_written,
+                        &settings,
+                    )?;
+                }
+            }
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                if !buffer.is_empty() {
+                    flush_log_buffer(
+                        &mut writer,
+                        &mut buffer,
+                        &mut lines_written,
+                        &settings,
+                    )?;
+                }
+                report_dropped(&dropped);
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                if !buffer.is_empty() {
+                    flush_log_buffer(
+                        &mut writer,
+                        &mut buffer,
+                        &mut lines_written,
+                        &settings,
+                    )?;
+                }
+                report_dropped(&dropped);
+                writer.flush().ok();
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn report_dropped(dropped: &AtomicUsize) {
+    let count = dropped.swap(0, Ordering::Relaxed);
+    if count > 0 {
+        tracing::warn!("Raw logger dropped {} lines (buffer full)", count);
+    }
+}
+
+fn open_log_writer(dir: &Path) -> Result<BufWriter<std::fs::File>> {
+    let timestamp = Local::now().format("%Y-%m-%d-%H-%M-%S");
+    let path = dir.join(format!("{}.xml", timestamp));
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("Failed to open raw log file {:?}", path))?;
+    info!("Raw log file: {:?}", path);
+    Ok(BufWriter::new(file))
+}
+
+fn flush_log_buffer(
+    writer: &mut BufWriter<std::fs::File>,
+    buffer: &mut Vec<String>,
+    lines_written: &mut usize,
+    settings: &LogWriterSettings,
+) -> Result<()> {
+    for line in buffer.drain(..) {
+        let output = if settings.timestamps {
+            let timestamp = Local::now().format("%H:%M:%S");
+            format!("{} {}", timestamp, line)
+        } else {
+            line
+        };
+        writeln!(writer, "{}", output)?;
+        *lines_written += 1;
+
+        if *lines_written >= settings.max_lines_per_file {
+            writer.flush()?;
+            *writer = open_log_writer(&settings.dir)?;
+            *lines_written = 0;
+        }
+    }
+
+    writer.flush()?;
+    Ok(())
 }
 
 impl DirectConnectConfig {
@@ -126,6 +294,7 @@ impl LichConnection {
         port: u16,
         server_tx: mpsc::UnboundedSender<ServerMessage>,
         command_rx: mpsc::UnboundedReceiver<String>,
+        raw_logger: Option<RawLogger>,
     ) -> Result<()> {
         info!("Connecting to Lich at {}:{}...", host, port);
 
@@ -137,7 +306,7 @@ impl LichConnection {
 
         send_pid_handshake(&mut stream).await?;
 
-        run_stream(stream, server_tx, command_rx).await
+        run_stream(stream, server_tx, command_rx, raw_logger).await
     }
 }
 
@@ -146,6 +315,7 @@ impl DirectConnection {
         config: DirectConnectConfig,
         server_tx: mpsc::UnboundedSender<ServerMessage>,
         command_rx: mpsc::UnboundedReceiver<String>,
+        raw_logger: Option<RawLogger>,
     ) -> Result<()> {
         let DirectConnectConfig {
             account,
@@ -179,7 +349,7 @@ impl DirectConnection {
 
         send_direct_handshake(&mut stream, &ticket).await?;
 
-        run_stream(stream, server_tx, command_rx).await
+        run_stream(stream, server_tx, command_rx, raw_logger).await
     }
 }
 
@@ -187,6 +357,7 @@ async fn run_stream(
     stream: TcpStream,
     server_tx: mpsc::UnboundedSender<ServerMessage>,
     mut command_rx: mpsc::UnboundedReceiver<String>,
+    raw_logger: Option<RawLogger>,
 ) -> Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
@@ -205,6 +376,9 @@ async fn run_stream(
                 }
                 Ok(_) => {
                     let line = line.trim_end_matches(['\r', '\n']);
+                    if let Some(logger) = &raw_logger {
+                        logger.log_line(line);
+                    }
                     let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
                 }
                 Err(e) => {
@@ -268,7 +442,7 @@ async fn send_direct_handshake(
     for _ in 0..2 {
         stream.write_all(b"<c>\n").await?;
         stream.flush().await?;
-        sleep(Duration::from_millis(300)).await;
+        sleep(TokioDuration::from_millis(300)).await;
     }
 
     Ok(())
@@ -347,9 +521,6 @@ mod eaccess {
                 auth_response.trim()
             );
         }
-
-        send_line(&mut stream, "M")?;
-        read_response(&mut stream)?; // Available games (unused)
 
         send_line(&mut stream, &format!("F\t{}", game_code))?;
         read_response(&mut stream)?; // Subscription tier

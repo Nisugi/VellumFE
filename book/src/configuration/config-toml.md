@@ -54,9 +54,6 @@ enabled = true
 # Master volume (0.0 - 1.0)
 volume = 0.8
 
-# Play startup music
-startup_music = true
-
 # Sound file paths (relative to data dir or absolute)
 # alert_sound = "sounds/alert.wav"
 
@@ -154,8 +151,6 @@ Audio settings.
 |-----|------|---------|-------------|
 | `enabled` | boolean | `true` | Master sound toggle |
 | `volume` | float | `0.8` | Master volume (0.0 to 1.0) |
-| `startup_music` | boolean | `true` | Play music on launch |
-
 **Note**: Requires the `sound` feature to be compiled in.
 
 ### [tts]

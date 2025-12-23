@@ -27,6 +27,8 @@ const DEFAULT_COLORS: &str = include_str!("../defaults/colors.toml");
 const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/highlights.toml");
 const DEFAULT_KEYBINDS: &str = include_str!("../defaults/keybinds.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
+const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/spell_abbrev.toml");
+const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/layout_template.toml");
 
 // Embed entire directories - automatically includes all files
 static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/layouts");
@@ -138,9 +140,6 @@ fn default_highlights_enabled() -> bool {
 /// Note: System highlights (monsterbold, links, roomname) are NOT affected by these toggles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HighlightsConfig {
-    /// Enable squelch/ignore patterns (hide matching lines)
-    #[serde(default = "default_highlights_enabled")]
-    pub ignores_enabled: bool,
     /// Enable sound triggers on pattern match
     #[serde(default = "default_highlights_enabled")]
     pub sounds_enabled: bool,
@@ -158,7 +157,6 @@ pub struct HighlightsConfig {
 impl Default for HighlightsConfig {
     fn default() -> Self {
         Self {
-            ignores_enabled: true,
             sounds_enabled: true,
             replace_enabled: true,
             redirect_enabled: true,
@@ -183,6 +181,10 @@ pub struct Config {
     #[serde(default)]
     pub tts: TtsConfig,
     #[serde(default)]
+    pub target_list: TargetListConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
     pub event_patterns: HashMap<String, EventPattern>,
     #[serde(default)]
     pub layout_mappings: Vec<LayoutMapping>,
@@ -197,7 +199,7 @@ pub struct Config {
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
-    pub highlight_settings: HighlightsConfig, // Highlight system toggles (ignores, sounds, replace, redirect, coloring)
+    pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
 }
 
 /// Terminal size range to layout mapping
@@ -397,19 +399,31 @@ impl ColorConfig {
         let colors_path = Config::colors_path(character)?;
 
         if colors_path.exists() {
+            tracing::info!("Loading colors from: {:?}", colors_path);
             let contents =
                 fs::read_to_string(&colors_path).context("Failed to read colors.toml")?;
             let mut colors: ColorConfig =
                 toml::from_str(&contents).context("Failed to parse colors.toml")?;
 
+            // Merge defaults for missing presets (so users don't need to define all presets)
+            let defaults = Self::default();
+            for (key, preset) in defaults.presets {
+                colors.presets.entry(key).or_insert(preset);
+            }
+
             // Merge defaults for missing color_palette (for backward compatibility)
             if colors.color_palette.is_empty() {
-                let defaults = Self::default();
                 colors.color_palette = defaults.color_palette;
             }
 
+            tracing::debug!(
+                "Loaded {} presets from colors.toml",
+                colors.presets.len()
+            );
+
             Ok(colors)
         } else {
+            tracing::info!("colors.toml not found at {:?}, using defaults", colors_path);
             // Return default if file doesn't exist (will be created by extract_defaults)
             Ok(Self::default())
         }
@@ -1189,51 +1203,6 @@ pub fn apply_compiled_text_replacements(text: &str, replacements: &[CompiledText
     result
 }
 
-/// Apply text replacements, auto-detecting regex patterns by metacharacters.
-/// WARNING: This compiles regex on every call! Use apply_compiled_text_replacements for hot paths.
-#[deprecated(note = "Use compile_text_replacements + apply_compiled_text_replacements for better performance")]
-pub fn apply_text_replacements(text: &str, replacements: &[TextReplacement]) -> String {
-    let mut result = text.to_string();
-    for replacement in replacements {
-        let pattern = replacement.pattern.as_str();
-        let is_regex = pattern.contains('\\')
-            || pattern.contains('^')
-            || pattern.contains('$')
-            || pattern.contains('.')
-            || pattern.contains('*')
-            || pattern.contains('+')
-            || pattern.contains('?')
-            || pattern.contains('(')
-            || pattern.contains(')')
-            || pattern.contains('[')
-            || pattern.contains(']')
-            || pattern.contains('{')
-            || pattern.contains('}')
-            || pattern.contains('|');
-
-        if is_regex {
-            match regex::Regex::new(pattern) {
-                Ok(re) => {
-                    result = re
-                        .replace_all(&result, replacement.replace.as_str())
-                        .into_owned();
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Invalid regex pattern '{}': {}, using literal match",
-                        pattern,
-                        e
-                    );
-                    result = result.replace(pattern, &replacement.replace);
-                }
-            }
-        } else {
-            result = result.replace(pattern, &replacement.replace);
-        }
-    }
-    result
-}
-
 /// Sort direction for perception entries
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SortDirection {
@@ -1638,12 +1607,6 @@ pub struct UiConfig {
     pub border_style: String, // Default border style: "single", "double", "rounded", "thick", "none"
     #[serde(default = "default_countdown_icon")]
     pub countdown_icon: String, // Unicode character for countdown blocks (e.g., "\u{f0c8}")
-    /// DEPRECATED: Moved to [sound] section. Kept for backwards compatibility.
-    #[serde(default = "default_startup_music", skip_serializing)]
-    pub startup_music: bool,
-    /// DEPRECATED: Moved to [sound] section. Kept for backwards compatibility.
-    #[serde(default = "default_startup_music_file", skip_serializing)]
-    pub startup_music_file: String,
     // Text selection settings
     #[serde(default = "default_selection_enabled")]
     pub selection_enabled: bool,
@@ -1658,6 +1621,9 @@ pub struct UiConfig {
     // Command history settings
     #[serde(default = "default_min_command_length")]
     pub min_command_length: usize, // Minimum command length to save to history (commands shorter than this are not saved)
+    // Command echo settings
+    #[serde(default = "default_command_echo")]
+    pub command_echo: bool, // Echo sent commands into main window
     // Performance stats settings
     #[serde(default = "default_performance_stats_enabled")]
     pub performance_stats_enabled: bool, // Global toggle for performance overlay
@@ -1669,9 +1635,6 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
-    /// DEPRECATED: Moved to [highlights] section. Kept for backwards compatibility.
-    #[serde(default = "default_ignores_enabled", skip_serializing)]
-    pub ignores_enabled: bool,
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
@@ -1687,19 +1650,17 @@ impl Default for UiConfig {
             layout: LayoutConfig::default(),
             border_style: default_border_style(),
             countdown_icon: default_countdown_icon(),
-            startup_music: default_startup_music(),
-            startup_music_file: default_startup_music_file(),
             selection_enabled: default_selection_enabled(),
             selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
             selection_auto_copy: default_selection_auto_copy(),
             drag_modifier_key: default_drag_modifier_key(),
             min_command_length: default_min_command_length(),
+            command_echo: default_command_echo(),
             performance_stats_enabled: default_performance_stats_enabled(),
             perf_stats_x: default_perf_stats_x(),
             perf_stats_y: default_perf_stats_y(),
             perf_stats_width: default_perf_stats_width(),
             perf_stats_height: default_perf_stats_height(),
-            ignores_enabled: default_ignores_enabled(),
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
         }
@@ -1802,13 +1763,6 @@ pub struct SoundConfig {
     pub volume: f32, // Master volume (0.0 to 1.0)
     #[serde(default = "default_sound_cooldown")]
     pub cooldown_ms: u64, // Cooldown between same sound plays (milliseconds)
-    #[serde(default = "default_startup_music")]
-    pub startup_music: bool, // Play startup music on connection
-    #[serde(default = "default_startup_music_file")]
-    pub startup_music_file: String, // Sound file to play on startup (without extension)
-    /// DEPRECATED: Use `enabled = false` instead. This field is only for backwards compatibility.
-    #[serde(default, skip_serializing)]
-    pub disabled: bool,
 }
 
 fn default_sound_enabled() -> bool {
@@ -1829,9 +1783,6 @@ impl Default for SoundConfig {
             enabled: default_sound_enabled(),
             volume: default_sound_volume(),
             cooldown_ms: default_sound_cooldown(),
-            startup_music: default_startup_music(),
-            startup_music_file: default_startup_music_file(),
-            disabled: false, // Deprecated, kept for backwards compat
         }
     }
 }
@@ -1890,6 +1841,133 @@ impl Default for TtsConfig {
             speak_thoughts: default_tts_speak_thoughts(),
             speak_speech: default_tts_speak_speech(),
             speak_main: default_tts_speak_main(),
+        }
+    }
+}
+
+/// Target list widget configuration (dropdown_targets for direct connect).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetListConfig {
+    /// Status display position: "start" or "end"
+    #[serde(default = "default_target_status_position")]
+    pub status_position: String,
+    /// Truncation mode: "full" or "noun"
+    #[serde(default = "default_target_truncation_mode")]
+    pub truncation_mode: String,
+    /// Map of full status names to 3-character abbreviations
+    #[serde(default = "default_status_abbrev")]
+    pub status_abbrev: HashMap<String, String>,
+    /// Nouns to exclude from room objs parsing (e.g., "arm", "coal")
+    #[serde(default = "default_excluded_nouns")]
+    pub excluded_nouns: Vec<String>,
+}
+
+fn default_target_status_position() -> String {
+    "end".to_string()
+}
+
+fn default_target_truncation_mode() -> String {
+    "noun".to_string()
+}
+
+fn default_status_abbrev() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("stunned".to_string(), "stu".to_string());
+    map.insert("frozen".to_string(), "frz".to_string());
+    map.insert("dead".to_string(), "ded".to_string());
+    map.insert("sitting".to_string(), "sit".to_string());
+    map.insert("kneeling".to_string(), "kne".to_string());
+    map.insert("prone".to_string(), "prn".to_string());
+    map.insert("webbed".to_string(), "web".to_string());
+    map.insert("immobilized".to_string(), "imm".to_string());
+    map.insert("bleeding".to_string(), "ble".to_string());
+    map.insert("standing".to_string(), "std".to_string());
+    map.insert("sleeping".to_string(), "slp".to_string());
+    map.insert("poisoned".to_string(), "poi".to_string());
+    map.insert("diseased".to_string(), "dis".to_string());
+    map.insert("bound".to_string(), "bnd".to_string());
+    map.insert("calmed".to_string(), "cal".to_string());
+    map
+}
+
+fn default_excluded_nouns() -> Vec<String> {
+    vec!["arm".to_string(), "coal".to_string()]
+}
+
+impl Default for TargetListConfig {
+    fn default() -> Self {
+        Self {
+            status_position: default_target_status_position(),
+            truncation_mode: default_target_truncation_mode(),
+            status_abbrev: default_status_abbrev(),
+            excluded_nouns: default_excluded_nouns(),
+        }
+    }
+}
+
+/// Raw XML logging configuration for network input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_logging_enabled")]
+    pub enabled: bool,
+    /// Directory for log files (relative to profile dir if not absolute).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    #[serde(default = "default_logging_buffer_lines")]
+    pub buffer_lines: usize,
+    #[serde(default = "default_logging_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    #[serde(default = "default_logging_max_lines_per_file")]
+    pub max_lines_per_file: usize,
+    #[serde(default = "default_logging_timestamps")]
+    pub timestamps: bool,
+}
+
+fn default_logging_enabled() -> bool {
+    false
+}
+
+fn default_logging_buffer_lines() -> usize {
+    200
+}
+
+fn default_logging_flush_interval_ms() -> u64 {
+    2000
+}
+
+fn default_logging_max_lines_per_file() -> usize {
+    30000
+}
+
+fn default_logging_timestamps() -> bool {
+    true
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_logging_enabled(),
+            dir: None,
+            buffer_lines: default_logging_buffer_lines(),
+            flush_interval_ms: default_logging_flush_interval_ms(),
+            max_lines_per_file: default_logging_max_lines_per_file(),
+            timestamps: default_logging_timestamps(),
+        }
+    }
+}
+
+impl LoggingConfig {
+    pub fn resolve_dir(&self, character: Option<&str>) -> Result<PathBuf> {
+        let base = Config::profile_dir(character)?;
+        if let Some(dir) = &self.dir {
+            let path = PathBuf::from(dir);
+            if path.is_absolute() {
+                Ok(path)
+            } else {
+                Ok(base.join(path))
+            }
+        } else {
+            Ok(base.join("logs"))
         }
     }
 }
@@ -1984,14 +2062,6 @@ fn default_background_color() -> String {
     "-".to_string() // transparent/no background
 }
 
-fn default_startup_music() -> bool {
-    true // Enable by default - nostalgic easter egg
-}
-
-fn default_startup_music_file() -> String {
-    "wizard_music".to_string() // Default to wizard_music for nostalgia
-}
-
 
 fn default_selection_enabled() -> bool {
     true
@@ -2021,6 +2091,10 @@ fn default_min_command_length() -> usize {
     3
 }
 
+fn default_command_echo() -> bool {
+    true
+}
+
 fn default_perf_stats_x() -> u16 {
     0 // Calculated dynamically: terminal_width - 35
 }
@@ -2041,9 +2115,6 @@ fn default_performance_stats_enabled() -> bool {
     false // Start disabled by default
 }
 
-fn default_ignores_enabled() -> bool {
-    true
-}
 
 // default_command_input* functions removed - command_input is now in windows array
 
@@ -3980,12 +4051,6 @@ impl Config {
         templates
     }
 
-    /// Get list of available window templates (excluding command_input which is always present)
-    /// DEPRECATED: Use list_window_templates() instead
-    pub fn available_window_templates() -> Vec<String> {
-        Self::list_window_templates()
-    }
-
     /// Return all indicator templates (built-in + user-defined), deduplicated by id
     pub fn list_indicator_templates() -> Vec<IndicatorTemplateEntry> {
         let mut templates = Vec::new();
@@ -4413,6 +4478,41 @@ impl Config {
             tracing::info!("Extracted cmdlist1.xml to {:?}", cmdlist_path);
         }
 
+        let spell_abbrev_path = Self::spell_abbrev_path()?;
+        if !spell_abbrev_path.exists() {
+            fs::write(&spell_abbrev_path, DEFAULT_SPELL_ABBREVS)
+                .context("Failed to write spell_abbrev.toml")?;
+            tracing::info!(
+                "Extracted spell_abbrev.toml to {:?}",
+                spell_abbrev_path
+            );
+        }
+
+        // Extract documented templates to global/templates directory
+        // These preserve all comments and examples for user reference
+        let templates_dir = global_dir.join("templates");
+        fs::create_dir_all(&templates_dir)?;
+
+        let template_config_path = templates_dir.join("config.toml");
+        if !template_config_path.exists() {
+            fs::write(&template_config_path, DEFAULT_CONFIG)
+                .context("Failed to write template config.toml")?;
+            tracing::info!(
+                "Extracted documented config.toml template to {:?}",
+                template_config_path
+            );
+        }
+
+        let template_layout_path = templates_dir.join("layout_template.toml");
+        if !template_layout_path.exists() {
+            fs::write(&template_layout_path, DEFAULT_LAYOUT_TEMPLATE)
+                .context("Failed to write layout_template.toml")?;
+            tracing::info!(
+                "Extracted documented layout_template.toml to {:?}",
+                template_layout_path
+            );
+        }
+
         // Create profile directory
         let profile = Self::profile_dir(character)?;
         fs::create_dir_all(&profile)?;
@@ -4477,35 +4577,6 @@ impl Config {
         config.character = character.map(|s| s.to_string());
 
         // === Backwards Compatibility Migrations ===
-
-        // [sound] Migration: disabled field → enabled = false
-        if config.sound.disabled {
-            tracing::warn!(
-                "DEPRECATED: sound.disabled is deprecated. Use enabled = false instead. \
-                 Migrating: setting sound.enabled = false"
-            );
-            config.sound.enabled = false;
-        }
-
-        // [sound] Migration: startup_music from [ui] to [sound]
-        // If ui.startup_music was explicitly set to false, respect that
-        if !config.ui.startup_music {
-            config.sound.startup_music = false;
-        }
-        // If ui.startup_music_file was changed from default, use that
-        if config.ui.startup_music_file != default_startup_music_file() {
-            config.sound.startup_music_file = config.ui.startup_music_file.clone();
-        }
-
-        // [highlights] Migration: ui.ignores_enabled → highlight_settings.ignores_enabled
-        // If ui.ignores_enabled was explicitly set to false, migrate to new location
-        if !config.ui.ignores_enabled {
-            tracing::info!(
-                "Migrating ui.ignores_enabled=false to [highlights].ignores_enabled"
-            );
-            config.highlight_settings.ignores_enabled = false;
-        }
-
         // === End Migrations ===
 
         // Load from separate files
@@ -4663,6 +4734,12 @@ impl Config {
         Ok(Self::global_dir()?.join("cmdlist1.xml"))
     }
 
+    /// Get path to spell abbreviations (perception window)
+    /// Returns: ~/.vellum-fe/global/spell_abbrev.toml
+    pub fn spell_abbrev_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("spell_abbrev.toml"))
+    }
+
     /// Get path to highlights.toml for a character
     /// Returns: ~/.vellum-fe/{character}/highlights.toml
     pub fn highlights_path(character: Option<&str>) -> Result<PathBuf> {
@@ -4791,8 +4868,6 @@ impl Default for Config {
                 layout: LayoutConfig::default(),
                 border_style: default_border_style(),
                 countdown_icon: default_countdown_icon(),
-                startup_music: default_startup_music(),
-                startup_music_file: default_startup_music_file(),
                 selection_enabled: default_selection_enabled(),
                 selection_respect_window_boundaries: default_selection_respect_window_boundaries(),
                 selection_auto_copy: default_selection_auto_copy(),
@@ -4803,9 +4878,9 @@ impl Default for Config {
                 perf_stats_y: default_perf_stats_y(),
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
-                ignores_enabled: default_ignores_enabled(),
                 color_mode: ColorMode::default(),
                 timestamp_position: TimestampPosition::default(),
+                command_echo: default_command_echo(),
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
@@ -4813,6 +4888,8 @@ impl Default for Config {
             colors: ColorConfig::default(), // Loaded from colors.toml
             sound: SoundConfig::default(),
             tts: TtsConfig::default(),
+            target_list: TargetListConfig::default(),
+            logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             event_patterns: HashMap::new(), // Empty by default - user adds via config
@@ -5608,33 +5685,4 @@ visible = true
         assert!(spacer_end <= b_start, "Spacer should not overlap B");
     }
 
-    #[test]
-    fn test_apply_text_replacements_literal() {
-        let replacements = vec![TextReplacement {
-            pattern: " roisaen".to_string(),
-            replace: "".to_string(),
-        }];
-        let result = apply_text_replacements("Fading roisaen", &replacements);
-        assert_eq!(result, "Fading");
-    }
-
-    #[test]
-    fn test_apply_text_replacements_regex() {
-        let replacements = vec![TextReplacement {
-            pattern: r"\(\d+\)".to_string(),
-            replace: "??".to_string(),
-        }];
-        let result = apply_text_replacements("Monkey (82)", &replacements);
-        assert_eq!(result, "Monkey ??");
-    }
-
-    #[test]
-    fn test_apply_text_replacements_invalid_regex_falls_back() {
-        let replacements = vec![TextReplacement {
-            pattern: "[".to_string(),
-            replace: "X".to_string(),
-        }];
-        let result = apply_text_replacements("a[b", &replacements);
-        assert_eq!(result, "aXb");
-    }
 }

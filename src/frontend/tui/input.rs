@@ -25,6 +25,38 @@ fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: &[crate::co
     color
 }
 
+/// Find the topmost window at the given screen coordinates.
+/// Ephemeral windows (container discovery) have higher z-order and are checked first.
+/// Returns the window name, defaulting to "main" if no window contains the point.
+fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> String {
+    // First check ephemeral windows (they're rendered on top)
+    for window_name in &app_core.ui_state.ephemeral_windows {
+        if let Some(window) = app_core.ui_state.windows.get(window_name) {
+            if !window.visible {
+                continue;
+            }
+            let pos = &window.position;
+            if x >= pos.x && x < pos.x + pos.width && y >= pos.y && y < pos.y + pos.height {
+                return window_name.clone();
+            }
+        }
+    }
+
+    // Then check regular windows
+    for (name, window) in &app_core.ui_state.windows {
+        if !window.visible || app_core.ui_state.ephemeral_windows.contains(name) {
+            continue;
+        }
+        let pos = &window.position;
+        if x >= pos.x && x < pos.x + pos.width && y >= pos.y && y < pos.y + pos.height {
+            return name.clone();
+        }
+    }
+
+    // Default to main window
+    "main".to_string()
+}
+
 // TUI-specific methods (not part of Frontend trait)
 impl TuiFrontend {
     /// Handle mouse events (extracted from main.rs Phase 4.1)
@@ -152,37 +184,15 @@ impl TuiFrontend {
 
         match kind {
             MouseEventKind::ScrollUp => {
-                // Find which window the mouse is over
-                let mut target_window = "main".to_string();
-                for (name, window) in &app_core.ui_state.windows {
-                    let pos = &window.position;
-                    if *x >= pos.x
-                        && *x < pos.x + pos.width
-                        && *y >= pos.y
-                        && *y < pos.y + pos.height
-                    {
-                        target_window = name.clone();
-                        break;
-                    }
-                }
+                // Find topmost window at mouse position (ephemeral windows have higher z-order)
+                let target_window = find_topmost_window_at(app_core, *x, *y);
                 self.scroll_window(&target_window, 10);
                 app_core.needs_render = true;
                 return Ok((true, None));
             }
             MouseEventKind::ScrollDown => {
-                // Find which window the mouse is over
-                let mut target_window = "main".to_string();
-                for (name, window) in &app_core.ui_state.windows {
-                    let pos = &window.position;
-                    if *x >= pos.x
-                        && *x < pos.x + pos.width
-                        && *y >= pos.y
-                        && *y < pos.y + pos.height
-                    {
-                        target_window = name.clone();
-                        break;
-                    }
-                }
+                // Find topmost window at mouse position (ephemeral windows have higher z-order)
+                let target_window = find_topmost_window_at(app_core, *x, *y);
                 self.scroll_window(&target_window, -10);
                 app_core.needs_render = true;
                 return Ok((true, None));
@@ -263,6 +273,24 @@ impl TuiFrontend {
                             app_core.ui_state.nested_submenu = None;
                             app_core.ui_state.deep_submenu = None;
                             app_core.ui_state.input_mode = InputMode::Normal;
+
+                            // Handle window close command from right-click menu
+                            if let Some(window_name) = command.strip_prefix("__CLOSE_WINDOW__") {
+                                // Check if it's an ephemeral window
+                                if app_core.ui_state.ephemeral_windows.contains(window_name) {
+                                    app_core.ui_state.remove_window(window_name);
+                                    app_core.ui_state.ephemeral_windows.remove(window_name);
+                                    app_core.add_system_message(&format!(
+                                        "Closed container window: {}",
+                                        window_name
+                                    ));
+                                } else {
+                                    // Regular window - just hide it
+                                    app_core.hide_window(window_name);
+                                }
+                                app_core.needs_render = true;
+                                return Ok((true, None));
+                            }
 
                             // Check if this is an internal action or game command
                             if command.starts_with("action:") {
@@ -766,6 +794,41 @@ impl TuiFrontend {
                 }
 
                 return Ok((true, command_to_send));
+            }
+            MouseEventKind::Down(crate::frontend::MouseButton::Right) => {
+                // Right-click: show context menu for window title bars
+                for (name, window) in &app_core.ui_state.windows {
+                    let pos = &window.position;
+                    // Check if click is on the title bar (top row of window)
+                    if *y == pos.y && *x >= pos.x && *x < pos.x + pos.width {
+                        // Build context menu items
+                        let mut items = Vec::new();
+
+                        // Don't allow closing the main window
+                        if name != "main" && name != "command_input" {
+                            items.push(crate::data::ui_state::PopupMenuItem {
+                                text: "Close Window".to_string(),
+                                command: format!("__CLOSE_WINDOW__{}", name),
+                                disabled: false,
+                            });
+                        }
+
+                        items.push(crate::data::ui_state::PopupMenuItem {
+                            text: "Edit Window...".to_string(),
+                            command: format!("action:editwindow:{}", name),
+                            disabled: false,
+                        });
+
+                        if !items.is_empty() {
+                            // Position menu just below click point
+                            app_core.ui_state.popup_menu =
+                                Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
+                            app_core.ui_state.input_mode = InputMode::Menu;
+                            app_core.needs_render = true;
+                            return Ok((true, None));
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -2364,6 +2427,24 @@ impl TuiFrontend {
             app_core.ui_state.submenu = None;
             app_core.ui_state.nested_submenu = None;
             app_core.ui_state.deep_submenu = None;
+            app_core.needs_render = true;
+        } else if let Some(window_name) = command.strip_prefix("__CLOSE_WINDOW__") {
+            // Handle window close from right-click menu
+            app_core.ui_state.popup_menu = None;
+            app_core.ui_state.submenu = None;
+            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
+
+            // Check if it's an ephemeral window
+            if app_core.ui_state.ephemeral_windows.contains(window_name) {
+                app_core.ui_state.remove_window(window_name);
+                app_core.ui_state.ephemeral_windows.remove(window_name);
+                app_core.add_system_message(&format!("Closed container window: {}", window_name));
+            } else {
+                // Regular window - just hide it
+                app_core.hide_window(window_name);
+            }
             app_core.needs_render = true;
         } else {
             // Internal action commands should manage menus themselves

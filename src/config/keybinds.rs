@@ -119,7 +119,6 @@ pub enum KeyAction {
 
     // System toggles
     TogglePerformanceStats,  // Show/hide performance overlay
-    ToggleIgnores,           // Enable/disable squelch patterns globally
     ToggleSounds,            // Enable/disable sound system
 
     // TTS (Text-to-Speech) actions - Accessibility
@@ -491,7 +490,6 @@ impl KeyAction {
             "paste" => Some(Self::Paste),
             "select_all" => Some(Self::SelectAll),
             "toggle_performance_stats" => Some(Self::TogglePerformanceStats),
-            "toggle_ignores" => Some(Self::ToggleIgnores),
             "toggle_sounds" => Some(Self::ToggleSounds),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
@@ -1268,7 +1266,6 @@ mod tests {
     #[test]
     fn test_key_action_from_str_toggles() {
         assert_eq!(KeyAction::from_str("toggle_performance_stats"), Some(KeyAction::TogglePerformanceStats));
-        assert_eq!(KeyAction::from_str("toggle_ignores"), Some(KeyAction::ToggleIgnores));
         assert_eq!(KeyAction::from_str("toggle_sounds"), Some(KeyAction::ToggleSounds));
     }
 

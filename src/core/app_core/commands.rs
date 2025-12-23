@@ -13,7 +13,7 @@ impl AppCore {
         }
 
         // Echo command to main window (prompt + command)
-        if !command.is_empty() {
+        if self.config.ui.command_echo && !command.is_empty() {
             tracing::info!("[SEND_COMMAND] Echoing command to main window: '{}'", command);
             if let Some(main_window) = self.ui_state.windows.get_mut("main") {
                 if let WindowContent::Text(ref mut content) = main_window.content {
@@ -392,17 +392,8 @@ impl AppCore {
                 }
             }
 
-            // Toggle ignores (squelch patterns)
-            "toggleignores" | "ignores" => {
-                self.config.highlight_settings.ignores_enabled =
-                    !self.config.highlight_settings.ignores_enabled;
-                let status = if self.config.highlight_settings.ignores_enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                };
-                self.add_system_message(&format!("Squelch patterns {}", status));
-                tracing::info!("Squelch patterns toggled: {}", status);
+            "toggletransparency" | "transparency" => {
+                self.toggle_transparent_background_all();
             }
 
             // Lock/unlock all windows
@@ -419,6 +410,29 @@ impl AppCore {
                 }
                 self.add_system_message("All windows unlocked (can be moved/resized)");
                 self.needs_render = true;
+            }
+
+            // Container discovery mode
+            "containers" => {
+                self.ui_state.container_discovery_mode = !self.ui_state.container_discovery_mode;
+                let status = if self.ui_state.container_discovery_mode {
+                    "ON"
+                } else {
+                    "OFF"
+                };
+                self.add_system_message(&format!("Container discovery {}", status));
+                if self.ui_state.container_discovery_mode {
+                    self.add_system_message("LOOK IN containers to create windows for them");
+                }
+            }
+            "hidecontainers" => {
+                // No args = close all, with arg = close matching container
+                let args = parts.get(1..).unwrap_or(&[]).join(" ");
+                if args.is_empty() {
+                    self.close_all_ephemeral_windows();
+                } else {
+                    self.close_ephemeral_window_by_title(&args);
+                }
             }
 
             // Menu system

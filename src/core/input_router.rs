@@ -59,12 +59,6 @@ pub fn has_priority_window(mode: &InputMode) -> bool {
     !matches!(mode, InputMode::Normal | InputMode::Navigation)
 }
 
-/// Alias for backwards compatibility
-#[deprecated(note = "Use has_priority_window() instead")]
-pub fn should_use_menu_keybinds(mode: &InputMode) -> bool {
-    has_priority_window(mode)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

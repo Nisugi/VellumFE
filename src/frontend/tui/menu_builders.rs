@@ -104,26 +104,6 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
 
     items.push(SettingItem {
         category: "UI".to_string(),
-        key: "ui.startup_music".to_string(),
-        display_name: "Startup Music".to_string(),
-        value: SettingValue::Boolean(config.ui.startup_music),
-        description: Some("Play music when connecting".to_string()),
-        editable: true,
-        name_width: None,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.startup_music_file".to_string(),
-        display_name: "Startup Music File".to_string(),
-        value: SettingValue::String(config.ui.startup_music_file.clone()),
-        description: Some("Sound file to play on startup (without extension)".to_string()),
-        editable: true,
-        name_width: None,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
         key: "ui.selection_enabled".to_string(),
         display_name: "Selection Enabled".to_string(),
         value: SettingValue::Boolean(config.ui.selection_enabled),

@@ -38,8 +38,6 @@ category = "Players"
 # ===== SQUELCH PATTERNS (Ignore/Filter Lines) =====
 # These patterns will completely hide matching lines from view.
 # Use squelch = true to enable filtering for a pattern.
-# Global toggle: ignores_enabled in config (or .toggleignores command)
-
 # Squelch ambient/environmental spam
 [ambient_spam]
 pattern = "A cool breeze|The wind blows|A leaf falls|rustles softly"

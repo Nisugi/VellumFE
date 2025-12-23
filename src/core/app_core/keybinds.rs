@@ -159,17 +159,6 @@ impl AppCore {
                 self.add_system_message(&format!("Performance overlay {}", status));
                 tracing::info!("Performance stats overlay toggled: {}", status);
             }
-            KeyAction::ToggleIgnores => {
-                self.config.highlight_settings.ignores_enabled =
-                    !self.config.highlight_settings.ignores_enabled;
-                let status = if self.config.highlight_settings.ignores_enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                };
-                self.add_system_message(&format!("Squelch patterns {}", status));
-                tracing::info!("Squelch patterns toggled: {}", status);
-            }
             KeyAction::ToggleSounds => {
                 self.config.sound.enabled = !self.config.sound.enabled;
                 let status = if self.config.sound.enabled {

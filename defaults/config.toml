@@ -43,6 +43,26 @@ port = 8001
 
 
 # ------------------------------------------------------------
+# RAW LOGGING (Debug)
+# ------------------------------------------------------------
+# Capture raw XML from the network layer (pre-parse). Useful for debugging
+# parser issues or reproducing sessions without Lich logs.
+# Works for both direct and Lich connections.
+#
+# Logs are written to the profile directory by default:
+#   ~/.vellum-fe/profiles/<character>/logs/
+# File names use start time: YYYY-MM-DD-HH-MM-SS.xml
+
+[logging]
+enabled = false
+# dir = "logs"              # Relative to profile dir or absolute path
+# buffer_lines = 200        # Lines to buffer before write
+# flush_interval_ms = 2000  # Periodic flush interval
+# max_lines_per_file = 30000 # Rotate file after this many lines
+# timestamps = true         # Prefix each line with HH:MM:SS
+
+
+# ------------------------------------------------------------
 # USER INTERFACE
 # ------------------------------------------------------------
 # Display and interaction settings.
@@ -58,9 +78,9 @@ buffer_size = 1000
 border_style = "single"
 
 # Icon for countdown timer blocks (uses Nerd Font glyph)
-# Examples: "" (square), "" (circle), "●" (bullet)
+# Examples: "█" (square), "⚪" (circle), "●" (bullet)
 # Find icons: https://www.nerdfonts.com/cheat-sheet
-countdown_icon = ""
+countdown_icon = "█"
 
 # Color rendering mode - choose based on your terminal:
 #
@@ -89,6 +109,8 @@ drag_modifier_key = "ctrl"
 # --- Command History ---
 # Minimum command length to save (shorter commands not recorded)
 min_command_length = 3
+# Echo sent commands into the main window (prompt + command line)
+command_echo = true
 
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
@@ -100,13 +122,53 @@ perf_stats_height = 23
 
 
 # ------------------------------------------------------------
+# TARGET LIST
+# ------------------------------------------------------------
+# Configuration for the dropdown_targets widget (direct connect).
+# Controls how creature names and statuses are displayed.
+
+[target_list]
+# Status display position: "start" or "end"
+#   "end"   - Display status after name (e.g., "muddy hog [frozen]")
+#   "start" - Display status before name (e.g., "[frozen] muddy hog")
+status_position = "end"
+
+# Truncation mode for long creature names:
+#   "full" - Use full creature name (may truncate if too long)
+#   "noun" - Use short noun when name + status exceeds width (e.g., "hog [frozen]")
+truncation_mode = "noun"
+
+# Status abbreviations (3 characters max for maximum space savings)
+# If a status is not in this list, it will be truncated to 3 chars
+# Users can customize or remove abbreviations as needed
+[target_list.status_abbrev]
+stunned = "stu"
+frozen = "frz"
+dead = "ded"
+sitting = "sit"
+kneeling = "kne"
+prone = "prn"
+webbed = "web"
+immobilized = "imm"
+bleeding = "ble"
+standing = "std"
+sleeping = "slp"
+poisoned = "poi"
+diseased = "dis"
+bound = "bnd"
+calmed = "cal"
+
+# Nouns to exclude from target list (non-creature objects)
+excluded_nouns = ["arm", "coal"]
+
+
+# ------------------------------------------------------------
 # HIGHLIGHT SYSTEM
 # ------------------------------------------------------------
 # Global toggles for highlight features (disable without deleting patterns).
 # Note: System highlights (monsterbold, links, roomname) are NOT affected.
 
 [highlights]
-ignores_enabled = true      # Squelch/hide matching lines
 sounds_enabled = true       # Play sounds on pattern match
 replace_enabled = true      # Apply text replacements
 redirect_enabled = true     # Route lines to other windows
@@ -116,15 +178,13 @@ coloring_enabled = true     # Apply color highlighting
 # ------------------------------------------------------------
 # SOUND
 # ------------------------------------------------------------
-# Audio feedback and startup music.
+# Audio feedback.
 # Set enabled = false to skip audio initialization entirely.
 
 [sound]
 enabled = true
 volume = 0.7           # Master volume (0.0 to 1.0)
 cooldown_ms = 500      # Minimum time between repeated sounds
-startup_music = true   # Play music on connection
-startup_music_file = "wizard_music"  # Sound file (without extension)
 
 
 # ------------------------------------------------------------

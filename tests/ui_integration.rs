@@ -86,6 +86,7 @@ fn add_progress_window(ui_state: &mut UiState, name: &str, progress_id: &str) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -103,6 +104,7 @@ fn add_countdown_window(ui_state: &mut UiState, name: &str, countdown_id: &str) 
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -120,6 +122,7 @@ fn add_indicator_window(ui_state: &mut UiState, name: &str, indicator_id: &str) 
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -128,66 +131,40 @@ fn add_targets_window(ui_state: &mut UiState) {
     let window = WindowState {
         name: "targets".to_string(),
         widget_type: WidgetType::Targets,
-        content: WindowContent::Targets {
-            targets_text: String::new(),
-            count: None,
-            entity_id: "targetcount".to_string(),
-        },
+        content: WindowContent::Targets,
         position: position(),
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("targets".to_string(), window);
-}
-
-fn add_targets_window_with_id(ui_state: &mut UiState, name: &str, entity_id: &str) {
-    let window = WindowState {
-        name: name.to_string(),
-        widget_type: WidgetType::Targets,
-        content: WindowContent::Targets {
-            targets_text: String::new(),
-            count: None,
-            entity_id: entity_id.to_string(),
-        },
-        position: position(),
-        visible: true,
-        focused: false,
-        content_align: None,
-    };
-    ui_state.set_window(name.to_string(), window);
 }
 
 fn add_players_window(ui_state: &mut UiState) {
     let window = WindowState {
         name: "players".to_string(),
         widget_type: WidgetType::Players,
-        content: WindowContent::Players {
-            players_text: String::new(),
-            count: None,
-            entity_id: "playercount".to_string(),
-        },
+        content: WindowContent::Players,
         position: position(),
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("players".to_string(), window);
 }
 
-fn add_players_window_with_id(ui_state: &mut UiState, name: &str, entity_id: &str) {
+fn add_players_window_with_id(ui_state: &mut UiState, name: &str, _entity_id: &str) {
     let window = WindowState {
         name: name.to_string(),
         widget_type: WidgetType::Players,
-        content: WindowContent::Players {
-            players_text: String::new(),
-            count: None,
-            entity_id: entity_id.to_string(),
-        },
+        content: WindowContent::Players,
         position: position(),
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -204,6 +181,7 @@ fn add_hand_window(ui_state: &mut UiState, name: &str) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -217,6 +195,7 @@ fn add_compass_window(ui_state: &mut UiState) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("compass".to_string(), window);
 }
@@ -230,6 +209,7 @@ fn add_dashboard_window(ui_state: &mut UiState, name: &str, indicators: Vec<(Str
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -246,6 +226,7 @@ fn add_active_effects_window(ui_state: &mut UiState, name: &str, category: &str)
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -259,6 +240,7 @@ fn add_injury_window(ui_state: &mut UiState) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("injuries".to_string(), window);
 }
@@ -287,6 +269,7 @@ fn add_tabbed_window(
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -303,6 +286,7 @@ fn add_text_window(ui_state: &mut UiState, name: &str, max_lines: usize) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window(name.to_string(), window);
 }
@@ -316,6 +300,7 @@ fn add_inventory_window(ui_state: &mut UiState) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("inventory".to_string(), window);
 }
@@ -329,6 +314,7 @@ fn add_spells_window(ui_state: &mut UiState) {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("spells".to_string(), window);
 }
@@ -653,7 +639,7 @@ fn spells_stream_falls_back_to_main_without_window() {
 
 #[test]
 fn prompt_is_skipped_after_silent_stream() {
-    const XML: &str = "<clearStream id='combat'/><pushStream id='combat'/>A swing!<popStream/>\
+    const XML: &str = "<clearStream id='percWindow'/><pushStream id='percWindow'/>A swing!<popStream/>\
                        <prompt time='1759294809'>&gt;</prompt>";
     let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
     add_text_window(&mut ui_state, "main", 50);
@@ -1644,208 +1630,18 @@ fn ui_updates_multiple_indicators() {
 
 // ---------------- Targets / Players ----------------
 
-#[test]
-fn ui_sets_entity_counts_from_streams() {
-    const XML: &str = "<clearStream id='targetcount'/><pushStream id='targetcount'/>[03]<popStream/>";
-    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
-    add_targets_window(&mut ui_state);
-
-    run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-
-    let count = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "targets")
-        .and_then(|w| {
-            if let vellum_fe::data::WindowContent::Targets { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    assert_eq!(count, "[03]");
-}
 
 #[test]
-fn entity_counts_update_only_matching_entity_id() {
-    const XML: &str = "<clearStream id='playercount'/><pushStream id='playercount'/>[04]<popStream/>\
-                       <clearStream id='targetcount'/><pushStream id='targetcount'/>[02]<popStream/>";
-    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
-    add_targets_window_with_id(&mut ui_state, "targets", "targetcount");
-    add_targets_window_with_id(&mut ui_state, "other_targets", "othertargets");
-    add_players_window_with_id(&mut ui_state, "players", "playercount");
-    add_players_window_with_id(&mut ui_state, "other_players", "otherplayers");
-
-    run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-
-    let target_count = ui_state
-        .windows
-        .get("targets")
-        .and_then(|w| {
-            if let WindowContent::Targets { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    let other_target_count = ui_state
-        .windows
-        .get("other_targets")
-        .and_then(|w| {
-            if let WindowContent::Targets { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    let player_count = ui_state
-        .windows
-        .get("players")
-        .and_then(|w| {
-            if let WindowContent::Players { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    let other_player_count = ui_state
-        .windows
-        .get("other_players")
-        .and_then(|w| {
-            if let WindowContent::Players { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    assert_eq!(target_count, "[02]", "matching targetcount should update targets");
-    assert_eq!(
-        other_target_count, "",
-        "non-matching target entity_id should remain untouched"
-    );
-    assert_eq!(player_count, "[04]", "matching playercount should update players");
-    assert_eq!(
-        other_player_count, "",
-        "non-matching player entity_id should remain untouched"
-    );
-}
-
-#[test]
-fn ui_clears_entity_counts_on_empty_stream() {
-    const TARGET_CLEAR: &str = include_str!("fixtures/targetcount_clear.xml");
-    const PLAYER_CLEAR: &str = include_str!("fixtures/playercount_clear.xml");
-    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
-    add_targets_window(&mut ui_state);
-    add_players_window(&mut ui_state);
-
-    // First set a value so we can see it replaced
-    run_fixture(
-        "<clearStream id='targetcount'/><pushStream id='targetcount'/>[02]<popStream/>\
-         <clearStream id='playercount'/><pushStream id='playercount'/>[01]<popStream/>",
-        &mut ui_state,
-        &mut processor,
-        &mut game_state,
-        &mut parser,
-    );
-    // Now send empty updates
-    run_fixture(TARGET_CLEAR, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-    run_fixture(PLAYER_CLEAR, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-
-    let target_count = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "targets")
-        .and_then(|w| {
-            if let WindowContent::Targets { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    let player_count = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "players")
-        .and_then(|w| {
-            if let WindowContent::Players { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    assert_eq!(
-        target_count, "[02]",
-        "empty targetcount stream should not overwrite previous count"
-    );
-    assert_eq!(
-        player_count, "[01]",
-        "empty playercount stream should not overwrite previous count"
-    );
-}
-
-#[test]
-fn ui_sets_targets_text_from_combat_stream() {
-    const XML: &str = include_str!("fixtures/combat_targets.xml");
-    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
-    add_targets_window(&mut ui_state);
-
-    run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-
-    let targets_text = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "targets")
-        .and_then(|w| {
-            if let vellum_fe::data::WindowContent::Targets { targets_text, .. } = &w.content {
-                Some(targets_text.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    assert!(!targets_text.is_empty(), "targets text should be populated");
-    assert!(
-        targets_text.contains("valravn"),
-        "targets text should include the target name from combat stream"
-    );
-}
-
-#[test]
-fn ui_sets_players_counts_and_list() {
+fn ui_ignores_playercount_and_list_streams() {
     const XML: &str = include_str!("fixtures/player_counts.xml");
     let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
     add_players_window(&mut ui_state);
 
     run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
 
-    let (count, players_text) = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "players")
-        .and_then(|w| {
-            if let vellum_fe::data::WindowContent::Players { count, players_text, .. } = &w.content {
-                Some((count.clone().unwrap_or_default(), players_text.clone()))
-            } else {
-                None
-            }
-        })
-        .expect("players window should exist");
-
-    assert_eq!(count, "[02]");
     assert!(
-        players_text.contains("Alice") && players_text.contains("Bob"),
-        "playerlist should include names"
+        game_state.room_players.is_empty(),
+        "playercount/playerlist streams are ignored by component-based players"
     );
 }
 
@@ -1862,44 +1658,6 @@ fn players_streams_are_ignored_without_window() {
         .values()
         .any(|w| matches!(w.widget_type, WidgetType::Players));
     assert!(!has_players, "no players window should exist");
-}
-
-#[test]
-fn ui_handles_combined_counts_and_combat_text() {
-    const XML: &str = include_str!("fixtures/combined_counts.xml");
-    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
-    add_targets_window(&mut ui_state);
-    add_players_window(&mut ui_state);
-
-    run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
-
-    let target_count = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "targets")
-        .and_then(|w| {
-            if let vellum_fe::data::WindowContent::Targets { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    assert_eq!(target_count, "[01]");
-
-    let player_count = ui_state
-        .windows
-        .values()
-        .find(|w| w.name == "players")
-        .and_then(|w| {
-            if let vellum_fe::data::WindowContent::Players { count, .. } = &w.content {
-                count.clone()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    assert_eq!(player_count, "[02]");
 }
 
 // ---------------- Hands / Compass ----------------
@@ -1966,6 +1724,7 @@ fn ui_updates_room_subtitle_and_compass() {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("room".to_string(), room_window);
 
@@ -2004,6 +1763,7 @@ fn ui_stores_room_components_when_room_window_present() {
         visible: true,
         focused: false,
         content_align: None,
+        ephemeral: false,
     };
     ui_state.set_window("room".to_string(), room_window);
 

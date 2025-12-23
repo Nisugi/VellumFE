@@ -27,6 +27,8 @@ pub struct ProgressBar {
     transparent_background: bool,
     text_color: Option<Color>,
     text_align_left: bool,
+    /// When true, skip contrast checking and preserve the exact text color specified
+    preserve_text_color: bool,
 }
 
 impl ProgressBar {
@@ -46,6 +48,7 @@ impl ProgressBar {
             transparent_background: true,
             text_color: Some(Color::White),
             text_align_left: false,
+            preserve_text_color: false,
         }
     }
 
@@ -285,7 +288,16 @@ impl ProgressBar {
                 inner_area.x + (available_width.saturating_sub(text_width)) / 2
             };
             let text_fg_base = self.text_color.unwrap_or(Color::White);
-            let text_fg = Self::ensure_contrast(text_fg_base, Some(bar_color));
+            // Check contrast against ACTUAL background where text appears
+            // When split_position == 0 (no visible bar), text is on bar_bg_color, not bar_color
+            let contrast_bg = if split_position > 0 {
+                Some(bar_color)
+            } else if self.transparent_background {
+                None // Skip contrast check - preserve original color
+            } else {
+                Some(bar_bg_color)
+            };
+            let text_fg = Self::ensure_contrast(text_fg_base, contrast_bg);
 
             for (i, c) in display_text.chars().enumerate() {
                 let x = text_start_x + i as u16;

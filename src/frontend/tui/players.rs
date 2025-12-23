@@ -1,188 +1,185 @@
-//! Scrollable player list derived from the room stream text.
+//! Players list widget using room players component data.
 //!
-//! Parses the XML-ish player line emitted by Wizard FE and stores each entry in
-//! a `ScrollableContainer`, keeping stance/status suffixes intact.
+//! Displays players with dual status support (prepended + appended) and clickable names.
+//! Uses ListWidget for proper text rendering with clickable links.
 
-use super::scrollable_container::ScrollableContainer;
+use crate::data::LinkData;
 use ratatui::{buffer::Buffer, layout::Rect};
 
 pub struct Players {
-    container: ScrollableContainer,
+    widget: super::list_widget::ListWidget,
     count: u32,
     base_title: String,
-    count_override: Option<String>,
+    /// Generation counter for change detection
+    generation: u64,
+    /// Cached player IDs for change detection (comma-joined)
+    player_ids_cache: String,
 }
 
 impl Players {
     pub fn new(title: &str) -> Self {
-        let mut container = ScrollableContainer::new(title);
-        // Players widget hides values and percentages by default
-        container.set_display_options(false, false);
-
         Self {
-            container,
+            widget: super::list_widget::ListWidget::new(title),
             count: 0,
             base_title: title.to_string(),
-            count_override: None,
+            generation: 0,
+            player_ids_cache: String::new(),
         }
     }
 
-    /// Parse players from formatted game text
-    /// Format: "<b>[sit] Player1</b>, <b>Player2</b>, <b>[kne] Deddalus</b>"
-    pub fn set_players_from_text(&mut self, text: &str) {
-        self.container.clear();
-        self.count = 0;
+    /// Update from room players with dual status support
+    /// Returns true if the display changed
+    pub fn update_from_state(
+        &mut self,
+        room_players: &[crate::core::state::Player],
+        config: &crate::config::TargetListConfig,
+    ) -> bool {
+        // Build IDs string for change detection
+        let new_ids: String = room_players
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let new_count = room_players.len() as u32;
 
-        if text.is_empty() {
-            self.update_title();
-            return;
+        // Quick check: if IDs and count match, no change
+        if self.player_ids_cache == new_ids && self.count == new_count {
+            return false;
         }
 
-        // Split by comma to get individual players
-        let players: Vec<&str> = text.split(',').map(|s| s.trim()).collect();
+        self.player_ids_cache = new_ids;
+        self.widget.clear();
+        self.count = 0;
 
-        for (idx, player_str) in players.iter().enumerate() {
-            if player_str.is_empty() {
-                continue;
+        tracing::debug!(
+            "Players[{}]::update_from_state - {} players",
+            self.base_title,
+            room_players.len()
+        );
+
+        for player in room_players.iter() {
+            // Build status display with abbreviations
+            let mut status_parts = Vec::new();
+
+            // Primary status (prepended, e.g., "stunned" from "a stunned Player")
+            if let Some(ref primary) = player.primary_status {
+                let abbrev = config.status_abbrev
+                    .get(&primary.to_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if primary.len() <= 3 { primary.to_string() }
+                        else { primary.chars().take(3).collect() }
+                    });
+                status_parts.push(format!("[{}]", abbrev));
             }
 
-            // Extract status prefix [xxx] if present
-            let status = if let Some(start) = player_str.find('[') {
-                if let Some(end) = player_str.find(']') {
-                    if end > start {
-                        Some(player_str[start..=end].to_string())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // Strip all XML tags to get clean player name
-            let clean_name = Self::strip_xml_tags(player_str);
-
-            // Remove status prefix from the name if it was at the start
-            let clean_name = if let Some(ref s) = status {
-                clean_name.trim_start_matches(s).trim().to_string()
-            } else {
-                clean_name
-            };
-
-            if clean_name.is_empty() {
-                continue;
+            // Secondary status (appended, e.g., "prone" from "Player (prone)")
+            if let Some(ref secondary) = player.secondary_status {
+                let abbrev = config.status_abbrev
+                    .get(&secondary.to_lowercase())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if secondary.len() <= 3 { secondary.to_string() }
+                        else { secondary.chars().take(3).collect() }
+                    });
+                status_parts.push(format!("[{}]", abbrev));
             }
 
-            // Create unique ID
-            let id = format!("player_{}", idx);
+            // Build display name with status position from config
+            let display_name = if status_parts.is_empty() {
+                player.name.clone()
+            } else if config.status_position == "start" {
+                format!("{} {}", status_parts.join(" "), player.name)
+            } else {
+                // Default: "end"
+                format!("{} {}", player.name, status_parts.join(" "))
+            };
 
-            // Add to container with status as suffix
-            self.container.add_or_update_item_full(
-                id, clean_name, None,   // no alternate text
-                0,      // value (hidden)
-                1,      // max (hidden)
-                status, // suffix (status like "[sit]")
-                None,   // no color override
-                None,
-            );
+            // Create clickable link
+            let link_data = Some(LinkData {
+                exist_id: player.id.clone(),
+                noun: player.name.clone(),
+                text: player.name.clone(),
+                coord: None,
+            });
 
+            self.widget.add_simple_line(display_name, None, link_data);
             self.count += 1;
         }
 
         self.update_title();
-    }
-
-    /// Strip all XML tags from a string
-    fn strip_xml_tags(input: &str) -> String {
-        let mut result = String::new();
-        let mut in_tag = false;
-
-        for ch in input.chars() {
-            match ch {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ => {
-                    if !in_tag {
-                        result.push(ch);
-                    }
-                }
-            }
-        }
-
-        result.trim().to_string()
+        self.generation += 1;
+        true
     }
 
     fn update_title(&mut self) {
-        if let Some(ref override_count) = self.count_override {
-            let title = if self.base_title.is_empty() {
-                String::new()
-            } else {
-                format!("{} {}", self.base_title, override_count)
-            };
-            self.container.set_title(title);
-        } else if self.base_title.is_empty() {
-            self.container.set_title(String::new());
+        let title = if self.base_title.is_empty() {
+            String::new()
         } else {
-            let title = format!("{} [{:02}]", self.base_title, self.count);
-            self.container.set_title(title);
-        }
+            format!("{} [{:02}]", self.base_title, self.count)
+        };
+        self.widget.set_title(title);
     }
 
-    pub fn set_title_with_count(&mut self, base_title: &str, count: Option<&str>) {
-        self.base_title = base_title.to_string();
-        self.count_override = count.map(|c| c.to_string());
+    pub fn set_title(&mut self, title: &str) {
+        self.base_title = title.to_string();
         self.update_title();
     }
 
+    pub fn get_generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn scroll_up(&mut self, amount: usize) {
-        self.container.scroll_up(amount);
+        self.widget.scroll_up(amount);
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
-        self.container.scroll_down(amount);
+        self.widget.scroll_down(amount);
     }
 
     pub fn set_border_config(&mut self, show: bool, style: Option<String>, color: Option<String>) {
-        self.container.set_border_config(show, style, color);
+        self.widget.set_border_config(show, style, color);
     }
 
     pub fn set_border_sides(&mut self, sides: crate::config::BorderSides) {
-        self.container.set_border_sides(sides);
-    }
-
-    pub fn set_bar_color(&mut self, color: String) {
-        self.container.set_bar_color(color);
+        self.widget.set_border_sides(sides);
     }
 
     pub fn set_background_color(&mut self, color: Option<String>) {
-        self.container.set_background_color(color);
+        self.widget.set_background_color(color);
     }
 
     pub fn set_text_color(&mut self, color: Option<String>) {
-        self.container.set_text_color(color);
+        self.widget.set_text_color(color);
     }
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
-        self.container.set_transparent_background(transparent);
+        self.widget.set_transparent_background(transparent);
     }
 
     /// Set highlight patterns for this widget
     pub fn set_highlights(&mut self, highlights: Vec<crate::config::HighlightPattern>) {
-        self.container.set_highlights(highlights);
+        self.widget.set_highlights(highlights);
     }
 
     /// Set whether text replacement is enabled for highlights
     pub fn set_replace_enabled(&mut self, enabled: bool) {
-        self.container.set_replace_enabled(enabled);
+        self.widget.set_replace_enabled(enabled);
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        self.container.render(area, buf);
+        self.widget.render(area, buf);
     }
 
     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.container.render_with_focus(area, buf, focused);
+        self.widget.render_with_focus(area, buf, focused);
+    }
+
+    /// Handle a click at the given coordinates.
+    /// Returns a LinkData if a player was clicked (can be used for targeting/interacting).
+    pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
+        // Delegate to ListWidget's click handling (x=0 since ListWidget doesn't use it)
+        self.widget.handle_click(0, y, area)
     }
 }

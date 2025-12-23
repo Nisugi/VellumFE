@@ -77,10 +77,6 @@ struct Cli {
     #[arg(long)]
     links: bool,
 
-    /// Disable startup music
-    #[arg(long)]
-    nomusic: bool,
-
     /// Disable sound system entirely (skip audio device initialization)
     #[arg(long)]
     nosound: bool,
@@ -290,9 +286,6 @@ fn main() -> Result<()> {
     };
 
     // Apply CLI flag overrides
-    if cli.nomusic {
-        config.sound.startup_music = false;
-    }
     if cli.nosound {
         config.sound.enabled = false;
     }

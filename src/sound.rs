@@ -81,9 +81,21 @@ impl SoundPlayer {
         debug!("Sound player volume set to: {}", self.volume);
     }
 
+    fn lock_cooldown_map(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Instant>> {
+        match self.cooldown_map.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("Sound cooldown map lock poisoned; recovering");
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Check if a sound is on cooldown
     fn is_on_cooldown(&self, sound_id: &str) -> bool {
-        let map = self.cooldown_map.lock().unwrap();
+        let map = self.lock_cooldown_map();
         if let Some(last_played) = map.get(sound_id) {
             last_played.elapsed() < self.cooldown_duration
         } else {
@@ -93,7 +105,7 @@ impl SoundPlayer {
 
     /// Set the cooldown for a sound
     fn set_cooldown(&self, sound_id: String) {
-        let mut map = self.cooldown_map.lock().unwrap();
+        let mut map = self.lock_cooldown_map();
         map.insert(sound_id, Instant::now());
     }
 
