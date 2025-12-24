@@ -573,6 +573,56 @@ mod parser_state {
     }
 
     #[test]
+    fn test_malformed_chunk_does_not_break_next_parse() {
+        let mut parser = XmlParser::new();
+
+        let _ = parser.parse_line("<indicator id='test' visible='y'><unclosed>");
+        let elements = parser.parse_line("<prompt time='1'>></prompt>");
+
+        let has_prompt = elements.iter().any(|e| {
+            matches!(e, ParsedElement::Prompt { time, text } if time == "1" && text == ">")
+        });
+        assert!(has_prompt, "Prompt should parse after malformed chunk");
+    }
+
+    #[test]
+    fn test_speech_stream_carries_prefix_text() {
+        let mut parser = XmlParser::new();
+
+        let elements = parser.parse_line("You <pushStream id='speech'/>say hi<popStream/>");
+        let speech_text: String = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::Text { content, stream, .. } if stream == "speech" => {
+                    Some(content.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            speech_text.contains("You say hi"),
+            "Speech stream should include carried prefix, got: {:?}",
+            speech_text
+        );
+    }
+
+    #[test]
+    fn test_pop_stream_resets_to_main_stream() {
+        let mut parser = XmlParser::new();
+
+        let _ = parser.parse_line("<pushStream id='room'/>");
+        let _ = parser.parse_line("Room text");
+        let _ = parser.parse_line("<popStream/>");
+        let elements = parser.parse_line("Main text");
+
+        let has_main_text = elements.iter().any(|e| {
+            matches!(e, ParsedElement::Text { content, stream, .. } if stream == "main" && content.contains("Main text"))
+        });
+        assert!(has_main_text, "Text after popStream should be in main stream");
+    }
+
+    #[test]
     fn test_parser_clears_properly_between_chunks() {
         let mut parser = XmlParser::new();
 
