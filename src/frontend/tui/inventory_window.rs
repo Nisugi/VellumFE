@@ -125,9 +125,70 @@ impl InventoryWindow {
         self.widget.render(area, buf);
     }
 
-    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
+pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
         // For now, just call regular render - theme colors will be applied in future update
         self.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::widget::SpanType;
+    use ratatui::buffer::Buffer;
+
+    fn make_segment(text: &str) -> TextSegment {
+        TextSegment {
+            text: text.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        }
+    }
+
+    #[test]
+    fn test_add_segment_and_finish_line() {
+        let mut inv = InventoryWindow::new("Inventory".to_string());
+        inv.add_segment(make_segment("a "));
+        inv.add_segment(make_segment("sword"));
+        inv.finish_line();
+
+        let lines = inv.get_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].len(), 2);
+        assert_eq!(lines[0][0].text, "a ");
+        assert_eq!(lines[0][1].text, "sword");
+    }
+
+    #[test]
+    fn test_clear_removes_lines() {
+        let mut inv = InventoryWindow::new("Inventory".to_string());
+        inv.add_segment(make_segment("a sword"));
+        inv.finish_line();
+        assert!(!inv.get_lines().is_empty());
+
+        inv.clear();
+        assert!(inv.get_lines().is_empty());
+    }
+
+    #[test]
+    fn test_get_start_line_after_scroll() {
+        let mut inv = InventoryWindow::new("Inventory".to_string());
+        inv.set_border_config(false, None);
+
+        for _ in 0..5 {
+            inv.add_segment(make_segment("item"));
+            inv.finish_line();
+        }
+
+        let area = Rect::new(0, 0, 10, 3);
+        let mut buf = Buffer::empty(area);
+        inv.render(area, &mut buf);
+
+        inv.scroll_up(1);
+        assert_eq!(inv.get_start_line(), 1);
     }
 }
 

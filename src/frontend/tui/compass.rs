@@ -232,3 +232,55 @@ impl Compass {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_active_and_inactive_colors() {
+        let mut compass = Compass::new("Compass");
+        compass.set_border_config(false, None, None);
+        compass.set_transparent_background(true);
+        compass.set_colors(
+            Some("#ff0000".to_string()),
+            Some("#00ff00".to_string()),
+        );
+        compass.set_directions(vec!["north".to_string(), "out".to_string()]);
+
+        let area = Rect::new(0, 0, 7, 3);
+        let mut buf = Buffer::empty(area);
+        compass.render(area, &mut buf);
+
+        assert_eq!(buf[(4, 0)].fg, Color::Rgb(255, 0, 0));
+        assert_eq!(buf[(4, 1)].fg, Color::Rgb(255, 0, 0));
+        assert_eq!(buf[(6, 1)].fg, Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn test_background_fill_when_not_transparent() {
+        let mut compass = Compass::new("Compass");
+        compass.set_border_config(false, None, None);
+        compass.set_background_color(Some("#0000ff".to_string()));
+
+        let area = Rect::new(0, 0, 7, 3);
+        let mut buf = Buffer::empty(area);
+        compass.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(0, 0, 255));
+    }
+
+    #[test]
+    fn test_content_alignment_offsets_positions() {
+        let mut compass = Compass::new("Compass");
+        compass.set_border_config(false, None, None);
+        compass.set_content_align(Some("center".to_string()));
+        compass.set_directions(vec!["north".to_string()]);
+
+        let area = Rect::new(0, 0, 9, 5);
+        let mut buf = Buffer::empty(area);
+        compass.render(area, &mut buf);
+
+        assert_eq!(buf[(5, 1)].fg, Color::Green);
+        assert_eq!(buf[(4, 0)].fg, Color::Reset);
+    }
+}

@@ -142,7 +142,80 @@ impl ActiveEffects {
         self.container.render(area, buf);
     }
 
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         self.container.render_with_focus(area, buf, focused);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        assert_eq!(ActiveEffects::format_duration("01:02:03"), "[01:02]");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(ActiveEffects::format_duration("00:04:05"), "[04:05]");
+    }
+
+    #[test]
+    fn test_render_includes_duration_suffix() {
+        let mut effects = ActiveEffects::new("Effects", "spell".to_string());
+        effects.set_border_config(false, None, None);
+        effects.add_or_update_effect(
+            "id1".to_string(),
+            "Bless".to_string(),
+            50,
+            "00:03:21".to_string(),
+            None,
+            None,
+        );
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        effects.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("[03:21]"));
+    }
+
+    #[test]
+    fn test_toggle_display_switches_to_id() {
+        let mut effects = ActiveEffects::new("Effects", "spell".to_string());
+        effects.set_border_config(false, None, None);
+        effects.add_or_update_effect(
+            "abc123".to_string(),
+            "Bless".to_string(),
+            50,
+            "00:03:21".to_string(),
+            None,
+            None,
+        );
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        effects.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("Bless"));
+
+        effects.toggle_display();
+        let mut buf = Buffer::empty(area);
+        effects.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("abc123"));
     }
 }

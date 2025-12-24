@@ -284,8 +284,71 @@ impl Hand {
         }
     }
 
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
         self.render(area, buf);
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn test_render_includes_icon_and_content() {
+        let mut hand = Hand::new("Left", HandType::Left);
+        hand.set_content("short sword".to_string());
+        hand.set_transparent_background(true);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        hand.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("L:"));
+        assert!(line.contains("short sword"));
+    }
+
+    #[test]
+    fn test_content_truncation() {
+        let mut hand = Hand::new("Left", HandType::Left);
+        hand.set_content("abcdefghijklmnopqrstuvwxyz".to_string());
+        hand.set_transparent_background(true);
+
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        hand.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(!line.contains("y"));
+        assert!(!line.contains("z"));
+    }
+
+    #[test]
+    fn test_left_right_borders_rendered() {
+        let mut hand = Hand::new("Left", HandType::Left);
+        hand.set_border_config(true, None, None);
+        hand.set_border_sides(crate::config::BorderSides {
+            left: true,
+            right: true,
+            top: false,
+            bottom: false,
+        });
+        hand.set_transparent_background(true);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        hand.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].symbol(), "│");
+        assert_eq!(buf[(9, 0)].symbol(), "│");
+    }
+}

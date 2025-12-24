@@ -951,3 +951,113 @@ impl TabbedTextWindow {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::SpanType;
+    use crate::frontend::tui::text_window::StyledText;
+
+    fn styled_text(text: &str) -> StyledText {
+        StyledText {
+            content: text.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        }
+    }
+
+    fn make_window() -> TabbedTextWindow {
+        let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
+        window.add_tab(
+            "Main".to_string(),
+            vec!["main".to_string()],
+            100,
+            false,
+            false,
+        );
+        window.add_tab(
+            "Thoughts".to_string(),
+            vec!["thoughts".to_string()],
+            100,
+            false,
+            false,
+        );
+        window
+    }
+
+    #[test]
+    fn test_add_tab_and_get_names() {
+        let window = make_window();
+        let names = window.get_tab_names();
+        assert_eq!(names, vec!["Main".to_string(), "Thoughts".to_string()]);
+    }
+
+    #[test]
+    fn test_add_text_marks_unread_for_inactive_tab() {
+        let mut window = make_window();
+        assert!(!window.has_unread_tabs());
+
+        window.add_text_to_stream("thoughts", styled_text("Hello"));
+        assert!(window.has_unread_tabs());
+
+        window.switch_to_tab(1);
+        assert!(!window.has_unread_tabs());
+    }
+
+    #[test]
+    fn test_handle_mouse_click_switches_tab() {
+        let mut window = make_window();
+        let rect = Rect::new(0, 0, 20, 5);
+
+        // Tab bar is inside border, first tab starts at x=1, y=1 with divider " | "
+        let clicked = window.handle_mouse_click(rect, 8, 1);
+        assert!(clicked);
+        assert_eq!(window.get_active_tab_index(), 1);
+    }
+
+    #[test]
+    fn test_remove_tab_disallows_last() {
+        let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
+        window.add_tab(
+            "Main".to_string(),
+            vec!["main".to_string()],
+            100,
+            false,
+            false,
+        );
+        assert!(!window.remove_tab("Main"));
+
+        window.add_tab(
+            "Other".to_string(),
+            vec!["other".to_string()],
+            100,
+            false,
+            false,
+        );
+        assert!(window.remove_tab("Main"));
+        assert_eq!(window.get_tab_names(), vec!["Other".to_string()]);
+        assert_eq!(window.get_active_tab_index(), 0);
+    }
+
+    #[test]
+    fn test_reorder_tabs_preserves_active_by_name() {
+        let mut window = make_window();
+        window.add_tab(
+            "Other".to_string(),
+            vec!["other".to_string()],
+            100,
+            false,
+            false,
+        );
+        window.switch_to_tab(2); // "Other"
+
+        window.reorder_tabs(&["Other".to_string(), "Main".to_string()]);
+        let names = window.get_tab_names();
+        let active = window.get_active_tab_index();
+        assert_eq!(names[active], "Other");
+        assert_eq!(names, vec!["Other".to_string(), "Main".to_string(), "Thoughts".to_string()]);
+    }
+}
+

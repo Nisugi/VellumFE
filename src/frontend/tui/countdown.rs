@@ -253,3 +253,69 @@ impl Countdown {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    fn now_seconds() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    #[test]
+    fn test_render_blank_when_elapsed() {
+        let mut countdown = Countdown::new("RT");
+        countdown.set_border_config(false, None, None);
+        countdown.set_end_time(now_seconds() - 1);
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim().is_empty());
+    }
+
+    #[test]
+    fn test_render_shows_blocks_when_active() {
+        let mut countdown = Countdown::new("RT");
+        countdown.set_border_config(false, None, None);
+        countdown.set_icon('#');
+        countdown.set_end_time(now_seconds() + 60);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains('#'));
+    }
+
+    #[test]
+    fn test_background_color_fills_area() {
+        let mut countdown = Countdown::new("RT");
+        countdown.set_border_config(false, None, None);
+        countdown.set_background_color(Some("#ff0000".to_string()));
+        countdown.set_end_time(now_seconds() - 1);
+
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(255, 0, 0));
+    }
+}

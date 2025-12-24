@@ -731,3 +731,60 @@ impl RoomWindow {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn make_segment(text: &str) -> TextSegment {
+        TextSegment {
+            text: text.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        }
+    }
+
+    fn collect_line_text(line: &[TextSegment]) -> String {
+        line.iter().map(|seg| seg.text.as_str()).collect()
+    }
+
+    #[test]
+    fn test_component_visibility_filters_lines() {
+        let mut window = RoomWindow::new("Room".to_string());
+        window.set_border_config(false, None, None);
+
+        window.start_component("room desc".to_string());
+        window.add_segment(make_segment("Desc line"));
+        window.finish_line();
+        window.finish_component();
+
+        window.start_component("room objs".to_string());
+        window.add_segment(make_segment("Obj line"));
+        window.finish_line();
+        window.finish_component();
+
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let lines = window.get_wrapped_lines();
+        assert_eq!(lines.len(), 1);
+        let combined = collect_line_text(&lines[0]);
+        assert!(combined.contains("Desc"));
+        assert!(combined.contains("Obj"));
+
+        window.set_component_visible("room objs", false);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let lines = window.get_wrapped_lines();
+        assert_eq!(lines.len(), 1);
+        let combined = collect_line_text(&lines[0]);
+        assert!(combined.contains("Desc"));
+        assert!(!combined.contains("Obj"));
+    }
+}

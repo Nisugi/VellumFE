@@ -233,6 +233,7 @@ impl PerceptionWindow {
 mod tests {
     use super::*;
     use crate::data::widget::{PerceptionEntry, PerceptionFormat};
+    use crate::config::{HighlightPattern, RedirectMode};
 
     #[test]
     fn test_new_perception_window() {
@@ -342,5 +343,434 @@ mod tests {
 
         window.set_show_border(true);
         assert!(window.show_border);
+    }
+
+    #[test]
+    fn test_render_draws_entries_without_border() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_entries(vec![
+            PerceptionEntry {
+                name: "Entry1".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry1".to_string(),
+                weight: 100,
+                link_data: None,
+            },
+            PerceptionEntry {
+                name: "Entry2".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry2".to_string(),
+                weight: 90,
+                link_data: None,
+            },
+        ]);
+
+        let area = Rect::new(0, 0, 10, 2);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let line0: String = (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        let line1: String = (0..area.width)
+            .map(|x| buf[(x, 1)].symbol())
+            .collect();
+
+        assert!(line0.contains("Entry1"));
+        assert!(line1.contains("Entry2"));
+    }
+
+    #[test]
+    fn test_render_scrolls_entries() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_entries(vec![
+            PerceptionEntry {
+                name: "Entry1".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry1".to_string(),
+                weight: 100,
+                link_data: None,
+            },
+            PerceptionEntry {
+                name: "Entry2".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry2".to_string(),
+                weight: 90,
+                link_data: None,
+            },
+            PerceptionEntry {
+                name: "Entry3".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry3".to_string(),
+                weight: 80,
+                link_data: None,
+            },
+        ]);
+        window.set_scroll_offset(1);
+
+        let area = Rect::new(0, 0, 10, 2);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let line0: String = (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        let line1: String = (0..area.width)
+            .map(|x| buf[(x, 1)].symbol())
+            .collect();
+
+        assert!(line0.contains("Entry2"));
+        assert!(line1.contains("Entry3"));
+    }
+
+    #[test]
+    fn test_render_applies_background_color() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_background_color(Some("#0000ff".to_string()));
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(0, 0, 255));
+    }
+
+    #[test]
+    fn test_render_applies_text_color() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_text_color(Some("#00ff00".to_string()));
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn test_render_applies_highlight_color() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry2".to_string(),
+            fg: Some("#ff0000".to_string()),
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![
+            PerceptionEntry {
+                name: "Entry1".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry1".to_string(),
+                weight: 100,
+                link_data: None,
+            },
+            PerceptionEntry {
+                name: "Entry2".to_string(),
+                format: PerceptionFormat::Other(String::new()),
+                raw_text: "Entry2".to_string(),
+                weight: 90,
+                link_data: None,
+            },
+        ]);
+
+        let area = Rect::new(0, 0, 10, 2);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Reset);
+        assert_eq!(buf[(0, 1)].fg, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn test_render_color_entire_line_applies_to_whole_row() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry1".to_string(),
+            fg: Some("#00ff00".to_string()),
+            bg: None,
+            bold: false,
+            color_entire_line: true,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Rgb(0, 255, 0));
+        assert_eq!(buf[(5, 0)].fg, Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn test_render_highlight_bold_sets_modifier() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry1".to_string(),
+            fg: None,
+            bg: None,
+            bold: true,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert!(buf[(0, 0)].modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_render_respects_stream_filter() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry1".to_string(),
+            fg: Some("#ff0000".to_string()),
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: Some("other".to_string()),
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Reset);
+    }
+
+    #[test]
+    fn test_render_replaces_text_when_enabled() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry(\\d+)".to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: Some("Replaced$1".to_string()),
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let line0: String = (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        assert!(line0.contains("Replaced1"));
+    }
+
+    #[test]
+    fn test_render_replace_disabled_keeps_original_text() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "Entry(\\d+)".to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: Some("Replaced$1".to_string()),
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_replace_enabled(false);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let line0: String = (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        assert!(line0.contains("Entry1"));
+    }
+
+    #[test]
+    fn test_render_invalid_regex_does_not_apply_highlight() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(false);
+        window.set_highlights(vec![HighlightPattern {
+            pattern: "[".to_string(),
+            fg: Some("#ff0000".to_string()),
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: None,
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: None,
+            window: None,
+            compiled_regex: None,
+        }]);
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        let line0: String = (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect();
+        assert!(line0.contains("Entry1"));
+        assert_eq!(buf[(0, 0)].fg, Color::Reset);
+    }
+
+    #[test]
+    fn test_render_background_does_not_override_border_cells() {
+        let mut window = PerceptionWindow::new("Test".to_string());
+        window.set_show_border(true);
+        window.set_background_color(Some("#0000ff".to_string()));
+        window.set_entries(vec![PerceptionEntry {
+            name: "Entry1".to_string(),
+            format: PerceptionFormat::Other(String::new()),
+            raw_text: "Entry1".to_string(),
+            weight: 100,
+            link_data: None,
+        }]);
+
+        let area = Rect::new(0, 0, 10, 3);
+        let mut buf = Buffer::empty(area);
+        window.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Reset);
+        assert_eq!(buf[(1, 1)].bg, Color::Rgb(0, 0, 255));
     }
 }

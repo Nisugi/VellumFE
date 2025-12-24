@@ -1307,6 +1307,88 @@ impl TextWindow {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn styled_text(text: &str, link: Option<LinkData>) -> StyledText {
+        StyledText {
+            content: text.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            span_type: if link.is_some() { SpanType::Link } else { SpanType::Normal },
+            link_data: link,
+        }
+    }
+
+    fn link(exist_id: &str, noun: &str) -> LinkData {
+        LinkData {
+            exist_id: exist_id.to_string(),
+            noun: noun.to_string(),
+            text: noun.to_string(),
+            coord: None,
+        }
+    }
+
+    #[test]
+    fn test_add_text_and_finish_line() {
+        let mut window = TextWindow::new("Main", 10);
+        window.add_text(styled_text("Hello ", None));
+        window.add_text(styled_text("world", None));
+        window.finish_line(80);
+
+        let lines = window.get_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].segments.len(), 1);
+        assert_eq!(lines[0].segments[0].text, "Hello world");
+    }
+
+    #[test]
+    fn test_toggle_links_disables_link_data() {
+        let mut window = TextWindow::new("Main", 10);
+        window.toggle_links(); // disable
+        window.add_text(styled_text("Fireball", Some(link("101", "fireball"))));
+        window.finish_line(80);
+
+        let lines = window.get_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].segments.len(), 1);
+        assert!(lines[0].segments[0].link_data.is_none());
+    }
+
+    #[test]
+    fn test_scroll_indicator_after_scroll_up() {
+        let mut window = TextWindow::new("Main", 50);
+        for idx in 0..10 {
+            window.add_text(styled_text(&format!("Line {}", idx), None));
+            window.finish_line(80);
+        }
+
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        window.render_with_focus(area, &mut buf, false, None, "#000000", 0, &theme);
+
+        window.scroll_up(1);
+        assert!(window.get_scroll_indicator().is_some());
+    }
+
+    #[test]
+    fn test_get_visible_lines_info_respects_height() {
+        let mut window = TextWindow::new("Main", 10);
+        window.add_text(styled_text("Line 1", None));
+        window.finish_line(80);
+        window.add_text(styled_text("Line 2", None));
+        window.finish_line(80);
+
+        let (_start, visible) = window.get_visible_lines_info(1);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].segments[0].text, "Line 2");
+    }
+}
+
 /// A line of text with multiple styled segments (for text selection)
 pub struct LineSegments {
     pub segments: Vec<TextSegment>,

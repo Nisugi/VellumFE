@@ -448,3 +448,204 @@ impl Dashboard {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn test_hide_inactive_filters_out() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Horizontal);
+        dashboard.set_border_config(false, None, None);
+        dashboard.add_indicator("off".to_string(), "A".to_string(), vec!["#000000".to_string()]);
+        dashboard.add_indicator("on".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.set_indicator_value("on", 1);
+
+        let area = Rect::new(0, 0, 5, 1);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(!line.contains('A'));
+        assert!(line.contains('B'));
+
+        dashboard.set_hide_inactive(false);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains('A'));
+        assert!(line.contains('B'));
+    }
+
+    #[test]
+    fn test_horizontal_center_align_offsets_icons() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Horizontal);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_content_align(Some("center".to_string()));
+        dashboard.set_hide_inactive(false);
+        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 7, 1);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(2, 0)].symbol(), "A");
+        assert_eq!(buf[(4, 0)].symbol(), "B");
+    }
+
+    #[test]
+    fn test_flow_wraps_to_next_row() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Flow);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.set_spacing(1);
+        dashboard.add_indicator("a".to_string(), "AA".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "BB".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("c".to_string(), "C".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 5);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buffer_line(&buf, 0, area.width).trim(), "AA");
+        assert_eq!(buffer_line(&buf, 2, area.width).trim(), "BB");
+        assert_eq!(buffer_line(&buf, 4, area.width).trim(), "C");
+    }
+
+    #[test]
+    fn test_background_fill_with_no_indicators() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Horizontal);
+        dashboard.set_background_color(Some("#ff0000".to_string()));
+
+        let area = Rect::new(0, 0, 2, 1);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn test_grid_layout_positions_icons() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Grid { rows: 2, cols: 2 });
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("c".to_string(), "C".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("d".to_string(), "D".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 4, 2);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].symbol(), "A");
+        assert_eq!(buf[(2, 0)].symbol(), "B");
+        assert_eq!(buf[(0, 1)].symbol(), "C");
+        assert_eq!(buf[(2, 1)].symbol(), "D");
+    }
+
+    #[test]
+    fn test_color_selection_uses_value_index() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Horizontal);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec![
+                "#111111".to_string(),
+                "#222222".to_string(),
+                "#333333".to_string(),
+            ],
+        );
+        dashboard.set_indicator_value("a", 2);
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Rgb(51, 51, 51));
+    }
+
+    #[test]
+    fn test_flow_center_alignment_offsets_rows() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Flow);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.set_spacing(1);
+        dashboard.set_content_align(Some("center".to_string()));
+        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "BB".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 3);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(1, 0)].symbol(), "A");
+        assert_eq!(buf[(0, 2)].symbol(), "B");
+        assert_eq!(buf[(1, 2)].symbol(), "B");
+    }
+
+    #[test]
+    fn test_flow_right_alignment_offsets_rows() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Flow);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.set_spacing(1);
+        dashboard.set_content_align(Some("right".to_string()));
+        dashboard.add_indicator("a".to_string(), "AA".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 3);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(1, 0)].symbol(), "A");
+        assert_eq!(buf[(2, 0)].symbol(), "A");
+        assert_eq!(buf[(2, 2)].symbol(), "B");
+    }
+
+    #[test]
+    fn test_vertical_center_alignment_offsets_rows() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Vertical);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.set_content_align(Some("center".to_string()));
+        dashboard.set_spacing(0);
+        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 5);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 1)].symbol(), "A");
+        assert_eq!(buf[(0, 2)].symbol(), "B");
+    }
+
+    #[test]
+    fn test_vertical_bottom_alignment_offsets_rows() {
+        let mut dashboard = Dashboard::new("Stance", DashboardLayout::Vertical);
+        dashboard.set_border_config(false, None, None);
+        dashboard.set_hide_inactive(false);
+        dashboard.set_content_align(Some("bottom".to_string()));
+        dashboard.set_spacing(0);
+        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 5);
+        let mut buf = Buffer::empty(area);
+        dashboard.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 3)].symbol(), "A");
+        assert_eq!(buf[(0, 4)].symbol(), "B");
+    }
+}

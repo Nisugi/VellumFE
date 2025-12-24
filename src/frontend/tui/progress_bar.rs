@@ -331,6 +331,14 @@ mod tests {
     use super::*;
     use crate::config::BorderSides;
 
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
     #[test]
     fn draws_side_borders_when_only_left_right_enabled() {
         let mut bar = ProgressBar::new("Test");
@@ -352,5 +360,35 @@ mod tests {
 
         assert_eq!(buf[(0, 0)].symbol(), "│");
         assert_eq!(buf[(5, 0)].symbol(), "│");
+    }
+
+    #[test]
+    fn renders_left_aligned_custom_text() {
+        let mut bar = ProgressBar::new("");
+        bar.set_border_config(false, None, None, BorderSides::default());
+        bar.set_value_with_text(10, 100, Some("HP".to_string()));
+        bar.set_text_align_left(true);
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        bar.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].symbol(), "H");
+        assert_eq!(buf[(1, 0)].symbol(), "P");
+    }
+
+    #[test]
+    fn renders_centered_text_by_default() {
+        let mut bar = ProgressBar::new("");
+        bar.set_border_config(false, None, None, BorderSides::default());
+        bar.set_value_with_text(10, 100, Some("HP".to_string()));
+
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(area);
+        bar.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert_eq!(line.chars().nth(4).unwrap(), 'H');
+        assert_eq!(line.chars().nth(5).unwrap(), 'P');
     }
 }

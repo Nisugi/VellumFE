@@ -119,9 +119,115 @@ impl SpellsWindow {
         self.widget.render(area, buf);
     }
 
-    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
+pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
         // For now, just call regular render - theme colors will be applied in future update
         self.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn link(exist_id: &str, noun: &str, text: &str) -> LinkData {
+        LinkData {
+            exist_id: exist_id.to_string(),
+            noun: noun.to_string(),
+            text: text.to_string(),
+            coord: None,
+        }
+    }
+
+    #[test]
+    fn test_add_text_and_finish_line() {
+        let mut spells = SpellsWindow::new("Spells".to_string());
+        spells.add_text(
+            "You know ".to_string(),
+            None,
+            None,
+            false,
+            SpanType::Normal,
+            None,
+        );
+        spells.add_text(
+            "Fireball".to_string(),
+            None,
+            None,
+            false,
+            SpanType::Link,
+            Some(link("101", "fireball", "Fireball")),
+        );
+        spells.finish_line();
+
+        let lines = spells.get_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].len(), 2);
+        assert_eq!(lines[0][0].text, "You know ");
+        assert_eq!(lines[0][1].text, "Fireball");
+    }
+
+    #[test]
+    fn test_clear_removes_lines() {
+        let mut spells = SpellsWindow::new("Spells".to_string());
+        spells.add_text(
+            "Fireball".to_string(),
+            None,
+            None,
+            false,
+            SpanType::Link,
+            Some(link("101", "fireball", "Fireball")),
+        );
+        spells.finish_line();
+        assert!(!spells.get_lines().is_empty());
+
+        spells.clear();
+        assert!(spells.get_lines().is_empty());
+    }
+
+    #[test]
+    fn test_find_link_by_word_matches_noun() {
+        let mut spells = SpellsWindow::new("Spells".to_string());
+        spells.add_text(
+            "Fireball".to_string(),
+            None,
+            None,
+            false,
+            SpanType::Link,
+            Some(link("101", "fireball", "Fireball")),
+        );
+        spells.finish_line();
+
+        let found = spells.find_link_by_word("fireball");
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.exist_id, "101");
+        assert_eq!(found.noun, "fireball");
+    }
+
+    #[test]
+    fn test_handle_click_returns_link_data() {
+        let mut spells = SpellsWindow::new("Spells".to_string());
+        spells.set_border_config(false, None, None);
+        spells.add_text(
+            "Fireball".to_string(),
+            None,
+            None,
+            false,
+            SpanType::Link,
+            Some(link("101", "fireball", "Fireball")),
+        );
+        spells.finish_line();
+
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        spells.render(area, &mut buf);
+
+        let clicked = spells.handle_click(0, 0, area);
+        assert!(clicked.is_some());
+        let clicked = clicked.unwrap();
+        assert_eq!(clicked.exist_id, "101");
+        assert_eq!(clicked.text, "Fireball");
     }
 }
 

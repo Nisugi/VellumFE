@@ -205,8 +205,107 @@ impl Indicator {
         }
     }
 
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
         self.render(area, buf);
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn test_inactive_indicator_renders_empty() {
+        let mut indicator = Indicator::new("On");
+        indicator.set_active(false);
+
+        let area = Rect::new(0, 0, 5, 1);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim().is_empty());
+    }
+
+    #[test]
+    fn test_active_indicator_renders_label() {
+        let mut indicator = Indicator::new("On");
+        indicator.set_active(true);
+
+        let area = Rect::new(0, 0, 5, 1);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("On"));
+    }
+
+    #[test]
+    fn test_set_status_controls_active_state() {
+        let mut indicator = Indicator::new("On");
+
+        indicator.set_status("");
+        let area = Rect::new(0, 0, 5, 1);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim().is_empty());
+
+        indicator.set_status("standing");
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.contains("On"));
+    }
+
+    #[test]
+    fn test_background_color_fills_when_configured() {
+        let mut indicator = Indicator::new("On");
+        indicator.set_active(false);
+        indicator.set_background_color(Some("#ff0000".to_string()));
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn test_transparent_background_skips_fill() {
+        let mut indicator = Indicator::new("On");
+        indicator.set_active(false);
+        indicator.set_background_color(Some("#ff0000".to_string()));
+        indicator.set_transparent_background(true);
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Reset);
+    }
+
+    #[test]
+    fn test_active_indicator_with_border_renders_inside_area() {
+        let mut indicator = Indicator::new("On");
+        indicator.set_active(true);
+        indicator.set_border_config(true, None, None);
+
+        let area = Rect::new(0, 0, 6, 3);
+        let mut buf = Buffer::empty(area);
+        indicator.render(area, &mut buf);
+
+        assert_ne!(buf[(0, 0)].symbol(), " ");
+        let line = buffer_line(&buf, 1, area.width);
+        assert!(line.contains("On"));
+    }
+}

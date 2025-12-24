@@ -285,6 +285,16 @@ impl Targets {
 mod tests {
     use super::*;
     use crate::core::state::Creature;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
 
     // ===========================================
     // Constructor tests
@@ -479,5 +489,81 @@ mod tests {
         let mut dt = Targets::new("Targets");
         // Just verify it doesn't panic
         dt.scroll_down(5);
+    }
+
+    // ===========================================
+    // Render tests
+    // ===========================================
+
+    #[test]
+    fn test_render_status_position_start() {
+        let mut dt = Targets::new("Targets");
+        let mut config = crate::config::TargetListConfig::default();
+        config.status_position = "start".to_string();
+
+        let creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            status: Some("stunned".to_string()),
+        }];
+
+        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        dt.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim_end().starts_with("[stu] a goblin"));
+    }
+
+    #[test]
+    fn test_render_status_position_end() {
+        let mut dt = Targets::new("Targets");
+        let mut config = crate::config::TargetListConfig::default();
+        config.status_position = "end".to_string();
+
+        let creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            status: Some("prone".to_string()),
+        }];
+
+        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        dt.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim_end().starts_with("a goblin [prn]"));
+    }
+
+    #[test]
+    fn test_render_uses_noun_when_width_is_limited() {
+        let mut dt = Targets::new("Targets");
+        let mut config = crate::config::TargetListConfig::default();
+        config.truncation_mode = "noun".to_string();
+
+        let creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a muddy hog".to_string(),
+            noun: Some("hog".to_string()),
+            status: Some("stunned".to_string()),
+        }];
+
+        dt.update_from_state(&creatures, "1", &config, 12);
+        dt.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        dt.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim_end().starts_with("hog [stu]"));
     }
 }
