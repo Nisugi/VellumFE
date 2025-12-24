@@ -416,6 +416,29 @@ impl TuiFrontend {
             return None;
         }
 
+        // Try spells window
+        if let Some(spells_window) = self.widget_manager.spells_windows.get(window_name) {
+            tracing::debug!(
+                "Checking spells window '{}' for link at ({}, {})",
+                window_name,
+                mouse_col,
+                mouse_row
+            );
+
+            // Delegate to spells_window's handle_click method
+            if let Some(link) = spells_window.handle_click(mouse_col, mouse_row, window_rect) {
+                tracing::debug!(
+                    "Found spell link: exist_id={}, noun={}, coord={:?}",
+                    link.exist_id,
+                    link.noun,
+                    link.coord
+                );
+                return Some(link);
+            }
+            tracing::debug!("No spell link found at click position");
+            return None;
+        }
+
         // Try targets widget (component-based, for direct targeting)
         if let Some(targets_widget) = self.widget_manager.targets_widgets.get(window_name) {
             // handle_click returns "target #id" command if creature clicked

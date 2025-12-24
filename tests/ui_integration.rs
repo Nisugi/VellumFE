@@ -306,10 +306,12 @@ fn add_inventory_window(ui_state: &mut UiState) {
 }
 
 fn add_spells_window(ui_state: &mut UiState) {
+    let mut content = TextContent::new("spells", 200);
+    content.streams = vec!["Spells".to_string()];
     let window = WindowState {
         name: "spells".to_string(),
         widget_type: WidgetType::Spells,
-        content: WindowContent::Spells(TextContent::new("spells", 200)),
+        content: WindowContent::Spells(content),
         position: position(),
         visible: true,
         focused: false,
@@ -592,6 +594,7 @@ fn spells_stream_populates_spells_window() {
     add_spells_window(&mut ui_state);
 
     run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
+    processor.flush_spells_buffer(&mut ui_state);
 
     let spells_lines = ui_state
         .windows
@@ -612,13 +615,15 @@ fn spells_stream_populates_spells_window() {
 }
 
 #[test]
-fn spells_stream_falls_back_to_main_without_window() {
+fn spells_stream_buffers_without_window() {
+    // Spells are buffered even when no window exists, so they can populate new windows later
     const XML: &str = include_str!("fixtures/spells_stream.xml");
     let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
     add_text_window(&mut ui_state, "main", 200);
 
     run_fixture(XML, &mut ui_state, &mut processor, &mut game_state, &mut parser);
 
+    // Spells should NOT go to main - they should be buffered
     let main_lines = ui_state
         .windows
         .get("main")
@@ -632,8 +637,55 @@ fn spells_stream_falls_back_to_main_without_window() {
         .unwrap_or_default();
 
     assert!(
-        main_lines.iter().any(|l| l.contains("Spell listing")),
-        "spells stream should fall back to main when spells window is missing"
+        !main_lines.iter().any(|l| l.contains("Spell listing")),
+        "spells stream should be buffered (not sent to main) when spells window is missing"
+    );
+
+    // Now add a spells window - it should be populated from buffer
+    let mut content = vellum_fe::data::TextContent::new("spells", 100);
+    content.streams = vec!["Spells".to_string()];
+    ui_state.set_window(
+        "spells".to_string(),
+        vellum_fe::data::WindowState {
+            name: "spells".to_string(),
+            widget_type: vellum_fe::data::WidgetType::Spells,
+            content: vellum_fe::data::WindowContent::Spells(content),
+            position: vellum_fe::data::WindowPosition {
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 10,
+            },
+            visible: true,
+            content_align: None,
+            focused: false,
+            ephemeral: false,
+        },
+    );
+
+    // Populate the new window from buffer
+    if let Some(window) = ui_state.windows.get_mut("spells") {
+        if let vellum_fe::data::WindowContent::Spells(ref mut content) = window.content {
+            processor.populate_spells_window(content);
+        }
+    }
+
+    // Verify the spells window has the data
+    let spells_lines = ui_state
+        .windows
+        .get("spells")
+        .and_then(|w| {
+            if let vellum_fe::data::WindowContent::Spells(content) = &w.content {
+                Some(lines_to_strings(&content.lines))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    assert!(
+        spells_lines.iter().any(|l| l.contains("Spell listing")),
+        "new spells window should be populated from buffer"
     );
 }
 

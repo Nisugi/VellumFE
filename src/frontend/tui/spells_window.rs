@@ -108,6 +108,12 @@ impl SpellsWindow {
         self.widget.set_transparent_background(transparent);
     }
 
+    /// Handle a click at the given coordinates.
+    /// Returns the LinkData if a spell link was clicked.
+    pub fn handle_click(&self, x: u16, y: u16, area: Rect) -> Option<LinkData> {
+        self.widget.handle_click(x, y, area)
+    }
+
     /// Render the spells window
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.widget.render(area, buf);

@@ -44,6 +44,15 @@ pub struct MessageProcessor {
     /// Previous inventory buffer for comparison (avoid unnecessary updates)
     previous_inventory: Vec<Vec<TextSegment>>,
 
+    /// Buffer for accumulating spells stream lines (double-buffer system)
+    spells_buffer: Vec<Vec<TextSegment>>,
+
+    /// Previous spells buffer for comparison (avoid unnecessary updates)
+    previous_spells: Vec<Vec<TextSegment>>,
+
+    /// Temporary buffer for accumulating segments within current Spells stream line
+    spells_line_buffer: Vec<TextSegment>,
+
     /// Buffer for accumulating perception stream lines (for perception widget)
     perception_buffer: Vec<Vec<TextSegment>>,
 
@@ -120,6 +129,9 @@ impl MessageProcessor {
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
+            spells_buffer: Vec::new(),
+            previous_spells: Vec::new(),
+            spells_line_buffer: Vec::new(),
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
             squelch_matcher: None,
@@ -200,7 +212,6 @@ impl MessageProcessor {
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
-                    ui_state,
                     room_subtitle,
                     room_window_dirty,
                 );
@@ -278,6 +289,18 @@ impl MessageProcessor {
                     self.flush_inventory_buffer(ui_state);
                 }
 
+                // Flush spells line buffer if we're leaving Spells stream
+                // Each <stream id="Spells">...</stream> block becomes one complete line
+                if self.current_stream == "Spells" && !self.spells_line_buffer.is_empty() {
+                    let segment_count = self.spells_line_buffer.len();
+                    let line_segments = std::mem::take(&mut self.spells_line_buffer);
+                    self.spells_buffer.push(line_segments);
+                    tracing::debug!(
+                        "Flushed Spells line buffer - accumulated {} segments into one line",
+                        segment_count
+                    );
+                }
+
                 // Note: perception buffer is NOT flushed on popStream
                 // It accumulates across multiple push/pop pairs and flushes on clearStream
 
@@ -317,6 +340,16 @@ impl MessageProcessor {
                         }
                     }
                     tracing::debug!("ClearStream percWindow - cleared buffer and window");
+                } else if id == "Spells" {
+                    // Clear the spells buffer for new data
+                    self.spells_buffer.clear();
+                    // Clear the window content
+                    for window in ui_state.windows.values_mut() {
+                        if let WindowContent::Spells(ref mut content) = window.content {
+                            content.lines.clear();
+                        }
+                    }
+                    tracing::debug!("ClearStream Spells - cleared buffer and window(s)");
                 }
                 // Other streams can be handled here as needed
             }
@@ -329,6 +362,11 @@ impl MessageProcessor {
                     self.flush_perception_buffer(ui_state);
                 }
 
+                // Flush spells buffer on prompt (after all spells have accumulated)
+                if !self.spells_buffer.is_empty() {
+                    self.flush_spells_buffer(ui_state);
+                }
+
                 // Decide whether to show this prompt based on chunk tracking
                 // Skip if: no main text was received since last prompt
                 // This handles both "silent updates only" and "empty chunk" cases
@@ -339,7 +377,7 @@ impl MessageProcessor {
                 self.current_stream = String::from("main");
 
                 if should_skip {
-                    tracing::debug!("Skipping prompt '{}' - no main text since last prompt", text);
+                    // Skip this prompt - no main text since last prompt
                 } else if !text.trim().is_empty() {
                     // Store the prompt in game state for command echoes
                     game_state.last_prompt = text.clone();
@@ -403,14 +441,66 @@ impl MessageProcessor {
                 bold,
                 span_type,
                 link_data,
-                ..
+                stream,
             } => {
+                // Use the stream from the element (inline <stream id="...">) if different from current
+                // This handles both <pushStream> (which sets current_stream) and <stream> (inline)
+                let effective_stream = if !stream.is_empty()
+                    && stream.as_str() != self.current_stream.as_str()
+                {
+                    tracing::debug!(
+                        "Inline stream tag: switching from '{}' to '{}' for this text element",
+                        self.current_stream, stream
+                    );
+                    stream.as_str()
+                } else {
+                    self.current_stream.as_str()
+                };
+
                 // Debug: log perception stream text elements
-                if self.current_stream == "percWindow" {
+                if effective_stream == "percWindow" {
                     tracing::debug!(
                         "Text element on percWindow stream: '{}'",
                         if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() }
                     );
+                }
+
+                // Special handling for inline Spells stream - accumulate segments into line buffer
+                // Spells are sent once at login with inline <stream id="Spells"> tags
+                // We accumulate segments until the </stream> tag, then flush to buffer
+                if effective_stream == "Spells" {
+                    self.chunk_has_silent_updates = true;
+
+                    // Map parser SpanType to data layer SpanType
+                    use crate::data::SpanType as DataSpanType;
+                    use crate::parser::SpanType as ParserSpanType;
+                    let data_span_type = match span_type {
+                        ParserSpanType::Normal => DataSpanType::Normal,
+                        ParserSpanType::Link => DataSpanType::Link,
+                        ParserSpanType::Monsterbold => DataSpanType::Monsterbold,
+                        ParserSpanType::Spell => DataSpanType::Spell,
+                        ParserSpanType::Speech => DataSpanType::Speech,
+                        ParserSpanType::System => DataSpanType::Normal,
+                    };
+
+                    // Create the text segment
+                    let segment = TextSegment {
+                        text: content.clone(),
+                        fg: fg_color.clone(),
+                        bg: bg_color.clone(),
+                        bold: *bold,
+                        span_type: data_span_type,
+                        link_data: link_data.clone(),
+                    };
+
+                    // Accumulate this segment in the current line buffer
+                    // It will be flushed to spells_buffer when we see </stream>
+                    self.spells_line_buffer.push(segment);
+                    tracing::trace!(
+                        "Accumulated Spells segment: '{}'",
+                        if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() }
+                    );
+                    return; // Don't add to current_segments
                 }
 
                 // Discard text if we're in a discarded stream (e.g., no Spells/inv/room window)
@@ -850,7 +940,6 @@ impl MessageProcessor {
         &mut self,
         id: &str,
         subtitle: Option<&str>,
-        ui_state: &mut UiState,
         room_subtitle_out: &mut Option<String>,
         room_window_dirty: &mut bool,
     ) {
@@ -980,7 +1069,7 @@ impl MessageProcessor {
         self.previous_room_components
             .insert(id.to_string(), value.to_string());
 
-        // Extract creatures from room objs (for dropdown_targets widget)
+        // Extract creatures from room objs (for targets widget)
         // Creatures are in bold: <b><pushBold/>a <a exist='ID' noun='...'>name</a><popBold/></b> (status)
         if id == "room objs" {
             game_state.room_creatures.clear();
@@ -1525,17 +1614,24 @@ impl MessageProcessor {
                     }
                 }
                 WindowContent::Inventory(content) => {
-                    let mapped_name = self.map_stream_to_window(&self.current_stream);
-                    if mapped_name == "inventory" {
+                    // Check if this inventory window listens to the current stream
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
                         content.add_line(line.clone());
                         added_here = true;
                     }
                 }
                 WindowContent::Spells(content) => {
-                    let mapped_name = self.map_stream_to_window(&self.current_stream);
-                    if mapped_name == "spells" {
+                    // Check if this spells window listens to the current stream
+                    tracing::debug!(
+                        "Spells window '{}': checking stream '{}' against subscribed streams {:?}",
+                        window_name, self.current_stream, content.streams
+                    );
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
+                        tracing::debug!("Spells window '{}': MATCHED stream '{}'", window_name, self.current_stream);
                         content.add_line(line.clone());
                         added_here = true;
+                    } else {
+                        tracing::debug!("Spells window '{}': NO MATCH for stream '{}'", window_name, self.current_stream);
                     }
                 }
                 WindowContent::TabbedText(tab_content) => {
@@ -1784,6 +1880,66 @@ impl MessageProcessor {
 
         // Clear buffer for next update
         self.inventory_buffer.clear();
+    }
+
+    /// Flush spells buffer to all Spells windows (only if content changed)
+    /// Unlike inventory, spells buffer is NOT cleared after flushing because spells
+    /// are sent once at login and must persist for newly created windows
+    pub fn flush_spells_buffer(&mut self, ui_state: &mut UiState) {
+        // If buffer is empty, nothing to do
+        if self.spells_buffer.is_empty() {
+            return;
+        }
+
+        // Compare to previous spells
+        let spells_changed = self.spells_buffer != self.previous_spells;
+
+        if spells_changed {
+            tracing::debug!(
+                "Spells changed - updating window(s) ({} lines)",
+                self.spells_buffer.len()
+            );
+
+            // Find ALL spells windows and update them (supports multiple spells windows)
+            let mut updated_count = 0;
+            for (name, window) in ui_state.windows.iter_mut() {
+                if let WindowContent::Spells(ref mut content) = window.content {
+                    // Clear existing content
+                    content.lines.clear();
+
+                    // Add all buffered lines
+                    for line_segments in &self.spells_buffer {
+                        content.add_line(StyledLine {
+                            segments: line_segments.clone(),
+                            stream: String::from("Spells"),
+                        });
+                    }
+                    tracing::debug!(
+                        "Updated spells window '{}' with {} lines",
+                        name,
+                        content.lines.len()
+                    );
+                    updated_count += 1;
+                }
+            }
+
+            if updated_count == 0 {
+                tracing::debug!("No spells windows found to update (buffer preserved for future windows)");
+            } else {
+                tracing::debug!("Updated {} spells window(s)", updated_count);
+            }
+
+            // Store as new previous spells
+            self.previous_spells = self.spells_buffer.clone();
+        } else {
+            tracing::debug!(
+                "Spells unchanged - skipping update ({} lines)",
+                self.spells_buffer.len()
+            );
+        }
+
+        // NOTE: Unlike inventory, we do NOT clear spells_buffer here
+        // Spells are sent once at login and must persist for newly created windows
     }
 
     /// Flush perception buffer to perception window with parsing and sorting
@@ -2143,6 +2299,32 @@ impl MessageProcessor {
         tracing::debug!("Cleared inventory cache - next inventory update will render");
     }
 
+    /// Populate a Spells window from the buffer
+    /// Unlike inventory, spells are sent once at login, so we populate from buffer immediately
+    /// Should be called when a new spells window is created
+    pub fn populate_spells_window(&self, window_content: &mut crate::data::TextContent) {
+        if self.spells_buffer.is_empty() {
+            tracing::debug!("Spells buffer is empty - new window will remain empty until data arrives");
+            return;
+        }
+
+        // Clear existing content
+        window_content.lines.clear();
+
+        // Add all buffered lines
+        for line_segments in &self.spells_buffer {
+            window_content.add_line(StyledLine {
+                segments: line_segments.clone(),
+                stream: String::from("Spells"),
+            });
+        }
+
+        tracing::debug!(
+            "Populated new spells window from buffer with {} lines",
+            window_content.lines.len()
+        );
+    }
+
     /// Update squelch pattern matching infrastructure from config
     pub fn update_squelch_patterns(&mut self) {
         // Collect all squelch patterns
@@ -2232,20 +2414,24 @@ impl MessageProcessor {
                     }
                 }
 
-                // Inventory widget implicitly subscribes to "inv" stream
-                WindowContent::Inventory(_) => {
-                    subscribers
-                        .entry("inv".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                // Inventory widget uses its streams field (like Text windows)
+                WindowContent::Inventory(content) => {
+                    for stream in &content.streams {
+                        subscribers
+                            .entry(stream.clone())
+                            .or_default()
+                            .push(window_name.clone());
+                    }
                 }
 
-                // Spells widget implicitly subscribes to "Spells" stream
-                WindowContent::Spells(_) => {
-                    subscribers
-                        .entry("Spells".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                // Spells widget uses its streams field (like Text windows)
+                WindowContent::Spells(content) => {
+                    for stream in &content.streams {
+                        subscribers
+                            .entry(stream.clone())
+                            .or_default()
+                            .push(window_name.clone());
+                    }
                 }
 
                 // Perception widget implicitly subscribes to "percWindow" stream
@@ -2516,7 +2702,7 @@ mod tests {
             .highlights
             .insert("empty_redirect".to_string(), make_redirect_pattern("||"));
 
-        let mut processor = MessageProcessor::new(config);
+        let processor = MessageProcessor::new(config);
         let result = processor.check_redirect_match("anything");
         assert!(result.is_none());
     }
@@ -2530,7 +2716,7 @@ mod tests {
             make_redirect_pattern("a|ab|abc"),
         );
 
-        let mut processor = MessageProcessor::new(config);
+        let processor = MessageProcessor::new(config);
         let result = processor.check_redirect_match("zz abc zz");
         assert!(matches!(
             result,

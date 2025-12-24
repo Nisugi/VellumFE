@@ -954,18 +954,7 @@ impl TuiFrontend {
                             .get("monsterbold");
                         let monsterbold_fg = monsterbold_preset.and_then(|p| p.fg.clone());
 
-                        tracing::debug!(
-                            "targets colors: explicit={:?}, monsterbold_preset={:?}, monsterbold_fg={:?}",
-                            explicit_text_color,
-                            monsterbold_preset,
-                            monsterbold_fg
-                        );
-
                         let creature_text_color = explicit_text_color.or(monsterbold_fg);
-                        tracing::debug!(
-                            "targets final creature_text_color={:?}",
-                            creature_text_color
-                        );
                         widget.set_text_color(creature_text_color.clone());
 
                         // Set indicator color for current target (►)
@@ -975,11 +964,6 @@ impl TuiFrontend {
                             .presets
                             .get("target_indicator")
                             .and_then(|p| p.fg.clone());
-
-                        tracing::debug!(
-                            "Targets: setting indicator_color = {:?} (from preset 'target_indicator')",
-                            indicator_color
-                        );
 
                         widget.set_indicator_color(indicator_color);
 

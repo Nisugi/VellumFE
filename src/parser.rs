@@ -497,6 +497,23 @@ impl XmlParser {
                 };
                 elements.push(ParsedElement::Component { id, value: content });
             }
+        } else if tag.starts_with("<stream ") {
+            // Inline stream tag: <stream id="Spells">content</stream>
+            // Flush any buffered text to the current stream before switching
+            if !text_buffer.is_empty() {
+                self.flush_text_with_events(text_buffer.clone(), elements);
+                text_buffer.clear();
+            }
+            // Switch to the inline stream (handled same as pushStream)
+            self.handle_push_stream(tag, elements);
+        } else if tag == "</stream>" {
+            // End of inline stream tag - flush buffer and pop stream
+            if !text_buffer.is_empty() {
+                self.flush_text_with_events(text_buffer.clone(), elements);
+                text_buffer.clear();
+            }
+            elements.push(ParsedElement::StreamPop);
+            self.current_stream = "main".to_string();
         } else if tag.starts_with("<pushStream ") {
             // If we encounter a mid-line stream switch into the speech stream, carry the
             // buffered text forward so the speech window gets the full line (including

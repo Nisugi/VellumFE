@@ -70,19 +70,12 @@ use resize::ResizeDebouncer;
 use anyhow::Result;
 use crossterm::{execute, terminal::{enable_raw_mode, EnterAlternateScreen}};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::collections::HashMap;
 use std::io;
 
 pub struct TuiFrontend {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Widget manager - handles all widget caches and synchronization
     widget_manager: WidgetManager,
-    /// Active popup menu (if any)
-    popup_menu: Option<popup_menu::PopupMenu>,
-    /// Active submenu (if any)
-    submenu: Option<popup_menu::PopupMenu>,
-    /// Cached submenu items for the main menu
-    menu_categories: HashMap<String, Vec<popup_menu::MenuItem>>,
     /// Active window editor (if any)
     pub window_editor: Option<window_editor::WindowEditor>,
     /// Indicator template editor (global templates)
@@ -133,9 +126,6 @@ impl TuiFrontend {
         Ok(Self {
             terminal,
             widget_manager: WidgetManager::new(),
-            popup_menu: None,
-            submenu: None,
-            menu_categories: HashMap::new(),
             window_editor: None,
             indicator_template_editor: None,
             highlight_browser: None,

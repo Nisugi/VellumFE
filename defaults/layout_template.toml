@@ -442,8 +442,6 @@
 # Updates automatically when creatures enter/leave room.
 #
 # [[windows]]
-# name = "dd_targets"
-# widget_type = "dropdown_targets"
 # title = "Targets"
 # row = 0
 # col = 100

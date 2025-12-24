@@ -1248,9 +1248,6 @@ impl WindowEditor {
             WindowDef::Targets { .. } | WindowDef::Players { .. } => {
                 fields.push(FieldRef::EntityId);
             }
-            WindowDef::DropdownTargets { .. } => {
-                // No special fields - reads from GameState.target_list
-            }
             WindowDef::Container { .. } => {
                 // Could add container_id field in the future
             }

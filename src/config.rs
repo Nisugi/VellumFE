@@ -1390,13 +1390,6 @@ pub enum WindowDef {
         data: PlayersWidgetData,
     },
 
-    /// Dropdown-based target list (for direct-connect users without Lich)
-    #[serde(rename = "dropdown_targets")]
-    DropdownTargets {
-        #[serde(flatten)]
-        base: WindowBase,
-    },
-
     /// Container window for displaying contents of bags, backpacks, etc.
     #[serde(rename = "container")]
     Container {
@@ -1460,7 +1453,6 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => &base.name,
             WindowDef::Targets { base, .. } => &base.name,
             WindowDef::Players { base, .. } => &base.name,
-            WindowDef::DropdownTargets { base, .. } => &base.name,
             WindowDef::Container { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
@@ -1488,7 +1480,6 @@ impl WindowDef {
             WindowDef::Performance { .. } => "performance",
             WindowDef::Targets { .. } => "targets",
             WindowDef::Players { .. } => "players",
-            WindowDef::DropdownTargets { .. } => "dropdown_targets",
             WindowDef::Container { .. } => "container",
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Spells { .. } => "spells",
@@ -1516,7 +1507,6 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
-            WindowDef::DropdownTargets { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
@@ -1544,7 +1534,6 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
-            WindowDef::DropdownTargets { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
@@ -1845,7 +1834,7 @@ impl Default for TtsConfig {
     }
 }
 
-/// Target list widget configuration (dropdown_targets for direct connect).
+/// Target list widget configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetListConfig {
     /// Status display position: "start" or "end"
@@ -2734,8 +2723,6 @@ impl Config {
             visible: true,
             content_align: None,
         };
-        let ui_defaults = UiConfig::default();
-
         // Prefer user-defined window templates (global store)
         if let Some(custom) = Self::get_custom_window_template(name) {
             return Some(custom);
@@ -2925,19 +2912,6 @@ impl Config {
                 },
                 data: TargetsWidgetData {
                     entity_id: default_target_entity_id(),
-                },
-            }),
-            "dropdown_targets" | "dd_targets" => Some(WindowDef::DropdownTargets {
-                base: WindowBase {
-                    name: "dropdown_targets".to_string(),
-                    title: Some("Targets".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 8,
-                    cols: 25,
-                    min_rows: Some(4),
-                    min_cols: Some(20),
-                    ..base_defaults.clone()
                 },
             }),
             "players" => Some(WindowDef::Players {
@@ -4017,9 +3991,8 @@ impl Config {
             "perception".to_string(),
             "experience".to_string(), // DR-specific
             // Target tracking
-            "targets".to_string(),       // Lich-based target list
-            "dropdown_targets".to_string(), // Game's built-in dropdown target list
-            "players".to_string(),       // Player list
+            "targets".to_string(), // Target list
+            "players".to_string(), // Player list
             // command_input is NOT in this list - it's always present and can't be added/removed
         ];
 

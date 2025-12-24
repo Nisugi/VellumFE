@@ -70,7 +70,7 @@ impl WidgetType {
             "dashboard" => Some(WidgetType::Dashboard),
             "hand" => Some(WidgetType::Hand),
             "active_effects" => Some(WidgetType::ActiveEffects),
-            "targets" | "dropdown_targets" | "dropdowntargets" => Some(WidgetType::Targets),  // Component-based (default)
+            "targets" => Some(WidgetType::Targets),  // Component-based (default)
             "players" => Some(WidgetType::Players),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),

@@ -669,8 +669,40 @@ impl TuiFrontend {
                                 command.trim()
                             );
                             command_to_send = Some(command);
+                        } else if let Some(ref coord) = pending_click.link_data.coord {
+                            // Link has coord field: Look up command in cmdlist and send directly
+                            if let Some(ref cmdlist) = app_core.cmdlist {
+                                if let Some(entry) = cmdlist.get(coord) {
+                                    // Substitute placeholders in command
+                                    let command = crate::cmdlist::CmdList::substitute_command(
+                                        &entry.command,
+                                        &pending_click.link_data.noun,
+                                        &pending_click.link_data.exist_id,
+                                        None,
+                                    );
+                                    tracing::info!(
+                                        "Executing cmdlist command for '{}' (coord: {}): {}",
+                                        pending_click.link_data.text,
+                                        coord,
+                                        command.trim()
+                                    );
+                                    command_to_send = Some(format!("{}\n", command));
+                                } else {
+                                    tracing::warn!(
+                                        "Coord {} not found in cmdlist for '{}'",
+                                        coord,
+                                        pending_click.link_data.text
+                                    );
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "Cmdlist not loaded - cannot resolve coord {} for '{}'",
+                                    coord,
+                                    pending_click.link_data.text
+                                );
+                            }
                         } else {
-                            // Regular <a> tag: Request context menu
+                            // Regular <a> tag without coord: Request context menu
                             let command = app_core.request_menu(
                                 pending_click.link_data.exist_id.clone(),
                                 pending_click.link_data.noun.clone(),

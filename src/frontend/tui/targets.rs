@@ -143,9 +143,6 @@ impl Targets {
                 base_name.clone()
             };
 
-            // Use creature ID as the unique identifier
-            let id = creature.id.clone();
-
             // Build LinkData for clickable targeting
             // - exist_id: ID without # prefix (e.g., "209852066")
             // - noun: Use parsed noun or fallback to last word

@@ -584,8 +584,17 @@ impl AppCore {
                     players: Vec::new(),
                     objects: Vec::new(),
                 }),
-                WidgetType::Inventory => WindowContent::Inventory(TextContent::new(title, 10000)),
-                WidgetType::Spells => WindowContent::Spells(TextContent::new(title, 10000)),
+                WidgetType::Inventory => {
+                    let mut content = TextContent::new(title, 10000);
+                    content.streams = vec!["inv".to_string()];
+                    WindowContent::Inventory(content)
+                }
+                WidgetType::Spells => {
+                    let mut content = TextContent::new(title, 10000);
+                    content.streams = vec!["Spells".to_string()];
+                    tracing::debug!("init_windows: Creating Spells window '{}' with streams={:?}", title, content.streams);
+                    WindowContent::Spells(content)
+                }
                 WidgetType::ActiveEffects => {
                     // Extract category from window def
                     let category =
@@ -650,6 +659,13 @@ impl AppCore {
         // Update text stream subscriber map for routing (uses widget stream configs)
         self.message_processor
             .update_text_stream_subscribers(&self.ui_state);
+
+        // Populate all spells windows from buffer (spells are sent once at login)
+        for window in self.ui_state.windows.values_mut() {
+            if let WindowContent::Spells(ref mut content) = window.content {
+                self.message_processor.populate_spells_window(content);
+            }
+        }
 
         self.needs_render = true;
     }
@@ -820,8 +836,16 @@ impl AppCore {
                 players: Vec::new(),
                 objects: Vec::new(),
             }),
-            WidgetType::Inventory => WindowContent::Inventory(TextContent::new(title, 0)),
-            WidgetType::Spells => WindowContent::Spells(TextContent::new(title, 0)),
+            WidgetType::Inventory => {
+                let mut content = TextContent::new(title, 0);
+                content.streams = vec!["inv".to_string()];
+                WindowContent::Inventory(content)
+            }
+            WidgetType::Spells => {
+                let mut content = TextContent::new(title, 0);
+                content.streams = vec!["Spells".to_string()];
+                WindowContent::Spells(content)
+            }
             WidgetType::ActiveEffects => {
                 // Extract category from window def
                 let category =
@@ -870,6 +894,16 @@ impl AppCore {
         // Clear inventory cache if this is an inventory window to force initial render
         if window_def.widget_type() == "inventory" {
             self.message_processor.clear_inventory_cache();
+        }
+
+        // Populate spells window from buffer if this is a spells window
+        // Spells are sent once at login, so we populate immediately from buffer
+        if window_def.widget_type() == "spells" {
+            if let Some(window) = self.ui_state.windows.get_mut(window_def.name()) {
+                if let WindowContent::Spells(ref mut content) = window.content {
+                    self.message_processor.populate_spells_window(content);
+                }
+            }
         }
 
         // Set dirty flag for room windows to trigger sync in TUI frontend
@@ -1742,6 +1776,28 @@ impl AppCore {
                 history: Vec::new(),
                 history_index: None,
             },
+            WidgetType::Inventory => {
+                let mut content = TextContent::new(name, 0);
+                content.streams = vec!["inv".to_string()];
+                WindowContent::Inventory(content)
+            }
+            WidgetType::Spells => {
+                let mut content = TextContent::new(name, 0);
+                content.streams = vec!["Spells".to_string()];
+                WindowContent::Spells(content)
+            }
+            WidgetType::Dashboard => WindowContent::Dashboard {
+                indicators: Vec::new(),
+            },
+            WidgetType::ActiveEffects => WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
+                category: "Unknown".to_string(),
+                effects: Vec::new(),
+            }),
+            WidgetType::Targets => WindowContent::Targets,
+            WidgetType::Players => WindowContent::Players,
+            WidgetType::Container => WindowContent::Container {
+                container_title: String::new(),
+            },
             _ => WindowContent::Empty,
         };
 
@@ -1866,6 +1922,25 @@ impl AppCore {
             name, width, height, x, y, widget_type_str
         ));
         self.needs_render = true;
+
+        // Update text stream subscriber map (new window may have stream subscriptions)
+        self.message_processor
+            .update_text_stream_subscribers(&self.ui_state);
+
+        // Clear inventory cache if this is an inventory window to force initial render
+        if widget_type == WidgetType::Inventory {
+            self.message_processor.clear_inventory_cache();
+        }
+
+        // Populate spells window from buffer if this is a spells window
+        // Spells are sent once at login, so we populate immediately from buffer
+        if widget_type == WidgetType::Spells {
+            if let Some(window) = self.ui_state.windows.get_mut(name) {
+                if let WindowContent::Spells(ref mut content) = window.content {
+                    self.message_processor.populate_spells_window(content);
+                }
+            }
+        }
     }
 
     /// Rename a window's title

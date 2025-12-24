@@ -1,7 +1,7 @@
 //! Unified list widget for all text-list use cases.
 //!
 //! Replaces duplicate implementations in SpellsWindow, InventoryWindow, and
-//! misuse of ScrollableContainer+ProgressBar in dropdown_targets, targets, players.
+//! misuse of ScrollableContainer+ProgressBar in targets, players.
 //!
 //! This widget properly handles text-only lists without progress bar logic.
 
@@ -722,7 +722,7 @@ impl ListWidget {
         None
     }
 
-    /// Handle a click at the given coordinates (for dropdown_targets style usage)
+    /// Handle a click at the given coordinates (for targets style usage)
     /// Returns the LinkData if a link was clicked at that position
     /// Note: This is a simple implementation - coordinate-based click handling
     /// is complex and may need refinement based on actual usage

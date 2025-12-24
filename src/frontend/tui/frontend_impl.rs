@@ -412,7 +412,6 @@ impl Frontend for TuiFrontend {
                     .filter(|item| !item.disabled)
                     .map(|item| popup_menu::MenuItem {
                         text: item.text.clone(),
-                        command: item.command.clone(),
                     })
                     .collect();
 
@@ -433,7 +432,6 @@ impl Frontend for TuiFrontend {
                     .filter(|item| !item.disabled)
                     .map(|item| popup_menu::MenuItem {
                         text: item.text.clone(),
-                        command: item.command.clone(),
                     })
                     .collect();
 
@@ -454,7 +452,6 @@ impl Frontend for TuiFrontend {
                     .filter(|item| !item.disabled)
                     .map(|item| popup_menu::MenuItem {
                         text: item.text.clone(),
-                        command: item.command.clone(),
                     })
                     .collect();
 
@@ -475,7 +472,6 @@ impl Frontend for TuiFrontend {
                     .filter(|item| !item.disabled)
                     .map(|item| popup_menu::MenuItem {
                         text: item.text.clone(),
-                        command: item.command.clone(),
                     })
                     .collect();
 

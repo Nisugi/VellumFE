@@ -178,8 +178,192 @@ impl Players {
 
     /// Handle a click at the given coordinates.
     /// Returns a LinkData if a player was clicked (can be used for targeting/interacting).
-    pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
+pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
         // Delegate to ListWidget's click handling (x=0 since ListWidget doesn't use it)
         self.widget.handle_click(0, y, area)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::state::Player;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn buffer_line(buf: &Buffer, y: u16, width: u16) -> String {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buf[(x, y)].symbol());
+        }
+        line
+    }
+
+    #[test]
+    fn test_new_defaults() {
+        let players = Players::new("Players");
+        assert_eq!(players.base_title, "Players");
+        assert_eq!(players.count, 0);
+        assert_eq!(players.generation, 0);
+        assert!(players.player_ids_cache.is_empty());
+    }
+
+    #[test]
+    fn test_set_title_updates_base_title() {
+        let mut players = Players::new("Players");
+        players.set_title("Room Players");
+        assert_eq!(players.base_title, "Room Players");
+    }
+
+    #[test]
+    fn test_update_from_state_empty_no_change() {
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+
+        let changed = players.update_from_state(&[], &config);
+        assert!(!changed);
+        assert_eq!(players.count, 0);
+        assert!(players.player_ids_cache.is_empty());
+    }
+
+    #[test]
+    fn test_update_from_state_with_players() {
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+        let room_players = vec![
+            Player {
+                name: "Bob".to_string(),
+                id: "-1".to_string(),
+                primary_status: None,
+                secondary_status: None,
+            },
+            Player {
+                name: "Jane".to_string(),
+                id: "-2".to_string(),
+                primary_status: Some("stunned".to_string()),
+                secondary_status: Some("prone".to_string()),
+            },
+        ];
+
+        let changed = players.update_from_state(&room_players, &config);
+        assert!(changed);
+        assert_eq!(players.count, 2);
+        assert_eq!(players.player_ids_cache, "-1,-2");
+        assert_eq!(players.generation, 1);
+    }
+
+    #[test]
+    fn test_update_from_state_no_change() {
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+        let room_players = vec![Player {
+            name: "Bob".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: None,
+        }];
+
+        players.update_from_state(&room_players, &config);
+        let initial_generation = players.get_generation();
+
+        let changed = players.update_from_state(&room_players, &config);
+        assert!(!changed);
+        assert_eq!(players.get_generation(), initial_generation);
+    }
+
+    #[test]
+    fn test_update_from_state_ids_change() {
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+        let room_players = vec![Player {
+            name: "Bob".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: None,
+        }];
+
+        players.update_from_state(&room_players, &config);
+
+        let updated_players = vec![Player {
+            name: "Jane".to_string(),
+            id: "-2".to_string(),
+            primary_status: None,
+            secondary_status: None,
+        }];
+
+        let changed = players.update_from_state(&updated_players, &config);
+        assert!(changed);
+        assert_eq!(players.count, 1);
+        assert_eq!(players.player_ids_cache, "-2");
+    }
+
+    #[test]
+    fn test_handle_click_returns_link_data() {
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+        let room_players = vec![Player {
+            name: "Bob".to_string(),
+            id: "-101".to_string(),
+            primary_status: None,
+            secondary_status: None,
+        }];
+
+        players.update_from_state(&room_players, &config);
+
+        let area = Rect::new(0, 0, 20, 5);
+        let link = players.handle_click(1, area);
+        assert!(link.is_some());
+        let link = link.unwrap();
+        assert_eq!(link.exist_id, "-101");
+        assert_eq!(link.noun, "Bob");
+        assert_eq!(link.text, "Bob");
+    }
+
+    #[test]
+    fn test_render_status_position_start() {
+        let mut players = Players::new("Players");
+        let mut config = crate::config::TargetListConfig::default();
+        config.status_position = "start".to_string();
+
+        let room_players = vec![Player {
+            name: "Bob".to_string(),
+            id: "-1".to_string(),
+            primary_status: Some("stunned".to_string()),
+            secondary_status: Some("prone".to_string()),
+        }];
+
+        players.update_from_state(&room_players, &config);
+        players.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        players.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim_end().starts_with("[stu] [prn] Bob"));
+    }
+
+    #[test]
+    fn test_render_status_position_end_with_fallback_abbrev() {
+        let mut players = Players::new("Players");
+        let mut config = crate::config::TargetListConfig::default();
+        config.status_position = "end".to_string();
+
+        let room_players = vec![Player {
+            name: "Bob".to_string(),
+            id: "-1".to_string(),
+            primary_status: Some("awake".to_string()),
+            secondary_status: None,
+        }];
+
+        players.update_from_state(&room_players, &config);
+        players.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        players.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(line.trim_end().starts_with("Bob [awa]"));
     }
 }

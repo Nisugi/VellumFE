@@ -351,3 +351,48 @@ impl AppCore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AppCore;
+    use crate::config::{Config, KeyBindAction};
+    use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn build_keybind_map_parses_valid_entries() {
+        let mut config = Config::default();
+        config.keybinds.insert(
+            "ctrl+a".to_string(),
+            KeyBindAction::Action("copy".to_string()),
+        );
+        config.keybinds.insert(
+            "alt+x".to_string(),
+            KeyBindAction::Action("paste".to_string()),
+        );
+
+        let map = AppCore::build_keybind_map(&config);
+        let ctrl_a = KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::CTRL,
+        };
+        let alt_x = KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::ALT,
+        };
+
+        assert!(map.contains_key(&ctrl_a), "Expected ctrl+a entry");
+        assert!(map.contains_key(&alt_x), "Expected alt+x entry");
+    }
+
+    #[test]
+    fn build_keybind_map_skips_invalid_keys() {
+        let mut config = Config::default();
+        config.keybinds.insert(
+            "ctrl+notakey".to_string(),
+            KeyBindAction::Action("copy".to_string()),
+        );
+
+        let map = AppCore::build_keybind_map(&config);
+        assert!(map.is_empty(), "Invalid keybind should be skipped");
+    }
+}

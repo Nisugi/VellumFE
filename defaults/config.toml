@@ -124,7 +124,7 @@ perf_stats_height = 23
 # ------------------------------------------------------------
 # TARGET LIST
 # ------------------------------------------------------------
-# Configuration for the dropdown_targets widget (direct connect).
+# Configuration for the targets widget.
 # Controls how creature names and statuses are displayed.
 
 [target_list]

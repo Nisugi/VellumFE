@@ -94,7 +94,7 @@ pub struct GameState {
     pub target_list: TargetListState,
 
     /// Creatures currently in room (parsed from room objs component)
-    /// Primary source for dropdown_targets widget
+    /// Primary source for targets widget
     pub room_creatures: Vec<Creature>,
 
     /// Players currently in room (parsed from room players component)
