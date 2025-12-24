@@ -172,6 +172,45 @@
 # streams = ["thoughts", "speech", "whispers"]
 
 
+# ------------------------------------------------------------
+# Pre-configured Text Windows
+# ------------------------------------------------------------
+# Quick-start templates for common stream windows.
+# Just use the name as widget_type to get preconfigured settings.
+#
+# Available templates:
+#   - "thoughts"       - Thoughts stream only
+#   - "speech"         - Speech/talking stream
+#   - "announcements"  - System announcements
+#   - "loot"           - Loot drops
+#   - "death"          - Death messages
+#   - "logons"         - Player login/logout
+#   - "familiar"       - Familiar messages
+#   - "ambients"       - Ambient room messages
+#   - "bounty"         - Bounty system updates
+#   - "society"        - Society messages
+#   - "betrayerpanel"  - Betrayer panel (GemStone-specific)
+#
+# Example - Thoughts window:
+# [[windows]]
+# name = "thoughts"
+# widget_type = "text"
+# row = 0
+# col = 60
+# rows = 15
+# cols = 60
+# streams = ["thoughts"]
+#
+# Example - Using template name directly:
+# [[windows]]
+# name = "my_thoughts"
+# widget_type = "thoughts"  # Pre-configured with thoughts stream
+# row = 0
+# col = 60
+# rows = 15
+# cols = 60
+
+
 # ============================================================
 # INFORMATION WIDGETS
 # ============================================================
@@ -249,9 +288,10 @@
 
 
 # ------------------------------------------------------------
-# Perception Window
+# Perception Window (DragonRealms Only)
 # ------------------------------------------------------------
 # Displays perception buffs/debuffs with sorting and text replacements.
+# DragonRealms-specific feature - not available in GemStone IV.
 #
 # [[windows]]
 # name = "perception"
@@ -279,6 +319,31 @@
 # [[windows.text_replacements]]
 # pattern = "Spirit Warding II"
 # replace = "SW2"
+
+
+# ------------------------------------------------------------
+# Experience Window (DragonRealms Only)
+# ------------------------------------------------------------
+# Displays skill training progress and learning rates.
+# Only works in DragonRealms - not available in GemStone IV.
+#
+# [[windows]]
+# name = "experience"
+# widget_type = "experience"
+# row = 0
+# col = 80
+# rows = 20
+# cols = 40
+# show_border = true
+# border_style = "single"
+# border_color = "#808080"
+# visible = true
+#
+# # Experience-specific options:
+# stream = "experience"        # Stream ID (default: "experience")
+# buffer_size = 100            # Max skills to track (default: 100)
+# show_rates = true            # Show learning rates (default: true)
+# compact_mode = false         # Condensed display (default: false)
 
 
 # ============================================================
@@ -310,6 +375,28 @@
 # color = "#ff0000"            # Bar color (optional)
 # numbers_only = false         # Show only numbers, hide label (default: false)
 # current_only = false         # Show only current value (default: false)
+
+
+# ------------------------------------------------------------
+# Concentration Bar (DragonRealms Only)
+# ------------------------------------------------------------
+# Fourth vital stat bar in DragonRealms.
+# Not available in GemStone IV (which has 3 vitals: health, mana, stamina).
+#
+# [[windows]]
+# name = "concentration"
+# widget_type = "progress"
+# row = 0
+# col = 45
+# rows = 1
+# cols = 15
+# show_border = false
+# visible = true
+#
+# # Progress-specific options:
+# id = "concentration"         # Feed ID (DR-specific)
+# label = "CON"                # Display label (optional)
+# color = "#9370DB"            # Bar color (optional)
 
 
 # ------------------------------------------------------------
@@ -669,7 +756,29 @@
 # ============================================================
 # UTILITY WIDGETS
 # ============================================================
-# Input, spacing, and debug widgets.
+# Input, spacing, quickbar, and debug widgets.
+
+# ------------------------------------------------------------
+# Quickbar
+# ------------------------------------------------------------
+# Displays quickbar entries from scripts (foreach, custom actions).
+# Updates automatically from <dialogData id="quick-*"> XML.
+#
+# [[windows]]
+# name = "quickbar"
+# widget_type = "quickbar"
+# row = 35
+# col = 0
+# rows = 1
+# cols = 120
+# show_border = false
+# visible = true
+#
+# # Quickbar-specific options:
+# selection_fg = "#000000"     # Selected item text color (default: "#000000")
+# selection_bg = "#00ff00"     # Selected item background (default: "#00ff00")
+# text_color = "#ffffff"       # Normal text color (optional)
+
 
 # ------------------------------------------------------------
 # Command Input
