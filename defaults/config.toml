@@ -139,6 +139,7 @@ open_dialog_blocklist = [
 #
 # [ui.focus]
 # types = ["text", "tabbedtext", "quickbar", "targets", "players", "inventory", "spells"]
+# exclude = ["bounty", "society"]
 # order = ["main", "thoughts", "quickbar"]
 
 # --- Performance Overlay (Debug) ---

@@ -156,7 +156,12 @@ impl MessageProcessor {
 
     /// Refresh internal config, parser presets, and caches after a reload.
     pub fn apply_config(&mut self, mut config: Config) {
+        let apply_start = std::time::Instant::now();
         crate::config::Config::compile_highlight_patterns(&mut config.highlights);
+        tracing::debug!(
+            "apply_config: compiled highlight patterns in {:?}",
+            apply_start.elapsed()
+        );
         self.config = config;
 
         // Log loaded presets for debugging
@@ -180,21 +185,46 @@ impl MessageProcessor {
         self.parser
             .update_event_patterns(self.config.event_patterns.clone());
 
+        let cache_start = std::time::Instant::now();
         self.update_squelch_patterns();
         self.update_redirect_cache();
         self.warned_empty_redirect_patterns.borrow_mut().clear();
+        tracing::debug!(
+            "apply_config: updated caches in {:?}",
+            cache_start.elapsed()
+        );
 
         // Update highlight engine with new patterns
         self.update_highlights();
+        tracing::debug!(
+            "apply_config: total elapsed {:?}",
+            apply_start.elapsed()
+        );
     }
 
     /// Update the highlight engine with current config patterns.
     /// Called on startup and when highlights are reloaded.
     pub fn update_highlights(&mut self) {
+        let start = std::time::Instant::now();
         let highlights: Vec<_> = self.config.highlights.values().cloned().collect();
         self.highlight_engine.update_patterns(highlights);
         self.highlight_engine
             .set_replace_enabled(self.config.highlight_settings.replace_enabled);
+        tracing::debug!("update_highlights: rebuild in {:?}", start.elapsed());
+    }
+
+    /// Update only highlight-related configuration and caches.
+    pub fn apply_highlights_config(
+        &mut self,
+        highlights: std::collections::HashMap<String, crate::config::HighlightPattern>,
+        highlight_settings: crate::config::HighlightsConfig,
+    ) {
+        self.config.highlights = highlights;
+        self.config.highlight_settings = highlight_settings;
+        self.update_squelch_patterns();
+        self.update_redirect_cache();
+        self.warned_empty_redirect_patterns.borrow_mut().clear();
+        self.update_highlights();
     }
 
     /// Skip the next Spells clearStream (used after requesting spell link updates).

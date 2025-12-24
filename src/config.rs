@@ -789,6 +789,10 @@ fn default_focus_types() -> Vec<String> {
     ]
 }
 
+fn default_focus_exclude() -> Vec<String> {
+    Vec::new()
+}
+
 fn default_betrayer_active_color() -> Option<String> {
     Some("#ff4040".to_string())
 }
@@ -1764,6 +1768,8 @@ pub struct FocusConfig {
     pub order: Vec<String>,
     #[serde(default = "default_focus_types")]
     pub types: Vec<String>,
+    #[serde(default = "default_focus_exclude")]
+    pub exclude: Vec<String>,
 }
 
 impl Default for FocusConfig {
@@ -1771,6 +1777,7 @@ impl Default for FocusConfig {
         Self {
             order: Vec::new(),
             types: default_focus_types(),
+            exclude: default_focus_exclude(),
         }
     }
 }

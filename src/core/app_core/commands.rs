@@ -80,6 +80,7 @@ impl AppCore {
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
+        tracing::debug!("handle_dot_command: '{}'", command);
 
         match cmd.as_str() {
             // Application commands
@@ -373,6 +374,7 @@ impl AppCore {
 
             // Reload config from disk
             "reload" => {
+                tracing::debug!("handle_dot_command: reload args {:?}", parts.get(1));
                 if parts.len() < 2 {
                     // Reload everything
                     self.reload_all();
@@ -390,6 +392,7 @@ impl AppCore {
                         }
                     }
                 }
+                tracing::debug!("handle_dot_command: reload complete");
             }
 
             "toggletransparency" | "transparency" => {

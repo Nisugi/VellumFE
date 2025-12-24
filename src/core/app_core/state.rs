@@ -580,6 +580,13 @@ impl AppCore {
                 focusable.insert(entry.trim().to_lowercase());
             }
         }
+        let mut excluded = std::collections::HashSet::new();
+        for entry in &focus_config.exclude {
+            let trimmed = entry.trim();
+            if !trimmed.is_empty() {
+                excluded.insert(trimmed.to_lowercase());
+            }
+        }
 
         let mut names = Vec::new();
 
@@ -587,6 +594,9 @@ impl AppCore {
             for name in &focus_config.order {
                 let trimmed = name.trim();
                 if trimmed.is_empty() {
+                    continue;
+                }
+                if excluded.contains(&trimmed.to_lowercase()) {
                     continue;
                 }
                 if let Some(window) = self.ui_state.windows.get(trimmed) {
@@ -604,6 +614,9 @@ impl AppCore {
                     continue;
                 }
                 let name = window_def.name();
+                if excluded.contains(&name.to_lowercase()) {
+                    continue;
+                }
                 if let Some(window) = self.ui_state.windows.get(name) {
                     if Self::is_focusable_widget(&window.widget_type, &focusable) {
                         names.push(name.to_string());
@@ -614,6 +627,9 @@ impl AppCore {
 
         for (name, window) in &self.ui_state.windows {
             if !window.visible {
+                continue;
+            }
+            if excluded.contains(&name.to_lowercase()) {
                 continue;
             }
             if names.contains(name) {
@@ -3043,24 +3059,51 @@ impl AppCore {
 
     /// Reload highlights from disk
     pub fn reload_highlights(&mut self) {
+        tracing::debug!("reload_highlights: start");
         match crate::config::Config::load_highlights(self.config.character.as_deref()) {
             Ok(highlights) => {
                 self.config.highlights = highlights;
                 crate::config::Config::compile_highlight_patterns(&mut self.config.highlights);
                 self.message_processor.apply_config(self.config.clone());
+                tracing::debug!("reload_highlights: apply_config done");
                 self.add_system_message("Highlights reloaded");
-                match crate::spell_abbrevs::reload_spell_abbrevs() {
-                    Ok(()) => self.add_system_message("Spell abbreviations reloaded"),
-                    Err(e) => self.add_system_message(&format!(
-                        "Failed to reload spell abbreviations: {}",
-                        e
-                    )),
+                tracing::debug!("reload_highlights: system message queued");
+                let has_perception_window = self.ui_state.windows.values().any(|window| {
+                    matches!(window.content, crate::data::WindowContent::Perception(_))
+                });
+                let is_dr_game = self
+                    .config
+                    .connection
+                    .game
+                    .as_deref()
+                    .map(|game| game.to_ascii_lowercase().starts_with("dr"))
+                    .unwrap_or(false);
+                if has_perception_window && is_dr_game {
+                    tracing::debug!("reload_highlights: before reload_spell_abbrevs");
+                    match crate::spell_abbrevs::reload_spell_abbrevs() {
+                        Ok(()) => {
+                            self.add_system_message("Spell abbreviations reloaded");
+                            tracing::debug!("reload_highlights: spell abbrevs reloaded");
+                        }
+                        Err(e) => self.add_system_message(&format!(
+                            "Failed to reload spell abbreviations: {}",
+                            e
+                        )),
+                    }
+                    tracing::debug!("reload_highlights: after reload_spell_abbrevs");
+                } else {
+                    tracing::debug!(
+                        "reload_highlights: skipping spell abbrevs (perception_window={}, dr_game={})",
+                        has_perception_window,
+                        is_dr_game
+                    );
                 }
             }
             Err(e) => {
                 self.add_system_message(&format!("Failed to reload highlights: {}", e));
             }
         }
+        tracing::debug!("reload_highlights: end");
     }
 
     /// Reload keybinds from disk

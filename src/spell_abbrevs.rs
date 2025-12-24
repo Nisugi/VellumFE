@@ -63,19 +63,44 @@ pub fn abbreviate_spells(text: &str) -> String {
 
 /// Reload spell abbreviations from disk and rebuild the matcher.
 pub fn reload_spell_abbrevs() -> Result<(), String> {
+    let start = std::time::Instant::now();
+    tracing::debug!("reload_spell_abbrevs: start");
+    // Ensure SPELL_MATCHER is initialized before taking ABBREVS write lock to avoid deadlock.
+    std::sync::LazyLock::force(&SPELL_MATCHER);
     let map = load_spell_abbrevs();
+    tracing::debug!(
+        "reload_spell_abbrevs: loaded map ({} entries) in {:?}",
+        map.len(),
+        start.elapsed()
+    );
     let matcher = build_matcher(&map);
+    tracing::debug!(
+        "reload_spell_abbrevs: built matcher in {:?}",
+        start.elapsed()
+    );
 
-    let mut abbrevs = SPELL_ABBREVIATIONS
-        .write()
-        .map_err(|_| "Spell abbreviation lock poisoned".to_string())?;
-    *abbrevs = map;
+    {
+        let mut abbrevs = SPELL_ABBREVIATIONS
+            .try_write()
+            .map_err(|_| "Spell abbreviation lock busy".to_string())?;
+        *abbrevs = map;
+    }
+    tracing::debug!("reload_spell_abbrevs: updated map in {:?}", start.elapsed());
 
-    let mut matcher_lock = SPELL_MATCHER
-        .write()
-        .map_err(|_| "Spell matcher lock poisoned".to_string())?;
-    *matcher_lock = matcher;
+    tracing::debug!("reload_spell_abbrevs: spawning matcher update");
+    std::thread::spawn(move || {
+        let mut matcher_lock = match SPELL_MATCHER.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!("Spell matcher lock poisoned; recovering");
+                poisoned.into_inner()
+            }
+        };
+        *matcher_lock = matcher;
+        tracing::debug!("reload_spell_abbrevs: updated matcher");
+    });
 
+    tracing::debug!("reload_spell_abbrevs: end in {:?}", start.elapsed());
     Ok(())
 }
 

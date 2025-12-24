@@ -360,6 +360,7 @@ impl super::TuiFrontend {
         command: String,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
+        tracing::debug!("handle_command_submission: start '{}'", command);
         if command.starts_with(".savelayout ") || command == ".savelayout" {
             let name = command
                 .strip_prefix(".savelayout ")
@@ -384,21 +385,26 @@ impl super::TuiFrontend {
             app_core.needs_render = true;
         } else {
             let to_send = app_core.send_command(command)?;
+            tracing::debug!("handle_command_submission: send_command returned '{}'", to_send);
             if to_send.starts_with("action:") {
                 // Handle internal UI actions locally instead of sending to the game
                 menu_actions::handle_menu_action(app_core, self, &to_send)?;
                 app_core.needs_render = true;
+                tracing::debug!("handle_command_submission: handled action '{}'", to_send);
                 return Ok(None);
             }
 
             if to_send.is_empty() {
                 app_core.needs_render = true;
+                tracing::debug!("handle_command_submission: no-op command");
                 return Ok(None);
             }
 
             app_core.needs_render = true;
+            tracing::debug!("handle_command_submission: queued for network");
             return Ok(Some(to_send));
         }
+        tracing::debug!("handle_command_submission: end");
         Ok(None)
     }
 

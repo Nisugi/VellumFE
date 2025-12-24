@@ -108,8 +108,12 @@ impl CoreHighlightEngine {
                     }
                     None // Don't compile as regex
                 } else {
-                    // Regular regex pattern
-                    Regex::new(&h.pattern).ok()
+                    // Regular regex pattern (reuse compiled regex when available)
+                    if let Some(regex) = h.compiled_regex.clone() {
+                        Some(regex)
+                    } else {
+                        Regex::new(&h.pattern).ok()
+                    }
                 }
             })
             .collect();
