@@ -20,7 +20,7 @@ Yes! VellumFE is open source under the MIT license.
 
 ### Does VellumFE work with DragonRealms?
 
-The parser supports the Stormfront XML protocol used by both GS4 and DR. DR support is planned but not fully tested.
+The parser supports the Wrayth XML protocol used by both GS4 and DR. DR support is planned but not fully tested.
 
 ## Connection
 
@@ -91,7 +91,7 @@ Press `F1` → Layout → Edit Windows, or use keyboard shortcuts to resize/move
 
 VellumFE itself doesn't run scripts. Use Lich for scripting and connect VellumFE as a frontend.
 
-### Can I use VellumFE with Stormfront scripts?
+### Can I use VellumFE with Wrayth scripts?
 
 If using Lich, yes - Lich handles all scripting. VellumFE just displays the output.
 

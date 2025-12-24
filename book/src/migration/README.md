@@ -12,7 +12,7 @@ If you're coming from another GemStone IV or DragonRealms client, these guides h
 |-----------------|-------|
 | Profanity | [From Profanity](./from-profanity.md) |
 | Wizard Front End | [From WFE](./from-wfe.md) |
-| StormFront | [From StormFront](./from-stormfront.md) |
+| Wrayth | [From Wrayth](./from-wrayth.md) |
 
 ## Common Migration Tasks
 

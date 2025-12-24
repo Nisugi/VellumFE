@@ -14,7 +14,7 @@ vellum-fe/
 ├── src/
 │   ├── main.rs          # CLI entry point (clap)
 │   ├── config.rs        # Configuration loading (TOML files)
-│   ├── parser.rs        # Stormfront XML protocol parser
+│   ├── parser.rs        # Wrayth XML protocol parser
 │   ├── network.rs       # TCP/TLS connections (Lich proxy or direct eAccess)
 │   ├── performance.rs   # Performance metrics tracking
 │   │

@@ -4,7 +4,7 @@ VellumFE's XML streaming parser converts GemStone IV/DragonRealms server data in
 
 ## Overview
 
-The game server sends an XML-based protocol called "Wizard Front End" (WFE) or "Stormfront" protocol. The `XmlParser` maintains state across chunks and emits high-level `ParsedElement` values.
+The game server sends an XML-based protocol called "Wizard Front End" (WFE) or "Wrayth" protocol. The `XmlParser` maintains state across chunks and emits high-level `ParsedElement` values.
 
 ## Parser Architecture
 

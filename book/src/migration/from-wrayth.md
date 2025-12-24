@@ -1,14 +1,14 @@
-# Migrating from StormFront
+# Migrating from Wrayth
 
-Guide for StormFront users transitioning to VellumFE.
+Guide for Wrayth users transitioning to VellumFE.
 
 ## Overview
 
-StormFront is Simutronics' official graphical client. VellumFE is an alternative terminal-based client with different strengths.
+Wrayth is Simutronics' official graphical client. VellumFE is an alternative terminal-based client with different strengths.
 
 ## Key Differences
 
-| Aspect | StormFront | VellumFE |
+| Aspect | Wrayth | VellumFE |
 |--------|------------|----------|
 | Type | Official GUI client | Third-party terminal |
 | Platform | Windows/macOS | Cross-platform terminal |
@@ -20,7 +20,7 @@ StormFront is Simutronics' official graphical client. VellumFE is an alternative
 
 ### Windows
 
-| StormFront | VellumFE |
+| Wrayth | VellumFE |
 |------------|----------|
 | Game Window | `text` widget |
 | Thoughts Window | `text` widget (thoughts stream) |
@@ -29,7 +29,7 @@ StormFront is Simutronics' official graphical client. VellumFE is an alternative
 
 ### Visual Elements
 
-| StormFront | VellumFE |
+| Wrayth | VellumFE |
 |------------|----------|
 | Health/Mana bars | `progress` widgets |
 | Compass rose | `compass` widget |
@@ -96,7 +96,7 @@ vellum-fe --dump-config > ~/.vellum-fe/config.toml
 
 ### 4. Create Layout
 
-Approximate StormFront layout:
+Approximate Wrayth layout:
 
 ```toml
 # ~/.vellum-fe/layout.toml
@@ -214,7 +214,7 @@ prompt = "> "
 
 ### 5. Set Up Keybinds
 
-StormFront uses basic keybinds. Expand with VellumFE:
+Wrayth uses basic keybinds. Expand with VellumFE:
 
 ```toml
 # ~/.vellum-fe/keybinds.toml
@@ -307,9 +307,9 @@ fg = "magenta"
 
 ## Visual Adaptation
 
-### StormFront Visual Elements
+### Wrayth Visual Elements
 
-StormFront provides:
+Wrayth provides:
 - Graphical status bars
 - Clickable compass
 - Character portrait
@@ -325,14 +325,14 @@ VellumFE provides text-based versions:
 
 ### Missing Features
 
-Some StormFront features don't have equivalents:
+Some Wrayth features don't have equivalents:
 - Character portrait
 - Graphical inventory icons
 - Animated status effects
 
 ## Gaining Lich Scripts
 
-StormFront users often don't use Lich. VellumFE + Lich provides:
+Wrayth users often don't use Lich. VellumFE + Lich provides:
 
 ### Popular Scripts
 
@@ -357,7 +357,7 @@ StormFront users often don't use Lich. VellumFE + Lich provides:
 - **Lower resources**: Faster, lighter
 - **Community support**: Active development
 
-## Tips for StormFront Users
+## Tips for Wrayth Users
 
 ### Terminal Navigation
 

@@ -43,7 +43,7 @@ cargo test -- --test-threads=1
 src/
 ├── main.rs           # CLI entry point (clap)
 ├── config.rs         # Configuration loading (TOML files)
-├── parser.rs         # Stormfront XML protocol parser
+├── parser.rs         # Wrayth XML protocol parser
 ├── network.rs        # TCP/TLS connections (Lich proxy or direct eAccess)
 │
 ├── core/             # Business logic layer (NO frontend imports)

@@ -142,7 +142,7 @@
 - [Migration Guides](./migration/README.md)
   - [From Profanity](./migration/from-profanity.md)
   - [From Wizard FE](./migration/from-wfe.md)
-  - [From Stormfront](./migration/from-stormfront.md)
+  - [From Wrayth](./migration/from-wrayth.md)
   - [Version History](./migration/version-history.md)
 
 ---

@@ -12,9 +12,9 @@ VellumFE draws significant inspiration from [Profanity](https://github.com/rspei
 
 [Lich](https://lichproject.org/) has been instrumental to the GemStone IV community, providing scripting capabilities and serving as an excellent proxy for frontend development. VellumFE's Lich mode exists thanks to Lich's well-designed proxy interface.
 
-### StormFront and Wizard
+### Wrayth and Wizard
 
-The official Simutronics clients (StormFront, Wizard Front End) established the standard for GemStone IV interfaces and defined the XML protocol that VellumFE parses.
+The official Simutronics clients (Wrayth, Wizard Front End) established the standard for GemStone IV interfaces and defined the XML protocol that VellumFE parses.
 
 ## Open Source Libraries
 
