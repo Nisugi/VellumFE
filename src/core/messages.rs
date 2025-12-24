@@ -1966,16 +1966,9 @@ impl MessageProcessor {
                 }
                 WindowContent::Spells(content) => {
                     // Check if this spells window listens to the current stream
-                    tracing::debug!(
-                        "Spells window '{}': checking stream '{}' against subscribed streams {:?}",
-                        window_name, self.current_stream, content.streams
-                    );
                     if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
-                        tracing::debug!("Spells window '{}': MATCHED stream '{}'", window_name, self.current_stream);
                         content.add_line(line.clone());
                         added_here = true;
-                    } else {
-                        tracing::debug!("Spells window '{}': NO MATCH for stream '{}'", window_name, self.current_stream);
                     }
                 }
                 WindowContent::TabbedText(tab_content) => {
@@ -2276,10 +2269,6 @@ impl MessageProcessor {
             // Store as new previous spells
             self.previous_spells = self.spells_buffer.clone();
         } else {
-            tracing::debug!(
-                "Spells unchanged - skipping update ({} lines)",
-                self.spells_buffer.len()
-            );
         }
 
         // NOTE: Unlike inventory, we do NOT clear spells_buffer here
