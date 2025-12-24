@@ -49,7 +49,8 @@ fn get_action_context(mode: &InputMode) -> ActionContext {
         | InputMode::Navigation
         | InputMode::History
         | InputMode::Search
-        | InputMode::Menu => ActionContext::Browser, // Fallback (shouldn't be called)
+        | InputMode::Menu
+        | InputMode::Dialog => ActionContext::Browser, // Fallback (shouldn't be called)
     }
 }
 
@@ -93,5 +94,6 @@ mod tests {
         assert!(has_priority_window(&InputMode::SettingsEditor));
         assert!(has_priority_window(&InputMode::Search));
         assert!(has_priority_window(&InputMode::Menu));
+        assert!(has_priority_window(&InputMode::Dialog));
     }
 }

@@ -94,6 +94,7 @@ pub struct TextWindow {
     timestamp_position: TimestampPosition,
     // Stream name for current line being built (for stream-filtered highlights)
     current_line_stream: String,
+    wordwrap: bool,
 }
 
 impl Clone for TextWindow {
@@ -127,6 +128,7 @@ impl Clone for TextWindow {
             show_timestamps: self.show_timestamps,
             timestamp_position: self.timestamp_position,
             current_line_stream: self.current_line_stream.clone(),
+            wordwrap: self.wordwrap,
         }
     }
 }
@@ -161,6 +163,7 @@ impl TextWindow {
             timestamp_position: TimestampPosition::End, // Default to end of line
             links_enabled: true,           // Links enabled by default
             current_line_stream: String::new(), // No stream set yet
+            wordwrap: true,
         }
     }
 
@@ -231,6 +234,13 @@ impl TextWindow {
 
     pub fn set_timestamp_position(&mut self, position: TimestampPosition) {
         self.timestamp_position = position;
+    }
+
+    pub fn set_wordwrap(&mut self, enabled: bool) {
+        if self.wordwrap != enabled {
+            self.wordwrap = enabled;
+            self.needs_rewrap = true;
+        }
     }
 
     pub fn toggle_links(&mut self) {
@@ -400,6 +410,19 @@ impl TextWindow {
     ) -> Vec<WrappedLine> {
         if width == 0 {
             return vec![];
+        }
+        if !self.wordwrap {
+            let mut line_spans = Vec::new();
+            for (text, style, span_type, link) in spans {
+                Self::append_to_line(
+                    &mut line_spans,
+                    text.clone(),
+                    *style,
+                    *span_type,
+                    link.clone(),
+                );
+            }
+            return vec![WrappedLine { spans: line_spans }];
         }
 
         let mut result = Vec::new();

@@ -59,6 +59,81 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
 
 // TUI-specific methods (not part of Frontend trait)
 impl TuiFrontend {
+    pub(super) fn open_quickbar_switcher(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        window_pos: crate::data::WindowPosition,
+    ) {
+        use crate::data::ui_state::{InputMode, PopupMenu, PopupMenuItem};
+
+        let mut ids: Vec<String> = if app_core.ui_state.quickbar_order.is_empty() {
+            Vec::new()
+        } else {
+            app_core.ui_state.quickbar_order.clone()
+        };
+
+        ids.retain(|id| !id.trim().is_empty());
+
+        let mut missing: Vec<String> = app_core
+            .ui_state
+            .quickbars
+            .keys()
+            .filter(|id| !ids.iter().any(|existing| existing == *id))
+            .cloned()
+            .collect();
+        missing.sort();
+        if !missing.is_empty() {
+            ids.extend(missing);
+        }
+
+        if ids.is_empty() {
+            let mut keys: Vec<String> = app_core.ui_state.quickbars.keys().cloned().collect();
+            keys.sort();
+            ids = keys;
+        }
+
+        let mut items = Vec::new();
+        for id in &ids {
+            let label = app_core
+                .ui_state
+                .quickbars
+                .get(id)
+                .and_then(|data| data.title.clone())
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| id.clone());
+            items.push(PopupMenuItem {
+                text: label,
+                command: format!("_qlink change {}", id),
+                disabled: false,
+            });
+        }
+
+        if items.is_empty() {
+            return;
+        }
+
+        let menu_height = items.len() as u16 + 2;
+        let menu_x = window_pos.x;
+        let menu_y = if window_pos.y >= menu_height {
+            window_pos.y - menu_height
+        } else {
+            window_pos.y.saturating_add(1)
+        };
+
+        let mut menu = PopupMenu::new(items, (menu_x, menu_y));
+        if let Some(active_id) = app_core.ui_state.active_quickbar_id.as_ref() {
+            if let Some(index) = ids.iter().position(|id| id == active_id) {
+                menu.selected = index;
+            }
+        }
+
+        app_core.ui_state.popup_menu = Some(menu);
+        app_core.ui_state.submenu = None;
+        app_core.ui_state.nested_submenu = None;
+        app_core.ui_state.deep_submenu = None;
+        app_core.ui_state.input_mode = InputMode::Menu;
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -70,6 +145,7 @@ impl TuiFrontend {
         use crate::data::ui_state::InputMode;
         use crate::frontend::MouseEventKind;
         use crate::data::{DragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
 
         let kind = &mouse_event.kind;
@@ -182,6 +258,53 @@ impl TuiFrontend {
             }
         }
 
+        if app_core.ui_state.input_mode == InputMode::Dialog {
+            let (width, height) = self.size();
+            let screen_area = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            let mut command_to_send: Option<String> = None;
+            let mut close_dialog = false;
+
+            {
+                let Some(dialog_state) = app_core.ui_state.active_dialog.as_mut() else {
+                    app_core.ui_state.input_mode = InputMode::Normal;
+                    app_core.needs_render = true;
+                    return Ok((true, None));
+                };
+
+                if let MouseEventKind::Down(crate::frontend::MouseButton::Left) = kind {
+                    let layout = dialog::compute_dialog_layout(screen_area, dialog_state);
+                    if let Some(field_index) = dialog::hit_test_field(&layout, *x, *y) {
+                        Self::set_dialog_focus(dialog_state, Some(field_index));
+                        app_core.needs_render = true;
+                        return Ok((true, None));
+                    }
+
+                    if let Some(index) = dialog::hit_test_button(&layout, *x, *y) {
+                        Self::set_dialog_focus(dialog_state, None);
+                        dialog_state.selected = index;
+                        let (cmd, should_close) =
+                            Self::activate_dialog_button(dialog_state, index);
+                        command_to_send = cmd;
+                        close_dialog = should_close;
+                    }
+                    app_core.needs_render = true;
+                }
+            }
+
+            if close_dialog {
+                app_core.ui_state.active_dialog = None;
+                app_core.ui_state.input_mode = InputMode::Normal;
+            }
+
+            return Ok((true, command_to_send));
+        }
+
         match kind {
             MouseEventKind::ScrollUp => {
                 // Find topmost window at mouse position (ephemeral windows have higher z-order)
@@ -215,7 +338,12 @@ impl TuiFrontend {
                             as u16
                             + 4; // +4 for borders and padding
 
-                        let menu_area = (pos.0, pos.1, menu_width, menu_height);
+                        let (screen_width, screen_height) = self.size();
+                        let max_x = screen_width.saturating_sub(menu_width);
+                        let max_y = screen_height.saturating_sub(menu_height);
+                        let menu_x = pos.0.min(max_x);
+                        let menu_y = pos.1.min(max_y);
+                        let menu_area = (menu_x, menu_y, menu_width, menu_height);
 
                         if let Some(index) = menu.check_click(*x, *y, menu_area) {
                             clicked_item = menu.get_items().get(index).cloned();
@@ -301,6 +429,15 @@ impl TuiFrontend {
                                 app_core.needs_render = true;
                                 return Ok((true, None));
                             } else {
+                                if let Some(id) = command.strip_prefix("_qlink change ") {
+                                    let id = id.trim();
+                                    if !id.is_empty() {
+                                        app_core.ui_state.active_quickbar_id = Some(id.to_string());
+                                        if !app_core.ui_state.quickbar_order.contains(&id.to_string()) {
+                                            app_core.ui_state.quickbar_order.push(id.to_string());
+                                        }
+                                    }
+                                }
                                 // Game command - return it for sending to server
                                 app_core.needs_render = true;
                                 return Ok((true, Some(format!("{}\n", command))));
@@ -323,6 +460,49 @@ impl TuiFrontend {
 
                 // Mouse down handling (find links, start drags)
                 app_core.ui_state.selection_state = None;
+
+                let topmost_window = find_topmost_window_at(app_core, *x, *y);
+                let (is_quickbar, window_pos) = app_core
+                    .ui_state
+                    .get_window(&topmost_window)
+                    .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
+                    .unwrap_or((false, None));
+
+                if is_quickbar {
+                    if let Some(quickbar_widget) =
+                        self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
+                    {
+                        let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0,
+                        });
+                        let rect = Rect {
+                            x: window_pos.x,
+                            y: window_pos.y,
+                            width: window_pos.width,
+                            height: window_pos.height,
+                        };
+                        if let Some(action) = quickbar_widget.handle_click(*x, *y, rect) {
+                            app_core.needs_render = true;
+                            match action {
+                                crate::frontend::tui::quickbar::QuickbarAction::OpenSwitcher => {
+                                    self.open_quickbar_switcher(app_core, window_pos);
+                                    app_core.needs_render = true;
+                                    return Ok((true, None));
+                                }
+                                crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
+                                    return Ok((true, Some(command)));
+                                }
+                                crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
+                                    let command = app_core.request_menu(exist, noun, (*x, *y));
+                                    return Ok((true, Some(command)));
+                                }
+                            }
+                        }
+                    }
+                }
 
                 let mut found_window = None;
                 let mut drag_op = None;
@@ -891,6 +1071,10 @@ impl TuiFrontend {
         // LAYER 1 & 2: Priority windows (browsers, forms, editors) - handle ALL keys
         // These modes get first priority and consume most input
         match app_core.ui_state.input_mode {
+            InputMode::Dialog => {
+                let result = self.handle_dialog_mode_keys(code, modifiers, app_core)?;
+                return Ok(result);
+            }
             InputMode::HighlightBrowser => {
                 if let Some(ref mut browser) = self.highlight_browser {
                     let key_event = crate::frontend::common::KeyEvent { code, modifiers };
@@ -2062,6 +2246,267 @@ impl TuiFrontend {
         self.handle_normal_mode_keys(code, modifiers, app_core)
     }
 
+    /// Handle Dialog mode keyboard navigation
+    fn handle_dialog_mode_keys(
+        &mut self,
+        code: crate::frontend::KeyCode,
+        _modifiers: crate::frontend::KeyModifiers,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<String>> {
+        use crate::data::ui_state::InputMode;
+        use crate::frontend::KeyCode;
+
+        let mut command_to_send: Option<String> = None;
+        let mut close_dialog = false;
+
+        {
+            let Some(dialog) = app_core.ui_state.active_dialog.as_mut() else {
+                app_core.ui_state.input_mode = InputMode::Normal;
+                app_core.needs_render = true;
+                return Ok(None);
+            };
+
+            if let Some(field_index) = dialog.focused_field {
+                if field_index >= dialog.fields.len() {
+                    Self::set_dialog_focus(dialog, None);
+                }
+            }
+
+            if let Some(field_index) = dialog.focused_field {
+                let field = &mut dialog.fields[field_index];
+                match code {
+                    KeyCode::Esc => close_dialog = true,
+                    KeyCode::Tab => {
+                        Self::move_dialog_focus(dialog, false);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::BackTab => {
+                        Self::move_dialog_focus(dialog, true);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Up => {
+                        Self::move_dialog_focus(dialog, true);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Down => {
+                        Self::move_dialog_focus(dialog, false);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Left => {
+                        if field.cursor > 0 {
+                            field.cursor -= 1;
+                            app_core.needs_render = true;
+                        }
+                    }
+                    KeyCode::Right => {
+                        if field.cursor < field.value.len() {
+                            field.cursor += 1;
+                            app_core.needs_render = true;
+                        }
+                    }
+                    KeyCode::Home => {
+                        field.cursor = 0;
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::End => {
+                        field.cursor = field.value.len();
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Backspace => {
+                        if field.cursor > 0 && !field.value.is_empty() {
+                            let remove_at = field.cursor - 1;
+                            field.value.remove(remove_at);
+                            field.cursor -= 1;
+                            app_core.needs_render = true;
+                        }
+                    }
+                    KeyCode::Delete => {
+                        if field.cursor < field.value.len() {
+                            field.value.remove(field.cursor);
+                            app_core.needs_render = true;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(button_id) = field.enter_button.clone() {
+                            if let Some(index) = Self::find_dialog_button_index(dialog, &button_id)
+                            {
+                                dialog.selected = index;
+                                let (cmd, should_close) =
+                                    Self::activate_dialog_button(dialog, index);
+                                command_to_send = cmd;
+                                close_dialog = should_close;
+                            }
+                        }
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Char(ch) => {
+                        field.value.insert(field.cursor, ch);
+                        field.cursor += 1;
+                        app_core.needs_render = true;
+                    }
+                    _ => {}
+                }
+            } else {
+                match code {
+                    KeyCode::Esc => {
+                        close_dialog = true;
+                    }
+                    KeyCode::Tab => {
+                        Self::move_dialog_focus(dialog, false);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::BackTab => {
+                        Self::move_dialog_focus(dialog, true);
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Up | KeyCode::Left => {
+                        if !dialog.buttons.is_empty() {
+                            if dialog.selected == 0 {
+                                dialog.selected = dialog.buttons.len() - 1;
+                            } else {
+                                dialog.selected -= 1;
+                            }
+                        }
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Down | KeyCode::Right => {
+                        if !dialog.buttons.is_empty() {
+                            dialog.selected = (dialog.selected + 1) % dialog.buttons.len();
+                        }
+                        app_core.needs_render = true;
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if !dialog.buttons.is_empty() {
+                            let (cmd, should_close) =
+                                Self::activate_dialog_button(dialog, dialog.selected);
+                            command_to_send = cmd;
+                            close_dialog = should_close;
+                        }
+                        app_core.needs_render = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if close_dialog {
+            app_core.ui_state.active_dialog = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
+        }
+
+        Ok(command_to_send)
+    }
+
+    fn dialog_command_with_placeholders(
+        dialog: &crate::data::DialogState,
+        command: &str,
+    ) -> String {
+        let mut resolved = command.to_string();
+        for field in &dialog.fields {
+            let token = format!("%{}%", field.id);
+            resolved = resolved.replace(&token, &field.value);
+        }
+        resolved
+    }
+
+    fn find_dialog_button_index(dialog: &crate::data::DialogState, id: &str) -> Option<usize> {
+        dialog.buttons.iter().position(|button| button.id == id)
+    }
+
+    fn set_dialog_focus(dialog: &mut crate::data::DialogState, focused: Option<usize>) {
+        dialog.focused_field = focused.filter(|idx| *idx < dialog.fields.len());
+        for (idx, field) in dialog.fields.iter_mut().enumerate() {
+            field.focused = dialog.focused_field == Some(idx);
+            if field.cursor > field.value.len() {
+                field.cursor = field.value.len();
+            }
+        }
+    }
+
+    fn move_dialog_focus(dialog: &mut crate::data::DialogState, reverse: bool) {
+        let field_count = dialog.fields.len();
+        let button_count = dialog.buttons.len();
+        let total = field_count + button_count;
+        if total == 0 {
+            return;
+        }
+
+        if dialog.focused_field.is_none() && field_count > 0 {
+            if reverse {
+                if button_count > 0 {
+                    Self::set_dialog_focus(dialog, None);
+                    dialog.selected = button_count - 1;
+                } else {
+                    Self::set_dialog_focus(dialog, Some(field_count - 1));
+                }
+            } else {
+                Self::set_dialog_focus(dialog, Some(0));
+            }
+            return;
+        }
+
+        let current_index = if let Some(field_idx) = dialog.focused_field {
+            field_idx
+        } else if button_count > 0 {
+            field_count + dialog.selected
+        } else {
+            0
+        };
+
+        let next_index = if reverse {
+            (current_index + total - 1) % total
+        } else {
+            (current_index + 1) % total
+        };
+
+        if next_index < field_count {
+            Self::set_dialog_focus(dialog, Some(next_index));
+        } else {
+            Self::set_dialog_focus(dialog, None);
+            dialog.selected = next_index - field_count;
+        }
+    }
+
+    fn activate_dialog_button(
+        dialog: &mut crate::data::DialogState,
+        index: usize,
+    ) -> (Option<String>, bool) {
+        let mut command_to_send: Option<String> = None;
+        let mut close_dialog = false;
+
+        if let Some(button) = dialog.buttons.get(index) {
+            let button_id = button.id.clone();
+            let button_cmd = button.command.clone();
+            let button_autosend = button.autosend;
+            let button_is_radio = button.is_radio;
+            let button_is_close = button.is_close;
+            let button_group = button.group.clone();
+
+            if button_is_close {
+                if !button_cmd.trim().is_empty() {
+                    let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
+                    command_to_send = Some(format!("{}\n", resolved));
+                }
+                close_dialog = true;
+            } else if button_is_radio {
+                for other in dialog.buttons.iter_mut() {
+                    if other.is_radio && other.group == button_group {
+                        other.selected = other.id == button_id;
+                    }
+                }
+                if button_autosend {
+                    let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
+                    command_to_send = Some(format!("{}\n", resolved));
+                }
+            } else {
+                let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
+                command_to_send = Some(format!("{}\n", resolved));
+            }
+        }
+
+        (command_to_send, close_dialog)
+    }
+
     /// Handle Menu mode keyboard navigation (extracted from main.rs Phase 4.2)
     fn handle_menu_mode_keys(
         &mut self,
@@ -2488,6 +2933,16 @@ impl TuiFrontend {
                 handle_menu_action_fn(app_core, self, &action_command)?;
                 app_core.needs_render = true;
             } else {
+                if let Some(id) = command.strip_prefix("_qlink change ") {
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        app_core.ui_state.active_quickbar_id = Some(id.to_string());
+                        if !app_core.ui_state.quickbar_order.contains(&id.to_string()) {
+                            app_core.ui_state.quickbar_order.push(id.to_string());
+                        }
+                        app_core.needs_render = true;
+                    }
+                }
                 // Game command or empty selection: close menus
                 app_core.ui_state.popup_menu = None;
                 app_core.ui_state.submenu = None;

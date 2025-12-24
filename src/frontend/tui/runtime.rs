@@ -85,6 +85,21 @@ async fn async_run(
     // Get terminal size and initialize windows
     let (width, height) = frontend.size();
     app_core.init_windows(width, height);
+    if direct.is_none() {
+        app_core.seed_default_quickbars_if_empty();
+        if app_core
+            .ui_state
+            .get_window_by_type(crate::data::window::WidgetType::Spells, None)
+            .is_some()
+        {
+            let command = "_spell _spell_update_links\n".to_string();
+            app_core.message_processor.skip_next_spells_clear();
+            app_core
+                .perf_stats
+                .record_bytes_sent((command.len() + 1) as u64);
+            let _ = command_tx.send(command);
+        }
+    }
 
     // Spawn network connection task
     let network_handle = match direct {

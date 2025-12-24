@@ -200,6 +200,8 @@ pub struct Config {
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
+    #[serde(default)]
+    pub quickbars: QuickbarsConfig, // Custom quickbar definitions and defaults
 }
 
 /// Terminal size range to layout mapping
@@ -775,6 +777,41 @@ fn default_title_position() -> String {
     "top-left".to_string()
 }
 
+fn default_focus_types() -> Vec<String> {
+    vec![
+        "text".to_string(),
+        "tabbedtext".to_string(),
+        "quickbar".to_string(),
+        "targets".to_string(),
+        "players".to_string(),
+        "inventory".to_string(),
+        "spells".to_string(),
+    ]
+}
+
+fn default_betrayer_active_color() -> Option<String> {
+    Some("#ff4040".to_string())
+}
+
+fn default_open_dialog_blocklist() -> Vec<String> {
+    vec![
+        "combat".to_string(),
+        "injuries".to_string(),
+        "stance".to_string(),
+        "befriend".to_string(),
+        "espMasterDialog".to_string(),
+        "espMasterData".to_string(),
+        "Buffs".to_string(),
+        "Debuffs".to_string(),
+        "Cooldowns".to_string(),
+        "mapMaster".to_string(),
+        "encum".to_string(),
+        "minivitals".to_string(),
+        "expr".to_string(),
+        "Active Spells".to_string(),
+    ]
+}
+
 /// Tab configuration for TabbedText widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TabbedTextTab {
@@ -1111,6 +1148,50 @@ pub struct SpacerWidgetData {
     // No extra fields currently
 }
 
+/// Quickbar widget specific data
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuickbarWidgetData {
+    // No extra fields currently
+}
+
+/// Quickbar entry definition for custom quickbars
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum QuickbarEntryConfig {
+    Link {
+        label: String,
+        command: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        echo: Option<String>,
+    },
+    MenuLink {
+        label: String,
+        exist: String,
+        noun: String,
+    },
+    #[serde(alias = "sep")]
+    Separator,
+}
+
+/// Custom quickbar definition
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuickbarDefinition {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub entries: Vec<QuickbarEntryConfig>,
+}
+
+/// Custom quickbar configuration
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct QuickbarsConfig {
+    #[serde(default)]
+    pub custom: Vec<QuickbarDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
 /// Spells window widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpellsWidgetData {
@@ -1407,6 +1488,14 @@ pub enum WindowDef {
         data: SpacerWidgetData,
     },
 
+    #[serde(rename = "quickbar")]
+    Quickbar {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: QuickbarWidgetData,
+    },
+
     #[serde(rename = "spells")]
     Spells {
         #[serde(flatten)]
@@ -1455,6 +1544,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => &base.name,
             WindowDef::Container { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
+            WindowDef::Quickbar { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
@@ -1482,6 +1572,7 @@ impl WindowDef {
             WindowDef::Players { .. } => "players",
             WindowDef::Container { .. } => "container",
             WindowDef::Spacer { .. } => "spacer",
+            WindowDef::Quickbar { .. } => "quickbar",
             WindowDef::Spells { .. } => "spells",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
@@ -1509,6 +1600,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
+            WindowDef::Quickbar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
@@ -1536,6 +1628,7 @@ impl WindowDef {
             WindowDef::Players { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
+            WindowDef::Quickbar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
@@ -1630,6 +1723,12 @@ pub struct UiConfig {
     // Timestamp position (start or end of line)
     #[serde(default)]
     pub timestamp_position: TimestampPosition, // "start" or "end" (default: end)
+    #[serde(default = "default_betrayer_active_color")]
+    pub betrayer_active_color: Option<String>,
+    #[serde(default = "default_open_dialog_blocklist")]
+    pub open_dialog_blocklist: Vec<String>,
+    #[serde(default)]
+    pub focus: FocusConfig, // Tab focus behavior and order
 }
 
 impl Default for UiConfig {
@@ -1652,6 +1751,26 @@ impl Default for UiConfig {
             perf_stats_height: default_perf_stats_height(),
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
+            betrayer_active_color: default_betrayer_active_color(),
+            open_dialog_blocklist: default_open_dialog_blocklist(),
+            focus: FocusConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusConfig {
+    #[serde(default)]
+    pub order: Vec<String>,
+    #[serde(default = "default_focus_types")]
+    pub types: Vec<String>,
+}
+
+impl Default for FocusConfig {
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            types: default_focus_types(),
         }
     }
 }
@@ -2351,6 +2470,16 @@ impl Layout {
             }
         }
 
+        for window in &mut layout.windows {
+            if window.widget_type() == "targets" {
+                let base = window.base_mut();
+                if base.name == "dd_targets" {
+                    tracing::info!("Renaming legacy targets window 'dd_targets' -> 'targets'");
+                    base.name = "targets".to_string();
+                }
+            }
+        }
+
         Ok(layout)
     }
 
@@ -2800,6 +2929,21 @@ impl Config {
                     ..base_defaults.clone()
                 },
                 data: CommandInputWidgetData::default(),
+            }),
+
+            "quickbar" => Some(WindowDef::Quickbar {
+                base: WindowBase {
+                    name: "quickbar".to_string(),
+                    title: Some("Quickbar".to_string()),
+                    rows: 1,
+                    cols: 120,
+                    min_rows: Some(1),
+                    max_rows: Some(1),
+                    show_border: false,
+                    show_title: false,
+                    ..base_defaults.clone()
+                },
+                data: QuickbarWidgetData {},
             }),
 
             "health" => Some(WindowDef::Progress {
@@ -3684,17 +3828,35 @@ impl Config {
             "society" => Some(WindowDef::Text {
                 base: WindowBase {
                     name: "society".to_string(),
-                    title: Some("Society".to_string()),
-                    rows: 10,
+                    title: Some("Society Tasks".to_string()),
+                    rows: 15,
                     cols: 50,
                     show_border: true,
-                    text_color: Some("#9370DB".to_string()), // Medium purple
+                    text_color: Some("#FFD700".to_string()), // Gold
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
                     streams: vec!["society".to_string()],
-                    buffer_size: 500,
+                    buffer_size: 0, // VellumFE uses 0 - content is cleared and replaced
                     wordwrap: true,
+                    show_timestamps: false,
+                    timestamp_position: None,
+                },
+            }),
+
+            "betrayerpanel" => Some(WindowDef::Text {
+                base: WindowBase {
+                    name: "betrayerpanel".to_string(),
+                    title: Some("Betrayer".to_string()),
+                    rows: 6,
+                    cols: 50,
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: TextWidgetData {
+                    streams: Vec::new(),
+                    buffer_size: 100,
+                    wordwrap: false,
                     show_timestamps: false,
                     timestamp_position: None,
                 },
@@ -3957,6 +4119,7 @@ impl Config {
             "ambients".to_string(),
             "bounty".to_string(),
             "society".to_string(),
+            "betrayerpanel".to_string(),
             "text_custom".to_string(),
             // Tabbed text windows
             "chat".to_string(),
@@ -3986,6 +4149,7 @@ impl Config {
             "spells".to_string(),
             "compass".to_string(),
             "injuries".to_string(),
+            "quickbar".to_string(),
             "spacer".to_string(),
             "performance".to_string(),
             "perception".to_string(),
@@ -4617,7 +4781,7 @@ impl Config {
 
     /// Get the profile directory for a character (or "default" if none)
     /// Returns: ~/.vellum-fe/profiles/{character}/ or ~/.vellum-fe/profiles/default/
-    fn profile_dir(character: Option<&str>) -> Result<PathBuf> {
+    pub(crate) fn profile_dir(character: Option<&str>) -> Result<PathBuf> {
         let profile_name = character.unwrap_or("default");
         Ok(Self::config_dir()?.join("profiles").join(profile_name))
     }
@@ -4854,6 +5018,9 @@ impl Default for Config {
                 color_mode: ColorMode::default(),
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),
+                betrayer_active_color: default_betrayer_active_color(),
+                open_dialog_blocklist: default_open_dialog_blocklist(),
+                focus: FocusConfig::default(),
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
@@ -4865,6 +5032,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
+            quickbars: QuickbarsConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

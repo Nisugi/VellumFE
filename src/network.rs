@@ -420,6 +420,12 @@ async fn send_pid_handshake(stream: &mut TcpStream) -> Result<()> {
     stream.write_all(msg.as_bytes()).await?;
     stream.flush().await?;
     debug!("Sent frontend PID: {}", pid);
+
+    // Set frontend identity to stormfront for full feature parity with StormFront
+    stream.write_all(b";eq $frontend=\"stormfront\"\n").await?;
+    stream.flush().await?;
+    debug!("Set frontend identity to stormfront");
+
     Ok(())
 }
 

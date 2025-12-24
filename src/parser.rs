@@ -5,7 +5,7 @@
 //! operate on higher-level `ParsedElement` values instead of raw XML.
 
 use crate::config::EventAction;
-use crate::data::LinkData;
+use crate::data::{DialogButton, LinkData, QuickbarEntry};
 use regex::Regex;
 use std::sync::LazyLock;
 use std::collections::HashMap;
@@ -141,6 +141,9 @@ pub enum ParsedElement {
     ClearDialogData {
         id: String,
     },
+    CloseDialog {
+        id: String,
+    },
     RoomId {
         id: String,
     },
@@ -169,6 +172,38 @@ pub enum ParsedElement {
     MenuResponse {
         id: String,                            // Correlation ID (counter)
         coords: Vec<(String, Option<String>)>, // List of (coord, optional noun) pairs from <mi> tags
+    },
+    QuickbarOpen {
+        id: String,
+        title: Option<String>,
+    },
+    QuickbarEntries {
+        id: String,
+        clear: bool,
+        entries: Vec<QuickbarEntry>,
+    },
+    QuickbarSwitch {
+        id: String,
+    },
+    DialogOpen {
+        id: String,
+        title: Option<String>,
+    },
+    DialogButtons {
+        id: String,
+        clear: bool,
+        buttons: Vec<DialogButton>,
+    },
+    DialogFields {
+        id: String,
+        clear: bool,
+        fields: Vec<DialogFieldSpec>,
+        labels: Vec<DialogLabelSpec>,
+    },
+    DialogLabelList {
+        id: String,
+        clear: bool,
+        labels: Vec<DialogLabelSpec>,
     },
     Event {
         event_type: String,  // "stun", "webbed", "prone", etc.
@@ -199,6 +234,20 @@ pub enum ParsedElement {
         container_id: String,
         content: String, // Full line with links preserved
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct DialogFieldSpec {
+    pub id: String,
+    pub value: String,
+    pub enter_button: Option<String>,
+    pub focused: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DialogLabelSpec {
+    pub id: String,
+    pub value: String,
 }
 
 /// Tracks the currently active foreground/background/bold settings while the
@@ -340,6 +389,7 @@ impl XmlParser {
                 "left",
                 "right",
                 "compass",
+                "openDialog",
                 "dialogData",
                 "component",
                 "compDef",
@@ -559,6 +609,12 @@ impl XmlParser {
             // Call both handlers to cover all dialogData processing
             self.handle_dialog_data(tag, elements);
             self.handle_dialogdata(tag, elements);
+        } else if tag.starts_with("<openDialog ") {
+            self.handle_open_dialog(tag, elements);
+        } else if tag.starts_with("<closeDialog ") {
+            self.handle_close_dialog(tag, elements);
+        } else if tag.starts_with("<switchQuickBar ") {
+            self.handle_switch_quickbar(tag, elements);
         } else if tag.starts_with("<indicator ") {
             self.handle_indicator(tag, elements);
         } else if tag.starts_with("<progressBar ") {
@@ -810,10 +866,75 @@ impl XmlParser {
         // <dialogData id='injuries' clear='t'></dialogData>
         // <dialogData id='MiniBounty' clear='t'></dialogData>
 
-        if let Some(id) = Self::extract_attribute(tag, "id") {
+        let tag_head = match tag.find('>') {
+            Some(idx) => &tag[..idx],
+            None => tag,
+        };
+        if tag.contains("<cmdButton") || tag.contains("<closeButton") || tag.contains("<radio") {
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let buttons = Self::parse_dialog_buttons(tag);
+                    elements.push(ParsedElement::DialogButtons { id, clear, buttons });
+                    return;
+                }
+            }
+        }
+        if tag.contains("<editBox") {
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let (fields, labels) = Self::parse_dialog_fields(tag);
+                    if !fields.is_empty() || !labels.is_empty() {
+                        elements.push(ParsedElement::DialogFields {
+                            id,
+                            clear,
+                            fields,
+                            labels,
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+        if let Some(id) = Self::extract_attribute(tag_head, "id") {
+            if Self::is_quickbar_id(&id) {
+                let clear = Self::extract_attribute(tag_head, "clear")
+                    .map(|value| {
+                        matches!(value.as_str(), "t" | "true" | "1")
+                            || value.eq_ignore_ascii_case("true")
+                    })
+                    .unwrap_or(false);
+                let entries = Self::parse_quickbar_entries(tag);
+                elements.push(ParsedElement::QuickbarEntries { id, clear, entries });
+                return;
+            }
+            if id == "BetrayerPanel" {
+                let clear = Self::extract_attribute(tag_head, "clear")
+                    .map(|value| {
+                        matches!(value.as_str(), "t" | "true" | "1")
+                            || value.eq_ignore_ascii_case("true")
+                    })
+                    .unwrap_or(false);
+                let (_, labels) = Self::parse_dialog_fields(tag);
+                if clear || !labels.is_empty() {
+                    elements.push(ParsedElement::DialogLabelList { id, clear, labels });
+                    return;
+                }
+            }
             // Check for clear='t' attribute - emit ClearDialogData for generic windows
             // This handles clearing for windows like MiniBounty, and other text-based dialogData
-            if let Some(clear) = Self::extract_attribute(tag, "clear") {
+            if let Some(clear) = Self::extract_attribute(tag_head, "clear") {
                 if clear == "t" {
                     // For injuries and active effects, we have specialized handling below
                     // For everything else, emit a generic ClearDialogData event
@@ -831,7 +952,7 @@ impl XmlParser {
             // Handle Icon* status indicators (preserve casing after stripping prefix)
             if let Some(rest) = id.strip_prefix("Icon") {
                 let status = rest.to_string();
-                if let Some(value) = Self::extract_attribute(tag, "value") {
+                if let Some(value) = Self::extract_attribute(tag_head, "value") {
                     let active = value == "active";
                     elements.push(ParsedElement::StatusIndicator { id: status, active });
                 }
@@ -842,7 +963,7 @@ impl XmlParser {
                 // tracing::debug!("Parser found dialogData for injuries");
 
                 // Check for clear='t' attribute - this clears ALL injuries
-                if let Some(clear) = Self::extract_attribute(tag, "clear") {
+                if let Some(clear) = Self::extract_attribute(tag_head, "clear") {
                     if clear == "t" {
                         // tracing::debug!("Clearing all injuries (clear='t')");
                         // Emit clear events for all body parts
@@ -981,6 +1102,395 @@ impl XmlParser {
                 }
             }
         }
+    }
+
+    fn handle_open_dialog(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let tag_head = tag.split('>').next().unwrap_or(tag);
+        if let Some(id) = Self::extract_attribute(tag_head, "id") {
+            if Self::is_quickbar_id(&id) {
+                let title = Self::extract_attribute(tag_head, "title")
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                elements.push(ParsedElement::QuickbarOpen { id, title });
+            } else {
+                let title = Self::extract_attribute(tag_head, "title")
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                elements.push(ParsedElement::DialogOpen { id, title });
+            }
+        }
+
+        self.handle_embedded_quickbar_dialog_data(tag, elements);
+        self.handle_embedded_dialog_buttons(tag, elements);
+        self.handle_embedded_dialog_fields(tag, elements);
+    }
+
+    fn handle_embedded_quickbar_dialog_data(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_attribute(dialog_head, "id") {
+                if Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let entries = Self::parse_quickbar_entries(dialog_tag);
+                    elements.push(ParsedElement::QuickbarEntries { id, clear, entries });
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
+    }
+
+    fn handle_embedded_dialog_buttons(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            if !(dialog_tag.contains("<cmdButton")
+                || dialog_tag.contains("<closeButton")
+                || dialog_tag.contains("<radio"))
+            {
+                remaining = &remaining[end..];
+                continue;
+            }
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_dialog_data_id(dialog_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let buttons = Self::parse_dialog_buttons(dialog_tag);
+                    elements.push(ParsedElement::DialogButtons { id, clear, buttons });
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
+    }
+
+    fn handle_embedded_dialog_fields(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            if !dialog_tag.contains("<editBox") {
+                remaining = &remaining[end..];
+                continue;
+            }
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_dialog_data_id(dialog_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let (fields, labels) = Self::parse_dialog_fields(dialog_tag);
+                    if !fields.is_empty() || !labels.is_empty() {
+                        elements.push(ParsedElement::DialogFields {
+                            id,
+                            clear,
+                            fields,
+                            labels,
+                        });
+                    }
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
+    }
+
+    fn handle_switch_quickbar(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            if Self::is_quickbar_id(&id) {
+                elements.push(ParsedElement::QuickbarSwitch { id });
+            }
+        }
+    }
+
+    fn handle_close_dialog(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        if let Some(id) = Self::extract_attribute(tag, "id") {
+            elements.push(ParsedElement::CloseDialog { id });
+        }
+    }
+
+    fn is_quickbar_id(id: &str) -> bool {
+        id == "quick" || id.starts_with("quick-")
+    }
+
+    fn extract_dialog_data_id(tag_head: &str) -> Option<String> {
+        Self::extract_attribute(tag_head, "id")
+            .or_else(|| Self::extract_attribute(tag_head, "name"))
+    }
+
+    fn parse_quickbar_entries(tag: &str) -> Vec<QuickbarEntry> {
+        let mut entries = Vec::new();
+        let mut remaining = tag;
+
+        loop {
+            let label_pos = remaining.find("<label");
+            let link_pos = remaining.find("<link");
+            let menu_pos = remaining.find("<menuLink");
+            let sep_pos = remaining.find("<sep");
+
+            let mut next_pos = None;
+            let mut kind = "";
+
+            for (pos, label) in [
+                (label_pos, "label"),
+                (link_pos, "link"),
+                (menu_pos, "menuLink"),
+                (sep_pos, "sep"),
+            ] {
+                if let Some(pos) = pos {
+                    if next_pos.map(|current| pos < current).unwrap_or(true) {
+                        next_pos = Some(pos);
+                        kind = label;
+                    }
+                }
+            }
+
+            let Some(pos) = next_pos else { break };
+            remaining = &remaining[pos..];
+
+            let (tag_slice, advance_by) = if let Some(end) = remaining.find("/>") {
+                (&remaining[..end + 2], end + 2)
+            } else if let Some(end) = remaining.find('>') {
+                (&remaining[..end + 1], end + 1)
+            } else {
+                break;
+            };
+
+            if kind == "sep" {
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                if value.trim().is_empty() {
+                    entries.push(QuickbarEntry::Separator);
+                } else {
+                    let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                    entries.push(QuickbarEntry::Label { id, value });
+                }
+            } else if kind == "label" {
+                let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                entries.push(QuickbarEntry::Label { id, value });
+            } else if kind == "link" {
+                let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                let cmd = Self::extract_attribute(tag_slice, "cmd").unwrap_or_default();
+                let echo = Self::extract_attribute(tag_slice, "echo");
+                entries.push(QuickbarEntry::Link {
+                    id,
+                    value,
+                    cmd,
+                    echo,
+                });
+            } else if kind == "menuLink" {
+                let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                let exist = Self::extract_attribute(tag_slice, "exist").unwrap_or_default();
+                let noun = Self::extract_attribute(tag_slice, "noun").unwrap_or_default();
+                entries.push(QuickbarEntry::MenuLink {
+                    id,
+                    value,
+                    exist,
+                    noun,
+                });
+            }
+
+            remaining = &remaining[advance_by..];
+        }
+
+        entries
+    }
+
+    fn parse_dialog_buttons(tag: &str) -> Vec<DialogButton> {
+        let mut buttons = Vec::new();
+        let mut remaining = tag;
+
+        loop {
+            let cmd_pos = remaining.find("<cmdButton");
+            let close_pos = remaining.find("<closeButton");
+            let radio_pos = remaining.find("<radio");
+
+            let mut next_pos = None;
+            let mut kind = "";
+
+            for (pos, label) in [
+                (cmd_pos, "cmdButton"),
+                (close_pos, "closeButton"),
+                (radio_pos, "radio"),
+            ] {
+                if let Some(pos) = pos {
+                    if next_pos.map(|current| pos < current).unwrap_or(true) {
+                        next_pos = Some(pos);
+                        kind = label;
+                    }
+                }
+            }
+
+            let Some(pos) = next_pos else { break };
+            remaining = &remaining[pos..];
+
+            let (tag_slice, advance_by) = if let Some(end) = remaining.find("/>") {
+                (&remaining[..end + 2], end + 2)
+            } else if let Some(end) = remaining.find('>') {
+                (&remaining[..end + 1], end + 1)
+            } else {
+                break;
+            };
+
+            let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+            let label = if kind == "radio" {
+                Self::extract_attribute(tag_slice, "text").unwrap_or_else(|| id.clone())
+            } else {
+                Self::extract_attribute(tag_slice, "value").unwrap_or_else(|| id.clone())
+            };
+            let cmd = Self::extract_attribute(tag_slice, "cmd").unwrap_or_default();
+            let is_close = kind == "closeButton" || cmd.trim().is_empty();
+            let is_radio = kind == "radio";
+            let selected = if is_radio {
+                Self::extract_attribute(tag_slice, "value")
+                    .map(|value| {
+                        matches!(value.as_str(), "1" | "true" | "t")
+                            || value.eq_ignore_ascii_case("true")
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let autosend = if is_radio {
+                Self::extract_attribute(tag_slice, "autosend")
+                    .map(|value| {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() {
+                            true
+                        } else {
+                            !matches!(trimmed, "0" | "false" | "f")
+                                && !trimmed.eq_ignore_ascii_case("false")
+                        }
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let group = if is_radio {
+                Self::extract_attribute(tag_slice, "group")
+            } else {
+                None
+            };
+
+            buttons.push(DialogButton {
+                id,
+                label,
+                command: cmd,
+                is_close,
+                is_radio,
+                selected,
+                autosend,
+                group,
+            });
+
+            remaining = &remaining[advance_by..];
+        }
+
+        buttons
+    }
+
+    fn parse_dialog_fields(tag: &str) -> (Vec<DialogFieldSpec>, Vec<DialogLabelSpec>) {
+        let mut fields = Vec::new();
+        let mut labels = Vec::new();
+        let mut remaining = tag;
+
+        loop {
+            let edit_pos = remaining.find("<editBox");
+            let label_pos = remaining.find("<label");
+
+            let mut next_pos = None;
+            let mut kind = "";
+
+            for (pos, label) in [(edit_pos, "editBox"), (label_pos, "label")] {
+                if let Some(pos) = pos {
+                    if next_pos.map(|current| pos < current).unwrap_or(true) {
+                        next_pos = Some(pos);
+                        kind = label;
+                    }
+                }
+            }
+
+            let Some(pos) = next_pos else { break };
+            remaining = &remaining[pos..];
+
+            let (tag_slice, advance_by) = if let Some(end) = remaining.find("/>") {
+                (&remaining[..end + 2], end + 2)
+            } else if let Some(end) = remaining.find('>') {
+                (&remaining[..end + 1], end + 1)
+            } else {
+                break;
+            };
+
+            if kind == "editBox" {
+                let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                let enter_button = Self::extract_attribute(tag_slice, "enterButton");
+                let focused = Self::extract_attribute(tag_slice, "focus").is_some();
+
+                fields.push(DialogFieldSpec {
+                    id,
+                    value,
+                    enter_button,
+                    focused,
+                });
+            } else if kind == "label" {
+                let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
+                let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
+                let value = Self::sanitize_dialog_label(&value);
+                labels.push(DialogLabelSpec { id, value });
+            }
+
+            remaining = &remaining[advance_by..];
+        }
+
+        (fields, labels)
+    }
+
+    fn sanitize_dialog_label(value: &str) -> String {
+        let mut cleaned = value.to_string();
+        if let Some(pos) = cleaned.find("&quot;") {
+            cleaned.truncate(pos);
+        }
+        cleaned.trim().to_string()
     }
 
     fn handle_progressbar(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
@@ -1291,6 +1801,7 @@ impl XmlParser {
 
     fn handle_menu_item(&mut self, tag: &str) {
         // <mi coord="2524,1898"/> or <mi coord="2524,1735" noun="gleaming steel baselard"/>
+        // <mi text="chuckle" cmd="chuckle"/>
         if self.current_menu_id.is_some() {
             if let Some(coord) = Self::extract_attribute(tag, "coord") {
                 let secondary_noun = Self::extract_attribute(tag, "noun");
@@ -1300,6 +1811,13 @@ impl XmlParser {
                     // tracing::debug!("Adding coord to menu: {}", coord);
                 }
                 self.current_menu_coords.push((coord, secondary_noun));
+            } else if let Some(cmd) = Self::extract_attribute(tag, "cmd") {
+                let text = Self::extract_attribute(tag, "text").or_else(|| {
+                    let noun = Self::extract_attribute(tag, "noun");
+                    noun.filter(|value| !value.trim().is_empty())
+                });
+                self.current_menu_coords
+                    .push((format!("__direct__:{}", cmd), text));
             }
         }
     }
@@ -2639,6 +3157,29 @@ mod tests {
         assert_eq!(value, "Some Value");
     }
 
+    #[test]
+    fn test_dialogdata_betrayerpanel_labels() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100'/><label id='lblitem1' value='!a patchwork dwarf skin backpack'/></dialogData>",
+        );
+
+        let label_elements: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::DialogLabelList { .. }))
+            .collect();
+        assert_eq!(label_elements.len(), 1);
+
+        let ParsedElement::DialogLabelList { id, clear, labels } = label_elements[0] else {
+            panic!("Expected DialogLabelList element, got {:?}", label_elements[0]);
+        };
+        assert_eq!(id, "BetrayerPanel");
+        assert!(!clear);
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].value, "Blood Points: 100");
+        assert_eq!(labels[1].value, "!a patchwork dwarf skin backpack");
+    }
+
     // ==================== Component Parsing ====================
 
     #[test]
@@ -2803,5 +3344,103 @@ mod tests {
         assert!(coords[0].1.is_none());
         assert_eq!(coords[1].0, "2524,1735");
         assert_eq!(coords[1].1.as_deref(), Some("gleaming steel baselard"));
+    }
+
+    // ==================== Dialog Parsing ====================
+
+    #[test]
+    fn test_dialog_open_with_buttons() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line("<openDialog type='dynamic' id='choosemode' title='Custom Actions Menu' location='center' height='50' width='300'><dialogData name='choosemode'><cmdButton id='addcustom' value='Add New' cmd='_custom dialog add qmech'/><closeButton id='cancelcustom' value='Cancel' cmd=''/></dialogData></openDialog>");
+
+        let dialog_open = elements.iter().find(|e| matches!(e, ParsedElement::DialogOpen { .. }));
+        assert!(dialog_open.is_some());
+
+        let dialog_buttons: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogButtons { id, clear, buttons } = e {
+                    Some((id, clear, buttons))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(dialog_buttons.len(), 1);
+        assert_eq!(dialog_buttons[0].0, "choosemode");
+        assert!(!*dialog_buttons[0].1);
+        assert_eq!(dialog_buttons[0].2.len(), 2);
+        assert_eq!(dialog_buttons[0].2[0].label, "Add New");
+        assert_eq!(dialog_buttons[0].2[0].command, "_custom dialog add qmech");
+        assert!(!dialog_buttons[0].2[0].is_close);
+        assert!(!dialog_buttons[0].2[0].is_radio);
+        assert!(!dialog_buttons[0].2[0].selected);
+        assert!(!dialog_buttons[0].2[0].autosend);
+        assert!(dialog_buttons[0].2[0].group.is_none());
+        assert_eq!(dialog_buttons[0].2[1].label, "Cancel");
+        assert!(dialog_buttons[0].2[1].is_close);
+        assert!(!dialog_buttons[0].2[1].is_radio);
+        assert!(!dialog_buttons[0].2[1].selected);
+        assert!(!dialog_buttons[0].2[1].autosend);
+        assert!(dialog_buttons[0].2[1].group.is_none());
+    }
+
+    #[test]
+    fn test_dialog_radio_parsing() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line("<openDialog type='dynamic' id='dialogedit' title='Edit Custom Actions' location='center'><dialogData name='dialogedit'><radio id='hide' value='0' text='hide' cmd='_custom dialog edit2 qmech hide;hide' group='rpedit' autosend=''/><radio id='stand' value='1' text='stand' cmd='_custom dialog edit2 qmech stand;stand' group='rpedit' autosend='t'/></dialogData></openDialog>");
+
+        let dialog_buttons: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogButtons { id, buttons, .. } = e {
+                    Some((id, buttons))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(dialog_buttons.len(), 1);
+        assert_eq!(dialog_buttons[0].0, "dialogedit");
+        assert_eq!(dialog_buttons[0].1.len(), 2);
+        assert!(dialog_buttons[0].1[0].is_radio);
+        assert!(!dialog_buttons[0].1[0].selected);
+        assert!(dialog_buttons[0].1[0].autosend);
+        assert_eq!(dialog_buttons[0].1[0].group.as_deref(), Some("rpedit"));
+        assert!(dialog_buttons[0].1[1].is_radio);
+        assert!(dialog_buttons[0].1[1].selected);
+        assert!(dialog_buttons[0].1[1].autosend);
+        assert_eq!(dialog_buttons[0].1[1].group.as_deref(), Some("rpedit"));
+    }
+
+    #[test]
+    fn test_dialog_editbox_parsing() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='displayedit' title='Edit Custom Actions' location='center'><dialogData id='displayedit'><editBox id='displayedit_text' focus='' enterButton='displayeditok' value='hide'/><label id='Label' value='Label&quot; anchor_top&quot;displayedit_text'/><editBox id='commandedit_text' enterButton='displayeditok' value='hide'/><label id='Command' value='Command&quot; anchor_left&quot;commandedit'/></dialogData></openDialog>",
+        );
+
+        let dialog_fields: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogFields { id, fields, labels, .. } = e {
+                    Some((id, fields, labels))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(dialog_fields.len(), 1);
+        assert_eq!(dialog_fields[0].0, "displayedit");
+        assert_eq!(dialog_fields[0].1.len(), 2);
+        assert_eq!(dialog_fields[0].1[0].id, "displayedit_text");
+        assert!(dialog_fields[0].1[0].focused);
+        assert_eq!(dialog_fields[0].1[0].enter_button.as_deref(), Some("displayeditok"));
+        assert_eq!(dialog_fields[0].1[1].id, "commandedit_text");
+        assert_eq!(dialog_fields[0].1[1].value, "hide");
+        assert_eq!(dialog_fields[0].2.len(), 2);
+        assert_eq!(dialog_fields[0].2[0].value, "Label");
+        assert_eq!(dialog_fields[0].2[1].value, "Command");
     }
 }

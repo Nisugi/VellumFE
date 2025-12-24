@@ -235,6 +235,74 @@ mod vitals_indicators {
     }
 }
 
+// ==================== Quickbar Tests ====================
+
+mod quickbar {
+    use super::*;
+    use vellum_fe::data::QuickbarEntry;
+
+    const QUICKBAR_XML: &str = r#"<openDialog id="quick" location="quickBar" title="main"><dialogData id="quick" clear="true"><link id="2" value="look" cmd="look" echo="look"/><sep/><menuLink id="3" value="roleplay..." exist="qlinkrp" noun=""/></dialogData></openDialog><switchQuickBar id="quick"/>"#;
+    const QUICKBAR_SIMU_XML: &str = "<openDialog id='quick-simu' location='quickBar' title='information'><dialogData id='quick-simu' clear='true'><link id='1' value='policy' cmd='policy' echo='policy'/><sep/><link id='2' value='news' cmd='url:/gs4/news.asp'/><sep/><link id=\"3\" value=\"calendar\" cmd='url:/gs4/events/'/><sep/><link id='4' value='documentation' cmd='url:/gs4/info/'/><sep/><link id='5' value='premium' cmd='premium' echo='premium'/><sep/><link id='6' value='platinum' cmd='url:/gs4/platinum/'/><sep/><link id='7' value='maps' cmd='url:/bounce/redirect.asp?URL=https://gswiki.play.net/Category:World'/><sep/><link id='8' value='Discord' cmd='url:/bounce/redirect.asp?URL=https://discord.gg/gs4'/><sep/><link id='9' value='version notes' cmd='url:/gs4/play/wrayth/notes.asp'/><sep/><link id='10' value='SimuCoins Store' cmd='url:/bounce/redirect.asp?URL=http://store.play.net/store/purchase/GS'/></dialogData></openDialog>";
+
+    #[test]
+    fn test_quickbar_elements_present() {
+        let elements = parse_xml(QUICKBAR_XML);
+
+        let opens = find_elements(&elements, |e| {
+            matches!(e, ParsedElement::QuickbarOpen { .. })
+        });
+        let entries = find_elements(&elements, |e| {
+            matches!(e, ParsedElement::QuickbarEntries { .. })
+        });
+        let switches = find_elements(&elements, |e| {
+            matches!(e, ParsedElement::QuickbarSwitch { .. })
+        });
+
+        assert_eq!(opens.len(), 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(switches.len(), 1);
+    }
+
+    #[test]
+    fn test_quickbar_entries_order() {
+        let elements = parse_xml(QUICKBAR_XML);
+        let entries = find_elements(&elements, |e| {
+            matches!(e, ParsedElement::QuickbarEntries { .. })
+        });
+
+        assert!(
+            !entries.is_empty(),
+            "Expected QuickbarEntries but got: {:?}",
+            elements
+        );
+        let ParsedElement::QuickbarEntries { entries, .. } = entries[0] else {
+            panic!("Expected QuickbarEntries");
+        };
+
+        assert_eq!(entries.len(), 3);
+        assert!(matches!(entries[0], QuickbarEntry::Link { .. }));
+        assert!(matches!(entries[1], QuickbarEntry::Separator));
+        assert!(matches!(entries[2], QuickbarEntry::MenuLink { .. }));
+    }
+
+    #[test]
+    fn test_quickbar_parses_url_commands() {
+        let elements = parse_xml(QUICKBAR_SIMU_XML);
+        let entries = find_elements(&elements, |e| {
+            matches!(e, ParsedElement::QuickbarEntries { .. })
+        });
+
+        let ParsedElement::QuickbarEntries { entries, .. } = entries[0] else {
+            panic!("Expected QuickbarEntries");
+        };
+
+        assert_eq!(entries.len(), 19);
+        assert!(matches!(entries[0], QuickbarEntry::Link { .. }));
+        assert!(matches!(entries[1], QuickbarEntry::Separator));
+        assert!(matches!(entries[2], QuickbarEntry::Link { .. }));
+    }
+}
+
 // ==================== Room Navigation Tests ====================
 
 mod room_navigation {

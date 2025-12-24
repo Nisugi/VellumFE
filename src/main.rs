@@ -13,6 +13,7 @@ mod network;
 mod parser;
 mod performance;
 mod selection;
+mod session_cache;
 mod sound;
 mod spell_abbrevs;
 mod theme;

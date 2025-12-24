@@ -53,6 +53,9 @@ pub struct MessageProcessor {
     /// Temporary buffer for accumulating segments within current Spells stream line
     spells_line_buffer: Vec<TextSegment>,
 
+    /// Skip the next Spells clearStream (used after _spell_update_links)
+    skip_next_spells_clear: bool,
+
     /// Buffer for accumulating perception stream lines (for perception widget)
     perception_buffer: Vec<Vec<TextSegment>>,
 
@@ -132,6 +135,7 @@ impl MessageProcessor {
             spells_buffer: Vec::new(),
             previous_spells: Vec::new(),
             spells_line_buffer: Vec::new(),
+            skip_next_spells_clear: false,
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
             squelch_matcher: None,
@@ -191,6 +195,11 @@ impl MessageProcessor {
         self.highlight_engine.update_patterns(highlights);
         self.highlight_engine
             .set_replace_enabled(self.config.highlight_settings.replace_enabled);
+    }
+
+    /// Skip the next Spells clearStream (used after requesting spell link updates).
+    pub fn skip_next_spells_clear(&mut self) {
+        self.skip_next_spells_clear = true;
     }
 
     /// Process a parsed XML element and update states
@@ -341,15 +350,22 @@ impl MessageProcessor {
                     }
                     tracing::debug!("ClearStream percWindow - cleared buffer and window");
                 } else if id == "Spells" {
-                    // Clear the spells buffer for new data
-                    self.spells_buffer.clear();
-                    // Clear the window content
-                    for window in ui_state.windows.values_mut() {
-                        if let WindowContent::Spells(ref mut content) = window.content {
-                            content.lines.clear();
+                    if self.skip_next_spells_clear {
+                        self.skip_next_spells_clear = false;
+                        tracing::debug!("ClearStream Spells - skipped one-time clear");
+                    } else {
+                        // Clear the spells buffer for new data
+                        self.spells_buffer.clear();
+                        self.spells_line_buffer.clear();
+                        self.previous_spells.clear();
+                        // Clear the window content
+                        for window in ui_state.windows.values_mut() {
+                            if let WindowContent::Spells(ref mut content) = window.content {
+                                content.lines.clear();
+                            }
                         }
+                        tracing::debug!("ClearStream Spells - cleared buffer and window(s)");
                     }
-                    tracing::debug!("ClearStream Spells - cleared buffer and window(s)");
                 }
                 // Other streams can be handled here as needed
             }
@@ -787,6 +803,304 @@ impl MessageProcessor {
                             }
                         }
                         _ => {}
+                    }
+                }
+            }
+            ParsedElement::QuickbarOpen { id, title } => {
+                self.chunk_has_silent_updates = true;
+
+                let entry = ui_state
+                    .quickbars
+                    .entry(id.clone())
+                    .or_insert(QuickbarData {
+                        id: id.clone(),
+                        title: title.clone(),
+                        entries: Vec::new(),
+                    });
+                if title.is_some() {
+                    entry.title = title.clone();
+                }
+                if !ui_state.quickbar_order.contains(id) {
+                    ui_state.quickbar_order.push(id.clone());
+                }
+                if ui_state.active_quickbar_id.is_none() {
+                    ui_state.active_quickbar_id = Some(id.clone());
+                }
+            }
+            ParsedElement::QuickbarEntries { id, clear, entries } => {
+                self.chunk_has_silent_updates = true;
+
+                let entry = ui_state
+                    .quickbars
+                    .entry(id.clone())
+                    .or_insert(QuickbarData {
+                        id: id.clone(),
+                        title: None,
+                        entries: Vec::new(),
+                    });
+                if *clear {
+                    entry.entries.clear();
+                }
+                entry.entries.extend(entries.clone());
+                if !ui_state.quickbar_order.contains(id) {
+                    ui_state.quickbar_order.push(id.clone());
+                }
+                if ui_state.active_quickbar_id.is_none() {
+                    ui_state.active_quickbar_id = Some(id.clone());
+                }
+            }
+            ParsedElement::QuickbarSwitch { id } => {
+                self.chunk_has_silent_updates = true;
+
+                ui_state.active_quickbar_id = Some(id.clone());
+                if !ui_state.quickbar_order.contains(id) {
+                    ui_state.quickbar_order.push(id.clone());
+                }
+            }
+            ParsedElement::DialogOpen { id, title } => {
+                self.chunk_has_silent_updates = true;
+
+                if self
+                    .config
+                    .ui
+                    .open_dialog_blocklist
+                    .iter()
+                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
+                {
+                    return;
+                }
+
+                ui_state.active_dialog = Some(DialogState {
+                    id: id.clone(),
+                    title: title.clone(),
+                    buttons: Vec::new(),
+                    selected: 0,
+                    fields: Vec::new(),
+                    labels: Vec::new(),
+                    focused_field: None,
+                });
+                ui_state.input_mode = InputMode::Dialog;
+                ui_state.popup_menu = None;
+                ui_state.submenu = None;
+                ui_state.nested_submenu = None;
+                ui_state.deep_submenu = None;
+            }
+            ParsedElement::DialogButtons { id, clear, buttons } => {
+                self.chunk_has_silent_updates = true;
+                if self
+                    .config
+                    .ui
+                    .open_dialog_blocklist
+                    .iter()
+                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
+                {
+                    return;
+                }
+
+                let needs_new_dialog = ui_state
+                    .active_dialog
+                    .as_ref()
+                    .map(|dialog| dialog.id != *id)
+                    .unwrap_or(true);
+                if needs_new_dialog {
+                    ui_state.active_dialog = Some(DialogState {
+                        id: id.clone(),
+                        title: None,
+                        buttons: Vec::new(),
+                        selected: 0,
+                        fields: Vec::new(),
+                        labels: Vec::new(),
+                        focused_field: None,
+                    });
+                    ui_state.input_mode = InputMode::Dialog;
+                    ui_state.popup_menu = None;
+                    ui_state.submenu = None;
+                    ui_state.nested_submenu = None;
+                    ui_state.deep_submenu = None;
+                }
+
+                if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                    if dialog.id == *id {
+                        if *clear {
+                            dialog.buttons.clear();
+                        }
+                        dialog.buttons.extend(buttons.clone());
+                        if dialog.selected >= dialog.buttons.len() {
+                            dialog.selected = 0;
+                        }
+                    }
+                }
+            }
+            ParsedElement::DialogFields {
+                id,
+                clear,
+                fields,
+                labels,
+            } => {
+                self.chunk_has_silent_updates = true;
+                if self
+                    .config
+                    .ui
+                    .open_dialog_blocklist
+                    .iter()
+                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
+                {
+                    return;
+                }
+
+                let needs_new_dialog = ui_state
+                    .active_dialog
+                    .as_ref()
+                    .map(|dialog| dialog.id != *id)
+                    .unwrap_or(true);
+                if needs_new_dialog {
+                    ui_state.active_dialog = Some(DialogState {
+                        id: id.clone(),
+                        title: None,
+                        buttons: Vec::new(),
+                        selected: 0,
+                        fields: Vec::new(),
+                        labels: Vec::new(),
+                        focused_field: None,
+                    });
+                    ui_state.input_mode = InputMode::Dialog;
+                    ui_state.popup_menu = None;
+                    ui_state.submenu = None;
+                    ui_state.nested_submenu = None;
+                    ui_state.deep_submenu = None;
+                }
+
+                if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                    if dialog.id == *id {
+                        if *clear {
+                            dialog.fields.clear();
+                            dialog.labels.clear();
+                            dialog.focused_field = None;
+                        }
+
+                        if !labels.is_empty() {
+                            dialog.labels = labels
+                                .iter()
+                                .map(|label| crate::data::DialogLabel {
+                                    id: label.id.clone(),
+                                    value: label.value.clone(),
+                                })
+                                .collect();
+                        }
+
+                        let mut focused_index = None;
+                        let mut new_fields = Vec::new();
+                        for (idx, field) in fields.iter().enumerate() {
+                            if field.focused {
+                                focused_index = Some(idx);
+                            }
+                            let existing = dialog.fields.iter().find(|f| f.id == field.id);
+                            let cursor = existing
+                                .map(|f| f.cursor.min(field.value.len()))
+                                .unwrap_or_else(|| field.value.len());
+                            new_fields.push(crate::data::DialogField {
+                                id: field.id.clone(),
+                                value: field.value.clone(),
+                                cursor,
+                                enter_button: field.enter_button.clone(),
+                                focused: field.focused,
+                            });
+                        }
+                        if !new_fields.is_empty() {
+                            dialog.fields = new_fields;
+                        }
+
+                        let fallback_focus = dialog
+                            .focused_field
+                            .filter(|idx| *idx < dialog.fields.len());
+                        let focused_field = focused_index.or(fallback_focus).or_else(|| {
+                            if dialog.fields.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            }
+                        });
+
+                        dialog.focused_field = focused_field;
+                        for (idx, field) in dialog.fields.iter_mut().enumerate() {
+                            field.focused = dialog.focused_field == Some(idx);
+                            if field.cursor > field.value.len() {
+                                field.cursor = field.value.len();
+                            }
+                        }
+                    }
+                }
+            }
+            ParsedElement::DialogLabelList { id, clear, labels } => {
+                self.chunk_has_silent_updates = true;
+                let window_name = id.to_lowercase();
+                if let Some(window) = ui_state.windows.get_mut(&window_name) {
+                    if let WindowContent::Text(content) = &mut window.content {
+                        if *clear {
+                            content.lines.clear();
+                            content.scroll_offset = 0;
+                        }
+                        if !labels.is_empty() {
+                            let active_color = self
+                                .config
+                                .ui
+                                .betrayer_active_color
+                                .as_ref()
+                                .map(|value| value.trim())
+                                .filter(|value| !value.is_empty() && *value != "-")
+                                .map(|value| value.to_string());
+                            for label in labels {
+                                if id == "BetrayerPanel" && label.value.starts_with('!') {
+                                    let mut segments = Vec::new();
+                                    segments.push(TextSegment {
+                                        text: "!".to_string(),
+                                        fg: active_color.clone(),
+                                        bg: None,
+                                        bold: false,
+                                        span_type: SpanType::Normal,
+                                        link_data: None,
+                                    });
+                                    let rest = label.value[1..].to_string();
+                                    if !rest.is_empty() {
+                                        segments.push(TextSegment {
+                                            text: rest,
+                                            fg: None,
+                                            bg: None,
+                                            bold: false,
+                                            span_type: SpanType::Normal,
+                                            link_data: None,
+                                        });
+                                    }
+                                    content.add_line(StyledLine {
+                                        segments,
+                                        stream: window_name.clone(),
+                                    });
+                                } else {
+                                    content.add_line(StyledLine::from_text(label.value.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ParsedElement::CloseDialog { id } => {
+                self.chunk_has_silent_updates = true;
+                let is_quickbar_id = id == "quick" || id.starts_with("quick-");
+                if is_quickbar_id {
+                    ui_state.quickbars.remove(id);
+                    ui_state.quickbar_order.retain(|entry| entry != id);
+
+                    if ui_state.active_quickbar_id.as_ref() == Some(id) {
+                        ui_state.active_quickbar_id = ui_state.quickbar_order.first().cloned();
+                    }
+                } else if ui_state
+                    .active_dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.id == *id)
+                {
+                    ui_state.active_dialog = None;
+                    if ui_state.input_mode == InputMode::Dialog {
+                        ui_state.input_mode = InputMode::Normal;
                     }
                 }
             }
@@ -2297,6 +2611,15 @@ impl MessageProcessor {
     pub fn clear_inventory_cache(&mut self) {
         self.previous_inventory.clear();
         tracing::debug!("Cleared inventory cache - next inventory update will render");
+    }
+
+    pub fn set_spells_buffer(&mut self, buffer: Vec<Vec<TextSegment>>) {
+        self.spells_buffer = buffer.clone();
+        self.previous_spells = buffer;
+    }
+
+    pub fn get_spells_buffer(&self) -> &Vec<Vec<TextSegment>> {
+        &self.spells_buffer
     }
 
     /// Populate a Spells window from the buffer

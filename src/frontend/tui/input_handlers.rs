@@ -92,6 +92,47 @@ impl super::TuiFrontend {
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         use crate::frontend::KeyCode;
+        use crate::data::window::WidgetType;
+
+        let focused_name = app_core.get_focused_window_name();
+        if let Some(window) = app_core.ui_state.get_window(&focused_name) {
+            if window.widget_type == WidgetType::Quickbar {
+                match code {
+                    KeyCode::Left => {
+                        if let Some(widget) = self.widget_manager.quickbar_widgets.get_mut(&focused_name) {
+                            widget.move_selection(-1);
+                            app_core.needs_render = true;
+                            return Ok(None);
+                        }
+                    }
+                    KeyCode::Right => {
+                        if let Some(widget) = self.widget_manager.quickbar_widgets.get_mut(&focused_name) {
+                            widget.move_selection(1);
+                            app_core.needs_render = true;
+                            return Ok(None);
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(widget) = self.widget_manager.quickbar_widgets.get_mut(&focused_name) {
+                            if let Some(action) = widget.activate_selected() {
+                                return Ok(self.handle_quickbar_action(action, &focused_name, app_core));
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {
+                        app_core.needs_render = true;
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if matches!(code, KeyCode::BackTab) {
+            app_core.cycle_focused_window_reverse();
+            app_core.needs_render = true;
+            return Ok(None);
+        }
 
         // Handle Enter key - always submit command
         if matches!(code, KeyCode::Enter) {
@@ -238,7 +279,6 @@ impl super::TuiFrontend {
                             &available_window_names,
                         );
                     } else {
-                        // No text or doesn't start with '.', cycle focused window
                         app_core.cycle_focused_window();
                     }
                     app_core.needs_render = true;
@@ -360,5 +400,31 @@ impl super::TuiFrontend {
             return Ok(Some(to_send));
         }
         Ok(None)
+    }
+
+    fn handle_quickbar_action(
+        &mut self,
+        action: super::quickbar::QuickbarAction,
+        window_name: &str,
+        app_core: &mut crate::core::AppCore,
+    ) -> Option<String> {
+        match action {
+            super::quickbar::QuickbarAction::OpenSwitcher => {
+                if let Some(window) = app_core.ui_state.get_window(window_name) {
+                    self.open_quickbar_switcher(app_core, window.position.clone());
+                    app_core.needs_render = true;
+                }
+                None
+            }
+            super::quickbar::QuickbarAction::ExecuteCommand(command) => Some(command),
+            super::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
+                let click_pos = app_core
+                    .ui_state
+                    .get_window(window_name)
+                    .map(|w| (w.position.x, w.position.y))
+                    .unwrap_or((0, 0));
+                Some(app_core.request_menu(exist, noun, click_pos))
+            }
+        }
     }
 }

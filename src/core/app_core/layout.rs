@@ -310,6 +310,7 @@ impl AppCore {
             "injury_doll" => (20, 10),
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
+            "quickbar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
@@ -1377,6 +1378,7 @@ mod tests {
             "injury_doll" => (20, 10),
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
+            "quickbar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
@@ -1445,6 +1447,13 @@ mod tests {
     }
 
     #[test]
+    fn test_widget_min_size_quickbar() {
+        let (cols, rows) = widget_min_size_standalone("quickbar");
+        assert_eq!(cols, 20);
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
     fn test_widget_min_size_text() {
         let (cols, rows) = widget_min_size_standalone("text");
         assert_eq!(cols, 5);
@@ -1497,6 +1506,7 @@ mod tests {
                 | "righthand"
                 | "spellhand"
                 | "command_input"
+                | "quickbar"
         )
     }
 
@@ -1552,6 +1562,11 @@ mod tests {
     #[test]
     fn test_static_height_command_input() {
         assert!(is_static_height("command_input"));
+    }
+
+    #[test]
+    fn test_static_height_quickbar() {
+        assert!(is_static_height("quickbar"));
     }
 
     #[test]

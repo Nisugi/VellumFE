@@ -94,6 +94,7 @@ impl Frontend for TuiFrontend {
         self.sync_active_effects(app_core, &theme);
         self.sync_hand_widgets(app_core, &theme);
         self.sync_spacer_widgets(app_core, &theme);
+        self.sync_quickbar_widgets(app_core, &theme);
         self.sync_indicator_widgets(app_core, &theme);
         self.sync_targets_widgets(app_core, &theme);  // New component-based
         self.sync_players_widgets(app_core, &theme);
@@ -117,6 +118,7 @@ impl Frontend for TuiFrontend {
         let mut active_effects_windows = std::mem::take(&mut self.widget_manager.active_effects_windows);
         let mut hand_widgets = std::mem::take(&mut self.widget_manager.hand_widgets);
         let mut spacer_widgets = std::mem::take(&mut self.widget_manager.spacer_widgets);
+        let mut quickbar_widgets = std::mem::take(&mut self.widget_manager.quickbar_widgets);
         let mut indicator_widgets = std::mem::take(&mut self.widget_manager.indicator_widgets);
         let mut targets_widgets = std::mem::take(&mut self.widget_manager.targets_widgets);
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
@@ -266,6 +268,12 @@ impl Frontend for TuiFrontend {
                                     .borders(Borders::ALL);
                                 f.render_widget(block, area);
                             }
+                        }
+                    }
+                    WindowContent::Quickbar => {
+                        if let Some(quickbar_widget) = quickbar_widgets.get_mut(name) {
+                            let focused = app_core.ui_state.focused_window.as_ref() == Some(name);
+                            quickbar_widget.render(area, f.buffer_mut(), focused);
                         }
                     }
                     WindowContent::Progress(_) => {
@@ -532,6 +540,10 @@ impl Frontend for TuiFrontend {
                 let editor_theme = theme.to_editor_theme();
                 window_editor.render(screen_area, f.buffer_mut(), &editor_theme);
             }
+
+            if let Some(ref dialog_state) = app_core.ui_state.active_dialog {
+                dialog::render_dialog(dialog_state, screen_area, f.buffer_mut(), &theme);
+            }
         })?;
 
         // Feed text wrapping timings into performance stats (drain samples from all text widgets)
@@ -578,6 +590,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.active_effects_windows = active_effects_windows;
         self.widget_manager.hand_widgets = hand_widgets;
         self.widget_manager.spacer_widgets = spacer_widgets;
+        self.widget_manager.quickbar_widgets = quickbar_widgets;
         self.widget_manager.indicator_widgets = indicator_widgets;
         self.widget_manager.targets_widgets = targets_widgets;
         self.widget_manager.players_widgets = players_widgets;

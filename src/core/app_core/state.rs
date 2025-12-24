@@ -11,7 +11,7 @@ use crate::data::*;
 use crate::parser::{ParsedElement, XmlParser};
 use crate::performance::PerformanceStats;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Pending menu request for correlation
 #[derive(Clone, Debug)]
@@ -225,6 +225,9 @@ impl AppCore {
             keybind_map,
         };
 
+        app.apply_session_cache();
+        app.apply_custom_quickbars();
+
         if let Some((theme_id, _)) = app.apply_layout_theme(layout_theme.as_deref()) {
             app.add_system_message(&format!("Theme switched to: {}", theme_id));
             // Update frontend cache later; AppCore just updates config here.
@@ -232,6 +235,184 @@ impl AppCore {
         }
 
         Ok(app)
+    }
+
+    fn apply_custom_quickbars(&mut self) {
+        use crate::config::{QuickbarEntryConfig, QuickbarDefinition};
+        use crate::data::{QuickbarData, QuickbarEntry};
+
+        fn is_quickbar_id(id: &str) -> bool {
+            let trimmed = id.trim();
+            trimmed == "quick" || trimmed.starts_with("quick-")
+        }
+
+        fn normalize_title(title: &Option<String>) -> Option<String> {
+            title
+                .as_ref()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| t.to_string())
+        }
+
+        fn insert_quickbar(
+            state: &mut crate::data::UiState,
+            def: &QuickbarDefinition,
+        ) {
+            let id = def.id.trim();
+            if id.is_empty() {
+                return;
+            }
+
+            if !is_quickbar_id(id) {
+                tracing::warn!("Skipping custom quickbar with invalid id '{}'", id);
+                return;
+            }
+
+            let mut entries = Vec::new();
+            for (index, entry) in def.entries.iter().enumerate() {
+                match entry {
+                    QuickbarEntryConfig::Link { label, command, echo } => {
+                        let value = label.trim();
+                        let cmd = command.trim();
+                        if value.is_empty() || cmd.is_empty() {
+                            continue;
+                        }
+                        entries.push(QuickbarEntry::Link {
+                            id: format!("custom-{}", index + 1),
+                            value: value.to_string(),
+                            cmd: cmd.to_string(),
+                            echo: echo.clone().filter(|s| !s.trim().is_empty()),
+                        });
+                    }
+                    QuickbarEntryConfig::MenuLink { label, exist, noun } => {
+                        let value = label.trim();
+                        let exist_id = exist.trim();
+                        let noun_value = noun.trim();
+                        if value.is_empty() || exist_id.is_empty() || noun_value.is_empty() {
+                            continue;
+                        }
+                        entries.push(QuickbarEntry::MenuLink {
+                            id: format!("custom-menu-{}", index + 1),
+                            value: value.to_string(),
+                            exist: exist_id.to_string(),
+                            noun: noun_value.to_string(),
+                        });
+                    }
+                    QuickbarEntryConfig::Separator => {
+                        entries.push(QuickbarEntry::Separator);
+                    }
+                }
+            }
+
+            let data = QuickbarData {
+                id: id.to_string(),
+                title: normalize_title(&def.title),
+                entries,
+            };
+            state.quickbars.insert(id.to_string(), data);
+            if !state.quickbar_order.contains(&id.to_string()) {
+                state.quickbar_order.push(id.to_string());
+            }
+        }
+
+        if self.config.quickbars.custom.is_empty() && self.config.quickbars.default.is_none() {
+            return;
+        }
+
+        for def in &self.config.quickbars.custom {
+            insert_quickbar(&mut self.ui_state, def);
+        }
+
+        if let Some(default_id) = self.config.quickbars.default.as_ref() {
+            let trimmed = default_id.trim();
+            if is_quickbar_id(trimmed) {
+                if self.ui_state.quickbars.contains_key(trimmed) {
+                    self.ui_state.active_quickbar_id = Some(trimmed.to_string());
+                } else {
+                    tracing::warn!(
+                        "Quickbar default '{}' not found in custom quickbars",
+                        trimmed
+                    );
+                }
+            } else if !trimmed.is_empty() {
+                tracing::warn!(
+                    "Quickbar default '{}' is not a valid quickbar id",
+                    trimmed
+                );
+            }
+        }
+    }
+
+    fn apply_session_cache(&mut self) {
+        let Some(cache) = crate::session_cache::load(self.config.character.as_deref()) else {
+            return;
+        };
+
+        if !cache.quickbars.is_empty() {
+            let allowed_ids = self.allowed_quickbar_ids();
+            let quickbars: HashMap<String, QuickbarData> = cache
+                .quickbars
+                .iter()
+                .filter(|(id, _)| allowed_ids.contains(*id))
+                .map(|(id, data)| (id.clone(), data.clone()))
+                .collect();
+            let quickbar_order: Vec<String> = cache
+                .quickbar_order
+                .iter()
+                .filter(|id| allowed_ids.contains(*id))
+                .cloned()
+                .collect();
+            let active_quickbar_id = cache
+                .active_quickbar_id
+                .as_ref()
+                .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
+
+            self.ui_state.quickbars = quickbars;
+            self.ui_state.quickbar_order = quickbar_order;
+            self.ui_state.active_quickbar_id = active_quickbar_id;
+
+            if self.ui_state.quickbar_order.is_empty() {
+                let mut ids: Vec<String> = self.ui_state.quickbars.keys().cloned().collect();
+                ids.sort();
+                self.ui_state.quickbar_order = ids;
+            } else {
+                for id in self.ui_state.quickbars.keys() {
+                    if !self.ui_state.quickbar_order.contains(id) {
+                        self.ui_state.quickbar_order.push(id.clone());
+                    }
+                }
+            }
+
+            if let Some(active_id) = self.ui_state.active_quickbar_id.as_ref() {
+                if !self.ui_state.quickbars.contains_key(active_id) {
+                    self.ui_state.active_quickbar_id = None;
+                }
+            }
+        }
+
+    }
+
+    fn allowed_quickbar_ids(&self) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        ids.insert("quick".to_string());
+        ids.insert("quick-combat".to_string());
+        ids.insert("quick-simu".to_string());
+
+        for def in &self.config.quickbars.custom {
+            let id = def.id.trim();
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+        }
+
+        if let Some(default_id) = self.config.quickbars.default.as_ref() {
+            let id = default_id.trim();
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+        }
+
+        ids
     }
 
     /// Build runtime keybind map from config for fast O(1) lookups
@@ -338,42 +519,146 @@ impl AppCore {
     }
 
     /// Cycle to the next scrollable text window
-    /// Only cycles through text and tabbedtext windows since other types don't scroll
+    /// Uses focus configuration (types + optional order) to choose focusable windows.
     pub fn cycle_focused_window(&mut self) {
-        // Get list of scrollable window names (text and tabbedtext only)
-        let scrollable_names: Vec<String> = self
-            .ui_state
-            .windows
-            .iter()
-            .filter(|(_, w)| {
-                matches!(
-                    w.widget_type,
-                    crate::data::WidgetType::Text | crate::data::WidgetType::TabbedText
-                )
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        if scrollable_names.is_empty() {
+        let focus_order = self.build_focus_order();
+        if focus_order.is_empty() {
             return;
         }
 
-        // Find current index
         let current_idx = self
             .ui_state
             .focused_window
             .as_ref()
-            .and_then(|name| scrollable_names.iter().position(|n| n == name))
-            .unwrap_or(0);
+            .and_then(|name| focus_order.iter().position(|n| n == name))
+            .unwrap_or(usize::MAX);
 
-        // Cycle to next
-        let next_idx = (current_idx + 1) % scrollable_names.len();
-        let next_name = scrollable_names[next_idx].clone();
+        let next_idx = if current_idx == usize::MAX {
+            0
+        } else {
+            (current_idx + 1) % focus_order.len()
+        };
+        let next_name = focus_order[next_idx].clone();
 
         self.ui_state.set_focus(Some(next_name.clone()));
         self.add_system_message(&format!("Focused window: {}", next_name));
         self.needs_render = true;
         tracing::debug!("Cycled focused window to '{}'", next_name);
+    }
+
+    /// Cycle focus backwards through the focus order.
+    pub fn cycle_focused_window_reverse(&mut self) {
+        let focus_order = self.build_focus_order();
+        if focus_order.is_empty() {
+            return;
+        }
+
+        let current_idx = self
+            .ui_state
+            .focused_window
+            .as_ref()
+            .and_then(|name| focus_order.iter().position(|n| n == name))
+            .unwrap_or(0);
+
+        let prev_idx = if current_idx == 0 {
+            focus_order.len() - 1
+        } else {
+            current_idx - 1
+        };
+        let prev_name = focus_order[prev_idx].clone();
+
+        self.ui_state.set_focus(Some(prev_name.clone()));
+        self.needs_render = true;
+        tracing::debug!("Cycled focused window to '{}' (reverse)", prev_name);
+    }
+
+    fn build_focus_order(&self) -> Vec<String> {
+        let focus_config = &self.config.ui.focus;
+        let mut focusable = std::collections::HashSet::new();
+        if !focus_config.types.is_empty() {
+            for entry in &focus_config.types {
+                focusable.insert(entry.trim().to_lowercase());
+            }
+        }
+
+        let mut names = Vec::new();
+
+        if !focus_config.order.is_empty() {
+            for name in &focus_config.order {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Some(window) = self.ui_state.windows.get(trimmed) {
+                    if !window.visible {
+                        continue;
+                    }
+                    if Self::is_focusable_widget(&window.widget_type, &focusable) {
+                        names.push(trimmed.to_string());
+                    }
+                }
+            }
+        } else {
+            for window_def in &self.layout.windows {
+                if !window_def.base().visible {
+                    continue;
+                }
+                let name = window_def.name();
+                if let Some(window) = self.ui_state.windows.get(name) {
+                    if Self::is_focusable_widget(&window.widget_type, &focusable) {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+
+        for (name, window) in &self.ui_state.windows {
+            if !window.visible {
+                continue;
+            }
+            if names.contains(name) {
+                continue;
+            }
+            if Self::is_focusable_widget(&window.widget_type, &focusable) {
+                names.push(name.clone());
+            }
+        }
+
+        names
+    }
+
+    fn is_focusable_widget(
+        widget_type: &crate::data::WidgetType,
+        focusable: &std::collections::HashSet<String>,
+    ) -> bool {
+        if focusable.is_empty() {
+            return !matches!(widget_type, crate::data::WidgetType::CommandInput);
+        }
+        let kind = match widget_type {
+            crate::data::WidgetType::Text => "text",
+            crate::data::WidgetType::TabbedText => "tabbedtext",
+            crate::data::WidgetType::Progress => "progress",
+            crate::data::WidgetType::Countdown => "countdown",
+            crate::data::WidgetType::Compass => "compass",
+            crate::data::WidgetType::Indicator => "indicator",
+            crate::data::WidgetType::Room => "room",
+            crate::data::WidgetType::Inventory => "inventory",
+            crate::data::WidgetType::CommandInput => "command_input",
+            crate::data::WidgetType::Dashboard => "dashboard",
+            crate::data::WidgetType::InjuryDoll => "injury_doll",
+            crate::data::WidgetType::Hand => "hand",
+            crate::data::WidgetType::ActiveEffects => "active_effects",
+            crate::data::WidgetType::Targets => "targets",
+            crate::data::WidgetType::Players => "players",
+            crate::data::WidgetType::Spells => "spells",
+            crate::data::WidgetType::Spacer => "spacer",
+            crate::data::WidgetType::Performance => "performance",
+            crate::data::WidgetType::Perception => "perception",
+            crate::data::WidgetType::Container => "container",
+            crate::data::WidgetType::Experience => "experience",
+            crate::data::WidgetType::Quickbar => "quickbar",
+        };
+        focusable.contains(kind)
     }
 
     // ===========================================================================================
@@ -626,6 +911,7 @@ impl AppCore {
                     entries: Vec::new(),
                     last_update: 0,
                 }),
+                WidgetType::Quickbar => WindowContent::Quickbar,
                 _ => WindowContent::Empty,
             };
 
@@ -1016,6 +1302,41 @@ impl AppCore {
         }
 
         Ok(())
+    }
+
+    /// Seed default quickbars when attaching without login bursts.
+    /// Intended for non-direct connections where login-only data is missing.
+    pub fn seed_default_quickbars_if_empty(&mut self) {
+        let has_quick = self.ui_state.quickbars.contains_key("quick");
+        let has_quick_combat = self.ui_state.quickbars.contains_key("quick-combat");
+        let has_quick_simu = self.ui_state.quickbars.contains_key("quick-simu");
+        if has_quick && has_quick_combat && has_quick_simu {
+            return;
+        }
+
+        let quickbar_lines = [
+            (
+                "quick",
+                "<openDialog id=\"quick\" location=\"quickBar\" title=\"main  \"><dialogData id=\"quick\" clear=\"true\"><link id=\"2\" value=\"look\" cmd=\"look\" echo=\"look\"/><sep/><menuLink id=\"3\" value=\"roleplay...\" exist=\"qlinkrp\" noun=\"\" width=\"\" left=\"\"/><menuLink id=\"18\" value=\"actions...\" exist=\"qlinkmech\" noun=\"\" width=\"\" left=\"\"/><link id=\"4\" value=\"search\" cmd=\"search\" echo=\"search\"/><sep/><link id=\"5\" value=\"inventory\" cmd=\"inven\" echo=\"inventory\"/><sep/><link id=\"6\" value=\"character sheet\" cmd=\"_info character\" echo=\"info\"/><sep/><link id=\"7\" value=\"skill goals\" cmd=\"goals\"/><sep/><link id=\"13\" value=\"directions\" cmd=\"dir\" echo=\"directions\"/><sep/><sep/><link id=\"19\" value=\"get assistance\" cmd=\"assist\" echo=\"assist\"/><sep/><link id=\"17\" value=\"society\" cmd=\"society\" echo=\"society\"/><sep/><link id=\"21\" value=\"SimuCoins\" cmd=\"simucoin\" echo=\"simucoin\"/><sep/></dialogData></openDialog>",
+            ),
+            (
+                "quick-combat",
+                "<openDialog id=\"quick-combat\" location=\"quickBar\" title=\"combat\"><dialogData id=\"quick-combat\" clear=\"true\"><link id=\"2\" value=\"look\" cmd=\"look\" echo=\"look\"/><sep/><link id=\"3\" value=\"attack\" cmd=\"attack\" echo=\"attack\"/><sep/><link id=\"4\" value=\"ambush\" cmd=\"ambush\" echo=\"ambush\"/><sep/><link id=\"5\" value=\"aim\" cmd=\"aim\" echo=\"aim\"/><sep/><link id=\"6\" value=\"target\" cmd=\"target\" echo=\"target\"/><sep/><link id=\"7\" value=\"fire\" cmd=\"fire\" echo=\"fire\"/><sep/><link id=\"8\" value=\"multistrike\" cmd=\"mstrike\" echo=\"mstrike\"/><sep/><link id=\"9\" value=\"targeted multistrike\" cmd=\"mstrike target\" echo=\"mstrike target\"/><sep/><link id=\"8\" value=\"maneuvers\" cmd=\"cman\" echo=\"cman\"/></dialogData></openDialog>",
+            ),
+            (
+                "quick-simu",
+                "<openDialog id=\"quick-simu\" location=\"quickBar\" title=\"information\"><dialogData id=\"quick-simu\" clear=\"true\"><link id=\"1\" value=\"policy\" cmd=\"policy\" echo=\"policy\"/><sep/><link id=\"2\" value=\"news\" cmd=\"url:/gs4/news.asp\"/><sep/><link id=\"3\" value=\"calendar\" cmd=\"url:/gs4/events/\"/><sep/><link id=\"4\" value=\"documentation\" cmd=\"url:/gs4/info/\"/><sep/><link id=\"5\" value=\"premium\" cmd=\"premium\" echo=\"premium\"/><sep/><link id=\"6\" value=\"platinum\" cmd=\"url:/gs4/platinum/\"/><sep/><link id=\"7\" value=\"maps\" cmd=\"url:/bounce/redirect.asp?URL=https://gswiki.play.net/Category:World\"/><sep/><link id=\"8\" value=\"Discord\" cmd=\"url:/bounce/redirect.asp?URL=https://discord.gg/gs4\"/><sep/><link id=\"9\" value=\"version notes\" cmd=\"url:/gs4/play/wrayth/notes.asp\"/><sep/><link id=\"10\" value=\"SimuCoins Store\" cmd=\"url:/bounce/redirect.asp?URL=http://store.play.net/store/purchase/GS\"/></dialogData></openDialog>",
+            ),
+        ];
+
+        for (id, line) in quickbar_lines {
+            if self.ui_state.quickbars.contains_key(id) {
+                continue;
+            }
+            if let Err(e) = self.process_server_data(line) {
+                tracing::warn!("Failed to seed default quickbar line: {}", e);
+            }
+        }
     }
 
     /// Process a single parsed XML element
@@ -2402,6 +2723,23 @@ impl AppCore {
             HashMap::new();
 
         for (coord, secondary_noun) in coords {
+            if let Some(cmd) = coord.strip_prefix("__direct__:") {
+                let menu_text = secondary_noun
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(cmd)
+                    .to_string();
+                categories
+                    .entry("0".to_string())
+                    .or_default()
+                    .push(crate::data::ui_state::PopupMenuItem {
+                        text: menu_text,
+                        command: cmd.to_string(),
+                        disabled: false,
+                    });
+                continue;
+            }
+
             if let Some(entry) = cmdlist.get(coord) {
                 // Skip _dialog commands
                 if entry.command.starts_with("_dialog") {
@@ -2643,6 +2981,36 @@ impl AppCore {
                     terminal_size
                 );
             }
+        }
+
+        let allowed_ids = self.allowed_quickbar_ids();
+        let quickbars: HashMap<String, QuickbarData> = self
+            .ui_state
+            .quickbars
+            .iter()
+            .filter(|(id, _)| allowed_ids.contains(*id))
+            .map(|(id, data)| (id.clone(), data.clone()))
+            .collect();
+        let quickbar_order: Vec<String> = self
+            .ui_state
+            .quickbar_order
+            .iter()
+            .filter(|id| allowed_ids.contains(*id))
+            .cloned()
+            .collect();
+        let active_quickbar_id = self
+            .ui_state
+            .active_quickbar_id
+            .as_ref()
+            .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
+
+        let cache = crate::session_cache::SessionCache {
+            quickbars,
+            quickbar_order,
+            active_quickbar_id,
+        };
+        if let Err(err) = crate::session_cache::save(self.config.character.as_deref(), &cache) {
+            tracing::warn!("Failed to save session cache: {}", err);
         }
 
         self.running = false;

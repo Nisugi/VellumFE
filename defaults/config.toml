@@ -112,6 +112,35 @@ min_command_length = 3
 # Echo sent commands into the main window (prompt + command line)
 command_echo = true
 
+# Highlight color for active items in the Betrayer panel (leading "!" marker)
+betrayer_active_color = "#ff4040"
+
+# Prevent these openDialog windows from auto-opening (still parse their data).
+open_dialog_blocklist = [
+  "combat",
+  "injuries",
+  "stance",
+  "befriend",
+  "espMasterDialog",
+  "espMasterData",
+  "Buffs",
+  "Debuffs",
+  "Cooldowns",
+  "Active Spells",
+  "mapMaster",
+  "encum",
+  "minivitals",
+  "expr",
+]
+
+# --- Focus Navigation ---
+# Configure which windows are focusable via Tab and the optional cycle order.
+# If order is empty, VellumFE uses layout order filtered by focusable types.
+#
+# [ui.focus]
+# types = ["text", "tabbedtext", "quickbar", "targets", "players", "inventory", "spells"]
+# order = ["main", "thoughts", "quickbar"]
+
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
 performance_stats_enabled = false
@@ -119,6 +148,26 @@ perf_stats_x = 0
 perf_stats_y = 0
 perf_stats_width = 35
 perf_stats_height = 23
+
+
+# ------------------------------------------------------------
+# QUICKBARS (CUSTOM)
+# ------------------------------------------------------------
+# Define custom quickbars that send custom commands.
+# IDs must be "quick" or start with "quick-".
+#
+# Example:
+# [quickbars]
+# default = "quick-custom"
+#
+# [[quickbars.custom]]
+# id = "quick-custom"
+# title = "Custom"
+# entries = [
+#   { type = "link", label = "look", command = "look" },
+#   { type = "sep" },
+#   { type = "link", label = "inventory", command = "inventory" }
+# ]
 
 
 # ------------------------------------------------------------

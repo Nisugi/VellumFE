@@ -3,6 +3,7 @@
 //! These are pure data structures with NO rendering logic.
 //! Frontends read from these to render appropriately.
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::config::TimestampPosition;
@@ -27,7 +28,7 @@ pub struct TextContent {
 }
 
 /// A single display line with styled segments
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StyledLine {
     pub segments: Vec<TextSegment>,
     /// The stream this line originated from (e.g., "death", "thoughts", "main")
@@ -36,7 +37,7 @@ pub struct StyledLine {
 }
 
 /// A segment of text with styling
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextSegment {
     pub text: String,
     pub fg: Option<String>, // Hex color "#RRGGBB"
@@ -47,7 +48,7 @@ pub struct TextSegment {
 }
 
 /// Semantic type of text span (for highlight priority)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpanType {
     Normal,      // Regular text
     Link,        // <a> tag from parser (clickable game objects)
@@ -58,12 +59,42 @@ pub enum SpanType {
 }
 
 /// Link metadata for clickable text
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkData {
     pub exist_id: String,
     pub noun: String,
     pub text: String,
     pub coord: Option<String>, // Optional coord for direct commands (e.g., "2524,1864" for movement)
+}
+
+/// Quickbar entry data (links, menu links, separators)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuickbarEntry {
+    Label {
+        id: String,
+        value: String,
+    },
+    Link {
+        id: String,
+        value: String,
+        cmd: String,
+        echo: Option<String>,
+    },
+    MenuLink {
+        id: String,
+        value: String,
+        exist: String,
+        noun: String,
+    },
+    Separator,
+}
+
+/// Quickbar data for a single quickbar id
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickbarData {
+    pub id: String,
+    pub title: Option<String>,
+    pub entries: Vec<QuickbarEntry>,
 }
 
 /// Progress bar state

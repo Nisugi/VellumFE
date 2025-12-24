@@ -66,6 +66,18 @@ pub struct UiState {
 
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
+
+    /// Quickbar data keyed by id (e.g., "quick", "quick-combat")
+    pub quickbars: HashMap<String, crate::data::QuickbarData>,
+
+    /// Quickbar ids in encounter order (for switcher menu)
+    pub quickbar_order: Vec<String>,
+
+    /// Currently active quickbar id
+    pub active_quickbar_id: Option<String>,
+
+    /// Active dialog popup (dynamic openDialog payloads)
+    pub active_dialog: Option<DialogState>,
 }
 
 /// Mouse drag state for window operations
@@ -114,6 +126,8 @@ pub enum InputMode {
     Search,
     /// Popup menu is active (Tab/Shift+Tab navigation)
     Menu,
+    /// Dialog popup is active (openDialog type="dynamic")
+    Dialog,
     /// Window editor is open
     WindowEditor,
     /// Highlight browser is open
@@ -142,6 +156,46 @@ pub enum InputMode {
     SettingsEditor,
     /// Indicator template editor is open
     IndicatorTemplateEditor,
+}
+
+/// Dialog popup state
+#[derive(Clone, Debug)]
+pub struct DialogState {
+    pub id: String,
+    pub title: Option<String>,
+    pub buttons: Vec<DialogButton>,
+    pub selected: usize,
+    pub fields: Vec<DialogField>,
+    pub labels: Vec<DialogLabel>,
+    pub focused_field: Option<usize>,
+}
+
+/// Dialog button definition
+#[derive(Clone, Debug)]
+pub struct DialogButton {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub is_close: bool,
+    pub is_radio: bool,
+    pub selected: bool,
+    pub autosend: bool,
+    pub group: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DialogField {
+    pub id: String,
+    pub value: String,
+    pub cursor: usize,
+    pub enter_button: Option<String>,
+    pub focused: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct DialogLabel {
+    pub id: String,
+    pub value: String,
 }
 
 /// Popup menu state
@@ -182,6 +236,10 @@ impl UiState {
             needs_widget_reset: false,
             container_discovery_mode: false,
             ephemeral_windows: std::collections::HashSet::new(),
+            quickbars: HashMap::new(),
+            quickbar_order: Vec::new(),
+            active_quickbar_id: None,
+            active_dialog: None,
         }
     }
 
@@ -453,6 +511,7 @@ mod tests {
             InputMode::History,
             InputMode::Search,
             InputMode::Menu,
+            InputMode::Dialog,
             InputMode::WindowEditor,
             InputMode::HighlightBrowser,
             InputMode::HighlightForm,
@@ -466,6 +525,7 @@ mod tests {
             InputMode::ThemeBrowser,
             InputMode::ThemeEditor,
             InputMode::SettingsEditor,
+            InputMode::IndicatorTemplateEditor,
         ];
 
         // All modes should be distinct

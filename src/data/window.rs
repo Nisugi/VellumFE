@@ -42,6 +42,7 @@ pub enum WidgetType {
     Perception,
     Container,
     Experience,
+    Quickbar,
 }
 
 impl WidgetType {
@@ -78,6 +79,7 @@ impl WidgetType {
             "spacer" => Some(WidgetType::Spacer),
             "container" => Some(WidgetType::Container),
             "experience" => Some(WidgetType::Experience),
+            "quickbar" => Some(WidgetType::Quickbar),
             _ => None,
         }
     }
@@ -87,7 +89,7 @@ impl WidgetType {
         "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
         "indicator", "room", "inventory", "command_input", "dashboard", "hand",
         "active_effects", "targets", "players", "spells",
-        "perception", "performance", "spacer", "container", "experience",
+        "perception", "performance", "spacer", "container", "experience", "quickbar",
     ];
 }
 
@@ -133,6 +135,7 @@ pub enum WindowContent {
     /// Experience window - displays DR skill/experience components
     /// Reads from GameState.exp_components (no data stored here)
     Experience,
+    Quickbar,
     Empty, // For spacers or not-yet-implemented widgets
 }
 
@@ -278,6 +281,7 @@ mod tests {
             WidgetType::Spacer,
             WidgetType::Performance,
             WidgetType::Perception,
+            WidgetType::Quickbar,
         ];
 
         // All variants should be distinct

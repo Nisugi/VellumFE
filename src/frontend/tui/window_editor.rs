@@ -1180,6 +1180,7 @@ impl WindowEditor {
                 fields.push(FieldRef::Wordwrap);
                 fields.push(FieldRef::Timestamps);
             }
+            WindowDef::Quickbar { .. } => {}
             WindowDef::TabbedText { .. } => {
                 fields.push(FieldRef::TabBarPosition);
                 fields.push(FieldRef::TabSeparator);

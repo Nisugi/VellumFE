@@ -60,13 +60,16 @@ impl TuiFrontend {
                             let ts_pos = data.timestamp_position
                                 .unwrap_or(app_core.config.ui.timestamp_position);
                             tw.set_timestamp_position(ts_pos);
+                            tw.set_wordwrap(data.wordwrap);
                         } else {
                             tw.set_show_timestamps(false); // Default to false for non-text windows
                             tw.set_timestamp_position(app_core.config.ui.timestamp_position);
+                            tw.set_wordwrap(true);
                         }
                     } else {
                         tw.set_show_timestamps(false); // Default to false when no window def
                         tw.set_timestamp_position(crate::config::TimestampPosition::End);
+                        tw.set_wordwrap(true);
                     }
                     // Note: Highlights are now applied in core (MessageProcessor)
 
@@ -99,9 +102,11 @@ impl TuiFrontend {
                         let ts_pos = data.timestamp_position
                             .unwrap_or(app_core.config.ui.timestamp_position);
                         text_window.set_timestamp_position(ts_pos);
+                        text_window.set_wordwrap(data.wordwrap);
                     } else {
                         text_window.set_show_timestamps(false); // Default to false
                         text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
+                        text_window.set_wordwrap(true);
                     }
                 }
 
@@ -807,6 +812,70 @@ impl TuiFrontend {
                             .set_transparent_background(window_def.base().transparent_background);
                     }
                 }
+            }
+        }
+    }
+
+    /// Sync quickbar widget data from AppCore to quickbar widgets
+    pub(crate) fn sync_quickbar_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if window.widget_type != crate::data::WidgetType::Quickbar {
+                continue;
+            }
+
+            if !self.widget_manager.quickbar_widgets.contains_key(name) {
+                let widget = quickbar::Quickbar::new(name);
+                self.widget_manager.quickbar_widgets.insert(name.clone(), widget);
+            }
+
+            if let Some(quickbar_widget) = self.widget_manager.quickbar_widgets.get_mut(name) {
+                let window_def = app_core.layout.windows.iter().find(|w| w.name() == name);
+                let active_id = app_core
+                    .ui_state
+                    .active_quickbar_id
+                    .clone()
+                    .or_else(|| app_core.ui_state.quickbar_order.first().cloned());
+                let quickbar_data = active_id
+                    .as_ref()
+                    .and_then(|id| app_core.ui_state.quickbars.get(id));
+                let entries = quickbar_data
+                    .map(|data| data.entries.clone())
+                    .unwrap_or_default();
+                quickbar_widget.set_entries(entries);
+
+                if let Some(def) = window_def {
+                    let colors = resolve_window_colors(def.base(), theme);
+                    quickbar_widget.set_border_config(
+                        def.base().show_border,
+                        Some(def.base().border_style.clone()),
+                        colors.border.clone(),
+                    );
+                    quickbar_widget.set_border_sides(def.base().border_sides.clone());
+                    quickbar_widget.set_background_color(colors.background.clone());
+                    quickbar_widget.set_text_color(colors.text.clone());
+                    quickbar_widget.set_transparent_background(def.base().transparent_background);
+
+                    let title_text = if def.base().show_title {
+                        let data_title = quickbar_data
+                            .and_then(|data| data.title.clone())
+                            .filter(|t| !t.trim().is_empty());
+                        data_title
+                            .or_else(|| def.base().title.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    quickbar_widget.set_title(title_text);
+                }
+
+                quickbar_widget.set_selection_colors(
+                    color_to_hex_string(&theme.text_selected),
+                    color_to_hex_string(&theme.background_selected),
+                );
             }
         }
     }

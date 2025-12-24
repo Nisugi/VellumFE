@@ -7,7 +7,7 @@ use vellum_fe::{
     data::{
         widget::{
             ActiveEffect, ActiveEffectsContent, CompassData, CountdownData, IndicatorData,
-            ProgressData, StyledLine, TextContent, TextSegment,
+            ProgressData, QuickbarEntry, StyledLine, TextContent, TextSegment,
         },
         window::{WindowContent, WindowPosition, WindowState, WidgetType},
         RoomContent, UiState,
@@ -198,6 +198,25 @@ fn add_compass_window(ui_state: &mut UiState) {
         ephemeral: false,
     };
     ui_state.set_window("compass".to_string(), window);
+}
+
+#[test]
+fn test_quickbar_state_updates() {
+    let (mut ui_state, mut processor, mut game_state, mut parser) = init_state();
+
+    let xml = r#"<openDialog id="quick" location="quickBar" title="main"><dialogData id="quick" clear="true"><link id="2" value="look" cmd="look" echo="look"/><sep/></dialogData></openDialog>
+<dialogData id="quick"><menuLink id="3" value="roleplay..." exist="qlinkrp" noun=""/></dialogData>
+<switchQuickBar id="quick"/>"#;
+
+    run_fixture(xml, &mut ui_state, &mut processor, &mut game_state, &mut parser);
+
+    let quickbar = ui_state.quickbars.get("quick").expect("quickbar data");
+    assert_eq!(quickbar.title.as_deref(), Some("main"));
+    assert_eq!(quickbar.entries.len(), 3);
+    assert!(matches!(quickbar.entries[0], QuickbarEntry::Link { .. }));
+    assert!(matches!(quickbar.entries[1], QuickbarEntry::Separator));
+    assert!(matches!(quickbar.entries[2], QuickbarEntry::MenuLink { .. }));
+    assert_eq!(ui_state.active_quickbar_id.as_deref(), Some("quick"));
 }
 
 fn add_dashboard_window(ui_state: &mut UiState, name: &str, indicators: Vec<(String, u8)>) {
