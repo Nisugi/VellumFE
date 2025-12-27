@@ -45,6 +45,17 @@ const SORT_DIRECTION_OPTIONS: &[&str] = &[
     "descending",
 ];
 
+/// Actions that can result from mouse interaction with the window editor
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowEditorMouseAction {
+    /// No special action, just focus change or drag
+    None,
+    /// User clicked Save button
+    Save,
+    /// User clicked Cancel button
+    Cancel,
+}
+
 /// Field reference for linear navigation/rendering
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FieldRef {
@@ -133,6 +144,28 @@ enum FieldRef {
     PerceptionSortDirection,
     PerceptionTextReplacements,
     PerceptionUseShortSpellNames,
+
+    // Encumbrance widget fields
+    EncumShowLabel,
+    EncumColorLight,
+    EncumColorModerate,
+    EncumColorHeavy,
+    EncumColorCritical,
+    // GS4Experience widget fields
+    GS4ExpShowLevel,
+    GS4ExpShowExpBar,
+    GS4ExpMindBarColor,
+    GS4ExpExpBarColor,
+    // MiniVitals widget fields
+    MiniVitalsNumbersOnly,
+    MiniVitalsCurrentOnly,
+    MiniVitalsHealthColor,
+    MiniVitalsManaColor,
+    MiniVitalsStaminaColor,
+    MiniVitalsSpiritColor,
+    // Betrayer widget fields
+    BetrayerShowItems,
+    BetrayerBarColor,
 }
 
 impl FieldRef {
@@ -218,6 +251,23 @@ impl FieldRef {
             FieldRef::PerceptionSortDirection => 93,
             FieldRef::PerceptionTextReplacements => 94,
             FieldRef::PerceptionUseShortSpellNames => 95,
+            FieldRef::EncumShowLabel => 96,
+            FieldRef::EncumColorLight => 105,
+            FieldRef::EncumColorModerate => 106,
+            FieldRef::EncumColorHeavy => 107,
+            FieldRef::EncumColorCritical => 108,
+            FieldRef::GS4ExpShowLevel => 97,
+            FieldRef::GS4ExpShowExpBar => 98,
+            FieldRef::GS4ExpMindBarColor => 109,
+            FieldRef::GS4ExpExpBarColor => 110,
+            FieldRef::MiniVitalsNumbersOnly => 99,
+            FieldRef::MiniVitalsCurrentOnly => 100,
+            FieldRef::MiniVitalsHealthColor => 101,
+            FieldRef::MiniVitalsManaColor => 102,
+            FieldRef::MiniVitalsStaminaColor => 103,
+            FieldRef::MiniVitalsSpiritColor => 104,
+            FieldRef::BetrayerShowItems => 111,
+            FieldRef::BetrayerBarColor => 112,
         }
     }
 }
@@ -992,6 +1042,31 @@ pub struct WindowEditor {
     perception_sort_direction_input: TextArea<'static>,
     perception_use_short_spell_names: bool,
 
+    // Encumbrance widget
+    show_label_encum: bool,
+    encum_color_light_input: TextArea<'static>,
+    encum_color_moderate_input: TextArea<'static>,
+    encum_color_heavy_input: TextArea<'static>,
+    encum_color_critical_input: TextArea<'static>,
+
+    // GS4Experience widget
+    gs4_exp_show_level: bool,
+    gs4_exp_show_exp_bar: bool,
+    gs4_exp_mind_bar_color_input: TextArea<'static>,
+    gs4_exp_exp_bar_color_input: TextArea<'static>,
+
+    // MiniVitals widget
+    minivitals_numbers_only: bool,
+    minivitals_current_only: bool,
+    minivitals_health_color_input: TextArea<'static>,
+    minivitals_mana_color_input: TextArea<'static>,
+    minivitals_stamina_color_input: TextArea<'static>,
+    minivitals_spirit_color_input: TextArea<'static>,
+
+    // Betrayer widget
+    betrayer_show_items: bool,
+    betrayer_bar_color_input: TextArea<'static>,
+
     window_def: WindowDef,
     original_window_def: WindowDef,
     is_new: bool,
@@ -1000,6 +1075,8 @@ pub struct WindowEditor {
     indicator_editor: Option<IndicatorEditor>,
     performance_metrics_editor: Option<PerformanceMetricsEditor>,
     text_replacements_editor: Option<TextReplacementsEditor>,
+    /// Stores (y_position, field_ref) for click-to-select
+    field_click_areas: Vec<(u16, u16, FieldRef)>, // (y, x_start, field)
 }
 
 impl WindowEditor {
@@ -1267,6 +1344,36 @@ impl WindowEditor {
                 // Experience widget - alignment is configurable via content_align in base
                 // No special fields beyond base settings
             }
+            WindowDef::GS4Experience { .. } => {
+                // GS4 Experience widget - show_level and show_exp_bar toggles, bar colors
+                fields.push(FieldRef::GS4ExpShowLevel);
+                fields.push(FieldRef::GS4ExpShowExpBar);
+                fields.push(FieldRef::GS4ExpMindBarColor);
+                fields.push(FieldRef::GS4ExpExpBarColor);
+            }
+            WindowDef::Encumbrance { .. } => {
+                // Encumbrance widget - show_label toggle and bar colors
+                fields.push(FieldRef::EncumShowLabel);
+                fields.push(FieldRef::EncumColorLight);
+                fields.push(FieldRef::EncumColorModerate);
+                fields.push(FieldRef::EncumColorHeavy);
+                fields.push(FieldRef::EncumColorCritical);
+            }
+            WindowDef::MiniVitals { .. } => {
+                // MiniVitals widget display mode toggles
+                fields.push(FieldRef::MiniVitalsNumbersOnly);
+                fields.push(FieldRef::MiniVitalsCurrentOnly);
+                // Bar color settings
+                fields.push(FieldRef::MiniVitalsHealthColor);
+                fields.push(FieldRef::MiniVitalsManaColor);
+                fields.push(FieldRef::MiniVitalsStaminaColor);
+                fields.push(FieldRef::MiniVitalsSpiritColor);
+            }
+            WindowDef::Betrayer { .. } => {
+                // Betrayer widget - show_items toggle and bar color
+                fields.push(FieldRef::BetrayerShowItems);
+                fields.push(FieldRef::BetrayerBarColor);
+            }
         }
 
         fields
@@ -1276,6 +1383,24 @@ impl WindowEditor {
         // Show total rows/cols (not content rows) - VellumFE style
         self.rows_input = Self::textarea_with_value(self.window_def.base().rows.max(1));
         self.cols_input = Self::textarea_with_value(self.window_def.base().cols.max(1));
+
+        // Also refresh min/max inputs (they adjust with border changes)
+        self.min_rows_input = Self::create_textarea();
+        if let Some(min_rows) = self.window_def.base().min_rows {
+            self.min_rows_input.insert_str(min_rows.to_string());
+        }
+        self.min_cols_input = Self::create_textarea();
+        if let Some(min_cols) = self.window_def.base().min_cols {
+            self.min_cols_input.insert_str(min_cols.to_string());
+        }
+        self.max_rows_input = Self::create_textarea();
+        if let Some(max_rows) = self.window_def.base().max_rows {
+            self.max_rows_input.insert_str(max_rows.to_string());
+        }
+        self.max_cols_input = Self::create_textarea();
+        if let Some(max_cols) = self.window_def.base().max_cols {
+            self.max_cols_input.insert_str(max_cols.to_string());
+        }
     }
 
     /// Current content alignment value (defaults to first option)
@@ -1624,6 +1749,100 @@ impl WindowEditor {
             perception_use_short_spell_names = data.use_short_spell_names;
         }
 
+        // Encumbrance widget fields - defaults match widget defaults (green, yellow, orange, red)
+        let (
+            show_label_encum,
+            encum_color_light,
+            encum_color_moderate,
+            encum_color_heavy,
+            encum_color_critical,
+        ) = if let crate::config::WindowDef::Encumbrance { data, .. } = &window_def {
+            (
+                data.show_label,
+                data.color_light.clone().unwrap_or_else(|| "#00FF00".to_string()),
+                data.color_moderate.clone().unwrap_or_else(|| "#FFFF00".to_string()),
+                data.color_heavy.clone().unwrap_or_else(|| "#FFA500".to_string()),
+                data.color_critical.clone().unwrap_or_else(|| "#FF0000".to_string()),
+            )
+        } else {
+            (true, "#00FF00".to_string(), "#FFFF00".to_string(), "#FFA500".to_string(), "#FF0000".to_string())
+        };
+
+        let mut encum_color_light_input = Self::create_textarea();
+        encum_color_light_input.insert_str(&encum_color_light);
+        let mut encum_color_moderate_input = Self::create_textarea();
+        encum_color_moderate_input.insert_str(&encum_color_moderate);
+        let mut encum_color_heavy_input = Self::create_textarea();
+        encum_color_heavy_input.insert_str(&encum_color_heavy);
+        let mut encum_color_critical_input = Self::create_textarea();
+        encum_color_critical_input.insert_str(&encum_color_critical);
+
+        // GS4Experience widget fields - mind bar default cyan, exp bar default empty (theme bg)
+        let (
+            gs4_exp_show_level,
+            gs4_exp_show_exp_bar,
+            gs4_exp_mind_bar_color,
+            gs4_exp_exp_bar_color,
+        ) = if let crate::config::WindowDef::GS4Experience { data, .. } = &window_def {
+            (
+                data.show_level,
+                data.show_exp_bar,
+                data.mind_bar_color.clone().unwrap_or_else(|| "#00FFFF".to_string()),
+                data.exp_bar_color.clone().unwrap_or_default(), // Empty = theme background
+            )
+        } else {
+            (true, true, "#00FFFF".to_string(), String::new())
+        };
+
+        let mut gs4_exp_mind_bar_color_input = Self::create_textarea();
+        gs4_exp_mind_bar_color_input.insert_str(&gs4_exp_mind_bar_color);
+        let mut gs4_exp_exp_bar_color_input = Self::create_textarea();
+        gs4_exp_exp_bar_color_input.insert_str(&gs4_exp_exp_bar_color);
+
+        // MiniVitals widget fields
+        let (
+            minivitals_numbers_only,
+            minivitals_current_only,
+            minivitals_health_color,
+            minivitals_mana_color,
+            minivitals_stamina_color,
+            minivitals_spirit_color,
+        ) = if let crate::config::WindowDef::MiniVitals { data, .. } = &window_def {
+            (
+                data.numbers_only,
+                data.current_only,
+                data.health_color.clone().unwrap_or_else(|| "#6e0202".to_string()),
+                data.mana_color.clone().unwrap_or_else(|| "#08086d".to_string()),
+                data.stamina_color.clone().unwrap_or_else(|| "#bd7b00".to_string()),
+                data.spirit_color.clone().unwrap_or_else(|| "#6e727c".to_string()),
+            )
+        } else {
+            (false, false, "#6e0202".to_string(), "#08086d".to_string(), "#bd7b00".to_string(), "#6e727c".to_string())
+        };
+
+        let mut minivitals_health_color_input = Self::create_textarea();
+        minivitals_health_color_input.insert_str(&minivitals_health_color);
+        let mut minivitals_mana_color_input = Self::create_textarea();
+        minivitals_mana_color_input.insert_str(&minivitals_mana_color);
+        let mut minivitals_stamina_color_input = Self::create_textarea();
+        minivitals_stamina_color_input.insert_str(&minivitals_stamina_color);
+        let mut minivitals_spirit_color_input = Self::create_textarea();
+        minivitals_spirit_color_input.insert_str(&minivitals_spirit_color);
+
+        // Betrayer widget fields
+        let (betrayer_show_items, betrayer_bar_color) =
+            if let crate::config::WindowDef::Betrayer { data, .. } = &window_def {
+                (
+                    data.show_items,
+                    data.bar_color.clone().unwrap_or_else(|| "#8b0000".to_string()),
+                )
+            } else {
+                (true, "#8b0000".to_string())
+            };
+
+        let mut betrayer_bar_color_input = Self::create_textarea();
+        betrayer_bar_color_input.insert_str(&betrayer_bar_color);
+
         let mut content_align_input = Self::create_textarea();
         if let Some(ref align) = window_def.base().content_align {
             content_align_input.insert_str(align);
@@ -1724,6 +1943,23 @@ impl WindowEditor {
             available_indicators: Vec::new(),
             perception_sort_direction_input,
             perception_use_short_spell_names,
+            show_label_encum,
+            encum_color_light_input,
+            encum_color_moderate_input,
+            encum_color_heavy_input,
+            encum_color_critical_input,
+            gs4_exp_show_level,
+            gs4_exp_show_exp_bar,
+            gs4_exp_mind_bar_color_input,
+            gs4_exp_exp_bar_color_input,
+            minivitals_numbers_only,
+            minivitals_current_only,
+            minivitals_health_color_input,
+            minivitals_mana_color_input,
+            minivitals_stamina_color_input,
+            minivitals_spirit_color_input,
+            betrayer_show_items,
+            betrayer_bar_color_input,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: false,
@@ -1732,6 +1968,7 @@ impl WindowEditor {
             indicator_editor: None,
             performance_metrics_editor: None,
             text_replacements_editor: None,
+            field_click_areas: Vec::new(),
         }
     }
 
@@ -1792,6 +2029,7 @@ impl WindowEditor {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             },
             "room" => WindowDef::Room {
@@ -1842,6 +2080,7 @@ impl WindowEditor {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             },
         };
@@ -2040,6 +2279,23 @@ impl WindowEditor {
             available_indicators: Vec::new(),
             perception_sort_direction_input,
             perception_use_short_spell_names,
+            show_label_encum: true,
+            encum_color_light_input: Self::create_textarea(),
+            encum_color_moderate_input: Self::create_textarea(),
+            encum_color_heavy_input: Self::create_textarea(),
+            encum_color_critical_input: Self::create_textarea(),
+            gs4_exp_show_level: true,
+            gs4_exp_show_exp_bar: true,
+            gs4_exp_mind_bar_color_input: Self::create_textarea(),
+            gs4_exp_exp_bar_color_input: Self::create_textarea(),
+            minivitals_numbers_only: false,
+            minivitals_current_only: false,
+            minivitals_health_color_input: Self::create_textarea(),
+            minivitals_mana_color_input: Self::create_textarea(),
+            minivitals_stamina_color_input: Self::create_textarea(),
+            minivitals_spirit_color_input: Self::create_textarea(),
+            betrayer_show_items: true,
+            betrayer_bar_color_input: Self::create_textarea(),
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: true,
@@ -2048,11 +2304,13 @@ impl WindowEditor {
             indicator_editor: None,
             performance_metrics_editor: None,
             text_replacements_editor: None,
+            field_click_areas: Vec::new(),
         }
     }
 
-    /// Create a new window editor with auto-naming for spacer widgets
-    /// Uses AppCore::generate_spacer_name() to auto-populate the name field for spacers
+    /// Create a new window editor with auto-naming for all custom widgets
+    /// Uses Layout::generate_spacer_name() for spacers (spacer_N pattern)
+    /// Uses Layout::generate_widget_name() for other types (custom-{type}-N pattern)
     pub fn new_window_with_layout(widget_type: String, layout: &crate::config::Layout) -> Self {
         // Prefer the configured template (so defaults like tabs/streams are respected)
         let mut editor = if let Some(template) = Config::get_window_template(&widget_type) {
@@ -2062,13 +2320,18 @@ impl WindowEditor {
         };
         editor.available_indicators = Self::indicators_from_layout(layout);
 
-        // If this is a spacer widget, auto-generate the name
-        if widget_type.to_lowercase() == "spacer" {
-            let auto_name = crate::core::app_core::AppCore::generate_spacer_name(layout);
-            // Clear the name input (which starts empty) and insert the auto-generated name
-            editor.name_input.insert_str(&auto_name);
-            editor.window_def.base_mut().name = auto_name;
-        }
+        // Auto-generate a name for all custom widgets
+        let auto_name = if widget_type.to_lowercase() == "spacer" {
+            // Spacers use the spacer_N pattern for backward compatibility
+            layout.generate_spacer_name()
+        } else {
+            // All other widget types use custom-{type}-N pattern
+            layout.generate_widget_name(&widget_type)
+        };
+
+        // Set the auto-generated name in both the input field and the window def
+        editor.name_input.insert_str(&auto_name);
+        editor.window_def.base_mut().name = auto_name;
 
         editor
     }
@@ -2393,6 +2656,12 @@ impl WindowEditor {
                     | FieldRef::TabSeparator
                     | FieldRef::DashboardHideInactive
                     | FieldRef::PerfEnableMonitor
+                    | FieldRef::EncumShowLabel
+                    | FieldRef::GS4ExpShowLevel
+                    | FieldRef::GS4ExpShowExpBar
+                    | FieldRef::MiniVitalsNumbersOnly
+                    | FieldRef::MiniVitalsCurrentOnly
+                    | FieldRef::BetrayerShowItems
             )
         )
     }
@@ -2695,6 +2964,39 @@ impl WindowEditor {
             _ if id == FieldRef::Scar3Color.legacy_field_id() => {
                 self.scar3_color_input.input(input);
             }
+            _ if id == FieldRef::MiniVitalsHealthColor.legacy_field_id() => {
+                self.minivitals_health_color_input.input(input);
+            }
+            _ if id == FieldRef::MiniVitalsManaColor.legacy_field_id() => {
+                self.minivitals_mana_color_input.input(input);
+            }
+            _ if id == FieldRef::MiniVitalsStaminaColor.legacy_field_id() => {
+                self.minivitals_stamina_color_input.input(input);
+            }
+            _ if id == FieldRef::MiniVitalsSpiritColor.legacy_field_id() => {
+                self.minivitals_spirit_color_input.input(input);
+            }
+            _ if id == FieldRef::EncumColorLight.legacy_field_id() => {
+                self.encum_color_light_input.input(input);
+            }
+            _ if id == FieldRef::EncumColorModerate.legacy_field_id() => {
+                self.encum_color_moderate_input.input(input);
+            }
+            _ if id == FieldRef::EncumColorHeavy.legacy_field_id() => {
+                self.encum_color_heavy_input.input(input);
+            }
+            _ if id == FieldRef::EncumColorCritical.legacy_field_id() => {
+                self.encum_color_critical_input.input(input);
+            }
+            _ if id == FieldRef::GS4ExpMindBarColor.legacy_field_id() => {
+                self.gs4_exp_mind_bar_color_input.input(input);
+            }
+            _ if id == FieldRef::GS4ExpExpBarColor.legacy_field_id() => {
+                self.gs4_exp_exp_bar_color_input.input(input);
+            }
+            _ if id == FieldRef::BetrayerBarColor.legacy_field_id() => {
+                self.betrayer_bar_color_input.input(input);
+            }
             _ if id == FieldRef::IndicatorId.legacy_field_id() => {
                 self.indicator_id_input.input(input);
             }
@@ -2883,6 +3185,80 @@ impl WindowEditor {
                         }
                         FieldRef::PerfChooseMetrics => {
                             self.open_performance_metrics_editor();
+                        }
+                        FieldRef::EncumShowLabel => {
+                            let prev_show = self.show_label_encum;
+                            self.show_label_encum = !self.show_label_encum;
+                            // Apply row adjustment for optional content row
+                            self.window_def
+                                .base_mut()
+                                .apply_optional_content_row(self.show_label_encum, prev_show);
+                            self.refresh_size_inputs();
+                        }
+                        FieldRef::GS4ExpShowLevel => {
+                            let prev_show = self.gs4_exp_show_level;
+                            self.gs4_exp_show_level = !self.gs4_exp_show_level;
+                            // Apply row adjustment for optional content row
+                            self.window_def
+                                .base_mut()
+                                .apply_optional_content_row(self.gs4_exp_show_level, prev_show);
+                            self.refresh_size_inputs();
+                        }
+                        FieldRef::GS4ExpShowExpBar => {
+                            let prev_show = self.gs4_exp_show_exp_bar;
+                            self.gs4_exp_show_exp_bar = !self.gs4_exp_show_exp_bar;
+                            // Apply row adjustment for optional content row
+                            self.window_def
+                                .base_mut()
+                                .apply_optional_content_row(self.gs4_exp_show_exp_bar, prev_show);
+                            self.refresh_size_inputs();
+                        }
+                        FieldRef::MiniVitalsNumbersOnly => {
+                            self.minivitals_numbers_only = !self.minivitals_numbers_only;
+                            // If numbers_only is enabled, disable current_only
+                            if self.minivitals_numbers_only {
+                                self.minivitals_current_only = false;
+                            }
+                        }
+                        FieldRef::MiniVitalsCurrentOnly => {
+                            self.minivitals_current_only = !self.minivitals_current_only;
+                            // If current_only is enabled, disable numbers_only
+                            if self.minivitals_current_only {
+                                self.minivitals_numbers_only = false;
+                            }
+                        }
+                        FieldRef::BetrayerShowItems => {
+                            let prev_show = self.betrayer_show_items;
+                            self.betrayer_show_items = !self.betrayer_show_items;
+                            // Adjust rows based on show_items toggle
+                            // When toggling OFF: remove item rows (calculate from current - ideal_without_items)
+                            // When toggling ON: add 1 row (minimum item row, auto-resize will correct later)
+                            // Read min/max from text inputs (not window_def which may not have latest edits)
+                            let min_rows: u16 = self
+                                .min_rows_input
+                                .lines()
+                                .first()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(1);
+                            let max_rows: u16 = self
+                                .max_rows_input
+                                .lines()
+                                .first()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(u16::MAX);
+                            let base = self.window_def.base_mut();
+                            let border_rows = base.horizontal_border_units();
+                            let bar_rows = 1u16;
+                            if prev_show && !self.betrayer_show_items {
+                                // Toggling OFF - set rows to just bar + borders
+                                let ideal_rows_off = bar_rows + border_rows;
+                                base.rows = ideal_rows_off.max(min_rows).min(max_rows);
+                            } else if !prev_show && self.betrayer_show_items {
+                                // Toggling ON - add 1 item row (minimum)
+                                let ideal_rows_on = bar_rows + 1 + border_rows;
+                                base.rows = ideal_rows_on.max(min_rows).min(max_rows);
+                            }
+                            self.refresh_size_inputs();
                         }
                         _ => {}
                     }
@@ -3497,6 +3873,79 @@ impl WindowEditor {
             data.current_only = self.progress_current_only;
         }
 
+        if let crate::config::WindowDef::Encumbrance { data, .. } = &mut self.window_def {
+            data.show_label = self.show_label_encum;
+            data.color_light = self.encum_color_light_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.color_moderate = self.encum_color_moderate_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.color_heavy = self.encum_color_heavy_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.color_critical = self.encum_color_critical_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+
+        if let crate::config::WindowDef::GS4Experience { data, .. } = &mut self.window_def {
+            data.show_level = self.gs4_exp_show_level;
+            data.show_exp_bar = self.gs4_exp_show_exp_bar;
+            data.mind_bar_color = self.gs4_exp_mind_bar_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.exp_bar_color = self.gs4_exp_exp_bar_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+
+        if let crate::config::WindowDef::MiniVitals { data, .. } = &mut self.window_def {
+            data.numbers_only = self.minivitals_numbers_only;
+            data.current_only = self.minivitals_current_only;
+            data.health_color = self.minivitals_health_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.mana_color = self.minivitals_mana_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.stamina_color = self.minivitals_stamina_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.spirit_color = self.minivitals_spirit_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+
+        if let crate::config::WindowDef::Betrayer { data, .. } = &mut self.window_def {
+            data.show_items = self.betrayer_show_items;
+            data.bar_color = self.betrayer_bar_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+
         if let crate::config::WindowDef::Countdown { data, .. } = &mut self.window_def {
             data.id = self
                 .countdown_id_input
@@ -3746,10 +4195,10 @@ impl WindowEditor {
         (self.popup_x, self.popup_y, self.popup_width, self.popup_height)
     }
 
-    pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) {
+    pub fn handle_mouse(&mut self, mouse_col: u16, mouse_row: u16, mouse_down: bool, area: Rect) -> WindowEditorMouseAction {
         if !mouse_down {
             self.dragging = false;
-            return;
+            return WindowEditorMouseAction::None;
         }
 
         let popup_area = Rect {
@@ -3777,7 +4226,95 @@ impl WindowEditor {
             self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
             self.popup_x = self.popup_x.min(area.width.saturating_sub(self.popup_width));
             self.popup_y = self.popup_y.min(area.height.saturating_sub(self.popup_height));
+            return WindowEditorMouseAction::None; // Don't process field clicks while dragging
         }
+
+        // Check if click is inside the popup (but not on title bar)
+        let inside_popup = mouse_col >= popup_area.x
+            && mouse_col < popup_area.x + popup_area.width
+            && mouse_row > popup_area.y  // Skip title bar row
+            && mouse_row < popup_area.y + popup_area.height;
+
+        if !inside_popup {
+            return WindowEditorMouseAction::None;
+        }
+
+        // Check if click is on the footer (bottom border with Save/Cancel)
+        let footer_y = popup_area.y + popup_area.height.saturating_sub(1);
+        if mouse_row == footer_y {
+            // Footer text: "[Ctrl+S: Save] [Esc: Cancel]"
+            // Check relative x position within the popup
+            let rel_x = mouse_col.saturating_sub(popup_area.x);
+
+            // Save is roughly in the left portion, Cancel in the right
+            // "[Ctrl+S: Save]" starts around x=1, "Save" is around x=9-12
+            // "[Esc: Cancel]" starts around x=16, "Cancel" is around x=22-27
+            if rel_x >= 1 && rel_x <= 14 {
+                return WindowEditorMouseAction::Save;
+            } else if rel_x >= 16 && rel_x <= 28 {
+                return WindowEditorMouseAction::Cancel;
+            }
+        }
+
+        // Check if click is on a tracked field area
+        // field_click_areas contains (y, x_start, field_ref)
+        // We match by y (exact row) and distinguish side-by-side fields by x
+        let left_column_end = self.popup_x + 37;  // Left column ends at x=37 relative to popup
+        let geom_x2 = self.popup_x + 17;  // Divider for side-by-side geometry fields (Row/Col, etc.)
+
+        // Find all fields on this row
+        let fields_on_row: Vec<_> = self.field_click_areas.iter()
+            .filter(|(y, _, _)| *y == mouse_row)
+            .collect();
+
+        for &(field_y, field_x, ref field_ref) in &self.field_click_areas {
+            if mouse_row == field_y {
+                // Check if there are multiple fields on this row (side-by-side)
+                let multiple_on_row = fields_on_row.len() > 1;
+
+                let in_field_region = if field_x >= left_column_end {
+                    // Right column field: accept clicks in right half
+                    mouse_col >= left_column_end
+                } else if multiple_on_row && field_x < left_column_end {
+                    // Left column with side-by-side fields (Row/Col, Rows/Cols, etc.)
+                    // First field is at left_x, second at geom_x2
+                    if field_x < geom_x2 {
+                        // First field (Row, Rows, Min, Max): accept clicks up to geom_x2
+                        mouse_col >= self.popup_x && mouse_col < geom_x2
+                    } else {
+                        // Second field (Col, Cols): accept clicks from geom_x2 onwards in left column
+                        mouse_col >= geom_x2 && mouse_col < left_column_end
+                    }
+                } else {
+                    // Single field in left column: accept clicks in left half
+                    mouse_col >= self.popup_x && mouse_col < left_column_end
+                };
+
+                if in_field_region {
+                    // Update focused field
+                    self.focused_field = field_ref.legacy_field_id();
+                    // Also update current_field_index to match
+                    if let Some(idx) = self.field_order.iter().position(|f| f == field_ref) {
+                        self.current_field_index = idx;
+                    }
+
+                    // Toggle checkboxes when clicked
+                    if self.is_on_checkbox() {
+                        self.toggle_field();
+                    } else if self.is_on_content_align() {
+                        self.cycle_content_align(false);
+                    } else if self.is_on_title_position() {
+                        self.cycle_title_position(false);
+                    } else if self.is_on_border_style() {
+                        self.cycle_border_style(false);
+                    }
+
+                    return WindowEditorMouseAction::None;
+                }
+            }
+        }
+
+        WindowEditorMouseAction::None
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &EditorTheme) {
@@ -4236,6 +4773,9 @@ impl WindowEditor {
     }
 
     fn render_fields(&mut self, area: Rect, buf: &mut Buffer, theme: &EditorTheme) {
+        // Clear click areas for fresh population
+        self.field_click_areas.clear();
+
         let left_x = area.x + 1;
         let right_x = area.x + 38;
         let geom_x2 = left_x + 16;
@@ -4258,6 +4798,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Name, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::Name));
         left_y += 1;
 
         self.render_textarea_compact(
@@ -4271,6 +4812,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Title, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::Title));
         left_y += 1;
 
         // Title align
@@ -4289,6 +4831,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::TitlePosition, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::TitlePosition));
         left_y += 1;
 
         // Content align
@@ -4303,6 +4846,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::ContentAlign, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::ContentAlign));
         left_y += 1;
 
         // Border style
@@ -4317,6 +4861,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderStyle, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::BorderStyle));
         left_y += 2;
 
         // Row / Col
@@ -4331,6 +4876,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Row, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::Row));
         self.render_textarea_compact(
             FieldRef::Col.legacy_field_id(),
             "  Col:",
@@ -4342,6 +4888,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Col, self.focused_field),
         );
+        self.field_click_areas.push((left_y, geom_x2, FieldRef::Col));
         left_y += 1;
 
         // Rows / Cols
@@ -4356,6 +4903,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Rows, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::Rows));
         self.render_textarea_compact(
             FieldRef::Cols.legacy_field_id(),
             " Cols:",
@@ -4367,6 +4915,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Cols, self.focused_field),
         );
+        self.field_click_areas.push((left_y, geom_x2, FieldRef::Cols));
         left_y += 1;
 
         // Min/Max constraints
@@ -4381,6 +4930,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::MinRows, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::MinRows));
         self.render_textarea_compact(
             FieldRef::MinCols.legacy_field_id(),
             "  Min:",
@@ -4392,6 +4942,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::MinCols, self.focused_field),
         );
+        self.field_click_areas.push((left_y, geom_x2, FieldRef::MinCols));
         left_y += 1;
 
         self.render_textarea_compact(
@@ -4405,6 +4956,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::MaxRows, self.focused_field),
         );
+        self.field_click_areas.push((left_y, left_x, FieldRef::MaxRows));
         self.render_textarea_compact(
             FieldRef::MaxCols.legacy_field_id(),
             "  Max:",
@@ -4416,6 +4968,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::MaxCols, self.focused_field),
         );
+        self.field_click_areas.push((left_y, geom_x2, FieldRef::MaxCols));
         left_y += 2;
 
         // Right column: appearance
@@ -4430,6 +4983,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::Locked, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::Locked));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::ShowTitle.legacy_field_id(),
@@ -4442,6 +4996,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::ShowTitle, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::ShowTitle));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::TransparentBg.legacy_field_id(),
@@ -4454,6 +5009,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::TransparentBg, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::TransparentBg));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::ShowBorder.legacy_field_id(),
@@ -4466,6 +5022,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::ShowBorder, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::ShowBorder));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::BorderTop.legacy_field_id(),
@@ -4478,6 +5035,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderTop, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BorderTop));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::BorderBottom.legacy_field_id(),
@@ -4490,6 +5048,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderBottom, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BorderBottom));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::BorderLeft.legacy_field_id(),
@@ -4502,6 +5061,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderLeft, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BorderLeft));
         right_y += 1;
         self.render_checkbox_compact(
             FieldRef::BorderRight.legacy_field_id(),
@@ -4514,6 +5074,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderRight, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BorderRight));
         right_y += 1;
 
         self.render_color_field(
@@ -4527,6 +5088,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BgColor, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BgColor));
         right_y += 1;
 
         self.render_color_field(
@@ -4540,6 +5102,7 @@ impl WindowEditor {
             theme,
             is_focus(FieldRef::BorderColor, self.focused_field),
         );
+        self.field_click_areas.push((right_y, right_x, FieldRef::BorderColor));
 
         // Special section
         let special_y = left_y.max(right_y) + 1;
@@ -5248,6 +5811,210 @@ impl WindowEditor {
                     is_focus(FieldRef::PerceptionTextReplacements, self.focused_field),
                 );
             }
+            WindowDef::GS4Experience { .. } => {
+                // Row 1: Show toggles
+                self.render_checkbox_compact(
+                    FieldRef::GS4ExpShowLevel.legacy_field_id(),
+                    "Show Level",
+                    self.gs4_exp_show_level,
+                    left_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::GS4ExpShowLevel, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::GS4ExpShowExpBar.legacy_field_id(),
+                    "Show Exp Bar",
+                    self.gs4_exp_show_exp_bar,
+                    right_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::GS4ExpShowExpBar, self.focused_field),
+                );
+                // Row 2: Bar colors
+                self.render_color_field(
+                    FieldRef::GS4ExpMindBarColor.legacy_field_id(),
+                    "Mind",
+                    &self.gs4_exp_mind_bar_color_input,
+                    left_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::GS4ExpMindBarColor, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::GS4ExpExpBarColor.legacy_field_id(),
+                    "Exp",
+                    &self.gs4_exp_exp_bar_color_input,
+                    right_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::GS4ExpExpBarColor, self.focused_field),
+                );
+            }
+            WindowDef::Encumbrance { .. } => {
+                // Row 1: Show label checkbox
+                self.render_checkbox_compact(
+                    FieldRef::EncumShowLabel.legacy_field_id(),
+                    "Show Label",
+                    self.show_label_encum,
+                    left_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EncumShowLabel, self.focused_field),
+                );
+                // Row 2: Light (0-20) and Moderate (21-50) colors
+                self.render_color_field(
+                    FieldRef::EncumColorLight.legacy_field_id(),
+                    "Light",
+                    &self.encum_color_light_input,
+                    left_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EncumColorLight, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::EncumColorModerate.legacy_field_id(),
+                    "Moderate",
+                    &self.encum_color_moderate_input,
+                    right_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EncumColorModerate, self.focused_field),
+                );
+                // Row 3: Heavy (51-80) and Critical (81-100) colors
+                self.render_color_field(
+                    FieldRef::EncumColorHeavy.legacy_field_id(),
+                    "Heavy",
+                    &self.encum_color_heavy_input,
+                    left_x,
+                    special_row + 2,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EncumColorHeavy, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::EncumColorCritical.legacy_field_id(),
+                    "Critical",
+                    &self.encum_color_critical_input,
+                    right_x,
+                    special_row + 2,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EncumColorCritical, self.focused_field),
+                );
+            }
+            WindowDef::MiniVitals { .. } => {
+                // Row 1: Display mode checkboxes
+                self.render_checkbox_compact(
+                    FieldRef::MiniVitalsNumbersOnly.legacy_field_id(),
+                    "Numbers Only",
+                    self.minivitals_numbers_only,
+                    left_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsNumbersOnly, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::MiniVitalsCurrentOnly.legacy_field_id(),
+                    "Current Only",
+                    self.minivitals_current_only,
+                    right_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsCurrentOnly, self.focused_field),
+                );
+                // Row 2: Health and Mana colors
+                self.render_color_field(
+                    FieldRef::MiniVitalsHealthColor.legacy_field_id(),
+                    "Health",
+                    &self.minivitals_health_color_input,
+                    left_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsHealthColor, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::MiniVitalsManaColor.legacy_field_id(),
+                    "Mana",
+                    &self.minivitals_mana_color_input,
+                    right_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsManaColor, self.focused_field),
+                );
+                // Row 3: Stamina and Spirit colors
+                self.render_color_field(
+                    FieldRef::MiniVitalsStaminaColor.legacy_field_id(),
+                    "Stamina",
+                    &self.minivitals_stamina_color_input,
+                    left_x,
+                    special_row + 2,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsStaminaColor, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::MiniVitalsSpiritColor.legacy_field_id(),
+                    "Spirit",
+                    &self.minivitals_spirit_color_input,
+                    right_x,
+                    special_row + 2,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsSpiritColor, self.focused_field),
+                );
+            }
+            WindowDef::Betrayer { .. } => {
+                // Betrayer widget: show_items toggle and bar color
+                self.render_checkbox_compact(
+                    FieldRef::BetrayerShowItems.legacy_field_id(),
+                    "Show Items",
+                    self.betrayer_show_items,
+                    left_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::BetrayerShowItems, self.focused_field),
+                );
+                self.render_color_field(
+                    FieldRef::BetrayerBarColor.legacy_field_id(),
+                    "Bar Color",
+                    &self.betrayer_bar_color_input,
+                    left_x,
+                    special_row + 1,
+                    12,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::BetrayerBarColor, self.focused_field),
+                );
+            }
             _ => {
                 buf.set_string(
                     left_x,
@@ -5759,6 +6526,57 @@ mod tests {
         let lines = editor.name_input.lines();
         let name = if !lines.is_empty() { &lines[0] } else { "" };
         assert_eq!(name, "spacer_2");
+    }
+
+    #[test]
+    fn test_new_window_tabbedtext_auto_naming_empty_layout() {
+        // Test that new_window_with_layout generates custom-tabbedtext-1 for tabbedtext in empty layout
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+
+        let editor = WindowEditor::new_window_with_layout("tabbedtext".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-tabbedtext-1");
+    }
+
+    #[test]
+    fn test_new_window_text_auto_naming_empty_layout() {
+        // Test that new_window_with_layout generates custom-text-1 for text in empty layout
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+
+        let editor = WindowEditor::new_window_with_layout("text".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-text-1");
+    }
+
+    #[test]
+    fn test_new_window_progress_auto_naming_empty_layout() {
+        // Test that new_window_with_layout generates custom-progress-1 for progress in empty layout
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+
+        let editor = WindowEditor::new_window_with_layout("progress".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-progress-1");
     }
 
     #[test]

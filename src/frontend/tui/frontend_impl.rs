@@ -105,6 +105,10 @@ impl Frontend for TuiFrontend {
         self.sync_injury_doll_widgets(app_core, &theme);
         self.sync_performance_widgets(app_core, &theme);
         self.sync_experience_widgets(app_core, &theme);
+        self.sync_gs4_experience_widgets(app_core, &theme);
+        self.sync_encumbrance_widgets(app_core, &theme);
+        self.sync_minivitals_widgets(app_core, &theme);
+        self.sync_betrayer_widgets(app_core, &theme);
 
         // Temporarily take ownership of widgets to use in render
         let mut text_windows = std::mem::take(&mut self.widget_manager.text_windows);
@@ -129,6 +133,10 @@ impl Frontend for TuiFrontend {
         let mut injury_doll_widgets = std::mem::take(&mut self.widget_manager.injury_doll_widgets);
         let mut performance_widgets = std::mem::take(&mut self.widget_manager.performance_widgets);
         let mut experience_widgets = std::mem::take(&mut self.widget_manager.experience_widgets);
+        let mut gs4_experience_widgets = std::mem::take(&mut self.widget_manager.gs4_experience_widgets);
+        let mut encumbrance_widgets = std::mem::take(&mut self.widget_manager.encumbrance_widgets);
+        let mut minivitals_widgets = std::mem::take(&mut self.widget_manager.minivitals_widgets);
+        let mut betrayer_widgets = std::mem::take(&mut self.widget_manager.betrayer_widgets);
 
         // Clone cached theme for use in render closure (cheaper than HashMap lookup + clone per widget)
         let theme_for_render = theme.clone();
@@ -407,6 +415,26 @@ impl Frontend for TuiFrontend {
                             experience_widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::GS4Experience => {
+                        if let Some(gs4_exp_widget) = gs4_experience_widgets.get_mut(name) {
+                            gs4_exp_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::Encumbrance => {
+                        if let Some(enc_widget) = encumbrance_widgets.get_mut(name) {
+                            enc_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::MiniVitals => {
+                        if let Some(mv_widget) = minivitals_widgets.get_mut(name) {
+                            mv_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::Betrayer => {
+                        if let Some(betrayer_widget) = betrayer_widgets.get_mut(name) {
+                            betrayer_widget.render(area, f.buffer_mut());
+                        }
+                    }
                 }
             }
 
@@ -601,6 +629,10 @@ impl Frontend for TuiFrontend {
         self.widget_manager.injury_doll_widgets = injury_doll_widgets;
         self.widget_manager.performance_widgets = performance_widgets;
         self.widget_manager.experience_widgets = experience_widgets;
+        self.widget_manager.gs4_experience_widgets = gs4_experience_widgets;
+        self.widget_manager.encumbrance_widgets = encumbrance_widgets;
+        self.widget_manager.minivitals_widgets = minivitals_widgets;
+        self.widget_manager.betrayer_widgets = betrayer_widgets;
 
         Ok(())
     }

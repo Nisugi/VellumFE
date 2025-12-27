@@ -144,7 +144,7 @@ impl TuiFrontend {
     ) -> Result<(bool, Option<String>)> {
         use crate::data::ui_state::InputMode;
         use crate::frontend::MouseEventKind;
-        use crate::data::{DragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use crate::data::{DragOperation, DialogDragState, DialogDragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
         use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
 
@@ -173,23 +173,54 @@ impl TuiFrontend {
             };
 
             if let Some(ref mut window_editor) = self.window_editor {
-                match kind {
+                use crate::frontend::tui::window_editor::WindowEditorMouseAction;
+
+                let action = match kind {
                     MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
-                        window_editor.handle_mouse(*x, *y, true, area);
+                        let action = window_editor.handle_mouse(*x, *y, true, area);
                         app_core.needs_render = true;
-                        return Ok((true, None));
+                        action
                     }
                     MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
-                        window_editor.handle_mouse(*x, *y, true, area);
+                        let action = window_editor.handle_mouse(*x, *y, true, area);
                         app_core.needs_render = true;
-                        return Ok((true, None));
+                        action
                     }
                     MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
-                        window_editor.handle_mouse(*x, *y, false, area);
+                        let action = window_editor.handle_mouse(*x, *y, false, area);
                         app_core.needs_render = true;
+                        action
+                    }
+                    _ => WindowEditorMouseAction::None,
+                };
+
+                // Handle Save/Cancel actions from mouse clicks
+                match action {
+                    WindowEditorMouseAction::Save => {
+                        // Trigger save via simulated Ctrl+S key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_window_editor_keys(
+                            KeyCode::Char('s'),
+                            KeyModifiers::CTRL,
+                            app_core,
+                        );
                         return Ok((true, None));
                     }
-                    _ => {}
+                    WindowEditorMouseAction::Cancel => {
+                        // Trigger cancel via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_window_editor_keys(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                        );
+                        return Ok((true, None));
+                    }
+                    WindowEditorMouseAction::None => {
+                        return Ok((true, None));
+                    }
                 }
             }
         }
@@ -259,16 +290,147 @@ impl TuiFrontend {
         }
 
         if app_core.ui_state.input_mode == InputMode::Dialog {
-            let (width, height) = self.size();
+            let (term_width, term_height) = self.size();
             let screen_area = Rect {
                 x: 0,
                 y: 0,
-                width,
-                height,
+                width: term_width,
+                height: term_height,
             };
 
             let mut command_to_send: Option<String> = None;
             let mut close_dialog = false;
+
+            // Handle drag operations first
+            match kind {
+                MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    if let Some(ref drag_state) = app_core.ui_state.dialog_drag {
+                        if let Some(ref mut dialog) = app_core.ui_state.active_dialog {
+                            let dx = *x as i32 - drag_state.start_pos.0 as i32;
+                            let dy = *y as i32 - drag_state.start_pos.1 as i32;
+
+                            let min_width: u16 = 10;
+                            let min_height: u16 = 4;
+
+                            match drag_state.operation {
+                                DialogDragOperation::Move => {
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
+
+                                    // Get current dialog size to clamp position
+                                    let dialog_size = dialog.size.unwrap_or(drag_state.original_dialog_size);
+                                    let max_x = term_width.saturating_sub(dialog_size.0);
+                                    let max_y = term_height.saturating_sub(dialog_size.1);
+
+                                    dialog.position = Some((new_x.min(max_x), new_y.min(max_y)));
+                                }
+                                DialogDragOperation::ResizeRight => {
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
+                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    dialog.size = Some((new_width.min(max_width), drag_state.original_dialog_size.1));
+                                }
+                                DialogDragOperation::ResizeBottom => {
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
+                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
+                                    dialog.size = Some((drag_state.original_dialog_size.0, new_height.min(max_height)));
+                                }
+                                DialogDragOperation::ResizeBottomRight => {
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
+                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
+                                    dialog.size = Some((new_width.min(max_width), new_height.min(max_height)));
+                                }
+                                DialogDragOperation::ResizeLeft => {
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
+                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
+                                    if new_width >= min_width {
+                                        dialog.position = Some((new_x, drag_state.original_dialog_pos.1));
+                                        dialog.size = Some((new_width, drag_state.original_dialog_size.1));
+                                    }
+                                }
+                                DialogDragOperation::ResizeTop => {
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
+                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
+                                    if new_height >= min_height {
+                                        dialog.position = Some((drag_state.original_dialog_pos.0, new_y));
+                                        dialog.size = Some((drag_state.original_dialog_size.0, new_height));
+                                    }
+                                }
+                                DialogDragOperation::ResizeTopLeft => {
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
+                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
+                                    if new_width >= min_width && new_height >= min_height {
+                                        dialog.position = Some((new_x, new_y));
+                                        dialog.size = Some((new_width, new_height));
+                                    }
+                                }
+                                DialogDragOperation::ResizeTopRight => {
+                                    let new_y = (drag_state.original_dialog_pos.1 as i32 + dy).max(0) as u16;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + dx).max(min_width as i32) as u16;
+                                    let height_delta = drag_state.original_dialog_pos.1 as i32 - new_y as i32;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + height_delta).max(min_height as i32) as u16;
+                                    let max_width = term_width.saturating_sub(drag_state.original_dialog_pos.0);
+                                    if new_height >= min_height {
+                                        dialog.position = Some((drag_state.original_dialog_pos.0, new_y));
+                                        dialog.size = Some((new_width.min(max_width), new_height));
+                                    }
+                                }
+                                DialogDragOperation::ResizeBottomLeft => {
+                                    let new_x = (drag_state.original_dialog_pos.0 as i32 + dx).max(0) as u16;
+                                    let new_height = (drag_state.original_dialog_size.1 as i32 + dy).max(min_height as i32) as u16;
+                                    let width_delta = drag_state.original_dialog_pos.0 as i32 - new_x as i32;
+                                    let new_width = (drag_state.original_dialog_size.0 as i32 + width_delta).max(min_width as i32) as u16;
+                                    let max_height = term_height.saturating_sub(drag_state.original_dialog_pos.1);
+                                    if new_width >= min_width {
+                                        dialog.position = Some((new_x, drag_state.original_dialog_pos.1));
+                                        dialog.size = Some((new_width, new_height.min(max_height)));
+                                    }
+                                }
+                            }
+                            app_core.needs_render = true;
+                        }
+                    }
+                    return Ok((true, None));
+                }
+                MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    if app_core.ui_state.dialog_drag.is_some() {
+                        // Save position if dialog has save_position flag
+                        if let Some(ref dialog) = app_core.ui_state.active_dialog {
+                            if dialog.save_position {
+                                if let Some((x, y)) = dialog.position {
+                                    use crate::config::{Config, DialogPosition};
+                                    let pos = DialogPosition {
+                                        x,
+                                        y,
+                                        width: dialog.size.map(|(w, _)| w),
+                                        height: dialog.size.map(|(_, h)| h),
+                                    };
+                                    app_core.saved_dialog_positions.dialogs.insert(dialog.id.clone(), pos);
+                                    // Save to disk asynchronously (best-effort)
+                                    let character = app_core.config.character.clone();
+                                    let positions = app_core.saved_dialog_positions.clone();
+                                    std::thread::spawn(move || {
+                                        if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
+                                            tracing::warn!("Failed to save dialog positions: {}", e);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        app_core.ui_state.dialog_drag = None;
+                        app_core.needs_render = true;
+                        return Ok((true, None));
+                    }
+                }
+                _ => {}
+            }
 
             {
                 let Some(dialog_state) = app_core.ui_state.active_dialog.as_mut() else {
@@ -279,12 +441,57 @@ impl TuiFrontend {
 
                 if let MouseEventKind::Down(crate::frontend::MouseButton::Left) = kind {
                     let layout = dialog::compute_dialog_layout(screen_area, dialog_state);
+
+                    // Check resize handles first
+                    if let Some(resize_op) = dialog::hit_test_resize_handle(&layout, *x, *y) {
+                        let current_pos = dialog_state.position.unwrap_or((layout.area.x, layout.area.y));
+                        let current_size = dialog_state.size.unwrap_or((layout.area.width, layout.area.height));
+                        app_core.ui_state.dialog_drag = Some(DialogDragState {
+                            operation: resize_op,
+                            start_pos: (*x, *y),
+                            original_dialog_pos: current_pos,
+                            original_dialog_size: current_size,
+                        });
+                        // Store the computed position/size if not already set
+                        if dialog_state.position.is_none() {
+                            dialog_state.position = Some((layout.area.x, layout.area.y));
+                        }
+                        if dialog_state.size.is_none() {
+                            dialog_state.size = Some((layout.area.width, layout.area.height));
+                        }
+                        app_core.needs_render = true;
+                        return Ok((true, None));
+                    }
+
+                    // Check title bar for move
+                    if dialog::hit_test_title_bar(&layout, *x, *y) {
+                        let current_pos = dialog_state.position.unwrap_or((layout.area.x, layout.area.y));
+                        let current_size = dialog_state.size.unwrap_or((layout.area.width, layout.area.height));
+                        app_core.ui_state.dialog_drag = Some(DialogDragState {
+                            operation: DialogDragOperation::Move,
+                            start_pos: (*x, *y),
+                            original_dialog_pos: current_pos,
+                            original_dialog_size: current_size,
+                        });
+                        // Store the computed position/size if not already set
+                        if dialog_state.position.is_none() {
+                            dialog_state.position = Some((layout.area.x, layout.area.y));
+                        }
+                        if dialog_state.size.is_none() {
+                            dialog_state.size = Some((layout.area.width, layout.area.height));
+                        }
+                        app_core.needs_render = true;
+                        return Ok((true, None));
+                    }
+
+                    // Check field clicks
                     if let Some(field_index) = dialog::hit_test_field(&layout, *x, *y) {
                         Self::set_dialog_focus(dialog_state, Some(field_index));
                         app_core.needs_render = true;
                         return Ok((true, None));
                     }
 
+                    // Check button clicks
                     if let Some(index) = dialog::hit_test_button(&layout, *x, *y) {
                         Self::set_dialog_focus(dialog_state, None);
                         dialog_state.selected = index;
@@ -2810,24 +3017,29 @@ impl TuiFrontend {
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
             // Start a new blank/custom window editor for this widget type
-            use crate::frontend::tui::window_editor::WindowEditor;
-            let mut editor = WindowEditor::new_window(widget_type.to_string());
+            // Safeguard: prevent opening if a window editor is already open
+            if self.window_editor.is_some() {
+                tracing::debug!("Window editor already open, ignoring add custom request");
+            } else {
+                use crate::frontend::tui::window_editor::WindowEditor;
+                let mut editor = WindowEditor::new_window(widget_type.to_string());
 
-            // Generate a unique name like custom_<type>[_n]
-            let base = format!("custom_{}", widget_type);
-            let mut candidate = base.clone();
-            let mut idx = 1;
-            while app_core.layout.get_window(&candidate).is_some() {
-                candidate = format!("{}_{}", base, idx);
-                idx += 1;
+                // Generate a unique name like custom_<type>[_n]
+                let base = format!("custom_{}", widget_type);
+                let mut candidate = base.clone();
+                let mut idx = 1;
+                while app_core.layout.get_window(&candidate).is_some() {
+                    candidate = format!("{}_{}", base, idx);
+                    idx += 1;
+                }
+                editor.set_name(&candidate);
+
+                self.window_editor = Some(editor);
+                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.submenu = None;
+                app_core.ui_state.input_mode = InputMode::WindowEditor;
+                app_core.needs_render = true;
             }
-            editor.set_name(&candidate);
-
-            self.window_editor = Some(editor);
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.input_mode = InputMode::WindowEditor;
-            app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__ADD__") {
             match app_core.layout.add_window(window_name) {
                 Ok(_) => {
@@ -2890,7 +3102,10 @@ impl TuiFrontend {
             app_core.ui_state.deep_submenu = None;
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__EDIT__") {
-            if let Some(window_def) = app_core.layout.get_window(window_name) {
+            // Safeguard: prevent opening if a window editor is already open
+            if self.window_editor.is_some() {
+                tracing::debug!("Window editor already open, ignoring edit request for: {}", window_name);
+            } else if let Some(window_def) = app_core.layout.get_window(window_name) {
                 self.window_editor = Some(crate::frontend::tui::window_editor::WindowEditor::new(
                     window_def.clone(),
                 ));

@@ -78,6 +78,13 @@ pub struct UiState {
 
     /// Active dialog popup (dynamic openDialog payloads)
     pub active_dialog: Option<DialogState>,
+
+    /// Dialog drag state for move/resize operations
+    pub dialog_drag: Option<DialogDragState>,
+
+    /// Pending window additions (template names to add to layout)
+    /// Set by message processor when openDialog has a matching template
+    pub pending_window_additions: Vec<String>,
 }
 
 /// Mouse drag state for window operations
@@ -96,6 +103,29 @@ pub enum DragOperation {
     ResizeRight,
     ResizeBottom,
     ResizeBottomRight,
+}
+
+/// Dialog drag state for move/resize operations
+#[derive(Clone, Debug)]
+pub struct DialogDragState {
+    pub operation: DialogDragOperation,
+    pub start_pos: (u16, u16),
+    pub original_dialog_pos: (u16, u16),
+    pub original_dialog_size: (u16, u16),
+}
+
+/// Type of dialog drag operation
+#[derive(Clone, Debug, PartialEq)]
+pub enum DialogDragOperation {
+    Move,
+    ResizeRight,
+    ResizeBottom,
+    ResizeBottomRight,
+    ResizeLeft,
+    ResizeTop,
+    ResizeTopLeft,
+    ResizeTopRight,
+    ResizeBottomLeft,
 }
 
 /// Link drag state (Ctrl+drag on a link)
@@ -168,6 +198,16 @@ pub struct DialogState {
     pub fields: Vec<DialogField>,
     pub labels: Vec<DialogLabel>,
     pub focused_field: Option<usize>,
+    /// Progress bars to display in the dialog
+    pub progress_bars: Vec<DialogProgressBar>,
+    /// Standalone display labels (not paired with input fields)
+    pub display_labels: Vec<DialogLabel>,
+    /// Manual position override (None = auto-center)
+    pub position: Option<(u16, u16)>,
+    /// Manual size override (None = auto-size based on content)
+    pub size: Option<(u16, u16)>,
+    /// Whether to persist position/size across sessions (save='t' in XML)
+    pub save_position: bool,
 }
 
 /// Dialog button definition
@@ -196,6 +236,14 @@ pub struct DialogField {
 pub struct DialogLabel {
     pub id: String,
     pub value: String,
+}
+
+/// Progress bar displayed in a dialog
+#[derive(Clone, Debug)]
+pub struct DialogProgressBar {
+    pub id: String,
+    pub value: u32,   // Percentage 0-100
+    pub text: String, // Display text (e.g., "defensive (100%)")
 }
 
 /// Popup menu state
@@ -240,6 +288,8 @@ impl UiState {
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
             active_dialog: None,
+            dialog_drag: None,
+            pending_window_additions: Vec::new(),
         }
     }
 
