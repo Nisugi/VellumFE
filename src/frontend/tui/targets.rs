@@ -6,6 +6,65 @@
 
 use crate::data::LinkData;
 use ratatui::{buffer::Buffer, layout::Rect};
+use regex::Regex;
+use std::sync::OnceLock;
+
+/// Regex for body part nouns that should be filtered out
+static BODY_PART_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_body_part_regex() -> &'static Regex {
+    BODY_PART_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$")
+            .unwrap()
+    })
+}
+
+/// Check if a creature is a body part (arm, tentacle, etc.)
+/// Returns true for body parts except "amaranthine kraken tentacle"
+fn is_body_part(creature: &crate::core::state::Creature) -> bool {
+    let name_lower = creature.name.to_lowercase();
+
+    // Check noun against body part regex
+    if let Some(ref noun) = creature.noun {
+        if get_body_part_regex().is_match(noun)
+            && !name_lower.contains("amaranthine kraken tentacle")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a creature should be filtered from the targets list
+/// Based on Lich's filtering logic for dead/gone, animated, and body parts
+/// Returns (should_filter, is_body_part) tuple
+fn should_filter_creature(creature: &crate::core::state::Creature) -> (bool, bool) {
+    // Check if it's a body part first
+    let body_part = is_body_part(creature);
+
+    // Filter dead or gone creatures
+    if let Some(ref status) = creature.status {
+        let status_lower = status.to_lowercase();
+        if status_lower.contains("dead") || status_lower.contains("gone") {
+            return (true, body_part);
+        }
+    }
+
+    let name_lower = creature.name.to_lowercase();
+
+    // Filter "animated" creatures except "animated slush"
+    if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
+        return (true, body_part);
+    }
+
+    // Filter body parts
+    if body_part {
+        return (true, true);
+    }
+
+    (false, false)
+}
 
 pub struct Targets {
     widget: super::list_widget::ListWidget,
@@ -19,6 +78,12 @@ pub struct Targets {
     creature_ids_cache: String,
     /// Color for the target indicator on current target (applied to text color)
     indicator_color: Option<String>,
+    /// Count of filtered body parts (arms, tentacles, etc.)
+    body_part_count: u32,
+    /// Whether to show body part count on bottom border
+    show_body_part_count: bool,
+    /// Border color for rendering body part count (from theme)
+    border_color: Option<ratatui::style::Color>,
 }
 
 impl Targets {
@@ -31,12 +96,25 @@ impl Targets {
             generation: 0,
             creature_ids_cache: String::new(),
             indicator_color: None,
+            body_part_count: 0,
+            show_body_part_count: false,
+            border_color: None,
         }
+    }
+
+    /// Set whether to show body part count on bottom border
+    pub fn set_show_body_part_count(&mut self, show: bool) {
+        self.show_body_part_count = show;
     }
 
     /// Set the color for the target indicator (►) on current target
     pub fn set_indicator_color(&mut self, color: Option<String>) {
         self.indicator_color = color;
+    }
+
+    /// Set the border color (used for body part count display)
+    pub fn set_border_color(&mut self, color: Option<String>) {
+        self.border_color = color.and_then(|c| super::colors::parse_hex_color(&c).ok());
     }
 
     /// Update the widget from room creatures and current target.
@@ -77,9 +155,23 @@ impl Targets {
 
         self.widget.clear();
         self.count = 0;
+        self.body_part_count = 0;
         self.current_target = current_target.to_string();
 
         for creature in room_creatures.iter() {
+            // Apply Lich-style filtering (dead/gone, animated, body parts)
+            let (should_filter, is_body_part) = should_filter_creature(creature);
+            if is_body_part {
+                self.body_part_count += 1;
+            }
+            if should_filter {
+                tracing::debug!(
+                    "Filtering creature: name='{}', noun={:?}, status={:?}, is_body_part={}",
+                    creature.name, creature.noun, creature.status, is_body_part
+                );
+                continue;
+            }
+
             tracing::debug!(
                 "Processing creature: name='{}', noun={:?}, id='{}', status={:?}",
                 creature.name, creature.noun, creature.id, creature.status
@@ -196,6 +288,7 @@ impl Targets {
     pub fn clear(&mut self) {
         self.widget.clear();
         self.count = 0;
+        self.body_part_count = 0;
         self.current_target.clear();
         self.creature_ids_cache.clear();
         self.generation += 1;
@@ -264,10 +357,45 @@ impl Targets {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.widget.render(area, buf);
+        self.render_body_part_count(area, buf);
     }
 
     pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         self.widget.render_with_focus(area, buf, focused);
+        self.render_body_part_count(area, buf);
+    }
+
+    /// Render body part count on bottom border if enabled and count > 0
+    fn render_body_part_count(&self, area: Rect, buf: &mut Buffer) {
+        if !self.show_body_part_count || self.body_part_count == 0 {
+            return;
+        }
+
+        // Only render if we have enough height for a bottom border
+        if area.height < 2 {
+            return;
+        }
+
+        let text = format!(" Arms: {} ", self.body_part_count);
+        let bottom_y = area.y + area.height - 1;
+
+        // Center the text on the bottom border
+        let text_len = text.len() as u16;
+        if text_len >= area.width {
+            return;
+        }
+        let start_x = area.x + (area.width - text_len) / 2;
+
+        // Write the text using border color (from theme)
+        use ratatui::style::{Color, Style};
+        let color = self.border_color.unwrap_or(Color::White);
+        let style = Style::default().fg(color);
+        for (i, ch) in text.chars().enumerate() {
+            let x = start_x + i as u16;
+            if x < area.x + area.width {
+                buf[(x, bottom_y)].set_char(ch).set_style(style);
+            }
+        }
     }
 
     /// Handle a click at the given coordinates.

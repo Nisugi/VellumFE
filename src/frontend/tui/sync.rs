@@ -61,6 +61,10 @@ impl TuiFrontend {
                                 .unwrap_or(app_core.config.ui.timestamp_position);
                             tw.set_timestamp_position(ts_pos);
                             tw.set_wordwrap(data.wordwrap);
+                            // Compact mode automatically centers content
+                            if data.compact {
+                                tw.set_content_align(Some("center".to_string()));
+                            }
                         } else {
                             tw.set_show_timestamps(false); // Default to false for non-text windows
                             tw.set_timestamp_position(app_core.config.ui.timestamp_position);
@@ -103,6 +107,10 @@ impl TuiFrontend {
                             .unwrap_or(app_core.config.ui.timestamp_position);
                         text_window.set_timestamp_position(ts_pos);
                         text_window.set_wordwrap(data.wordwrap);
+                        // Compact mode automatically centers content
+                        if data.compact {
+                            text_window.set_content_align(Some("center".to_string()));
+                        }
                     } else {
                         text_window.set_show_timestamps(false); // Default to false
                         text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
@@ -199,8 +207,11 @@ impl TuiFrontend {
                     }
 
                     // Apply roomName preset colors to the title/room name if available
+                    // Resolve palette names to hex values
                     if let Some(preset) = app_core.config.colors.presets.get("roomName") {
-                        room_window.set_title_colors(preset.fg.clone(), preset.bg.clone());
+                        let resolved_fg = preset.fg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
+                        let resolved_bg = preset.bg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
+                        room_window.set_title_colors(resolved_fg, resolved_bg);
                     }
 
                     self.widget_manager.room_windows.insert(name.clone(), room_window);
@@ -1007,6 +1018,7 @@ impl TuiFrontend {
                         );
                         widget.set_border_sides(window_def.base().border_sides.clone());
                         widget.set_background_color(colors.background.clone());
+                        widget.set_border_color(colors.border.clone());
 
                         // Use monsterbold preset as default text color for creatures,
                         // unless user explicitly set text_color in window config.
@@ -1021,7 +1033,10 @@ impl TuiFrontend {
                             .colors
                             .presets
                             .get("monsterbold");
-                        let monsterbold_fg = monsterbold_preset.and_then(|p| p.fg.clone());
+                        // Resolve palette name to hex value for monsterbold preset
+                        let monsterbold_fg = monsterbold_preset
+                            .and_then(|p| p.fg.as_ref())
+                            .map(|c| app_core.config.resolve_palette_color(c));
 
                         let creature_text_color = explicit_text_color.or(monsterbold_fg);
                         widget.set_text_color(creature_text_color.clone());
@@ -1035,6 +1050,11 @@ impl TuiFrontend {
                             .and_then(|p| p.fg.clone());
 
                         widget.set_indicator_color(indicator_color);
+
+                        // Set body part count display option from widget data
+                        if let crate::config::WindowDef::Targets { data, .. } = window_def {
+                            widget.set_show_body_part_count(data.show_body_part_count);
+                        }
 
                         // Respect user's transparent_background setting from window config
                         widget.set_transparent_background(window_def.base().transparent_background);
@@ -1062,6 +1082,16 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        // Resolve "links" preset color, falling back to theme.link_color
+        let link_color = app_core
+            .config
+            .colors
+            .presets
+            .get("links")
+            .and_then(|preset| preset.fg.as_ref())
+            .map(|c| Some(app_core.config.resolve_palette_color(c)))
+            .unwrap_or_else(|| color_to_hex_string(&theme.link_color));
+
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Container { container_title } = &window.content {
                 // Ensure widget exists - use title as the identifier since it's persistent
@@ -1078,15 +1108,15 @@ impl TuiFrontend {
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
                     widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                    // Set link color from theme before first update
-                    widget.set_link_color(color_to_hex_string(&theme.link_color));
+                    // Set link color from "links" preset before first update
+                    widget.set_link_color(link_color.clone());
                     self.widget_manager.container_widgets.insert(name.clone(), widget);
                 }
 
                 // Update widget from GameState.container_cache
                 if let Some(widget) = self.widget_manager.container_widgets.get_mut(name) {
-                    // Apply link color from theme (must be set before update_from_cache for correct parsing)
-                    widget.set_link_color(color_to_hex_string(&theme.link_color));
+                    // Apply link color from "links" preset (must be set before update_from_cache for correct parsing)
+                    widget.set_link_color(link_color.clone());
 
                     // Look up container by title (case-insensitive match)
                     if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
@@ -1705,8 +1735,9 @@ impl TuiFrontend {
                         if data_text_color.is_some() {
                             content_highlight = resolved_text_color.clone();
                         } else if link.is_some() {
+                            // Resolve palette name to hex value for links preset
                             if let Some(preset) = app_core.config.colors.presets.get("links") {
-                                content_highlight = preset.fg.clone();
+                                content_highlight = preset.fg.as_ref().map(|c| app_core.config.resolve_palette_color(c));
                             }
                         }
                         hand_widget.set_content_highlight_color(content_highlight);
@@ -2043,10 +2074,331 @@ impl TuiFrontend {
                             experience_widget.set_text_color(c);
                         }
                     }
+                    experience_widget.set_background_color(colors.background.clone());
                 }
 
                 // Update from game state
-                experience_widget.update_from_state(&app_core.game_state.exp_components);
+                experience_widget.update_from_state(&app_core.game_state.dr_experience);
+            }
+        }
+    }
+
+    /// Sync all GS4Experience widgets from GameState.gs4_experience
+    pub(crate) fn sync_gs4_experience_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if let crate::data::WindowContent::GS4Experience = &window.content {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get align config from WindowDef
+                let align = if let Some(crate::config::WindowDef::GS4Experience { data, .. }) =
+                    window_def
+                {
+                    data.align.clone()
+                } else {
+                    "center".to_string()
+                };
+
+                // Get or create GS4Experience widget for this window
+                let gs4_exp_widget = self
+                    .widget_manager
+                    .gs4_experience_widgets
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let title = window_def
+                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| name.clone()))
+                            .unwrap_or_else(|| name.clone());
+                        super::gs4_experience::GS4Experience::new(&title, &align)
+                    });
+
+                // Apply theme colors and config toggles
+                if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = window_def {
+                    let colors = resolve_window_colors(window_def.unwrap().base(), theme);
+                    if let Some(border_color) = &colors.border {
+                        if let Ok(c) = parse_hex_color(border_color) {
+                            gs4_exp_widget.set_border_color(c);
+                        }
+                    }
+                    if let Some(text_color) = &colors.text {
+                        if let Ok(c) = parse_hex_color(text_color) {
+                            gs4_exp_widget.set_text_color(c);
+                        }
+                    }
+                    gs4_exp_widget.set_background_color(colors.background.clone());
+                    // Apply show toggles from config
+                    gs4_exp_widget.set_show_level(data.show_level);
+                    gs4_exp_widget.set_show_exp_bar(data.show_exp_bar);
+                    // Apply custom bar colors (if configured)
+                    if let Some(color_str) = &data.mind_bar_color {
+                        if let Ok(c) = parse_hex_color(color_str) {
+                            gs4_exp_widget.set_mind_bar_color(c);
+                        }
+                    }
+                    if let Some(color_str) = &data.exp_bar_color {
+                        if let Ok(c) = parse_hex_color(color_str) {
+                            gs4_exp_widget.set_exp_bar_color(Some(c));
+                        }
+                    }
+                }
+
+                // Update from game state
+                gs4_exp_widget.update_from_state(&app_core.game_state.gs4_experience);
+            }
+        }
+    }
+
+    /// Sync all Encumbrance widgets from GameState.encumbrance
+    pub(crate) fn sync_encumbrance_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in app_core.ui_state.windows.iter() {
+            if let crate::data::WindowContent::Encumbrance = &window.content {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get align, show_label, and color settings from WindowDef
+                let (align, show_label, color_light, color_moderate, color_heavy, color_critical) =
+                    if let Some(crate::config::WindowDef::Encumbrance { data, .. }) = window_def {
+                        (
+                            data.align.clone(),
+                            data.show_label,
+                            data.color_light.clone(),
+                            data.color_moderate.clone(),
+                            data.color_heavy.clone(),
+                            data.color_critical.clone(),
+                        )
+                    } else {
+                        ("left".to_string(), true, None, None, None, None)
+                    };
+
+                // Get or create the widget
+                let enc_widget = self
+                    .widget_manager
+                    .encumbrance_widgets
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let title = window_def
+                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| name.clone()))
+                            .unwrap_or_else(|| name.clone());
+                        super::encumbrance::Encumbrance::new(&title, &align, show_label)
+                    });
+
+                // Update show_label on every sync (cached widget may have stale value)
+                enc_widget.set_show_label(show_label);
+
+                // Apply theme colors
+                if let Some(def) = window_def {
+                    let colors = resolve_window_colors(def.base(), theme);
+                    if let Some(border_color) = &colors.border {
+                        if let Ok(c) = parse_hex_color(border_color) {
+                            enc_widget.set_border_color(c);
+                        }
+                    }
+                    if let Some(text_color) = &colors.text {
+                        if let Ok(c) = parse_hex_color(text_color) {
+                            enc_widget.set_text_color(c);
+                        }
+                    }
+                    enc_widget.set_background_color(colors.background.clone());
+                }
+
+                // Apply custom encumbrance bar colors (if configured)
+                if let Some(color_str) = &color_light {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        enc_widget.set_color_light(c);
+                    }
+                }
+                if let Some(color_str) = &color_moderate {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        enc_widget.set_color_moderate(c);
+                    }
+                }
+                if let Some(color_str) = &color_heavy {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        enc_widget.set_color_heavy(c);
+                    }
+                }
+                if let Some(color_str) = &color_critical {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        enc_widget.set_color_critical(c);
+                    }
+                }
+
+                // Update from game state
+                enc_widget.update_from_state(&app_core.game_state.encumbrance);
+            }
+        }
+    }
+
+    /// Sync MiniVitals widgets - GS4 horizontal 4-bar layout
+    pub(crate) fn sync_minivitals_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in app_core.ui_state.windows.iter() {
+            if let crate::data::WindowContent::MiniVitals = &window.content {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get display options and bar colors from WindowDef
+                let (numbers_only, current_only, health_color, mana_color, stamina_color, spirit_color) =
+                    if let Some(crate::config::WindowDef::MiniVitals { data, .. }) = window_def {
+                        (
+                            data.numbers_only,
+                            data.current_only,
+                            data.health_color.clone(),
+                            data.mana_color.clone(),
+                            data.stamina_color.clone(),
+                            data.spirit_color.clone(),
+                        )
+                    } else {
+                        (false, false, None, None, None, None)
+                    };
+
+                // Get show_border from WindowDef
+                let show_border = window_def
+                    .map(|wd| wd.base().show_border)
+                    .unwrap_or(false);
+
+                // Get or create the widget
+                let mv_widget = self
+                    .widget_manager
+                    .minivitals_widgets
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let title = window_def
+                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| name.clone()))
+                            .unwrap_or_else(|| name.clone());
+                        super::minivitals::MiniVitals::new(&title, show_border)
+                    });
+
+                // Update show_border and display mode on every sync (not just creation)
+                mv_widget.set_show_border(show_border);
+                mv_widget.set_display_mode(numbers_only, current_only);
+
+                // Apply theme colors
+                if let Some(def) = window_def {
+                    let colors = resolve_window_colors(def.base(), theme);
+                    if let Some(border_color) = &colors.border {
+                        if let Ok(c) = parse_hex_color(border_color) {
+                            mv_widget.set_border_color(c);
+                        }
+                    }
+                    if let Some(text_color) = &colors.text {
+                        if let Ok(c) = parse_hex_color(text_color) {
+                            mv_widget.set_text_color(c);
+                        }
+                    }
+                    mv_widget.set_background_color(colors.background.clone());
+                }
+
+                // Apply bar colors (with defaults if not specified)
+                if let Some(color_str) = &health_color {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        mv_widget.set_health_color(c);
+                    }
+                }
+                if let Some(color_str) = &mana_color {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        mv_widget.set_mana_color(c);
+                    }
+                }
+                if let Some(color_str) = &stamina_color {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        mv_widget.set_stamina_color(c);
+                    }
+                }
+                if let Some(color_str) = &spirit_color {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        mv_widget.set_spirit_color(c);
+                    }
+                }
+
+                // Update from game state
+                mv_widget.update_from_state(&app_core.game_state.minivitals);
+            }
+        }
+    }
+
+    /// Sync Betrayer widgets (GS4 blood pool)
+    pub(crate) fn sync_betrayer_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in app_core.ui_state.windows.iter() {
+            if let crate::data::WindowContent::Betrayer = &window.content {
+                // Look up the WindowDef from layout to get config
+                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+
+                // Get options from WindowDef
+                let (show_items, bar_color) =
+                    if let Some(crate::config::WindowDef::Betrayer { data, .. }) = window_def {
+                        (data.show_items, data.bar_color.clone())
+                    } else {
+                        (true, None)
+                    };
+
+                // Get show_border from WindowDef
+                let show_border = window_def
+                    .map(|wd| wd.base().show_border)
+                    .unwrap_or(true);
+
+                // Get or create the widget
+                let betrayer_widget = self
+                    .widget_manager
+                    .betrayer_widgets
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let title = window_def
+                            .map(|wd| wd.base().title.clone().unwrap_or_else(|| "Blood Pool".to_string()))
+                            .unwrap_or_else(|| "Blood Pool".to_string());
+                        super::betrayer::Betrayer::new(&title, show_border)
+                    });
+
+                // Update settings on every sync (not just creation)
+                betrayer_widget.set_show_border(show_border);
+                betrayer_widget.set_show_items(show_items);
+
+                // Apply bar color
+                if let Some(color_str) = &bar_color {
+                    if let Ok(c) = parse_hex_color(color_str) {
+                        betrayer_widget.set_bar_color(c);
+                    }
+                }
+
+                // Apply theme colors
+                if let Some(def) = window_def {
+                    let colors = resolve_window_colors(def.base(), theme);
+                    if let Some(border_color) = &colors.border {
+                        if let Ok(c) = parse_hex_color(border_color) {
+                            betrayer_widget.set_border_color(c);
+                        }
+                    }
+                    if let Some(text_color) = &colors.text {
+                        if let Ok(c) = parse_hex_color(text_color) {
+                            betrayer_widget.set_text_color(c);
+                        }
+                    }
+                    betrayer_widget.set_background_color(colors.background.clone());
+                }
+
+                // Apply active item color from config
+                if let Some(active_color_str) = &app_core.config.ui.betrayer_active_color {
+                    if let Ok(c) = parse_hex_color(active_color_str) {
+                        betrayer_widget.set_active_color(c);
+                    }
+                }
+
+                // Update from game state
+                betrayer_widget.update_from_state(&app_core.game_state.betrayer);
             }
         }
     }

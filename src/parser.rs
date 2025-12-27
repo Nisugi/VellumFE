@@ -188,6 +188,7 @@ pub enum ParsedElement {
     DialogOpen {
         id: String,
         title: Option<String>,
+        save: bool, // true if save='t' - position should be persisted
     },
     DialogButtons {
         id: String,
@@ -204,6 +205,11 @@ pub enum ParsedElement {
         id: String,
         clear: bool,
         labels: Vec<DialogLabelSpec>,
+    },
+    DialogProgressBars {
+        id: String,
+        clear: bool,
+        progress_bars: Vec<DialogProgressBarSpec>,
     },
     Event {
         event_type: String,  // "stun", "webbed", "prone", etc.
@@ -248,6 +254,13 @@ pub struct DialogFieldSpec {
 pub struct DialogLabelSpec {
     pub id: String,
     pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DialogProgressBarSpec {
+    pub id: String,
+    pub value: u32,   // Percentage 0-100
+    pub text: String, // Display text (e.g., "defensive (100%)")
 }
 
 /// Tracks the currently active foreground/background/bold settings while the
@@ -885,7 +898,7 @@ impl XmlParser {
                 }
             }
         }
-        if tag.contains("<editBox") {
+        if tag.contains("<editBox") || tag.contains("<upDownEditBox") {
             if let Some(id) = Self::extract_dialog_data_id(tag_head) {
                 if !Self::is_quickbar_id(&id) {
                     let clear = Self::extract_attribute(tag_head, "clear")
@@ -1106,23 +1119,91 @@ impl XmlParser {
 
     fn handle_open_dialog(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         let tag_head = tag.split('>').next().unwrap_or(tag);
+
+        // Check if this is a resident dialog (persistent panel, not a popup)
+        let is_resident = Self::extract_attribute(tag_head, "resident")
+            .map(|v| v == "true" || v == "t" || v == "1")
+            .unwrap_or(false);
+
+        // Check if position should be saved (save='t')
+        let save_position = Self::extract_attribute(tag_head, "save")
+            .map(|v| v == "true" || v == "t" || v == "1")
+            .unwrap_or(false);
+
         if let Some(id) = Self::extract_attribute(tag_head, "id") {
             if Self::is_quickbar_id(&id) {
                 let title = Self::extract_attribute(tag_head, "title")
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty());
                 elements.push(ParsedElement::QuickbarOpen { id, title });
-            } else {
+            } else if !is_resident {
+                // Only emit DialogOpen for non-resident dialogs (popups)
+                // Resident dialogs are persistent panels that should update widgets, not show popups
                 let title = Self::extract_attribute(tag_head, "title")
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty());
-                elements.push(ParsedElement::DialogOpen { id, title });
+                tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
+                elements.push(ParsedElement::DialogOpen { id, title, save: save_position });
             }
         }
 
         self.handle_embedded_quickbar_dialog_data(tag, elements);
         self.handle_embedded_dialog_buttons(tag, elements);
         self.handle_embedded_dialog_fields(tag, elements);
+
+        // For resident dialogs, extract progressBar data for widget updates
+        // For non-resident dialogs (popups), extract progressBar data for dialog rendering
+        // Always call handle_embedded_resident_dialog_data to emit standalone ProgressBar/Label
+        // elements for game state updates (needed for widgets like gs4_experience, encumbrance)
+        self.handle_embedded_resident_dialog_data(tag, elements);
+        if !is_resident {
+            // Also extract for popup dialog rendering
+            self.handle_embedded_dialog_progress_bars(tag, elements);
+        }
+    }
+
+    /// Extract progressBar and other widget data from embedded dialogData in resident dialogs
+    fn handle_embedded_resident_dialog_data(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            // Extract progressBar elements
+            if dialog_tag.contains("<progressBar ") {
+                let mut pb_remaining = dialog_tag;
+                while let Some(pb_start) = pb_remaining.find("<progressBar ") {
+                    if let Some(pb_end) = pb_remaining[pb_start..].find("/>") {
+                        let pb_tag = &pb_remaining[pb_start..pb_start + pb_end + 2];
+                        self.handle_progressbar(pb_tag, elements);
+                        pb_remaining = &pb_remaining[pb_start + pb_end + 2..];
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Extract label elements for widgets like encumbrance
+            if dialog_tag.contains("<label ") {
+                let mut label_remaining = dialog_tag;
+                while let Some(label_start) = label_remaining.find("<label ") {
+                    if let Some(label_end) = label_remaining[label_start..].find("/>") {
+                        let label_tag = &label_remaining[label_start..label_start + label_end + 2];
+                        self.handle_label(label_tag, elements);
+                        label_remaining = &label_remaining[label_start + label_end + 2..];
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
     }
 
     fn handle_embedded_quickbar_dialog_data(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
@@ -1202,7 +1283,7 @@ impl XmlParser {
             let end = start + end_start + end_pattern.len();
             let dialog_tag = &remaining[start..end];
 
-            if !dialog_tag.contains("<editBox") {
+            if !dialog_tag.contains("<editBox") && !dialog_tag.contains("<upDownEditBox") {
                 remaining = &remaining[end..];
                 continue;
             }
@@ -1230,6 +1311,78 @@ impl XmlParser {
 
             remaining = &remaining[end..];
         }
+    }
+
+    /// Extract progressBar elements from embedded dialogData for non-resident dialogs (popups)
+    fn handle_embedded_dialog_progress_bars(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            if !dialog_tag.contains("<progressBar ") {
+                remaining = &remaining[end..];
+                continue;
+            }
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_dialog_data_id(dialog_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let progress_bars = Self::parse_dialog_progress_bars(dialog_tag);
+                    if !progress_bars.is_empty() {
+                        elements.push(ParsedElement::DialogProgressBars {
+                            id,
+                            clear,
+                            progress_bars,
+                        });
+                    }
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
+    }
+
+    /// Parse progressBar elements from a dialog tag
+    fn parse_dialog_progress_bars(tag: &str) -> Vec<DialogProgressBarSpec> {
+        let mut progress_bars = Vec::new();
+        let mut remaining = tag;
+
+        while let Some(pb_start) = remaining.find("<progressBar ") {
+            let pb_end = if let Some(end) = remaining[pb_start..].find("/>") {
+                pb_start + end + 2
+            } else if let Some(end) = remaining[pb_start..].find("</progressBar>") {
+                pb_start + end + 14
+            } else {
+                break;
+            };
+
+            let pb_tag = &remaining[pb_start..pb_end];
+
+            if let Some(id) = Self::extract_attribute(pb_tag, "id") {
+                let value = Self::extract_attribute(pb_tag, "value")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                let text = Self::extract_attribute(pb_tag, "text").unwrap_or_default();
+
+                progress_bars.push(DialogProgressBarSpec { id, value, text });
+            }
+
+            remaining = &remaining[pb_end..];
+        }
+
+        progress_bars
     }
 
     fn handle_switch_quickbar(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
@@ -1343,6 +1496,7 @@ impl XmlParser {
             let cmd_pos = remaining.find("<cmdButton");
             let close_pos = remaining.find("<closeButton");
             let radio_pos = remaining.find("<radio");
+            let link_pos = remaining.find("<link");
 
             let mut next_pos = None;
             let mut kind = "";
@@ -1351,6 +1505,7 @@ impl XmlParser {
                 (cmd_pos, "cmdButton"),
                 (close_pos, "closeButton"),
                 (radio_pos, "radio"),
+                (link_pos, "link"),
             ] {
                 if let Some(pos) = pos {
                     if next_pos.map(|current| pos < current).unwrap_or(true) {
@@ -1435,12 +1590,17 @@ impl XmlParser {
 
         loop {
             let edit_pos = remaining.find("<editBox");
+            let updown_pos = remaining.find("<upDownEditBox");
             let label_pos = remaining.find("<label");
 
             let mut next_pos = None;
             let mut kind = "";
 
-            for (pos, label) in [(edit_pos, "editBox"), (label_pos, "label")] {
+            for (pos, label) in [
+                (edit_pos, "editBox"),
+                (updown_pos, "upDownEditBox"),
+                (label_pos, "label"),
+            ] {
                 if let Some(pos) = pos {
                     if next_pos.map(|current| pos < current).unwrap_or(true) {
                         next_pos = Some(pos);
@@ -1460,7 +1620,7 @@ impl XmlParser {
                 break;
             };
 
-            if kind == "editBox" {
+            if kind == "editBox" || kind == "upDownEditBox" {
                 let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
                 let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
                 let enter_button = Self::extract_attribute(tag_slice, "enterButton");
@@ -1637,6 +1797,27 @@ impl XmlParser {
                     let pb_tag = &remaining[pb_start..pb_start + pb_end + 2];
                     self.handle_progressbar(pb_tag, elements);
                     remaining = &remaining[pb_start + pb_end + 2..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Extract label elements from dialogData
+        // <dialogData id='encum'>...<label id='encumblurb' value='You are not encumbered...' ...
+        if tag.contains("<label ") {
+            // Find all label tags within this dialogData
+            let mut remaining = tag;
+            while let Some(label_start) = remaining.find("<label ") {
+                if let Some(label_end) = remaining[label_start..].find("/>") {
+                    let label_tag = &remaining[label_start..label_start + label_end + 2];
+                    // Extract id and value attributes
+                    if let Some(id) = Self::extract_attribute(label_tag, "id") {
+                        if let Some(value) = Self::extract_attribute(label_tag, "value") {
+                            elements.push(ParsedElement::Label { id, value });
+                        }
+                    }
+                    remaining = &remaining[label_start + label_end + 2..];
                 } else {
                     break;
                 }
@@ -3442,5 +3623,132 @@ mod tests {
         assert_eq!(dialog_fields[0].2.len(), 2);
         assert_eq!(dialog_fields[0].2[0].value, "Label");
         assert_eq!(dialog_fields[0].2[1].value, "Command");
+    }
+
+    #[test]
+    fn test_dialog_updowneditbox_parsing() {
+        // Test that upDownEditBox is parsed the same as editBox, including enterButton
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='bank' title='Bank' location='center'><dialogData id='bank'><label id='balance' value='Balance: 12345'/><upDownEditBox id='depositAmount' enterButton='deposit' value='5000'/><upDownEditBox id='withdrawAmount' enterButton='withdraw' value='1000'/><cmdButton id='deposit' value='Deposit' cmd='bank deposit $depositAmount'/><cmdButton id='withdraw' value='Withdraw' cmd='bank withdraw $withdrawAmount'/><closeButton id='close' value='Close'/></dialogData></openDialog>",
+        );
+
+        let dialog_fields: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogFields { id, fields, labels, .. } = e {
+                    Some((id, fields, labels))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(dialog_fields.len(), 1, "Should emit DialogFields for upDownEditBox");
+        assert_eq!(dialog_fields[0].0, "bank");
+        assert_eq!(dialog_fields[0].1.len(), 2, "Should have 2 upDownEditBox fields");
+
+        // Verify first field (deposit)
+        assert_eq!(dialog_fields[0].1[0].id, "depositAmount");
+        assert_eq!(dialog_fields[0].1[0].value, "5000");
+        assert_eq!(dialog_fields[0].1[0].enter_button.as_deref(), Some("deposit"));
+
+        // Verify second field (withdraw)
+        assert_eq!(dialog_fields[0].1[1].id, "withdrawAmount");
+        assert_eq!(dialog_fields[0].1[1].value, "1000");
+        assert_eq!(dialog_fields[0].1[1].enter_button.as_deref(), Some("withdraw"));
+
+        // Verify we also got the balance label as standalone
+        assert_eq!(dialog_fields[0].2.len(), 1);
+        assert_eq!(dialog_fields[0].2[0].id, "balance");
+        assert_eq!(dialog_fields[0].2[0].value, "Balance: 12345");
+
+        // Verify buttons were also parsed
+        let dialog_buttons: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogButtons { id, buttons, .. } = e {
+                    Some((id, buttons))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(dialog_buttons.len(), 1);
+        assert_eq!(dialog_buttons[0].1.len(), 3); // deposit, withdraw, close
+        assert_eq!(dialog_buttons[0].1[0].id, "deposit");
+        assert_eq!(dialog_buttons[0].1[1].id, "withdraw");
+        assert_eq!(dialog_buttons[0].1[2].id, "close");
+    }
+
+    // ==================== Resident Dialog Parsing ====================
+
+    #[test]
+    fn test_resident_dialog_no_popup() {
+        // Resident dialogs should NOT emit DialogOpen (no popup)
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='stance' title='Stance' location='right' height='50' width='190' resident='true'><dialogData id='stance'><progressBar id='pbarStance' value='100' text='defensive (100%)' top='5' left='-5' height='16' width='160' align='n' tooltip='Percent of stance contributing to defense'/></dialogData></openDialog>",
+        );
+
+        // Should NOT have DialogOpen (no popup for resident dialogs)
+        let dialog_open = elements.iter().find(|e| matches!(e, ParsedElement::DialogOpen { .. }));
+        assert!(dialog_open.is_none(), "Resident dialogs should not emit DialogOpen");
+
+        // SHOULD have ProgressBar extracted from the embedded dialogData
+        let progress_bars: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::ProgressBar { .. }))
+            .collect();
+        assert_eq!(progress_bars.len(), 1, "Should extract progressBar from resident dialog");
+
+        if let ParsedElement::ProgressBar { id, value, text, .. } = progress_bars[0] {
+            assert_eq!(id, "pbarStance");
+            assert_eq!(*value, 100);
+            assert_eq!(text, "defensive (100%)");
+        } else {
+            panic!("Expected ProgressBar");
+        }
+    }
+
+    #[test]
+    fn test_non_resident_dialog_creates_popup() {
+        // Non-resident dialogs SHOULD emit DialogOpen (popup)
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='choosemode' title='Custom Actions Menu' location='center'><dialogData name='choosemode'><cmdButton id='addcustom' value='Add New' cmd='_custom dialog add qmech'/></dialogData></openDialog>",
+        );
+
+        // SHOULD have DialogOpen for non-resident dialogs
+        let dialog_open = elements.iter().find(|e| matches!(e, ParsedElement::DialogOpen { .. }));
+        assert!(dialog_open.is_some(), "Non-resident dialogs should emit DialogOpen");
+    }
+
+    #[test]
+    fn test_resident_encumbrance_dialog() {
+        // Test encumbrance resident dialog with progressBar and label
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='encum' title='Encumbrance' location='right' height='100' width='190' resident='true'><dialogData id='encum'><progressBar id='encumlevel' value='0' text='None' top='5' left='-5' align='n' width='160' height='15'/><label id='encumblurb' value='You are not encumbered enough to notice.' top='10' left='0' align='n' width='160' height='50' justify='0' anchor_top='encumlevel'/></dialogData></openDialog>",
+        );
+
+        // Should NOT have DialogOpen
+        let dialog_open = elements.iter().find(|e| matches!(e, ParsedElement::DialogOpen { .. }));
+        assert!(dialog_open.is_none(), "Resident dialogs should not emit DialogOpen");
+
+        // Should have ProgressBar
+        let progress_bars: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::ProgressBar { .. }))
+            .collect();
+        assert_eq!(progress_bars.len(), 1);
+
+        // Should have Label
+        let labels: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::Label { .. }))
+            .collect();
+        assert_eq!(labels.len(), 1);
     }
 }

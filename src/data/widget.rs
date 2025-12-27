@@ -25,6 +25,8 @@ pub struct TextContent {
     /// Stream IDs this window listens to (e.g., ["thoughts"], ["main"], ["combat"])
     /// Used for routing incoming game text to the correct window
     pub streams: Vec<String>,
+    /// Enable compact display mode (transforms verbose bounty text to 1-4 lines)
+    pub compact: bool,
 }
 
 /// A single display line with styled segments
@@ -292,12 +294,14 @@ impl TextContent {
             title: title.into(),
             generation: 0,
             streams: vec![],  // Default to empty - will be set during window creation
+            compact: false,   // Default to disabled - set during window creation from layout
         }
     }
 
     pub fn add_line(&mut self, line: StyledLine) {
         self.lines.push_back(line);
-        if self.lines.len() > self.max_lines {
+        // Only prune if max_lines > 0 (0 means unlimited - content managed by clearStream)
+        if self.max_lines > 0 && self.lines.len() > self.max_lines {
             self.lines.pop_front();
         }
         // Increment generation counter on every add_line call

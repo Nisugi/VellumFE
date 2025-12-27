@@ -3,7 +3,8 @@
 //! Handles parsing and routing of XML messages from the game server.
 //! Updates GameState and UiState based on incoming messages.
 
-use crate::config::{Config, SpellColorStyle};
+use crate::config::{Config, SavedDialogPositions, SpellColorStyle};
+use crate::core::bounty_parser;
 use crate::core::GameState;
 use crate::data::*;
 use crate::parser::ParsedElement;
@@ -81,6 +82,9 @@ pub struct MessageProcessor {
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
+
+    /// Saved dialog positions for persistence across sessions
+    pub saved_dialog_positions: SavedDialogPositions,
 }
 
 impl MessageProcessor {
@@ -104,13 +108,18 @@ impl MessageProcessor {
             }
         }
     }
-    pub fn new(config: Config) -> Self {
-        // Create parser with presets from config
+    pub fn new(config: Config, saved_dialog_positions: SavedDialogPositions) -> Self {
+        // Create parser with presets from config, resolving palette names to hex values
         let preset_list = config
             .colors
             .presets
             .iter()
-            .map(|(id, preset)| (id.clone(), preset.fg.clone(), preset.bg.clone()))
+            .map(|(id, preset)| {
+                // Resolve palette names to actual hex values
+                let resolved_fg = preset.fg.as_ref().map(|c| config.resolve_palette_color(c));
+                let resolved_bg = preset.bg.as_ref().map(|c| config.resolve_palette_color(c));
+                (id.clone(), resolved_fg, resolved_bg)
+            })
             .collect();
         let event_patterns = config.event_patterns.clone();
         let parser = crate::parser::XmlParser::with_presets(preset_list, event_patterns);
@@ -145,6 +154,7 @@ impl MessageProcessor {
             text_stream_subscribers: std::collections::HashMap::new(),
             newly_registered_container: None,
             pending_sounds: Vec::new(),
+            saved_dialog_positions,
         };
 
         // Initialize squelch patterns from config
@@ -174,12 +184,17 @@ impl MessageProcessor {
             );
         }
 
+        // Resolve palette names to hex values when updating presets
         let preset_list = self
             .config
             .colors
             .presets
             .iter()
-            .map(|(id, preset)| (id.clone(), preset.fg.clone(), preset.bg.clone()))
+            .map(|(id, preset)| {
+                let resolved_fg = preset.fg.as_ref().map(|c| self.config.resolve_palette_color(c));
+                let resolved_bg = preset.bg.as_ref().map(|c| self.config.resolve_palette_color(c));
+                (id.clone(), resolved_fg, resolved_bg)
+            })
             .collect();
         self.parser.update_presets(preset_list);
         self.parser
@@ -396,8 +411,29 @@ impl MessageProcessor {
                         }
                         tracing::debug!("ClearStream Spells - cleared buffer and window(s)");
                     }
+                } else {
+                    // Generic clearStream handling for text windows
+                    // Check if any text window subscribes to this stream and clear it
+                    let mut cleared_any = false;
+                    for (window_name, window) in ui_state.windows.iter_mut() {
+                        if let WindowContent::Text(ref mut content) = window.content {
+                            if content.streams.iter().any(|s| s.eq_ignore_ascii_case(id)) {
+                                content.lines.clear();
+                                content.scroll_offset = 0;
+                                content.generation = content.generation.wrapping_add(1);
+                                cleared_any = true;
+                                tracing::debug!(
+                                    "ClearStream '{}' - cleared text window '{}'",
+                                    id,
+                                    window_name
+                                );
+                            }
+                        }
+                    }
+                    if !cleared_any {
+                        tracing::trace!("ClearStream '{}' - no subscribers found", id);
+                    }
                 }
-                // Other streams can be handled here as needed
             }
             ParsedElement::Prompt { time, text } => {
                 // Finish current stream before prompt
@@ -784,6 +820,41 @@ impl MessageProcessor {
                         _ => {}
                     }
                 }
+
+                // Update MiniVitals state for GS4 minivitals dialog
+                // This captures the full text for display options (numbers_only, current_only)
+                match id.as_str() {
+                    "health" | "mana" | "stamina" | "spirit" => {
+                        game_state.minivitals.update_vital(id, *value, *max, text.clone());
+                    }
+                    _ => {}
+                }
+
+                // Update GS4 experience state for expr dialog elements
+                match id.as_str() {
+                    "mindState" => {
+                        game_state.gs4_experience.update_mind_state(*value, text.clone());
+                    }
+                    "nextLvlPB" => {
+                        game_state.gs4_experience.update_next_level(*value, text.clone());
+                    }
+                    "encumlevel" => {
+                        game_state.encumbrance.update_level(*value, text.clone());
+                    }
+                    _ => {}
+                }
+            }
+            ParsedElement::Label { id, value } => {
+                self.chunk_has_silent_updates = true;
+
+                // Update GS4 experience state for expr dialog elements
+                if id == "yourLvl" {
+                    game_state.gs4_experience.update_level(value.clone());
+                }
+                // Update encumbrance blurb label
+                if id == "encumblurb" {
+                    game_state.encumbrance.update_blurb(value.clone());
+                }
             }
             ParsedElement::Spell { text } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
@@ -887,9 +958,11 @@ impl MessageProcessor {
                     ui_state.quickbar_order.push(id.clone());
                 }
             }
-            ParsedElement::DialogOpen { id, title } => {
+            ParsedElement::DialogOpen { id, title, save } => {
                 self.chunk_has_silent_updates = true;
+                tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
+                // Check blocklist first
                 if self
                     .config
                     .ui
@@ -897,9 +970,47 @@ impl MessageProcessor {
                     .iter()
                     .any(|blocked| blocked.eq_ignore_ascii_case(id))
                 {
+                    tracing::debug!("DialogOpen blocked: id={}", id);
                     return;
                 }
 
+                // Map dialog ID to template name (they may differ, e.g., "expr" -> "gs4_experience")
+                let template_name = Config::dialog_id_to_template(id);
+
+                // If a widget template exists for this dialog, add it to layout instead of popup
+                if Config::get_window_template(template_name).is_some() {
+                    tracing::debug!("DialogOpen redirected to widget: id={} -> template={}", id, template_name);
+                    // Queue the window to be added to layout (use template name, not dialog ID)
+                    let template_owned = template_name.to_string();
+                    if !ui_state.pending_window_additions.contains(&template_owned) {
+                        ui_state.pending_window_additions.push(template_owned);
+                    }
+                    return;
+                }
+                tracing::debug!("DialogOpen creating popup: id={}", id);
+
+                // Preserve position from currently open dialog with same ID
+                let preserved_pos = ui_state
+                    .active_dialog
+                    .as_ref()
+                    .filter(|d| d.id == *id)
+                    .map(|d| (d.position, d.size));
+
+                // Determine position: preserve existing, load from saved, or None (will center)
+                let (position, size) = if let Some((pos, sz)) = preserved_pos {
+                    (pos, sz)
+                } else if *save {
+                    // Load from saved positions if save='t' and no current dialog
+                    self.saved_dialog_positions
+                        .dialogs
+                        .get(id)
+                        .map(|p| (Some((p.x, p.y)), p.width.zip(p.height)))
+                        .unwrap_or((None, None))
+                } else {
+                    (None, None)
+                };
+
+                // No template - show as popup dialog
                 ui_state.active_dialog = Some(DialogState {
                     id: id.clone(),
                     title: title.clone(),
@@ -908,6 +1019,11 @@ impl MessageProcessor {
                     fields: Vec::new(),
                     labels: Vec::new(),
                     focused_field: None,
+                    progress_bars: Vec::new(),
+                    display_labels: Vec::new(),
+                    position,
+                    size,
+                    save_position: *save,
                 });
                 ui_state.input_mode = InputMode::Dialog;
                 ui_state.popup_menu = None;
@@ -933,6 +1049,13 @@ impl MessageProcessor {
                     .map(|dialog| dialog.id != *id)
                     .unwrap_or(true);
                 if needs_new_dialog {
+                    // Try to load saved position for this dialog
+                    let saved = self.saved_dialog_positions.dialogs.get(id);
+                    let (position, size, save_position) = if let Some(p) = saved {
+                        (Some((p.x, p.y)), p.width.zip(p.height), true)
+                    } else {
+                        (None, None, false)
+                    };
                     ui_state.active_dialog = Some(DialogState {
                         id: id.clone(),
                         title: None,
@@ -941,6 +1064,11 @@ impl MessageProcessor {
                         fields: Vec::new(),
                         labels: Vec::new(),
                         focused_field: None,
+                        progress_bars: Vec::new(),
+                        display_labels: Vec::new(),
+                        position,
+                        size,
+                        save_position,
                     });
                     ui_state.input_mode = InputMode::Dialog;
                     ui_state.popup_menu = None;
@@ -984,6 +1112,13 @@ impl MessageProcessor {
                     .map(|dialog| dialog.id != *id)
                     .unwrap_or(true);
                 if needs_new_dialog {
+                    // Try to load saved position for this dialog
+                    let saved = self.saved_dialog_positions.dialogs.get(id);
+                    let (position, size, save_position) = if let Some(p) = saved {
+                        (Some((p.x, p.y)), p.width.zip(p.height), true)
+                    } else {
+                        (None, None, false)
+                    };
                     ui_state.active_dialog = Some(DialogState {
                         id: id.clone(),
                         title: None,
@@ -992,6 +1127,11 @@ impl MessageProcessor {
                         fields: Vec::new(),
                         labels: Vec::new(),
                         focused_field: None,
+                        progress_bars: Vec::new(),
+                        display_labels: Vec::new(),
+                        position,
+                        size,
+                        save_position,
                     });
                     ui_state.input_mode = InputMode::Dialog;
                     ui_state.popup_menu = None;
@@ -1009,13 +1149,37 @@ impl MessageProcessor {
                         }
 
                         if !labels.is_empty() {
-                            dialog.labels = labels
-                                .iter()
-                                .map(|label| crate::data::DialogLabel {
+                            // Separate labels into:
+                            // - display_labels: standalone labels (not paired with any field)
+                            // - labels: labels that are paired with input fields
+                            //
+                            // A label is "paired" if its ID is a prefix of a field ID
+                            // e.g., "deposit" is paired with "depositAmount"
+                            let mut paired_labels = Vec::new();
+                            let mut standalone_labels = Vec::new();
+
+                            for label in labels.iter() {
+                                let is_paired = fields.iter().any(|field| {
+                                    field
+                                        .id
+                                        .to_lowercase()
+                                        .starts_with(&label.id.to_lowercase())
+                                });
+
+                                let dialog_label = crate::data::DialogLabel {
                                     id: label.id.clone(),
                                     value: label.value.clone(),
-                                })
-                                .collect();
+                                };
+
+                                if is_paired {
+                                    paired_labels.push(dialog_label);
+                                } else {
+                                    standalone_labels.push(dialog_label);
+                                }
+                            }
+
+                            dialog.labels = paired_labels;
+                            dialog.display_labels = standalone_labels;
                         }
 
                         let mut focused_index = None;
@@ -1061,8 +1225,66 @@ impl MessageProcessor {
                     }
                 }
             }
+            ParsedElement::DialogProgressBars {
+                id,
+                clear,
+                progress_bars,
+            } => {
+                self.chunk_has_silent_updates = true;
+                if self
+                    .config
+                    .ui
+                    .open_dialog_blocklist
+                    .iter()
+                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
+                {
+                    return;
+                }
+
+                if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                    if dialog.id == *id {
+                        if *clear {
+                            dialog.progress_bars.clear();
+                        }
+                        for pb in progress_bars {
+                            dialog.progress_bars.push(crate::data::DialogProgressBar {
+                                id: pb.id.clone(),
+                                value: pb.value,
+                                text: pb.text.clone(),
+                            });
+                        }
+                    }
+                }
+            }
             ParsedElement::DialogLabelList { id, clear, labels } => {
                 self.chunk_has_silent_updates = true;
+
+                // Handle BetrayerPanel state updates
+                if id == "BetrayerPanel" {
+                    if *clear {
+                        game_state.betrayer.clear();
+                    }
+                    // Extract blood points from lblBPs
+                    for label in labels.iter() {
+                        if label.id == "lblBPs" {
+                            game_state.betrayer.update_blood_points(&label.value);
+                            break;
+                        }
+                    }
+                    // Extract items from lblitemN labels (keep '!' prefix for active highlighting)
+                    let mut items: Vec<String> = Vec::new();
+                    for i in 1..=20 {
+                        let item_id = format!("lblitem{}", i);
+                        if let Some(label) = labels.iter().find(|l| l.id == item_id) {
+                            // Keep the raw value including '!' prefix for active item display
+                            items.push(label.value.clone());
+                        } else {
+                            break; // Stop at first missing item
+                        }
+                    }
+                    game_state.betrayer.update_items(items);
+                }
+
                 let window_name = id.to_lowercase();
                 if let Some(window) = ui_state.windows.get_mut(&window_name) {
                     if let WindowContent::Text(content) = &mut window.content {
@@ -1133,6 +1355,14 @@ impl MessageProcessor {
                         ui_state.input_mode = InputMode::Normal;
                     }
                 }
+            }
+            ParsedElement::ClearDialogData { id } => {
+                self.chunk_has_silent_updates = true;
+                // Handle BetrayerPanel clear
+                if id == "BetrayerPanel" {
+                    game_state.betrayer.clear();
+                }
+                // Other dialog clears can be added here as needed
             }
             ParsedElement::ActiveEffect {
                 category,
@@ -1368,12 +1598,12 @@ impl MessageProcessor {
         if let Some(field_name) = id.strip_prefix("exp ") {
             // Register the field order (will be a no-op after first occurrence)
             game_state
-                .exp_components
+                .dr_experience
                 .register_field(field_name.to_string());
 
             // Update the value (only triggers generation bump if changed)
             if game_state
-                .exp_components
+                .dr_experience
                 .update_field(field_name, value.to_string())
             {
                 tracing::debug!("Exp component updated: {} = {}", field_name, value);
@@ -1933,13 +2163,30 @@ impl MessageProcessor {
         let mut text_added_to_any_window = false;
         let mut tts_handled = false;
 
+        // Debug: log stream routing attempt
+        tracing::debug!(
+            "Routing stream '{}' - checking {} windows",
+            self.current_stream,
+            ui_state.windows.len()
+        );
+
         // Iterate over all windows to find interested parties
         for (window_name, window) in ui_state.windows.iter_mut() {
             let mut added_here = false;
             match &mut window.content {
                 WindowContent::Text(content) => {
+                    // Debug: log window streams
+                    if self.current_stream != "main" {
+                        tracing::debug!(
+                            "  Window '{}' has streams: {:?}, checking for '{}'",
+                            window_name,
+                            content.streams,
+                            self.current_stream
+                        );
+                    }
                     // Check if this text window listens to the current stream
                     if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
+                        tracing::debug!("  -> MATCHED: adding line to '{}'", window_name);
                         // Apply window-specific replacements if any
                         let final_line = if deferred_replacements.is_empty() {
                             line.clone()
@@ -1953,6 +2200,23 @@ impl MessageProcessor {
                                 stream: line.stream.clone(),
                             }
                         };
+
+                        // Check for compact bounty mode
+                        if content.compact && self.current_stream.eq_ignore_ascii_case("bounty") {
+                            // Extract plain text from segments
+                            let plain_text: String = final_line.segments.iter().map(|s| s.text.as_str()).collect();
+                            if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
+                                // Clear existing lines and add compact bounty lines
+                                content.lines.clear();
+                                for text in compact.lines {
+                                    content.add_line(StyledLine::from_text_with_stream(text, "bounty"));
+                                }
+                                added_here = true;
+                                // Skip normal add_line - we've handled this specially
+                                continue;
+                            }
+                        }
+
                         content.add_line(final_line);
                         added_here = true;
                     }
@@ -2985,7 +3249,7 @@ mod tests {
 
     fn create_test_processor() -> MessageProcessor {
         let config = Config::default();
-        MessageProcessor::new(config)
+        MessageProcessor::new(config, SavedDialogPositions::default())
     }
 
     fn make_redirect_pattern(pattern: &str) -> crate::config::HighlightPattern {
@@ -3044,7 +3308,7 @@ mod tests {
             .highlights
             .insert("empty_redirect".to_string(), make_redirect_pattern("||"));
 
-        let processor = MessageProcessor::new(config);
+        let processor = MessageProcessor::new(config, SavedDialogPositions::default());
         let result = processor.check_redirect_match("anything");
         assert!(result.is_none());
     }
@@ -3058,7 +3322,7 @@ mod tests {
             make_redirect_pattern("a|ab|abc"),
         );
 
-        let processor = MessageProcessor::new(config);
+        let processor = MessageProcessor::new(config, SavedDialogPositions::default());
         let result = processor.check_redirect_match("zz abc zz");
         assert!(matches!(
             result,

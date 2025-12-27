@@ -5,7 +5,7 @@
 //! that frontends read from.
 
 use crate::cmdlist::CmdList;
-use crate::config::{Config, Layout};
+use crate::config::{Config, Layout, SavedDialogPositions};
 use crate::core::{GameState, MessageProcessor};
 use crate::data::*;
 use crate::parser::{ParsedElement, XmlParser};
@@ -134,6 +134,11 @@ pub struct AppCore {
     /// Runtime keybind map for fast O(1) lookups (KeyEvent -> KeyBindAction)
     /// Built from config.keybinds at startup and on config reload
     pub keybind_map: HashMap<crate::frontend::common::KeyEvent, crate::config::KeyBindAction>,
+
+    // === Dialog Position Persistence ===
+    /// Saved dialog positions loaded from widget_state.toml
+    /// Updated when dialogs with save='t' are dragged/resized
+    pub saved_dialog_positions: SavedDialogPositions,
 }
 
 impl AppCore {
@@ -145,15 +150,23 @@ impl AppCore {
         // Load command list
         let cmdlist = CmdList::load().ok();
 
-        // Create message processor
-        let message_processor = MessageProcessor::new(config.clone());
+        // Load saved dialog positions from widget_state.toml
+        let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
+            .unwrap_or_default();
 
-        // Convert presets from config to parser format
+        // Create message processor (shares saved_dialog_positions reference)
+        let message_processor = MessageProcessor::new(config.clone(), saved_dialog_positions.clone());
+
+        // Convert presets from config to parser format, resolving palette names to hex values
         let preset_list: Vec<(String, Option<String>, Option<String>)> = config
             .colors
             .presets
             .iter()
-            .map(|(id, preset)| (id.clone(), preset.fg.clone(), preset.bg.clone()))
+            .map(|(id, preset)| {
+                let resolved_fg = preset.fg.as_ref().map(|c| config.resolve_palette_color(c));
+                let resolved_bg = preset.bg.as_ref().map(|c| config.resolve_palette_color(c));
+                (id.clone(), resolved_fg, resolved_bg)
+            })
             .collect();
 
         // Create parser with presets and event patterns
@@ -223,6 +236,7 @@ impl AppCore {
             save_reminder_shown: false,
             base_layout_name: None,
             keybind_map,
+            saved_dialog_positions,
         };
 
         app.apply_session_cache();
@@ -672,7 +686,11 @@ impl AppCore {
             crate::data::WidgetType::Perception => "perception",
             crate::data::WidgetType::Container => "container",
             crate::data::WidgetType::Experience => "experience",
+            crate::data::WidgetType::GS4Experience => "gs4_experience",
+            crate::data::WidgetType::Encumbrance => "encum",
             crate::data::WidgetType::Quickbar => "quickbar",
+            crate::data::WidgetType::MiniVitals => "minivitals",
+            crate::data::WidgetType::Betrayer => "betrayer",
         };
         focusable.contains(kind)
     }
@@ -720,6 +738,19 @@ impl AppCore {
 
     /// Initialize windows based on current layout
     pub fn init_windows(&mut self, terminal_width: u16, terminal_height: u16) {
+        // Preserve command history from existing command_input window
+        let preserved_history: Option<Vec<String>> = self
+            .ui_state
+            .windows
+            .get("command_input")
+            .and_then(|w| {
+                if let WindowContent::CommandInput { history, .. } = &w.content {
+                    Some(history.clone())
+                } else {
+                    None
+                }
+            });
+
         // Calculate window positions from layout
         let positions = self.calculate_window_positions(terminal_width, terminal_height);
 
@@ -757,14 +788,15 @@ impl AppCore {
 
             let content = match widget_type {
                 WidgetType::Text => {
-                    let (buffer_size, streams) =
+                    let (buffer_size, streams, compact) =
                         if let crate::config::WindowDef::Text { data, .. } = window_def {
-                            (data.buffer_size, data.streams.clone())
+                            (data.buffer_size, data.streams.clone(), data.compact)
                         } else {
-                            (1000, vec![]) // fallback
+                            (1000, vec![], false) // fallback
                         };
                     let mut text_content = TextContent::new(title, buffer_size);
                     text_content.streams = streams;
+                    text_content.compact = compact;
                     WindowContent::Text(text_content)
                 }
                 WidgetType::TabbedText => {
@@ -927,7 +959,12 @@ impl AppCore {
                     entries: Vec::new(),
                     last_update: 0,
                 }),
+                WidgetType::Experience => WindowContent::Experience,
+                WidgetType::GS4Experience => WindowContent::GS4Experience,
+                WidgetType::Encumbrance => WindowContent::Encumbrance,
                 WidgetType::Quickbar => WindowContent::Quickbar,
+                WidgetType::MiniVitals => WindowContent::MiniVitals,
+                WidgetType::Betrayer => WindowContent::Betrayer,
                 _ => WindowContent::Empty,
             };
 
@@ -966,6 +1003,18 @@ impl AppCore {
         for window in self.ui_state.windows.values_mut() {
             if let WindowContent::Spells(ref mut content) = window.content {
                 self.message_processor.populate_spells_window(content);
+            }
+        }
+
+        // Restore preserved command history
+        if let Some(history) = preserved_history {
+            if let Some(window) = self.ui_state.windows.get_mut("command_input") {
+                if let WindowContent::CommandInput {
+                    history: ref mut h, ..
+                } = window.content
+                {
+                    *h = history;
+                }
             }
         }
 
@@ -1017,13 +1066,14 @@ impl AppCore {
 
         let content = match widget_type {
             WidgetType::Text => {
-                let (buffer_size, streams) = if let crate::config::WindowDef::Text { data, .. } = window_def {
-                    (data.buffer_size, data.streams.clone())
+                let (buffer_size, streams, compact) = if let crate::config::WindowDef::Text { data, .. } = window_def {
+                    (data.buffer_size, data.streams.clone(), data.compact)
                 } else {
-                    (1000, vec![]) // fallback
+                    (1000, vec![], false) // fallback
                 };
                 let mut text_content = TextContent::new(title, buffer_size);
                 text_content.streams = streams;
+                text_content.compact = compact;
                 WindowContent::Text(text_content)
             }
             WidgetType::TabbedText => {
@@ -1175,6 +1225,12 @@ impl AppCore {
             WidgetType::Dashboard => WindowContent::Dashboard {
                 indicators: Vec::new(),
             },
+            WidgetType::Experience => WindowContent::Experience,
+            WidgetType::GS4Experience => WindowContent::GS4Experience,
+            WidgetType::Encumbrance => WindowContent::Encumbrance,
+            WidgetType::Quickbar => WindowContent::Quickbar,
+            WidgetType::MiniVitals => WindowContent::MiniVitals,
+            WidgetType::Betrayer => WindowContent::Betrayer,
             _ => WindowContent::Empty,
         };
 
@@ -1488,6 +1544,11 @@ impl AppCore {
             .collect()
     }
 
+    /// Get the current game type from config
+    pub fn game_type(&self) -> Option<crate::config::GameType> {
+        crate::config::GameType::from_game_string(self.config.connection.game.as_deref())
+    }
+
     /// Generate a unique spacer widget name based on existing spacers in layout
     /// Uses max number + 1 algorithm, checking ALL widgets including hidden ones
     /// Pattern: spacer_1, spacer_2, spacer_3, etc.
@@ -1515,27 +1576,59 @@ impl AppCore {
         format!("spacer_{}", max_number + 1)
     }
 
-    /// Add a system message to the main window
+    /// Add a system message to a window that receives the "main" stream.
+    /// First tries window named "main", then looks for any window subscribed to "main" stream.
     pub fn add_system_message(&mut self, message: &str) {
         use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
 
+        let line = StyledLine {
+            segments: vec![TextSegment {
+                text: message.to_string(),
+                fg: Some("#00ff00".to_string()),
+                bg: None,
+                bold: true,
+                span_type: SpanType::System, // system echo; skip highlight transforms
+                link_data: None,
+            }],
+            stream: String::from("main"),
+        };
+
+        // First try window named "main" (backward compatibility)
         if let Some(main_window) = self.ui_state.get_window_mut("main") {
             if let WindowContent::Text(ref mut content) = main_window.content {
-                let line = StyledLine {
-                    segments: vec![TextSegment {
-                        text: message.to_string(),
-                        fg: Some("#00ff00".to_string()),
-                        bg: None,
-                        bold: true,
-                        span_type: SpanType::System, // system echo; skip highlight transforms
-                        link_data: None,
-                    }],
-                    stream: String::from("main"),
-                };
                 content.add_line(line);
                 self.needs_render = true;
+                return;
             }
         }
+
+        // Otherwise, find any window subscribed to "main" stream
+        // Check Text windows
+        for window in self.ui_state.windows.values_mut() {
+            match &mut window.content {
+                WindowContent::Text(ref mut content) => {
+                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                        content.add_line(line);
+                        self.needs_render = true;
+                        return;
+                    }
+                }
+                WindowContent::TabbedText(ref mut content) => {
+                    // Find tab subscribed to "main" stream
+                    for tab in content.tabs.iter_mut() {
+                        if tab.definition.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                            tab.content.add_line(line);
+                            self.needs_render = true;
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // No window found - log warning
+        tracing::warn!("No window found subscribed to 'main' stream for system message: {}", message);
     }
 
     /// Inject a test line through the complete pipeline (parser → message processor → UI)
@@ -1927,6 +2020,53 @@ impl AppCore {
         tracing::info!("Showed window '{}' - added to layout and UI state", name);
     }
 
+    /// Process pending window additions from openDialog events.
+    /// Called by the frontend each frame with terminal dimensions.
+    pub fn process_pending_window_additions(&mut self, terminal_width: u16, terminal_height: u16) {
+        // Drain pending additions
+        let pending: Vec<String> = self.ui_state.pending_window_additions.drain(..).collect();
+
+        for name in pending {
+            // Check if window already exists and is visible
+            let already_visible = self
+                .layout
+                .windows
+                .iter()
+                .any(|w| w.name() == name && w.base().visible);
+
+            if already_visible {
+                // Window exists in layout - just make sure it's in UI state
+                if !self.ui_state.windows.contains_key(&name) {
+                    // Create UI state for existing layout window
+                    if let Some(window_def) = self.layout.windows.iter().find(|w| w.name() == name) {
+                        let window_def_clone = window_def.clone();
+                        self.add_new_window(&window_def_clone, terminal_width, terminal_height);
+                        tracing::info!("Created UI state for existing layout window '{}'", name);
+                        self.needs_render = true;
+                        self.ui_state.needs_widget_reset = true;
+                    }
+                }
+                continue;
+            }
+
+            // Add window to layout from template
+            if let Err(e) = self.layout.add_window(&name) {
+                tracing::warn!("Failed to auto-add window '{}' from dialog: {}", name, e);
+                continue;
+            }
+
+            // Get the window definition and create UI state
+            if let Some(window_def) = self.layout.windows.iter().find(|w| w.name() == name) {
+                let window_def_clone = window_def.clone();
+                self.add_new_window(&window_def_clone, terminal_width, terminal_height);
+                tracing::info!("Auto-added window '{}' from openDialog", name);
+                self.needs_render = true;
+                // Signal frontend to rebuild widget caches so new window is rendered
+                self.ui_state.needs_widget_reset = true;
+            }
+        }
+    }
+
     /// Delete a window (legacy - use hide_window instead)
     pub(super) fn delete_window(&mut self, name: &str) {
         // For backwards compatibility, redirect to hide
@@ -2135,6 +2275,11 @@ impl AppCore {
             WidgetType::Container => WindowContent::Container {
                 container_title: String::new(),
             },
+            WidgetType::Experience => WindowContent::Experience,
+            WidgetType::GS4Experience => WindowContent::GS4Experience,
+            WidgetType::Encumbrance => WindowContent::Encumbrance,
+            WidgetType::MiniVitals => WindowContent::MiniVitals,
+            WidgetType::Betrayer => WindowContent::Betrayer,
             _ => WindowContent::Empty,
         };
 
@@ -2219,6 +2364,7 @@ impl AppCore {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             },
             "room" => WindowDef::Room {
@@ -2246,6 +2392,7 @@ impl AppCore {
                         wordwrap: true,
                         show_timestamps: false,
                         timestamp_position: None,
+                    compact: false,
                     },
                 }
             }
@@ -2365,7 +2512,19 @@ impl AppCore {
                 window_def.base_mut().border_color = Some(c);
             }
 
+            // Recalculate and update window positions since rows/cols changed
+            let width = self.layout.terminal_width.unwrap_or(80);
+            let height = self.layout.terminal_height.unwrap_or(24);
+            let positions = self.calculate_window_positions(width, height);
+            for (name, position) in positions {
+                if let Some(window) = self.ui_state.get_window_mut(&name) {
+                    window.position = position;
+                }
+            }
+
             self.add_system_message(&format!("Border updated for window '{}'", window_name));
+            self.mark_layout_modified();
+            self.ui_state.needs_widget_reset = true;
             self.needs_render = true;
         } else {
             self.add_system_message(&format!("Window '{}' not found", window_name));
@@ -2932,6 +3091,57 @@ impl AppCore {
                 "Tip: Use .savelayout <name> to preserve changes as a reusable template",
             );
             self.save_reminder_shown = true;
+        }
+    }
+
+    /// Adjust window rows for content-driven widgets (like Betrayer)
+    /// Called after message processing when content count may have changed
+    pub fn adjust_content_driven_windows(&mut self) {
+        // Collect changes first to avoid borrow issues
+        let mut changes: Vec<(String, u16)> = Vec::new();
+
+        for window_def in &self.layout.windows {
+            if let crate::config::WindowDef::Betrayer { base, data } = window_def {
+                let bar_rows = 1u16;
+                let item_rows = if data.show_items {
+                    self.game_state.betrayer.items.len().max(1) as u16
+                } else {
+                    0
+                };
+                let border_rows = base.horizontal_border_units();
+                let ideal_rows = bar_rows + item_rows + border_rows;
+
+                // Clamp to min/max
+                let new_rows = ideal_rows
+                    .max(base.min_rows.unwrap_or(1))
+                    .min(base.max_rows.unwrap_or(u16::MAX));
+
+                if base.rows != new_rows {
+                    changes.push((base.name.clone(), new_rows));
+                }
+            }
+        }
+
+        // Apply changes to both layout and ui_state
+        for (name, new_rows) in changes {
+            // Update layout
+            for window_def in &mut self.layout.windows {
+                if window_def.name() == name {
+                    if let crate::config::WindowDef::Betrayer { base, .. } = window_def {
+                        base.rows = new_rows;
+                    }
+                    break;
+                }
+            }
+
+            // Update ui_state window position height
+            if let Some(window) = self.ui_state.windows.get_mut(&name) {
+                window.position.height = new_rows;
+            }
+
+            // Mark modified but don't show the save reminder for auto-resizes
+            self.layout_modified_since_save = true;
+            self.needs_render = true;
         }
     }
 
@@ -3806,6 +4016,7 @@ mod tests {
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                compact: false,
             },
         };
         let spacer1 = WindowDef::Spacer {

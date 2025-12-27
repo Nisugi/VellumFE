@@ -42,7 +42,11 @@ pub enum WidgetType {
     Perception,
     Container,
     Experience,
+    GS4Experience,
+    Encumbrance,
     Quickbar,
+    MiniVitals,
+    Betrayer,
 }
 
 impl WidgetType {
@@ -79,7 +83,11 @@ impl WidgetType {
             "spacer" => Some(WidgetType::Spacer),
             "container" => Some(WidgetType::Container),
             "experience" => Some(WidgetType::Experience),
+            "gs4_experience" => Some(WidgetType::GS4Experience),
+            "encum" => Some(WidgetType::Encumbrance),
             "quickbar" => Some(WidgetType::Quickbar),
+            "minivitals" => Some(WidgetType::MiniVitals),
+            "betrayer" => Some(WidgetType::Betrayer),
             _ => None,
         }
     }
@@ -89,7 +97,7 @@ impl WidgetType {
         "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
         "indicator", "room", "inventory", "command_input", "dashboard", "hand",
         "active_effects", "targets", "players", "spells",
-        "perception", "performance", "spacer", "container", "experience", "quickbar",
+        "perception", "performance", "spacer", "container", "experience", "gs4_experience", "encum", "quickbar", "minivitals", "betrayer",
     ];
 }
 
@@ -133,9 +141,21 @@ pub enum WindowContent {
         container_title: String, // Title of the container to display (e.g., "Bandolier")
     },
     /// Experience window - displays DR skill/experience components
-    /// Reads from GameState.exp_components (no data stored here)
+    /// Reads from GameState.dr_experience (no data stored here)
     Experience,
+    /// GS4 Experience window - displays level, mind state, experience
+    /// Reads from GameState.gs4_experience (no data stored here)
+    GS4Experience,
+    /// Encumbrance window - displays progress bar + optional label
+    /// Reads from GameState.encumbrance (no data stored here)
+    Encumbrance,
     Quickbar,
+    /// MiniVitals window - displays health, mana, stamina, spirit as horizontal bars
+    /// Reads from GameState.vitals (no data stored here)
+    MiniVitals,
+    /// Betrayer window - displays blood points progress bar and item list
+    /// Reads from GameState.betrayer (no data stored here)
+    Betrayer,
     Empty, // For spacers or not-yet-implemented widgets
 }
 

@@ -78,6 +78,29 @@ impl WidgetCategory {
     }
 }
 
+/// Game type for filtering game-specific features and templates
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GameType {
+    /// GemStone IV (prime, platinum, shattered, test)
+    GS4,
+    /// DragonRealms (dr, drplatinum, drfallen, drtest)
+    DR,
+}
+
+impl GameType {
+    /// Determine game type from game string (e.g., "prime", "dr", "drplatinum")
+    pub fn from_game_string(game: Option<&str>) -> Option<Self> {
+        game.map(|g| {
+            if g.to_ascii_lowercase().starts_with("dr") {
+                GameType::DR
+            } else {
+                GameType::GS4
+            }
+        })
+    }
+}
+
 /// Color rendering mode for terminal compatibility
 ///
 /// VellumFE supports two color modes:
@@ -579,19 +602,30 @@ impl WindowBase {
     }
 
     /// Apply new border visibility/sides while keeping interior size the same.
+    /// Also adjusts min_rows/max_rows/min_cols/max_cols proportionally (if set).
     pub fn apply_border_configuration(&mut self, show_border: bool, border_sides: BorderSides) {
         let prev_horizontal = self.horizontal_border_units();
         let prev_vertical = self.vertical_border_units();
 
-        let mut content_rows = self.rows.saturating_sub(prev_horizontal);
-        if content_rows == 0 {
-            content_rows = 1;
-        }
-        let mut content_cols = self.cols.saturating_sub(prev_vertical);
-        if content_cols == 0 {
-            content_cols = 1;
-        }
+        // Calculate content dimensions (interior without borders)
+        let content_rows = self.rows.saturating_sub(prev_horizontal).max(1);
+        let content_cols = self.cols.saturating_sub(prev_vertical).max(1);
 
+        // Calculate content-based min/max (if set) - None stays None
+        let content_min_rows = self
+            .min_rows
+            .map(|m| m.saturating_sub(prev_horizontal).max(1));
+        let content_max_rows = self
+            .max_rows
+            .map(|m| m.saturating_sub(prev_horizontal).max(1));
+        let content_min_cols = self
+            .min_cols
+            .map(|m| m.saturating_sub(prev_vertical).max(1));
+        let content_max_cols = self
+            .max_cols
+            .map(|m| m.saturating_sub(prev_vertical).max(1));
+
+        // Apply new border configuration
         self.show_border = show_border && border_sides.any();
         self.border_sides = border_sides;
 
@@ -599,32 +633,65 @@ impl WindowBase {
             Self::horizontal_border_units_for(self.show_border, &self.border_sides);
         let new_vertical = Self::vertical_border_units_for(self.show_border, &self.border_sides);
 
-        self.rows = content_rows + new_horizontal;
-        self.cols = content_cols + new_vertical;
+        // Adjust rows/cols (minimum 1)
+        self.rows = (content_rows + new_horizontal).max(1);
+        self.cols = (content_cols + new_vertical).max(1);
 
+        // Adjust min/max if set (minimum 1, None stays None)
+        self.min_rows = content_min_rows.map(|m| (m + new_horizontal).max(1));
+        self.max_rows = content_max_rows.map(|m| (m + new_horizontal).max(1));
+        self.min_cols = content_min_cols.map(|m| (m + new_vertical).max(1));
+        self.max_cols = content_max_cols.map(|m| (m + new_vertical).max(1));
+
+        // Enforce constraints on rows/cols
         if let Some(min_rows) = self.min_rows {
             if self.rows < min_rows {
                 self.rows = min_rows;
             }
-        } else if self.rows == 0 {
-            self.rows = 1;
         }
         if let Some(max_rows) = self.max_rows {
             if self.rows > max_rows {
                 self.rows = max_rows;
             }
         }
-
         if let Some(min_cols) = self.min_cols {
             if self.cols < min_cols {
                 self.cols = min_cols;
             }
-        } else if self.cols == 0 {
-            self.cols = 1;
         }
         if let Some(max_cols) = self.max_cols {
             if self.cols > max_cols {
                 self.cols = max_cols;
+            }
+        }
+    }
+
+    /// Apply a change to an optional content row (like show_label for encumbrance).
+    /// When enabling (false -> true), adds 1 row; when disabling (true -> false), removes 1 row.
+    /// Also adjusts min_rows/max_rows proportionally (if set).
+    pub fn apply_optional_content_row(&mut self, new_show: bool, prev_show: bool) {
+        if new_show == prev_show {
+            return; // No change
+        }
+
+        let delta: i16 = if new_show { 1 } else { -1 };
+
+        // Adjust rows (minimum 1)
+        self.rows = (self.rows as i16 + delta).max(1) as u16;
+
+        // Adjust min/max if set (minimum 1, None stays None)
+        self.min_rows = self.min_rows.map(|m| (m as i16 + delta).max(1) as u16);
+        self.max_rows = self.max_rows.map(|m| (m as i16 + delta).max(1) as u16);
+
+        // Enforce constraints
+        if let Some(min_rows) = self.min_rows {
+            if self.rows < min_rows {
+                self.rows = min_rows;
+            }
+        }
+        if let Some(max_rows) = self.max_rows {
+            if self.rows > max_rows {
+                self.rows = max_rows;
             }
         }
     }
@@ -694,6 +761,9 @@ pub struct TextWidgetData {
     /// Timestamp position (overrides ui.timestamp_position if Some)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp_position: Option<TimestampPosition>,
+    /// Enable compact display mode (transforms verbose bounty text to 1-4 lines)
+    #[serde(default)]
+    pub compact: bool,
 }
 
 /// Room widget specific data
@@ -1038,6 +1108,24 @@ pub struct WindowTemplateStore {
     pub templates: Vec<WindowTemplateEntry>,
 }
 
+/// Saved dialog position for persistence across sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DialogPosition {
+    pub x: u16,
+    pub y: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u16>,
+}
+
+/// TOML file wrapper for saved dialog positions (widget_state.toml)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SavedDialogPositions {
+    #[serde(default)]
+    pub dialogs: HashMap<String, DialogPosition>,
+}
+
 fn default_dashboard_layout() -> String {
     "horizontal".to_string()
 }
@@ -1128,6 +1216,9 @@ pub struct PerformanceWidgetData {
 pub struct TargetsWidgetData {
     #[serde(default = "default_target_entity_id")]
     pub entity_id: String,
+    /// Show count of filtered body parts (arms, tentacles, etc.) on bottom border
+    #[serde(default)]
+    pub show_body_part_count: bool,
 }
 
 /// Players widget specific data
@@ -1344,6 +1435,87 @@ fn default_experience_align() -> String {
     "left".to_string()
 }
 
+/// GS4 Experience widget data (level + mind state + experience)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GS4ExperienceWidgetData {
+    /// Text alignment: "left", "center", or "right" (default: "left")
+    #[serde(default = "default_experience_align")]
+    pub align: String,
+    /// Show level text (yourLvl label) - default true
+    #[serde(default = "default_true")]
+    pub show_level: bool,
+    /// Show experience progress bar (nextLvlPB) - default true
+    #[serde(default = "default_true")]
+    pub show_exp_bar: bool,
+    /// Mind bar fill color (default: cyan)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mind_bar_color: Option<String>,
+    /// Exp bar fill color (default: theme background for max-level users)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exp_bar_color: Option<String>,
+}
+
+/// Encumbrance widget data (progress bar + optional label)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct EncumbranceWidgetData {
+    /// Text alignment: "left", "center", or "right" (default: "left")
+    #[serde(default = "default_experience_align")]
+    pub align: String,
+    /// Show descriptive blurb text - default true
+    #[serde(default = "default_true")]
+    pub show_label: bool,
+    /// Bar color for light encumbrance (0-20) - default green
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_light: Option<String>,
+    /// Bar color for moderate encumbrance (21-50) - default yellow
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_moderate: Option<String>,
+    /// Bar color for heavy encumbrance (51-80) - default orange
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_heavy: Option<String>,
+    /// Bar color for critical encumbrance (81-100) - default red
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_critical: Option<String>,
+}
+
+/// MiniVitals widget data (horizontal 4-bar layout) - GS4 only
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct MiniVitalsWidgetData {
+    /// Show numbers only (226/300 instead of "health 226/300") - default false
+    #[serde(default)]
+    pub numbers_only: bool,
+    /// Show current value only (226 instead of 226/300) - default false
+    #[serde(default)]
+    pub current_only: bool,
+    /// Health bar color (default: red)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_color: Option<String>,
+    /// Mana bar color (default: blue)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mana_color: Option<String>,
+    /// Stamina bar color (default: yellow)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stamina_color: Option<String>,
+    /// Spirit bar color (default: magenta)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spirit_color: Option<String>,
+}
+
+/// Betrayer widget data (blood pool progress bar + item list) - GS4 only
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct BetrayerWidgetData {
+    /// Show item list below progress bar (default: true)
+    #[serde(default = "default_true")]
+    pub show_items: bool,
+    /// Progress bar color (default: dark red #8b0000)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_color: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Window definition - enum with widget-specific variants
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "widget_type")]
@@ -1524,6 +1696,42 @@ pub enum WindowDef {
         #[serde(flatten)]
         data: ExperienceWidgetData,
     },
+
+    /// GS4 Experience window (shows level, mind state, experience)
+    #[serde(rename = "gs4_experience")]
+    GS4Experience {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: GS4ExperienceWidgetData,
+    },
+
+    /// Encumbrance window (shows progress bar + optional label)
+    #[serde(rename = "encum")]
+    Encumbrance {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: EncumbranceWidgetData,
+    },
+
+    /// MiniVitals window (horizontal 4-bar layout) - GS4 only
+    #[serde(rename = "minivitals")]
+    MiniVitals {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: MiniVitalsWidgetData,
+    },
+
+    /// Betrayer window (blood pool progress bar + item list) - GS4 only
+    #[serde(rename = "betrayer")]
+    Betrayer {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: BetrayerWidgetData,
+    },
 }
 
 impl WindowDef {
@@ -1552,6 +1760,10 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
+            WindowDef::GS4Experience { base, .. } => &base.name,
+            WindowDef::Encumbrance { base, .. } => &base.name,
+            WindowDef::MiniVitals { base, .. } => &base.name,
+            WindowDef::Betrayer { base, .. } => &base.name,
         }
     }
 
@@ -1580,6 +1792,10 @@ impl WindowDef {
             WindowDef::Spells { .. } => "spells",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
+            WindowDef::GS4Experience { .. } => "gs4_experience",
+            WindowDef::Encumbrance { .. } => "encum",
+            WindowDef::MiniVitals { .. } => "minivitals",
+            WindowDef::Betrayer { .. } => "betrayer",
         }
     }
 
@@ -1608,6 +1824,10 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
+            WindowDef::GS4Experience { base, .. } => base,
+            WindowDef::Encumbrance { base, .. } => base,
+            WindowDef::MiniVitals { base, .. } => base,
+            WindowDef::Betrayer { base, .. } => base,
         }
     }
 
@@ -1636,6 +1856,10 @@ impl WindowDef {
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
+            WindowDef::GS4Experience { base, .. } => base,
+            WindowDef::Encumbrance { base, .. } => base,
+            WindowDef::MiniVitals { base, .. } => base,
+            WindowDef::Betrayer { base, .. } => base,
         }
     }
 }
@@ -2233,10 +2457,6 @@ fn default_performance_stats_enabled() -> bool {
 
 // default_command_input* functions removed - command_input is now in windows array
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_false() -> bool {
     false
 }
@@ -2707,6 +2927,33 @@ impl Layout {
         format!("spacer_{}", max_number + 1)
     }
 
+    /// Generate a unique widget name for any widget type
+    /// Uses max number + 1 algorithm, checking ALL widgets with matching prefix
+    /// Pattern: custom-{widgettype}-1, custom-{widgettype}-2, etc.
+    /// Example: custom-tabbedtext-1, custom-text-2, custom-progress-1
+    pub fn generate_widget_name(&self, widget_type: &str) -> String {
+        // Normalize widget type to lowercase for consistent prefix matching
+        let normalized_type = widget_type.to_lowercase();
+        let prefix = format!("custom-{}-", normalized_type);
+
+        let max_number = self
+            .windows
+            .iter()
+            .filter_map(|w| {
+                let name = w.name();
+                // Extract number from name like "custom-text-5"
+                if let Some(num_str) = name.strip_prefix(&prefix) {
+                    num_str.parse::<u32>().ok()
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or(0);
+
+        format!("custom-{}-{}", normalized_type, max_number + 1)
+    }
+
     pub fn add_window(&mut self, name: &str) -> Result<()> {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
@@ -2885,6 +3132,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -2942,11 +3190,11 @@ impl Config {
                 base: WindowBase {
                     name: "quickbar".to_string(),
                     title: Some("Quickbar".to_string()),
-                    rows: 1,
+                    rows: 3,
                     cols: 120,
-                    min_rows: Some(1),
-                    max_rows: Some(1),
-                    show_border: false,
+                    min_rows: Some(3),
+                    max_rows: Some(3),
+                    show_border: true,
                     show_title: false,
                     ..base_defaults.clone()
                 },
@@ -2962,7 +3210,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3015,7 +3263,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3037,7 +3285,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3063,6 +3311,7 @@ impl Config {
                 },
                 data: TargetsWidgetData {
                     entity_id: default_target_entity_id(),
+                    show_body_part_count: false,
                 },
             }),
             "players" => Some(WindowDef::Players {
@@ -3096,6 +3345,7 @@ impl Config {
                 },
                 data: TargetsWidgetData {
                     entity_id: String::new(),
+                    show_body_part_count: false,
                 },
             }),
 
@@ -3250,7 +3500,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3273,7 +3523,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3286,38 +3536,16 @@ impl Config {
                 },
             }),
 
-            "encumlevel" => Some(WindowDef::Progress {
+            "stance" => Some(WindowDef::Progress {
                 base: WindowBase {
-                    name: "encumlevel".to_string(),
-                    title: Some("Encumbrance".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
-                    show_border: true,
-                    min_rows: Some(1),
-                    max_rows: Some(3),
-                    ..base_defaults.clone()
-                },
-                data: ProgressWidgetData {
-                    id: Some("encumlevel".to_string()),
-                    label: Some("Encumbrance".to_string()),
-                    color: Some("#006400".to_string()), // Dark green
-                    numbers_only: false,
-                    current_only: false,
-                },
-            }),
-
-            "pbarStance" => Some(WindowDef::Progress {
-                base: WindowBase {
-                    name: "pbarStance".to_string(),
+                    name: "stance".to_string(),
                     title: Some("Stance".to_string()),
                     row: 0,
                     col: 0,
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3330,51 +3558,7 @@ impl Config {
                 },
             }),
 
-            "mindState" => Some(WindowDef::Progress {
-                base: WindowBase {
-                    name: "mindState".to_string(),
-                    title: Some("Mind".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
-                    show_border: true,
-                    min_rows: Some(1),
-                    max_rows: Some(3),
-                    ..base_defaults.clone()
-                },
-                data: ProgressWidgetData {
-                    id: Some("mindState".to_string()),
-                    label: Some("Mind".to_string()),
-                    color: Some("#008b8b".to_string()), // Cyan/teal
-                    numbers_only: false,
-                    current_only: false,
-                },
-            }),
-
-            "lblBPs" => Some(WindowDef::Progress {
-                base: WindowBase {
-                    name: "lblBPs".to_string(),
-                    title: Some("Blood Points".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
-                    show_border: true,
-                    min_rows: Some(1),
-                    max_rows: Some(3),
-                    ..base_defaults.clone()
-                },
-                data: ProgressWidgetData {
-                    id: Some("lblBPs".to_string()),
-                    label: Some("Blood Points".to_string()),
-                    color: Some("#8B0000".to_string()), // Dark red
-                    numbers_only: false,
-                    current_only: false,
-                },
-            }),
-
-            "progress_custom" => Some(WindowDef::Progress {
+"progress_custom" => Some(WindowDef::Progress {
                 base: WindowBase {
                     name: "progress_custom".to_string(),
                     title: Some("Custom".to_string()),
@@ -3383,7 +3567,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3489,9 +3673,8 @@ impl Config {
                     cols: 9, // 7 for compass grid + 2 for border
                     show_border: true,
                     min_rows: Some(3),
-                    max_rows: Some(5),
                     min_cols: Some(7),
-                    max_cols: Some(9),
+                    content_align: Some("center".to_string()),
                     ..base_defaults.clone()
                 },
                 data: CompassWidgetData {
@@ -3510,9 +3693,8 @@ impl Config {
                     cols: 10, // 8 for injury doll (5+3 for labels) + 2 for border
                     show_border: true,
                     min_rows: Some(6),
-                    max_rows: Some(8),
                     min_cols: Some(8),
-                    max_cols: Some(10),
+                    content_align: Some("center".to_string()),
                     ..base_defaults.clone()
                 },
                 data: InjuryDollWidgetData {
@@ -3533,7 +3715,6 @@ impl Config {
                     rows: 10,
                     cols: 30,
                     show_border: true,
-                    text_color: Some("#00FF00".to_string()), // Green
                     ..base_defaults.clone()
                 },
                 data: ActiveEffectsWidgetData {
@@ -3548,7 +3729,6 @@ impl Config {
                     rows: 10,
                     cols: 30,
                     show_border: true,
-                    text_color: Some("#FF0000".to_string()), // Red
                     ..base_defaults.clone()
                 },
                 data: ActiveEffectsWidgetData {
@@ -3563,7 +3743,6 @@ impl Config {
                     rows: 10,
                     cols: 30,
                     show_border: true,
-                    text_color: Some("#FFA500".to_string()), // Orange
                     ..base_defaults.clone()
                 },
                 data: ActiveEffectsWidgetData {
@@ -3578,7 +3757,6 @@ impl Config {
                     rows: 10,
                     cols: 30,
                     show_border: true,
-                    text_color: Some("#00BFFF".to_string()), // Deep sky blue
                     ..base_defaults.clone()
                 },
                 data: ActiveEffectsWidgetData {
@@ -3609,7 +3787,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3629,7 +3807,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3649,7 +3827,7 @@ impl Config {
                     rows: 3,
                     cols: 20,
                     show_border: true,
-                    min_rows: Some(1),
+                    min_rows: Some(3),
                     max_rows: Some(3),
                     ..base_defaults.clone()
                 },
@@ -3668,7 +3846,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#00CED1".to_string()), // Dark turquoise
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3677,6 +3854,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3687,7 +3865,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#FFD700".to_string()), // Gold
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3696,6 +3873,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3706,7 +3884,6 @@ impl Config {
                     rows: 10,
                     cols: 50,
                     show_border: true,
-                    text_color: Some("#FF1493".to_string()), // Deep pink
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3715,6 +3892,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3725,7 +3903,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#FFD700".to_string()), // Gold
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3734,6 +3911,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3744,7 +3922,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#DC143C".to_string()), // Crimson
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3753,6 +3930,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3763,7 +3941,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#87CEEB".to_string()), // Sky blue
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3772,6 +3949,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3782,7 +3960,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#9370DB".to_string()), // Medium purple
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3791,6 +3968,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3801,7 +3979,6 @@ impl Config {
                     rows: 10,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#B0C4DE".to_string()), // Light steel blue
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
@@ -3810,6 +3987,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3820,15 +3998,15 @@ impl Config {
                     rows: 15,
                     cols: 50,
                     show_border: true,
-                    text_color: Some("#FFD700".to_string()), // Gold
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
                     streams: vec!["bounty".to_string()],
-                    buffer_size: 0, // VellumFE uses 0 - content is cleared and replaced
+                    buffer_size: 10, // Small buffer - content is cleared and replaced by clearStream
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3839,37 +4017,19 @@ impl Config {
                     rows: 15,
                     cols: 50,
                     show_border: true,
-                    text_color: Some("#FFD700".to_string()), // Gold
                     ..base_defaults.clone()
                 },
                 data: TextWidgetData {
                     streams: vec!["society".to_string()],
-                    buffer_size: 0, // VellumFE uses 0 - content is cleared and replaced
+                    buffer_size: 10, // Small buffer - content is cleared and replaced by clearStream
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
-            "betrayerpanel" => Some(WindowDef::Text {
-                base: WindowBase {
-                    name: "betrayerpanel".to_string(),
-                    title: Some("Betrayer".to_string()),
-                    rows: 6,
-                    cols: 50,
-                    show_border: true,
-                    ..base_defaults.clone()
-                },
-                data: TextWidgetData {
-                    streams: Vec::new(),
-                    buffer_size: 100,
-                    wordwrap: false,
-                    show_timestamps: false,
-                    timestamp_position: None,
-                },
-            }),
-
-            "text_custom" => Some(WindowDef::Text {
+"text_custom" => Some(WindowDef::Text {
                 base: WindowBase {
                     name: String::new(),
                     title: None,
@@ -3884,6 +4044,7 @@ impl Config {
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
+                    compact: false,
                 },
             }),
 
@@ -3894,7 +4055,6 @@ impl Config {
                     rows: 20,
                     cols: 40,
                     show_border: true,
-                    text_color: Some("#9370DB".to_string()), // Medium purple
                     ..base_defaults.clone()
                 },
                 data: SpellsWidgetData {},
@@ -4035,10 +4195,101 @@ impl Config {
                     min_rows: Some(5),
                     min_cols: Some(20),
                     show_border: true,
-                    ..base_defaults
+                    ..base_defaults.clone()
                 },
                 data: ExperienceWidgetData {
                     align: "left".to_string(),
+                },
+            }),
+
+            "gs4_experience" => Some(WindowDef::GS4Experience {
+                base: WindowBase {
+                    name: "gs4_experience".to_string(),
+                    title: Some("Experience".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 5,           // 3 content (level, mind, exp) + 2 borders = 5 total
+                    cols: 30,
+                    min_rows: Some(5), // Minimum with all content + borders
+                    max_rows: Some(5), // Maximum with all content + borders
+                    min_cols: Some(20),
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: GS4ExperienceWidgetData {
+                    align: "center".to_string(),
+                    show_level: true,
+                    show_exp_bar: true,
+                    mind_bar_color: None,
+                    exp_bar_color: None,
+                },
+            }),
+
+            "encum" => Some(WindowDef::Encumbrance {
+                base: WindowBase {
+                    name: "encum".to_string(),
+                    title: Some("Encumbrance".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 4,           // 1 bar + 1 label + 2 borders = 4 total
+                    cols: 25,
+                    min_rows: Some(4), // Minimum with borders + label
+                    max_rows: Some(4), // Maximum with borders + label
+                    min_cols: Some(15),
+                    show_border: true,
+                    ..base_defaults.clone()
+                },
+                data: EncumbranceWidgetData {
+                    align: "left".to_string(),
+                    show_label: true,
+                    color_light: None,
+                    color_moderate: None,
+                    color_heavy: None,
+                    color_critical: None,
+                },
+            }),
+
+            "minivitals" => Some(WindowDef::MiniVitals {
+                base: WindowBase {
+                    name: "minivitals".to_string(),
+                    title: None, // No title shown (like Wrayth Stats)
+                    row: 0,
+                    col: 0,
+                    rows: 3, // 1 content row + 2 borders = 3 total
+                    cols: 80, // Wide to fit 4 bars
+                    min_rows: Some(3),
+                    max_rows: Some(3),
+                    min_cols: Some(40),
+                    show_border: true, // Borders enabled by default
+                    ..base_defaults
+                },
+                data: MiniVitalsWidgetData {
+                    numbers_only: false,
+                    current_only: false,
+                    health_color: None,
+                    mana_color: None,
+                    stamina_color: None,
+                    spirit_color: None,
+                },
+            }),
+
+            "betrayer" => Some(WindowDef::Betrayer {
+                base: WindowBase {
+                    name: "betrayer".to_string(),
+                    title: Some("Betrayer".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 4, // 1 bar + 1 item + 2 borders
+                    cols: 30,
+                    min_rows: Some(3), // bar + borders (when show_items=false)
+                    max_rows: Some(12), // Allow growth for more items
+                    min_cols: Some(20),
+                    show_border: true,
+                    ..base_defaults
+                },
+                data: BetrayerWidgetData {
+                    show_items: true,
+                    bar_color: None, // Default to #8b0000 in widget
                 },
             }),
 
@@ -4103,10 +4354,7 @@ impl Config {
             "stamina".to_string(),
             "spirit".to_string(),
             "concentration".to_string(), // DR-specific
-            "encumlevel".to_string(),
-            "pbarStance".to_string(),
-            "mindState".to_string(),
-            "lblBPs".to_string(),
+            "stance".to_string(),
             "progress_custom".to_string(),
             "dashboard".to_string(),
             "poisoned".to_string(),
@@ -4126,7 +4374,6 @@ impl Config {
             "ambients".to_string(),
             "bounty".to_string(),
             "society".to_string(),
-            "betrayerpanel".to_string(),
             "text_custom".to_string(),
             // Tabbed text windows
             "chat".to_string(),
@@ -4160,7 +4407,11 @@ impl Config {
             "spacer".to_string(),
             "performance".to_string(),
             "perception".to_string(),
-            "experience".to_string(), // DR-specific
+            "experience".to_string(),     // DR-specific
+            "gs4_experience".to_string(), // GS4-specific
+            "encum".to_string(),          // GS4-specific
+            "minivitals".to_string(),     // GS4-specific
+            "betrayer".to_string(),       // GS4-specific
             // Target tracking
             "targets".to_string(), // Target list
             "players".to_string(), // Player list
@@ -4193,6 +4444,41 @@ impl Config {
         }
 
         templates
+    }
+
+    /// Get the game type requirement for a template
+    /// Returns None if template is available for all games
+    pub fn template_game_type(name: &str) -> Option<GameType> {
+        match name {
+            // DR-specific templates
+            "experience" | "concentration" | "perception" => Some(GameType::DR),
+            // GS4-specific templates
+            "gs4_experience" | "encum" | "minivitals" | "betrayer" => Some(GameType::GS4),
+            // All others available for both games
+            _ => None,
+        }
+    }
+
+    /// Map dialog ID to template name when they differ.
+    /// Most dialogs use the same ID as the template, but some have special mappings.
+    pub fn dialog_id_to_template(dialog_id: &str) -> &str {
+        match dialog_id {
+            // GS4 expr dialog -> gs4_experience template
+            "expr" => "gs4_experience",
+            // Most dialogs use the same ID as template
+            _ => dialog_id,
+        }
+    }
+
+    /// List window templates filtered by game type
+    pub fn list_window_templates_for_game(game: Option<GameType>) -> Vec<String> {
+        Self::list_window_templates()
+            .into_iter()
+            .filter(|name| match Self::template_game_type(name) {
+                None => true, // Available for all games
+                Some(required_game) => game == Some(required_game),
+            })
+            .collect()
     }
 
     /// Return all indicator templates (built-in + user-defined), deduplicated by id
@@ -4872,6 +5158,38 @@ impl Config {
         Ok(Self::profile_dir(character)?.join("widget_state.toml"))
     }
 
+    /// Load saved dialog positions from widget_state.toml for a character
+    pub fn load_dialog_positions(character: Option<&str>) -> Result<SavedDialogPositions> {
+        let path = Self::widget_state_path(character)?;
+        if !path.exists() {
+            return Ok(SavedDialogPositions::default());
+        }
+
+        let contents = fs::read_to_string(&path)
+            .context(format!("Failed to read widget state at {:?}", path))?;
+        let positions: SavedDialogPositions = toml::from_str(&contents)
+            .context(format!("Failed to parse widget state at {:?}", path))?;
+
+        Ok(positions)
+    }
+
+    /// Save dialog positions to widget_state.toml for a character
+    pub fn save_dialog_positions(
+        character: Option<&str>,
+        positions: &SavedDialogPositions,
+    ) -> Result<()> {
+        let path = Self::widget_state_path(character)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let contents = toml::to_string_pretty(positions)
+            .context("Failed to serialize dialog positions")?;
+        fs::write(&path, contents)
+            .context(format!("Failed to write widget state to {:?}", path))?;
+        Ok(())
+    }
+
     /// Get path to cmdlist1.xml (single source of truth)
     /// Returns: ~/.vellum-fe/global/cmdlist1.xml
     pub fn cmdlist_path() -> Result<PathBuf> {
@@ -5490,6 +5808,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 
@@ -5552,6 +5871,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 
@@ -5609,6 +5929,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 
@@ -5671,6 +5992,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 
@@ -5741,6 +6063,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 
@@ -5803,6 +6126,7 @@ visible = true
                 wordwrap: true,
                 show_timestamps: false,
                 timestamp_position: None,
+                    compact: false,
             },
         };
 

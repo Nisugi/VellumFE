@@ -1,9 +1,9 @@
 //! DragonRealms experience widget.
 //!
 //! Displays skill/experience components from `<component id='exp XXX'>` tags.
-//! Reads data from GameState.exp_components (populated at login and updated on changes).
+//! Reads data from GameState.dr_experience (populated at login and updated on changes).
 
-use crate::core::state::ExpComponentState;
+use crate::core::state::DRExperienceState;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -23,6 +23,8 @@ pub struct Experience {
     border_color: Color,
     /// Text color
     text_color: Color,
+    /// Background color (from theme)
+    background_color: Option<Color>,
 }
 
 impl Experience {
@@ -40,6 +42,7 @@ impl Experience {
             generation: 0,
             border_color: Color::White,
             text_color: Color::White,
+            background_color: None,
         }
     }
 
@@ -53,9 +56,14 @@ impl Experience {
         self.text_color = color;
     }
 
-    /// Update the widget from ExpComponentState.
+    /// Set the background color (from theme)
+    pub fn set_background_color(&mut self, color: Option<String>) {
+        self.background_color = color.and_then(|c| super::colors::parse_color_to_ratatui(&c));
+    }
+
+    /// Update the widget from DRExperienceState.
     /// Returns true if the display changed.
-    pub fn update_from_state(&mut self, exp_state: &ExpComponentState) -> bool {
+    pub fn update_from_state(&mut self, exp_state: &DRExperienceState) -> bool {
         // Quick check: if generation matches, no update needed
         if self.generation == exp_state.generation {
             return false;
@@ -82,11 +90,25 @@ impl Experience {
 
     /// Render the experience widget
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        // Apply background color to full area (including borders) before rendering block
+        if let Some(bg_color) = self.background_color {
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(bg_color);
+                    }
+                }
+            }
+        }
+
         // Create block with border and title
         let block = Block::default()
             .title(self.title.as_str())
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.border_color));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
 
         // If no data, show a placeholder message
         let lines: Vec<Line> = if self.lines.is_empty() {
@@ -98,11 +120,8 @@ impl Experience {
             self.lines.clone()
         };
 
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .alignment(self.align);
-
-        paragraph.render(area, buf);
+        let paragraph = Paragraph::new(lines).alignment(self.align);
+        paragraph.render(inner, buf);
     }
 }
 
@@ -182,7 +201,7 @@ mod tests {
     #[test]
     fn test_update_from_state_no_change() {
         let mut exp = Experience::new("Skills", "left");
-        let state = ExpComponentState::default();
+        let state = DRExperienceState::default();
 
         // First update with default state
         let changed = exp.update_from_state(&state);
@@ -193,7 +212,7 @@ mod tests {
     #[test]
     fn test_update_from_state_with_change() {
         let mut exp = Experience::new("Skills", "left");
-        let mut state = ExpComponentState::default();
+        let mut state = DRExperienceState::default();
         state.generation = 1; // Bump generation
 
         let changed = exp.update_from_state(&state);
@@ -204,7 +223,7 @@ mod tests {
     #[test]
     fn test_update_from_state_caches_generation() {
         let mut exp = Experience::new("Skills", "left");
-        let mut state = ExpComponentState::default();
+        let mut state = DRExperienceState::default();
         state.generation = 5;
 
         exp.update_from_state(&state);

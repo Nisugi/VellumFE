@@ -104,7 +104,19 @@ pub struct GameState {
     pub container_cache: ContainerCache,
 
     /// DragonRealms experience/skill component state
-    pub exp_components: ExpComponentState,
+    pub dr_experience: DRExperienceState,
+
+    /// GS4 experience dialog state (from expr dialog)
+    pub gs4_experience: GS4ExperienceState,
+
+    /// Encumbrance dialog state (from encum dialog)
+    pub encumbrance: EncumbranceState,
+
+    /// Betrayer panel state (blood points + items) - GS4 only
+    pub betrayer: BetrayerState,
+
+    /// MiniVitals state (from minivitals dialog) - GS4 only
+    pub minivitals: MiniVitalsState,
 
     /// Estimated lag between system time and game server time (in milliseconds)
     /// Positive = system clock ahead of game, Negative = game ahead of system
@@ -134,13 +146,54 @@ pub struct StatusInfo {
     pub dead: bool,
 }
 
-/// Player vitals
+/// Player vitals (percentages only)
 #[derive(Clone, Debug)]
 pub struct Vitals {
     pub health: u8,
     pub mana: u8,
     pub stamina: u8,
     pub spirit: u8,
+}
+
+/// A single vital entry with full data for MiniVitals widget
+#[derive(Clone, Debug, Default)]
+pub struct VitalEntry {
+    pub value: u32,
+    pub max: u32,
+    pub text: String, // e.g., "health 226/226"
+}
+
+/// MiniVitals state - stores full vital data for GS4 horizontal bar display
+#[derive(Clone, Debug, Default)]
+pub struct MiniVitalsState {
+    pub health: VitalEntry,
+    pub mana: VitalEntry,
+    pub stamina: VitalEntry,
+    pub spirit: VitalEntry,
+    pub generation: u64,
+}
+
+impl MiniVitalsState {
+    /// Update a vital entry. Returns true if changed.
+    pub fn update_vital(&mut self, id: &str, value: u32, max: u32, text: String) -> bool {
+        let entry = match id {
+            "health" => &mut self.health,
+            "mana" => &mut self.mana,
+            "stamina" => &mut self.stamina,
+            "spirit" => &mut self.spirit,
+            _ => return false,
+        };
+
+        if entry.value != value || entry.max != max || entry.text != text {
+            entry.value = value;
+            entry.max = max;
+            entry.text = text;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Target list state from dDBTarget dropdown (for direct-connect users)
@@ -207,7 +260,7 @@ impl TargetListState {
 /// DragonRealms experience/skill component tracking state
 /// Stores values from `<component id='exp XXX'>` tags, ordered by `<compDef>` at login
 #[derive(Clone, Debug, Default)]
-pub struct ExpComponentState {
+pub struct DRExperienceState {
     /// Ordered list of field names (from compDef tags at login)
     /// e.g., ["Stealth", "Locksmithing", "Brawling", "tdp", ...]
     pub field_order: Vec<String>,
@@ -220,7 +273,7 @@ pub struct ExpComponentState {
     pub generation: u64,
 }
 
-impl ExpComponentState {
+impl DRExperienceState {
     /// Register a field from compDef (establishes order)
     pub fn register_field(&mut self, field_name: String) {
         if !self.field_order.contains(&field_name) {
@@ -257,6 +310,169 @@ impl ExpComponentState {
     /// Clear all values (on disconnect/login)
     pub fn clear(&mut self) {
         self.values.clear();
+        self.generation += 1;
+    }
+}
+
+/// GS4 Experience dialog state (from `<openDialog id='expr'>`)
+/// Composite of: yourLvl label + mindState progress + nextLvlPB progress
+#[derive(Clone, Debug, Default)]
+pub struct GS4ExperienceState {
+    /// Current level text (e.g., "Level 100")
+    pub level_text: String,
+    /// Mind state percentage (0-100)
+    pub mind_state_value: u32,
+    /// Mind state display text (e.g., "clear as a bell")
+    pub mind_state_text: String,
+    /// Experience to next level percentage (0-100)
+    pub next_level_value: u32,
+    /// Experience to next level text (e.g., "43904921 experience")
+    pub next_level_text: String,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl GS4ExperienceState {
+    /// Update level text, returns true if changed
+    pub fn update_level(&mut self, text: String) -> bool {
+        if self.level_text != text {
+            self.level_text = text;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update mind state, returns true if changed
+    pub fn update_mind_state(&mut self, value: u32, text: String) -> bool {
+        if self.mind_state_value != value || self.mind_state_text != text {
+            self.mind_state_value = value;
+            self.mind_state_text = text;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update experience to next level, returns true if changed
+    pub fn update_next_level(&mut self, value: u32, text: String) -> bool {
+        if self.next_level_value != value || self.next_level_text != text {
+            self.next_level_value = value;
+            self.next_level_text = text;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear all values (on disconnect/login)
+    pub fn clear(&mut self) {
+        self.level_text.clear();
+        self.mind_state_value = 0;
+        self.mind_state_text.clear();
+        self.next_level_value = 0;
+        self.next_level_text.clear();
+        self.generation += 1;
+    }
+}
+
+/// Encumbrance state (from `<openDialog id='encum'>`)
+/// Composite of: encumlevel progress bar + encumblurb label
+#[derive(Clone, Debug, Default)]
+pub struct EncumbranceState {
+    /// Encumbrance percentage (0-100)
+    pub value: u32,
+    /// Encumbrance level text (e.g., "None", "Light", "Moderate")
+    pub text: String,
+    /// Descriptive blurb (e.g., "You are not encumbered enough to notice.")
+    pub blurb: String,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl EncumbranceState {
+    /// Update from progress bar data, returns true if changed
+    pub fn update_level(&mut self, value: u32, text: String) -> bool {
+        if self.value != value || self.text != text {
+            self.value = value;
+            self.text = text;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update blurb text, returns true if changed
+    pub fn update_blurb(&mut self, blurb: String) -> bool {
+        if self.blurb != blurb {
+            self.blurb = blurb;
+            self.generation += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear all values (on disconnect/login)
+    pub fn clear(&mut self) {
+        self.value = 0;
+        self.text.clear();
+        self.blurb.clear();
+        self.generation += 1;
+    }
+}
+
+/// Betrayer panel state (from `<dialogData id='BetrayerPanel'>`)
+/// Displays blood points as progress bar + list of contributing items
+#[derive(Clone, Debug, Default)]
+pub struct BetrayerState {
+    /// Blood points value (0-100)
+    pub value: u32,
+    /// Display text (e.g., "Blood Points: 100")
+    pub text: String,
+    /// List of items contributing to blood pool
+    pub items: Vec<String>,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl BetrayerState {
+    /// Update blood points from lblBPs label value
+    /// Parses "Blood Points: XXX" → value=XXX
+    pub fn update_blood_points(&mut self, value_text: &str) -> bool {
+        let value = value_text
+            .strip_prefix("Blood Points: ")
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        if self.value != value || self.text != value_text {
+            self.value = value;
+            self.text = value_text.to_string();
+            self.generation += 1;
+            return true;
+        }
+        false
+    }
+
+    /// Update items list from lblitemX labels
+    pub fn update_items(&mut self, items: Vec<String>) -> bool {
+        if self.items != items {
+            self.items = items;
+            self.generation += 1;
+            return true;
+        }
+        false
+    }
+
+    /// Clear all values (on disconnect/login or clear='t')
+    pub fn clear(&mut self) {
+        self.value = 0;
+        self.text.clear();
+        self.items.clear();
         self.generation += 1;
     }
 }
@@ -364,7 +580,11 @@ impl GameState {
             room_creatures: Vec::new(),
             room_players: Vec::new(),
             container_cache: ContainerCache::default(),
-            exp_components: ExpComponentState::default(),
+            dr_experience: DRExperienceState::default(),
+            gs4_experience: GS4ExperienceState::default(),
+            encumbrance: EncumbranceState::default(),
+            minivitals: MiniVitalsState::default(),
+            betrayer: BetrayerState::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
             sound_queue: SoundQueue::new(),
