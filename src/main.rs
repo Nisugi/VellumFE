@@ -82,6 +82,11 @@ struct Cli {
     #[arg(long)]
     nosound: bool,
 
+    /// Login key for Lich proxy connections (provided by Lich as %key%)
+    /// This key is sent to the game server for authentication when connecting via Lich
+    #[arg(long)]
+    key: Option<String>,
+
     /// Color rendering mode: direct (true color RGB) or slot (256-color palette)
     #[arg(long, value_enum)]
     color_mode: Option<config::ColorMode>,
@@ -314,8 +319,9 @@ fn main() -> Result<()> {
     // Run appropriate frontend
     // Character is used for Lich proxy selection and display (not profile)
     let character = cli.character.clone();
+    let login_key = cli.key.clone();
     match cli.frontend {
-        FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette)?,
+        FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette, login_key)?,
         FrontendType::Gui => run_gui(config)?,
     }
 

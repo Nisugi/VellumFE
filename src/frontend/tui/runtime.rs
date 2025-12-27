@@ -11,10 +11,11 @@ pub fn run(
     character: Option<String>,
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
+    login_key: Option<String>,
 ) -> Result<()> {
     // Use tokio runtime for async network I/O
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async_run(config, character, direct, setup_palette))
+    runtime.block_on(async_run(config, character, direct, setup_palette, login_key))
 }
 
 /// Async TUI main loop with network support
@@ -23,6 +24,7 @@ async fn async_run(
     character: Option<String>,
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
+    login_key: Option<String>,
 ) -> Result<()> {
     use crate::core::AppCore;
     use crate::network::{DirectConnection, LichConnection, ServerMessage};
@@ -110,9 +112,10 @@ async fn async_run(
         }),
         None => {
             let host_clone = host.clone();
+            let login_key_clone = login_key.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    LichConnection::start(&host_clone, port, server_tx, command_rx, raw_logger).await
+                    LichConnection::start(&host_clone, port, login_key_clone, server_tx, command_rx, raw_logger).await
                 {
                     tracing::error!(error = ?e, "Network connection error");
                 }
@@ -170,6 +173,10 @@ async fn async_run(
 
             let duration = event_start.elapsed();
             app_core.perf_stats.record_event_process_time(duration);
+
+            // Process pending window additions after event handling (for .testline)
+            let (term_width, term_height) = frontend.size();
+            app_core.process_pending_window_additions(term_width, term_height);
         }
 
         // Poll for server messages (non-blocking)
@@ -186,6 +193,9 @@ async fn async_run(
                     }
                     let parse_duration = parse_start.elapsed();
                     app_core.perf_stats.record_parse(parse_duration);
+
+                    // Adjust content-driven window sizes (e.g., Betrayer auto-resize)
+                    app_core.adjust_content_driven_windows();
 
                     // Play queued sounds from highlight processing
                     for sound in app_core.game_state.drain_sound_queue() {
@@ -212,6 +222,10 @@ async fn async_run(
                         // Clear any pending signal if discovery mode is off
                         app_core.message_processor.newly_registered_container = None;
                     }
+
+                    // Process pending window additions from openDialog events
+                    let (term_width, term_height) = frontend.size();
+                    app_core.process_pending_window_additions(term_width, term_height);
                 }
                 ServerMessage::Connected => {
                     tracing::info!("Connected to game server");

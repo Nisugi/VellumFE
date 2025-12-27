@@ -289,9 +289,14 @@ pub struct DirectConnection;
 
 impl LichConnection {
     /// Connect to Lich, spawn read loop, and forward commands supplied via the provided channel.
+    ///
+    /// # Arguments
+    /// * `login_key` - If provided (from --key argument), sends key for Lich-launched frontend.
+    ///                 If None, sends SET_FRONTEND_PID for detachable client mode.
     pub async fn start(
         host: &str,
         port: u16,
+        login_key: Option<String>,
         server_tx: mpsc::UnboundedSender<ServerMessage>,
         command_rx: mpsc::UnboundedReceiver<String>,
         raw_logger: Option<RawLogger>,
@@ -304,7 +309,7 @@ impl LichConnection {
 
         info!("Connected successfully");
 
-        send_pid_handshake(&mut stream).await?;
+        send_lich_handshake(&mut stream, login_key.as_deref()).await?;
 
         run_stream(stream, server_tx, command_rx, raw_logger).await
     }
@@ -414,17 +419,46 @@ async fn run_stream(
     Ok(())
 }
 
-async fn send_pid_handshake(stream: &mut TcpStream) -> Result<()> {
-    let pid = std::process::id();
-    let msg = format!("SET_FRONTEND_PID {}\n", pid);
-    stream.write_all(msg.as_bytes()).await?;
-    stream.flush().await?;
-    debug!("Sent frontend PID: {}", pid);
+/// Send handshake for Lich proxy connection.
+///
+/// The handshake depends on how VellumFE was launched:
+///
+/// **With --key (Lich-launched frontend):**
+/// 1. Send the login KEY (Lich forwards to game server for authentication)
+/// 2. Send frontend version string
+///
+/// **Without --key (Detachable client mode):**
+/// 1. Send SET_FRONTEND_PID (for Lich's window refocus feature)
+/// 2. Send frontend identity command
+async fn send_lich_handshake(stream: &mut TcpStream, login_key: Option<&str>) -> Result<()> {
+    if let Some(key) = login_key {
+        // Lich-launched mode: Send the login key for authentication
+        debug!("Sending login key");
+        stream.write_all(key.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+        stream.flush().await?;
 
-    // Set frontend identity to stormfront for full feature parity with StormFront
-    stream.write_all(b";eq $frontend=\"stormfront\"\n").await?;
-    stream.flush().await?;
-    debug!("Set frontend identity to stormfront");
+        // Send frontend version string (Lich reads but ignores this, sends its own)
+        let fe_string = format!(
+            "/FE:STORMFRONT /VERSION:1.0.1.26 /P:{} /XML\n",
+            std::env::consts::OS
+        );
+        stream.write_all(fe_string.as_bytes()).await?;
+        stream.flush().await?;
+        debug!("Sent frontend version string");
+    } else {
+        // Detachable client mode: Send PID for Lich's window refocus feature
+        let pid = std::process::id();
+        let msg = format!("SET_FRONTEND_PID {}\n", pid);
+        stream.write_all(msg.as_bytes()).await?;
+        stream.flush().await?;
+        debug!("Sent frontend PID: {}", pid);
+
+        // Set frontend identity to stormfront for full feature parity
+        stream.write_all(b";eq $frontend=\"stormfront\"\n").await?;
+        stream.flush().await?;
+        debug!("Set frontend identity to stormfront");
+    }
 
     Ok(())
 }
