@@ -29,6 +29,7 @@ const DEFAULT_KEYBINDS: &str = include_str!("../defaults/keybinds.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
 const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/spell_abbrev.toml");
 const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/layout_template.toml");
+const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../defaults/config_template.toml");
 
 // Embed entire directories - automatically includes all files
 static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/layouts");
@@ -4923,12 +4924,12 @@ impl Config {
         let templates_dir = global_dir.join("templates");
         fs::create_dir_all(&templates_dir)?;
 
-        let template_config_path = templates_dir.join("config.toml");
+        let template_config_path = templates_dir.join("config_template.toml");
         if !template_config_path.exists() {
-            fs::write(&template_config_path, DEFAULT_CONFIG)
-                .context("Failed to write template config.toml")?;
+            fs::write(&template_config_path, DEFAULT_CONFIG_TEMPLATE)
+                .context("Failed to write config_template.toml")?;
             tracing::info!(
-                "Extracted documented config.toml template to {:?}",
+                "Extracted documented config_template.toml to {:?}",
                 template_config_path
             );
         }
