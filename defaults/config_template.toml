@@ -1,0 +1,433 @@
+# ============================================================
+# VellumFE Configuration Template Reference
+# ============================================================
+# Complete reference for all configuration options.
+# This is a DOCUMENTATION FILE - examples are commented out.
+#
+# Configuration files stored in ~/.vellum-fe/ (or per-character folder):
+#   config.toml      - This file (connection, UI, sound settings)
+#   keybinds.toml    - Keyboard shortcuts
+#   highlights.toml  - Text highlighting and coloring rules
+#   colors.toml      - Color palette definitions
+#   layout.toml      - Window positions and sizes
+#
+# To use: Copy sections you need into your config.toml file.
+# Use .reload command in-game to apply changes without restart.
+#
+# ============================================================
+
+
+# ============================================================
+# CONNECTION
+# ============================================================
+# Where to connect. Default is Lich proxy on localhost.
+#
+# For direct connection (without Lich), use: vellum-fe --direct
+# Credentials can be stored here or passed via CLI (CLI overrides config).
+
+# [connection]
+# host = "127.0.0.1"          # Lich proxy host (default: "127.0.0.1")
+# port = 8001                  # Lich proxy port (default: 8001)
+# character = "YourName"       # Character for Lich proxy and direct connect login
+#
+# --- Direct Connection (all optional) ---
+# Store credentials here to simplify direct connection:
+#   vellum-fe --direct --character YourChar
+#
+# CLI arguments (--account, --password, --game) override these values.
+# If password is not set, you will be prompted securely at startup.
+#
+# account = "your_account"
+# password = "your_password"   # OPTIONAL - stored in PLAIN TEXT, use CLI for security
+# game = "prime"               # Game instance:
+#                              #   GemStone IV: "prime", "platinum", "shattered", "test"
+#                              #   DragonRealms: "dr", "drplatinum", "drfallen", "drtest"
+
+
+# ============================================================
+# RAW LOGGING (Debug)
+# ============================================================
+# Capture raw XML from the network layer (pre-parse). Useful for debugging
+# parser issues or reproducing sessions without Lich logs.
+# Works for both direct and Lich connections.
+#
+# Logs are written to the profile directory by default:
+#   ~/.vellum-fe/profiles/<character>/logs/
+# File names use start time: YYYY-MM-DD-HH-MM-SS.xml
+
+# [logging]
+# enabled = false              # Enable raw logging (default: false)
+# dir = "logs"                 # Directory (relative to profile dir or absolute path)
+# buffer_lines = 200           # Lines to buffer before write (default: 200)
+# flush_interval_ms = 2000     # Periodic flush interval in ms (default: 2000)
+# max_lines_per_file = 30000   # Rotate file after this many lines (default: 30000)
+# timestamps = true            # Prefix each line with HH:MM:SS (default: true)
+
+
+# ============================================================
+# USER INTERFACE
+# ============================================================
+# Display and interaction settings.
+
+# [ui]
+# --- Window Defaults ---
+# These values apply to windows that don't specify their own settings.
+#
+# buffer_size = 1000           # Default text buffer size (lines kept per window)
+#
+# border_style = "single"      # Default border style:
+#                              #   "single", "double", "rounded", "thick", "none"
+#
+# countdown_icon = "█"         # Icon for countdown timer blocks (Nerd Font glyph)
+#                              # Examples: "█" (square), "⚪" (circle), "●" (bullet)
+#                              # Find icons: https://www.nerdfonts.com/cheat-sheet
+#
+# --- Color Rendering Mode ---
+# Choose based on your terminal capabilities:
+#
+# color_mode = "direct"        # Options:
+#                              #   "direct"  - 24-bit true color (16 million colors)
+#                              #               Use with: kitty, alacritty, wezterm,
+#                              #               iTerm2, Windows Terminal
+#                              #
+#                              #   "slot"    - 256-color with custom palette via .setpalette
+#                              #               Use with: terminals supporting OSC4
+#                              #               Allows exact color matching via palette slots
+#                              #
+#                              #   "indexed" - 256-color with standard xterm palette
+#                              #               Use with: legacy terminals, SSH sessions
+#                              #               Safe fallback that works everywhere
+#
+# --- Timestamp Position ---
+# timestamp_position = "end"   # Where to show timestamps: "start" or "end" (default: "end")
+#
+# --- Text Selection ---
+# selection_enabled = true               # Enable text selection (default: true)
+# selection_respect_window_boundaries = true  # Limit selection to single window (default: true)
+# selection_auto_copy = true             # Copy to clipboard on mouse-up (default: true)
+#
+# --- Drag and Drop ---
+# drag_modifier_key = "ctrl"   # Modifier for window dragging: "ctrl", "alt", "shift"
+#
+# --- Command History ---
+# min_command_length = 3       # Min command length to save (shorter not recorded)
+# command_echo = true          # Echo sent commands into main window (default: true)
+#
+# --- GemStone IV Specific ---
+# betrayer_active_color = "#ff4040"  # Highlight color for active Betrayer items
+#
+# --- Dialog Blocklist ---
+# Prevent these openDialog windows from auto-opening (still parse their data).
+# Useful if you prefer to view this data in dedicated widgets instead.
+#
+# open_dialog_blocklist = [
+#   "bank",
+#   "combat",
+#   "injuries",
+#   "espMasterDialog",
+#   "espMasterData",
+#   "mapMaster",
+# ]
+#
+# --- Performance Overlay (Debug) ---
+# Press F3 or use .perf command to toggle
+#
+# performance_stats_enabled = false  # Global toggle (default: false)
+# perf_stats_x = 0                   # Overlay X position
+# perf_stats_y = 0                   # Overlay Y position
+# perf_stats_width = 35              # Overlay width
+# perf_stats_height = 23             # Overlay height
+
+
+# ============================================================
+# FOCUS NAVIGATION
+# ============================================================
+# Configure which windows are focusable via Tab and the optional cycle order.
+# If order is empty, VellumFE uses layout order filtered by focusable types.
+
+# [ui.focus]
+# types = [                    # Widget types that can receive focus:
+#   "text",
+#   "tabbedtext",
+#   "quickbar",
+#   "targets",
+#   "players",
+#   "inventory",
+#   "spells"
+# ]
+# exclude = ["bounty", "society"]  # Windows to skip when Tab cycling
+# order = ["main", "thoughts", "quickbar"]  # Custom focus order (empty = layout order)
+
+
+# ============================================================
+# QUICKBARS (CUSTOM)
+# ============================================================
+# Define custom quickbars that send custom commands.
+# IDs must be "quick" or start with "quick-".
+
+# [quickbars]
+# default = "quick-custom"     # Which quickbar to show by default
+#
+# [[quickbars.custom]]
+# id = "quick-custom"          # Unique ID (must be "quick" or start with "quick-")
+# title = "Custom"             # Display title
+# entries = [
+#   { type = "link", label = "look", command = "look" },
+#   { type = "sep" },          # Separator between entries
+#   { type = "link", label = "inventory", command = "inventory" }
+# ]
+#
+# Entry types:
+#   - type = "link"   - Clickable command (requires label and command)
+#   - type = "sep"    - Visual separator
+
+
+# ============================================================
+# TARGET LIST
+# ============================================================
+# Configuration for the targets widget.
+# Controls how creature names and statuses are displayed.
+
+# [target_list]
+# status_position = "end"      # Status display position:
+#                              #   "end"   - After name (e.g., "muddy hog [frozen]")
+#                              #   "start" - Before name (e.g., "[frozen] muddy hog")
+#
+# truncation_mode = "noun"     # Truncation for long creature names:
+#                              #   "full" - Use full name (may truncate if too long)
+#                              #   "noun" - Use short noun when name+status exceeds width
+#
+# excluded_nouns = ["arm", "coal"]  # Nouns to exclude (non-creature objects)
+#
+# --- Status Abbreviations ---
+# Map full status names to 3-character abbreviations for space savings.
+# If a status is not listed, it will be truncated to 3 chars.
+#
+# [target_list.status_abbrev]
+# stunned = "stu"
+# frozen = "frz"
+# dead = "ded"
+# sitting = "sit"
+# kneeling = "kne"
+# prone = "prn"
+# webbed = "web"
+# immobilized = "imm"
+# bleeding = "ble"
+# standing = "std"
+# sleeping = "slp"
+# poisoned = "poi"
+# diseased = "dis"
+# bound = "bnd"
+# calmed = "cal"
+
+
+# ============================================================
+# HIGHLIGHT SYSTEM
+# ============================================================
+# Global toggles for highlight features (disable without deleting patterns).
+# Note: System highlights (monsterbold, links, roomname) are NOT affected.
+# Individual patterns are defined in highlights.toml.
+
+# [highlights]
+# sounds_enabled = true        # Play sounds on pattern match (default: true)
+# replace_enabled = true       # Apply text replacements (default: true)
+# redirect_enabled = true      # Route lines to other windows (default: true)
+# coloring_enabled = true      # Apply color highlighting (default: true)
+
+
+# ============================================================
+# SOUND
+# ============================================================
+# Audio feedback configuration.
+# Set enabled = false to skip audio initialization entirely.
+
+# [sound]
+# enabled = true               # Enable sound system (default: true)
+# volume = 0.7                 # Master volume 0.0 to 1.0 (default: 0.7)
+# cooldown_ms = 500            # Min time between repeated sounds in ms (default: 500)
+
+
+# ============================================================
+# TEXT-TO-SPEECH (Accessibility)
+# ============================================================
+# Screen reader support via native TTS engines.
+# TTS operates independently of the sound system above.
+#
+# Controls:
+#   Ctrl+Shift+N - Read next message
+#   Ctrl+Shift+P - Read previous message
+#   Ctrl+Shift+M - Mute toggle
+
+# [tts]
+# enabled = false              # Enable TTS (default: false, opt-in)
+# rate = 1.0                   # Speech rate 0.5 (slow) to 2.0 (fast) (default: 1.0)
+# volume = 1.0                 # Volume 0.0 (silent) to 1.0 (full) (default: 1.0)
+# speak_thoughts = true        # Speak focused thoughts (default: true)
+# speak_speech = true          # Speak speech window (default: true)
+# speak_main = false           # Speak main window - can be overwhelming (default: false)
+
+
+# ============================================================
+# STREAM ROUTING
+# ============================================================
+# Controls how text streams are handled when no widget subscribes.
+# Most users won't need to modify this section.
+
+# [streams]
+# --- Streams to Drop ---
+# Streams to silently discard if no widget subscribes to them.
+#
+# Communication streams (speech, whisper, talk, conversation):
+#   The game sends speech content twice - once to main stream (full context like
+#   "You say, 'hello'") and once to the dedicated stream. Drop these to prevent
+#   duplication when no speech window exists.
+#
+# Script streams (targetcount, playercount, targetlist, playerlist):
+#   Generated by Lich scripts like ;targetlist. Drop to prevent noise like "[ 0]"
+#   in main window when no dedicated widget exists.
+#
+# drop_unsubscribed = [
+#   "targetcount",
+#   "playercount",
+#   "targetlist",
+#   "playerlist",
+#   "speech",
+#   "whisper",
+#   "talk",
+#   "conversation"
+# ]
+#
+# --- Fallback Routing ---
+# fallback = "main"            # Where to route orphaned streams (default: "main")
+#
+# --- Room Text Routing (DragonRealms) ---
+# room_in_main = true          # When true: Room text flows to main window
+#                              # When false: Legacy behavior where streamWindow pushes stream
+#                              # DragonRealms-specific - GemStone IV doesn't use this
+
+
+# ============================================================
+# EVENT PATTERNS
+# ============================================================
+# Regex patterns to detect game events for countdown timers.
+# Each pattern can trigger stun/RT/CT timer updates.
+#
+# Fields:
+#   pattern            - Regex to match game text
+#   event_type         - Timer type: "stun", "rt", "ct"
+#   action             - "set" (start timer) or "clear" (cancel timer)
+#   duration           - Fixed duration in seconds (if not captured)
+#   duration_capture   - Regex capture group for dynamic duration (1-based)
+#   duration_multiplier - Multiply captured value (e.g., 5.0 for rounds)
+#   enabled            - Toggle pattern on/off (default: true)
+
+# [event_patterns.stun_rounds]
+# pattern = '^\s*You are stunned for ([0-9]+) rounds?'
+# event_type = "stun"
+# action = "set"
+# duration = 0                 # 0 = use captured value
+# duration_capture = 1         # Capture group 1 contains the number
+# duration_multiplier = 5.0    # Convert rounds to seconds (1 round = 5 sec)
+# enabled = true
+#
+# [event_patterns.stun_recovery]
+# pattern = 'You recover from being stunned\.'
+# event_type = "stun"
+# action = "clear"
+# duration = 0
+# duration_multiplier = 1.0
+# enabled = true
+#
+# [event_patterns.stun_raise_dead]
+# pattern = 'Your surroundings grow dim\.\.\.you lapse into a state of awareness only'
+# event_type = "stun"
+# action = "set"
+# duration = 31                # Fixed duration
+# duration_multiplier = 1.0
+# enabled = true
+#
+# [event_patterns.stun_shadow_valley]
+# pattern = "Just as you think the falling will never end, you crash through an ethereal barrier"
+# event_type = "stun"
+# action = "set"
+# duration = 16
+# duration_multiplier = 1.0
+# enabled = true
+
+
+# ============================================================
+# LAYOUT MAPPINGS
+# ============================================================
+# Automatically switch layouts based on terminal size.
+# Useful for responsive layouts on resize.
+#
+# VellumFE checks these mappings when the terminal is resized.
+# First matching mapping wins (order matters).
+
+# [[layout_mappings]]
+# min_width = 80
+# min_height = 24
+# max_width = 120
+# max_height = 40
+# layout = "compact"           # Layout name to switch to
+#
+# [[layout_mappings]]
+# min_width = 121
+# min_height = 41
+# max_width = 9999
+# max_height = 9999
+# layout = "fullscreen"
+
+# layout_mappings = []         # Empty by default (no auto-switching)
+
+
+# ============================================================
+# MENU KEYBINDS
+# ============================================================
+# Keyboard shortcuts for menu navigation and window editors.
+# These override global keybinds when in menu mode.
+
+# [menu_keybinds]
+# close = "Escape"             # Close menu/editor
+# confirm = "Enter"            # Confirm selection
+# up = "Up"                    # Navigate up
+# down = "Down"                # Navigate down
+# left = "Left"                # Navigate left
+# right = "Right"              # Navigate right
+# page_up = "PageUp"           # Page up
+# page_down = "PageDown"       # Page down
+# home = "Home"                # Jump to start
+# end = "End"                  # Jump to end
+# search = "/"                 # Start search (in browsers)
+# tab = "Tab"                  # Next field (in editors)
+# shift_tab = "Shift+Tab"      # Previous field (in editors)
+
+
+# ============================================================
+# THEME SELECTION
+# ============================================================
+# Set the active color theme.
+
+# active_theme = "dark"        # Theme name (default: "dark")
+#                              # Available themes:
+#                              #   "default", "dark", "light",
+#                              #   "solarized-dark", "solarized-light",
+#                              #   "monokai", "dracula", "nord",
+#                              #   "gruvbox-dark", "gruvbox-light",
+#                              #   "tokyo-night", "catppuccin"
+#
+# Theme can also be overridden per-layout in layout.toml:
+#   theme = "monokai"
+
+
+# ============================================================
+# END OF CONFIGURATION TEMPLATE REFERENCE
+# ============================================================
+# For more information:
+#   - VellumFE Documentation: https://github.com/your-repo
+#   - Layout options: See layout_template.toml
+#   - Highlight patterns: See highlights.toml
+#   - Keybind options: See keybinds.toml
+#   - Color palette: See colors.toml
+#   - Use .reload in-game to apply changes
+# ============================================================
