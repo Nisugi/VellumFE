@@ -54,7 +54,8 @@ fn run_fixture(
 fn init_state() -> (UiState, MessageProcessor, GameState, XmlParser) {
     let config = Config::default();
     let ui_state = UiState::new();
-    let mut processor = MessageProcessor::new(config.clone());
+    let saved_positions = vellum_fe::config::SavedDialogPositions::default();
+    let mut processor = MessageProcessor::new(config.clone(), saved_positions);
     processor.update_squelch_patterns();
     processor.update_redirect_cache();
     let game_state = GameState::default();

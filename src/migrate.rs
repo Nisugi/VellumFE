@@ -524,7 +524,7 @@ fn map_widget_type(widget_type: &str, name: &str, table: &toml::value::Table) ->
         match n.to_lowercase().as_str() {
             "mindstate" | "mind_state" => "mindState".to_string(),
             "stance" | "pbarstance" => "pbarStance".to_string(),
-            "encumbrance" | "encum" => "encumlevel".to_string(),
+            "encumbrance" | "encumlevel" => "encum".to_string(),
             "lblbps" | "bloodpoints" | "blood_points" => "lblBPs".to_string(),
             other => other.to_string(),
         }
@@ -721,6 +721,10 @@ impl BaseMut for WindowDef {
             WindowDef::Spells { base, .. } => Some(base),
             WindowDef::Perception { base, .. } => Some(base),
             WindowDef::Experience { base, .. } => Some(base),
+            WindowDef::GS4Experience { base, .. } => Some(base),
+            WindowDef::Encumbrance { base, .. } => Some(base),
+            WindowDef::MiniVitals { base, .. } => Some(base),
+            WindowDef::Betrayer { base, .. } => Some(base),
         }
     }
 }

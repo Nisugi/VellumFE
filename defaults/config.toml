@@ -117,20 +117,12 @@ betrayer_active_color = "#ff4040"
 
 # Prevent these openDialog windows from auto-opening (still parse their data).
 open_dialog_blocklist = [
+  "bank",
   "combat",
   "injuries",
-  "stance",
-  "befriend",
   "espMasterDialog",
   "espMasterData",
-  "Buffs",
-  "Debuffs",
-  "Cooldowns",
-  "Active Spells",
   "mapMaster",
-  "encum",
-  "minivitals",
-  "expr",
 ]
 
 # --- Focus Navigation ---
@@ -188,6 +180,9 @@ status_position = "end"
 #   "noun" - Use short noun when name + status exceeds width (e.g., "hog [frozen]")
 truncation_mode = "noun"
 
+# Nouns to exclude from target list (non-creature objects)
+excluded_nouns = ["arm", "coal"]
+
 # Status abbreviations (3 characters max for maximum space savings)
 # If a status is not in this list, it will be truncated to 3 chars
 # Users can customize or remove abbreviations as needed
@@ -207,9 +202,6 @@ poisoned = "poi"
 diseased = "dis"
 bound = "bnd"
 calmed = "cal"
-
-# Nouns to exclude from target list (non-creature objects)
-excluded_nouns = ["arm", "coal"]
 
 
 # ------------------------------------------------------------

@@ -1,11 +1,11 @@
 # VellumFE v0.2.0 Beta 11 Changelog
 
-**Release Date**: 2024-12-23
+**Release Date**: 2025-12-25
 **Upgrade Path**: v0.1.9-beta.5 → v0.2.0-beta.11
 
 ## Overview
 
-This release represents a complete architecture rewrite (v0.2.0) with 56 commits of improvements from the last stable v0.1.x release. Major highlights include direct eAccess connection support, a new theme system, migration tools, and numerous widget improvements.
+This release represents a complete architecture rewrite (v0.2.0) with 63 commits of improvements from the last stable v0.1.x release. Major highlights include direct eAccess connection support, a new theme system, migration tools, and numerous widget improvements.
 
 ---
 
@@ -220,8 +220,8 @@ This enables:
 
 ## 📊 Statistics
 
-- **56 commits** since v0.1.9-beta.5
-- **1,003+ tests** passing
+- **63 commits** since v0.1.9-beta.5
+- **2,300+ tests** passing
 - **19 widget types** supported
 - **~600 spell abbreviations** in database
 - **10+ migration guide** pages

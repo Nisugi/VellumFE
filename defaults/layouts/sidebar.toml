@@ -489,38 +489,6 @@ current_only = false
 
 [[windows]]
 widget_type = "progress"
-name = "encumlevel"
-row = 50
-col = 0
-rows = 1
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = false
-title = "Encumbrance"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
-visible = true
-id = "encumlevel"
-label = "Encumbrance"
-color = "#006400"
-numbers_only = false
-current_only = false
-
-[[windows]]
-widget_type = "progress"
 name = "mindState"
 row = 49
 col = 0

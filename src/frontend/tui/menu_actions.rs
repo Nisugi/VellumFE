@@ -35,8 +35,10 @@ pub fn handle_menu_action(
         }
     } else if let Some(widget_type) = command.strip_prefix("action:createwindow:") {
         // Create a new window with the specified widget type
-        // Get template for this widget type (use widget type name as template name)
-        if let Some(_template) = config::Config::get_window_template(widget_type) {
+        // Safeguard: prevent opening if a window editor is already open
+        if frontend.window_editor.is_some() {
+            tracing::debug!("Window editor already open, ignoring createwindow request");
+        } else if let Some(_template) = config::Config::get_window_template(widget_type) {
             // Open window editor with template (proper defaults + marked as new)
             // Use new_window_with_layout for spacers to enable auto-naming
             frontend.window_editor = Some(
@@ -51,8 +53,10 @@ pub fn handle_menu_action(
         }
     } else if let Some(window_name) = command.strip_prefix("action:editwindow:") {
         // Edit an existing window
-        // Find the window definition
-        if let Some(window_def) = app_core
+        // Safeguard: prevent opening if a window editor is already open
+        if frontend.window_editor.is_some() {
+            tracing::debug!("Window editor already open, ignoring editwindow request");
+        } else if let Some(window_def) = app_core
             .layout
             .windows
             .iter()

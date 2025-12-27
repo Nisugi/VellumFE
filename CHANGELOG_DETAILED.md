@@ -1,6 +1,6 @@
 # Changelog - v0.2.0-beta.11 (Complete)
 
-All notable changes since v0.2.0-beta.1 (46 commits).
+All notable changes since v0.2.0-beta.1 (53 commits).
 
 ---
 
@@ -413,8 +413,8 @@ All notable changes since v0.2.0-beta.1 (46 commits).
 
 ## 📊 Statistics
 
-- **46 commits** since v0.2.0-beta.1
-- **1,026/1,027 tests passing**
+- **53 commits** since v0.2.0-beta.1
+- **2,300+ tests passing**
 - **Major focus areas**:
   - Color system & terminal compatibility
   - Universal highlighting
