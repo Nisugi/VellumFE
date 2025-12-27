@@ -8,7 +8,7 @@ use crate::data::{LinkData, SpanType};  // Use types from data module
 use crate::config::TimestampPosition;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, Paragraph, Widget},
@@ -1611,7 +1611,15 @@ impl TextWindow {
         }
 
         // Render content inside the inner area (border already drawn above)
-        let paragraph = Paragraph::new(padded_lines);
+        let mut paragraph = Paragraph::new(padded_lines);
+
+        // Apply horizontal alignment based on content_align setting
+        if let Some(ref align) = self.content_align {
+            if align.contains("center") {
+                paragraph = paragraph.alignment(Alignment::Center);
+            }
+        }
+
         paragraph.render(inner_area, buf);
     }
 
