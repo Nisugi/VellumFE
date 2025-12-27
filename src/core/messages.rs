@@ -1494,6 +1494,16 @@ impl MessageProcessor {
                 tracing::trace!("Added item to container '{}': {}", container_id,
                     if content.len() > 50 { format!("{}...", &content[..50]) } else { content.clone() });
             }
+            ParsedElement::LaunchURL { url } => {
+                // Build full URL by prepending play.net base
+                let full_url = format!("https://www.play.net{}", url);
+                tracing::info!("Launching URL in browser: {}", full_url);
+
+                // Open in default browser
+                if let Err(e) = open::that(&full_url) {
+                    tracing::error!("Failed to open browser: {}", e);
+                }
+            }
             _ => {
                 // Other elements handled elsewhere or not yet implemented
             }
