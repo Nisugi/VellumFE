@@ -1327,11 +1327,13 @@ impl TuiFrontend {
                         crate::core::menu_actions::MenuAction::Edit => {
                             if let Some(name) = browser.get_selected() {
                                 if let Some(pattern) = app_core.config.highlights.get(&name) {
-                                    self.highlight_form = Some(
-                                        crate::frontend::tui::highlight_form::HighlightFormWidget::new_edit(
-                                            name, pattern,
-                                        ),
+                                    // Default to global if unknown
+                                    let is_global = browser.get_selected_is_global().unwrap_or(true);
+                                    let mut form = crate::frontend::tui::highlight_form::HighlightFormWidget::new_edit(
+                                        name, pattern,
                                     );
+                                    form.set_scope(is_global);
+                                    self.highlight_form = Some(form);
                                     app_core.ui_state.input_mode = InputMode::HighlightForm;
                                 }
                             }
@@ -1345,26 +1347,37 @@ impl TuiFrontend {
                         }
                         crate::core::menu_actions::MenuAction::Delete => {
                             if let Some(name) = browser.get_selected() {
-                                app_core.config.highlights.remove(&name);
-                                browser.update_items(&app_core.config.highlights);
-                                tracing::info!("Deleted highlight: {}", name);
-                                if let Err(e) =
-                                    app_core.config.save_highlights(app_core.config.character.as_deref())
-                                {
+                                // Default to global if unknown
+                                let is_global = browser.get_selected_is_global().unwrap_or(true);
+                                // Delete from appropriate file based on scope
+                                if let Err(e) = crate::config::Config::delete_single_highlight(
+                                    &name,
+                                    is_global,
+                                    app_core.config.character.as_deref(),
+                                ) {
                                     app_core.add_system_message(&format!(
-                                        "Failed to save highlights: {}",
+                                        "Failed to delete highlight: {}",
                                         e
                                     ));
                                 } else {
-                                    app_core.add_system_message("Highlights saved");
+                                    let scope = if is_global { "global" } else { "character" };
+                                    app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
+                                    // Update in-memory config
+                                    app_core.config.highlights.remove(&name);
                                     crate::config::Config::compile_highlight_patterns(
                                         &mut app_core.config.highlights,
                                     );
                                     app_core
                                         .message_processor
                                         .apply_config(app_core.config.clone());
-                                    // Highlights now updated in core via apply_config()
+                                    // Refresh browser with source tracking
+                                    let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                    let character = crate::config::Config::load_character_highlights_only(
+                                        app_core.config.character.as_deref()
+                                    ).unwrap_or_default();
+                                    browser.update_items_with_source(&global, &character);
                                 }
+                                tracing::info!("Deleted highlight: {} (global={})", name, is_global);
                             }
                         }
                         crate::core::menu_actions::MenuAction::Cancel => {
@@ -1414,6 +1427,7 @@ impl TuiFrontend {
                                         entry.key_combo.clone(),
                                         action_type,
                                         entry.action_value.clone(),
+                                        entry.is_global,
                                     ),
                                 );
                                 app_core.ui_state.input_mode = InputMode::KeybindForm;
@@ -1427,9 +1441,16 @@ impl TuiFrontend {
                         }
                         crate::core::menu_actions::MenuAction::Delete => {
                             if let Some(key_combo) = browser.get_selected() {
+                                // TODO: Phase 3.4 - delete from correct file based on is_global
                                 app_core.config.keybinds.remove(&key_combo);
                                 app_core.rebuild_keybind_map();
-                                browser.update_items(&app_core.config.keybinds);
+                                // Reload with source tracking for proper [G]/[C] display
+                                let global_keybinds = crate::config::Config::load_common_keybinds()
+                                    .unwrap_or_default();
+                                let character_keybinds = crate::config::Config::load_character_keybinds_only(
+                                    app_core.config.connection.character.as_deref()
+                                ).unwrap_or_default();
+                                browser.update_items_with_source(&global_keybinds, &character_keybinds);
                                 tracing::info!("Deleted keybind: {}", key_combo);
                             }
                         }
@@ -1466,9 +1487,11 @@ impl TuiFrontend {
                         crate::core::menu_actions::MenuAction::Select
                         | crate::core::menu_actions::MenuAction::Edit => {
                             if let Some(color) = browser.get_selected_color() {
+                                let is_global = browser.get_selected_is_global().unwrap_or(true);
                                 self.color_form = Some(
-                                    crate::frontend::tui::color_form::ColorForm::new_edit(
+                                    crate::frontend::tui::color_form::ColorForm::new_edit_with_scope(
                                         color,
+                                        is_global,
                                     ),
                                 );
                                 app_core.ui_state.input_mode = InputMode::ColorForm;
@@ -1482,14 +1505,36 @@ impl TuiFrontend {
                         }
                         crate::core::menu_actions::MenuAction::Delete => {
                             if let Some(color_name) = browser.get_selected() {
-                                app_core
-                                    .config
-                                    .colors
-                                    .color_palette
-                                    .retain(|c| c.name != color_name);
-                                browser
-                                    .update_items(app_core.config.colors.color_palette.clone());
-                                tracing::info!("Deleted color: {}", color_name);
+                                let is_global = browser.get_selected_is_global().unwrap_or(true);
+
+                                // Delete from appropriate file based on scope
+                                if let Err(e) = crate::config::ColorConfig::delete_single_palette_color(
+                                    &color_name,
+                                    is_global,
+                                    app_core.config.character.as_deref(),
+                                ) {
+                                    tracing::error!("Failed to delete color: {}", e);
+                                }
+
+                                // Reload colors to update in-memory state
+                                if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
+                                    app_core.config.character.as_deref()
+                                ) {
+                                    app_core.config.colors = colors;
+                                }
+
+                                // Refresh browser with updated colors
+                                let global_colors = crate::config::ColorConfig::load_common_colors()
+                                    .map(|c| c.color_palette)
+                                    .unwrap_or_default();
+                                let char_colors = crate::config::ColorConfig::load_character_colors_only(
+                                    app_core.config.character.as_deref()
+                                )
+                                    .map(|c| c.color_palette)
+                                    .unwrap_or_default();
+                                browser.update_items_with_source(&global_colors, &char_colors);
+
+                                tracing::info!("Deleted color: {} ({})", color_name, if is_global { "global" } else { "character" });
                             }
                         }
                         crate::core::menu_actions::MenuAction::Cancel => {
@@ -1652,31 +1697,61 @@ impl TuiFrontend {
             }
             InputMode::SettingsEditor => {
                 if let Some(ref mut editor) = self.settings_editor {
-                    use crate::frontend::tui::widget_traits::Navigable;
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
+                    // First let the editor handle input directly
+                    // Convert our KeyCode/KeyModifiers to crossterm's
+                    let crossterm_code = super::crossterm_bridge::to_crossterm_keycode(code);
+                    let crossterm_modifiers = super::crossterm_bridge::to_crossterm_modifiers(modifiers);
+                    let key_event = crossterm::event::KeyEvent::new(crossterm_code, crossterm_modifiers);
+                    let handled = editor.handle_input(key_event);
 
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => editor.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => editor.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            editor.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            editor.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.settings_editor = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
+                    if handled {
+                        // Check if this was a value change - apply to config immediately
+                        editor.apply_to_config(&mut app_core.config);
+                        app_core.needs_render = true;
+                        return Ok(None);
                     }
+
+                    // Check for Ctrl+S to save all settings
+                    if modifiers.ctrl && matches!(code, KeyCode::Char('s') | KeyCode::Char('S')) {
+                        // Apply and save all settings with their scopes
+                        editor.apply_to_config(&mut app_core.config);
+
+                        // Get all items and save each with its scope
+                        let items_to_save: Vec<_> = editor.all_items()
+                            .map(|item| (item.key.clone(), item.is_global))
+                            .collect();
+
+                        let mut save_errors = Vec::new();
+                        for (key, is_global) in items_to_save {
+                            if let Err(e) = app_core.config.save_single_setting(
+                                &key,
+                                is_global,
+                                app_core.config.character.as_deref(),
+                            ) {
+                                save_errors.push(format!("{}: {}", key, e));
+                            }
+                        }
+
+                        if save_errors.is_empty() {
+                            app_core.add_system_message("Settings saved");
+                        } else {
+                            app_core.add_system_message(&format!(
+                                "Some settings failed to save: {}",
+                                save_errors.join(", ")
+                            ));
+                        }
+                        app_core.needs_render = true;
+                        return Ok(None);
+                    }
+
+                    // Handle Cancel/Escape to close editor
+                    if matches!(code, KeyCode::Esc) {
+                        // Apply changes to in-memory config before closing
+                        editor.apply_to_config(&mut app_core.config);
+                        self.settings_editor = None;
+                        app_core.ui_state.input_mode = InputMode::Normal;
+                    }
+
                     app_core.needs_render = true;
                 }
                 return Ok(None);
@@ -1691,39 +1766,49 @@ impl TuiFrontend {
                     if modifiers.ctrl && matches!(code, KeyCode::Char(c) if c == 's' || c == 'S') {
                         if let Some(result) = form.handle_action(crate::core::menu_actions::MenuAction::Save) {
                             match result {
-                                crate::frontend::tui::highlight_form::FormResult::Save { name, mut pattern } => {
+                                crate::frontend::tui::highlight_form::FormResult::Save { name, mut pattern, is_global } => {
                                     if let Some(ref fg) = pattern.fg {
                                         pattern.fg = Some(app_core.config.resolve_palette_color(fg));
                                     }
                                     if let Some(ref bg) = pattern.bg {
                                         pattern.bg = Some(app_core.config.resolve_palette_color(bg));
                                     }
-                                    app_core.config.highlights.insert(name.clone(), pattern);
-                                if let Some(ref mut browser) = self.highlight_browser {
-                                    browser.update_items(&app_core.config.highlights);
-                                }
-                                if let Err(e) =
-                                    app_core.config.save_highlights(app_core.config.character.as_deref())
-                                {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to save highlights: {}",
-                                        e
-                                    ));
-                                } else {
-                                    app_core.add_system_message("Highlights saved");
-                                    crate::config::Config::compile_highlight_patterns(
-                                        &mut app_core.config.highlights,
-                                    );
-                                    app_core
-                                        .message_processor
-                                        .apply_config(app_core.config.clone());
-                                }
-                                // Highlights now updated in core via apply_config()
-                                tracing::info!("Saved highlight: {}", name);
-                                self.highlight_form = None;
-                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                    InputMode::HighlightBrowser
-                                } else {
+                                    // Save to appropriate file based on scope
+                                    if let Err(e) = crate::config::Config::save_single_highlight(
+                                        &name,
+                                        &pattern,
+                                        is_global,
+                                        app_core.config.character.as_deref(),
+                                    ) {
+                                        app_core.add_system_message(&format!(
+                                            "Failed to save highlight: {}",
+                                            e
+                                        ));
+                                    } else {
+                                        let scope = if is_global { "global" } else { "character" };
+                                        app_core.add_system_message(&format!("Highlight saved to {} config", scope));
+                                        // Update in-memory config
+                                        app_core.config.highlights.insert(name.clone(), pattern);
+                                        crate::config::Config::compile_highlight_patterns(
+                                            &mut app_core.config.highlights,
+                                        );
+                                        app_core
+                                            .message_processor
+                                            .apply_config(app_core.config.clone());
+                                        // Refresh browser with source tracking
+                                        if let Some(ref mut browser) = self.highlight_browser {
+                                            let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                            let character = crate::config::Config::load_character_highlights_only(
+                                                app_core.config.character.as_deref()
+                                            ).unwrap_or_default();
+                                            browser.update_items_with_source(&global, &character);
+                                        }
+                                    }
+                                    tracing::info!("Saved highlight: {} (global={})", name, is_global);
+                                    self.highlight_form = None;
+                                    app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
+                                        InputMode::HighlightBrowser
+                                    } else {
                                         InputMode::Normal
                                     };
                                 }
@@ -1779,6 +1864,7 @@ impl TuiFrontend {
                             crate::frontend::tui::highlight_form::FormResult::Save {
                                 name,
                                 mut pattern,
+                                is_global,
                             } => {
                                 // Resolve palette color names to hex codes
                                 if let Some(ref fg) = pattern.fg {
@@ -1788,45 +1874,93 @@ impl TuiFrontend {
                                     pattern.bg = Some(app_core.config.resolve_palette_color(bg));
                                 }
 
-                                app_core.config.highlights.insert(name.clone(), pattern);
-                                if let Some(ref mut browser) = self.highlight_browser {
-                                    browser.update_items(&app_core.config.highlights);
-                                }
-                                if let Err(e) =
-                                    app_core.config.save_highlights(app_core.config.character.as_deref())
-                                {
+                                // Save to appropriate file based on scope
+                                if let Err(e) = crate::config::Config::save_single_highlight(
+                                    &name,
+                                    &pattern,
+                                    is_global,
+                                    app_core.config.character.as_deref(),
+                                ) {
                                     app_core.add_system_message(&format!(
-                                        "Failed to save highlights: {}",
+                                        "Failed to save highlight: {}",
                                         e
                                     ));
                                 } else {
-                                    app_core.add_system_message("Highlights saved");
+                                    let scope = if is_global { "global" } else { "character" };
+                                    app_core.add_system_message(&format!("Highlight saved to {} config", scope));
+                                    // Update in-memory config
+                                    app_core.config.highlights.insert(name.clone(), pattern);
                                     crate::config::Config::compile_highlight_patterns(
                                         &mut app_core.config.highlights,
                                     );
                                     app_core
                                         .message_processor
                                         .apply_config(app_core.config.clone());
+                                    // Refresh browser with source tracking
+                                    if let Some(ref mut browser) = self.highlight_browser {
+                                        let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                        let character = crate::config::Config::load_character_highlights_only(
+                                            app_core.config.character.as_deref()
+                                        ).unwrap_or_default();
+                                        browser.update_items_with_source(&global, &character);
+                                    }
                                 }
-                                // Highlights now updated in core via apply_config()
-                                tracing::info!("Saved highlight: {}", name);
+                                tracing::info!("Saved highlight: {} (global={})", name, is_global);
                                 self.highlight_form = None;
                                 app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
                                     InputMode::HighlightBrowser
                                 } else {
-                                            InputMode::Normal
-                                        };
-                                    }
-                                    crate::frontend::tui::highlight_form::FormResult::Delete { .. }
-                                    | crate::frontend::tui::highlight_form::FormResult::Cancel => {
-                                        self.highlight_form = None;
-                                        app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                            InputMode::HighlightBrowser
-                                        } else {
-                                            InputMode::Normal
-                                        };
+                                    InputMode::Normal
+                                };
+                            }
+                            crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
+                                // Delete from appropriate file based on scope
+                                if let Err(e) = crate::config::Config::delete_single_highlight(
+                                    &name,
+                                    is_global,
+                                    app_core.config.character.as_deref(),
+                                ) {
+                                    app_core.add_system_message(&format!(
+                                        "Failed to delete highlight: {}",
+                                        e
+                                    ));
+                                } else {
+                                    let scope = if is_global { "global" } else { "character" };
+                                    app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
+                                    // Update in-memory config
+                                    app_core.config.highlights.remove(&name);
+                                    crate::config::Config::compile_highlight_patterns(
+                                        &mut app_core.config.highlights,
+                                    );
+                                    app_core
+                                        .message_processor
+                                        .apply_config(app_core.config.clone());
+                                    // Refresh browser with source tracking
+                                    if let Some(ref mut browser) = self.highlight_browser {
+                                        let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                        let character = crate::config::Config::load_character_highlights_only(
+                                            app_core.config.character.as_deref()
+                                        ).unwrap_or_default();
+                                        browser.update_items_with_source(&global, &character);
                                     }
                                 }
+                                tracing::info!("Deleted highlight: {} (global={})", name, is_global);
+                                self.highlight_form = None;
+                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
+                                    InputMode::HighlightBrowser
+                                } else {
+                                    InputMode::Normal
+                                };
+                            }
+                            crate::frontend::tui::highlight_form::FormResult::Cancel => {
+                                self.highlight_form = None;
+                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
+                                    InputMode::HighlightBrowser
+                                } else {
+                                    InputMode::Normal
+                                };
+                            }
+                        }
                             }
                         }
                         _ => {
@@ -1838,21 +1972,49 @@ impl TuiFrontend {
                                 match result {
                                     crate::frontend::tui::highlight_form::FormResult::Save {
                                         name,
-                                        pattern,
+                                        mut pattern,
+                                        is_global,
                                     } => {
-                                        // Save to current config (save_as_common feature removed)
-                                        app_core.config.highlights.insert(name.clone(), pattern);
-                                        if let Some(ref mut browser) = self.highlight_browser {
-                                            browser.update_items(&app_core.config.highlights);
+                                        // Resolve palette color names to hex codes
+                                        if let Some(ref fg) = pattern.fg {
+                                            pattern.fg = Some(app_core.config.resolve_palette_color(fg));
                                         }
-                                        crate::config::Config::compile_highlight_patterns(
-                                            &mut app_core.config.highlights,
-                                        );
-                                        app_core
-                                            .message_processor
-                                            .apply_config(app_core.config.clone());
-                                        // Highlights now updated in core via apply_config()
-                                        tracing::info!("Saved highlight: {}", name);
+                                        if let Some(ref bg) = pattern.bg {
+                                            pattern.bg = Some(app_core.config.resolve_palette_color(bg));
+                                        }
+
+                                        // Save to appropriate file based on scope
+                                        if let Err(e) = crate::config::Config::save_single_highlight(
+                                            &name,
+                                            &pattern,
+                                            is_global,
+                                            app_core.config.character.as_deref(),
+                                        ) {
+                                            app_core.add_system_message(&format!(
+                                                "Failed to save highlight: {}",
+                                                e
+                                            ));
+                                        } else {
+                                            let scope = if is_global { "global" } else { "character" };
+                                            app_core.add_system_message(&format!("Highlight saved to {} config", scope));
+                                            // Update in-memory config
+                                            app_core.config.highlights.insert(name.clone(), pattern);
+                                            crate::config::Config::compile_highlight_patterns(
+                                                &mut app_core.config.highlights,
+                                            );
+                                            app_core
+                                                .message_processor
+                                                .apply_config(app_core.config.clone());
+                                            // Refresh browser with source tracking
+                                            if let Some(ref mut browser) = self.highlight_browser {
+                                                let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                                let character = crate::config::Config::load_character_highlights_only(
+                                                    app_core.config.character.as_deref()
+                                                ).unwrap_or_default();
+                                                browser.update_items_with_source(&global, &character);
+                                            }
+                                        }
+                                        tracing::info!("Saved highlight: {} (global={})", name, is_global);
                                         self.highlight_form = None;
                                         app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
                                             InputMode::HighlightBrowser
@@ -1860,8 +2022,46 @@ impl TuiFrontend {
                                             InputMode::Normal
                                         };
                                     }
-                                    crate::frontend::tui::highlight_form::FormResult::Delete { .. }
-                                    | crate::frontend::tui::highlight_form::FormResult::Cancel => {
+                                    crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
+                                        // Delete from appropriate file based on scope
+                                        if let Err(e) = crate::config::Config::delete_single_highlight(
+                                            &name,
+                                            is_global,
+                                            app_core.config.character.as_deref(),
+                                        ) {
+                                            app_core.add_system_message(&format!(
+                                                "Failed to delete highlight: {}",
+                                                e
+                                            ));
+                                        } else {
+                                            let scope = if is_global { "global" } else { "character" };
+                                            app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
+                                            // Update in-memory config
+                                            app_core.config.highlights.remove(&name);
+                                            crate::config::Config::compile_highlight_patterns(
+                                                &mut app_core.config.highlights,
+                                            );
+                                            app_core
+                                                .message_processor
+                                                .apply_config(app_core.config.clone());
+                                            // Refresh browser with source tracking
+                                            if let Some(ref mut browser) = self.highlight_browser {
+                                                let global = crate::config::Config::load_common_highlights().unwrap_or_default();
+                                                let character = crate::config::Config::load_character_highlights_only(
+                                                    app_core.config.character.as_deref()
+                                                ).unwrap_or_default();
+                                                browser.update_items_with_source(&global, &character);
+                                            }
+                                        }
+                                        tracing::info!("Deleted highlight: {} (global={})", name, is_global);
+                                        self.highlight_form = None;
+                                        app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
+                                            InputMode::HighlightBrowser
+                                        } else {
+                                            InputMode::Normal
+                                        };
+                                    }
+                                    crate::frontend::tui::highlight_form::FormResult::Cancel => {
                                         self.highlight_form = None;
                                         app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
                                             InputMode::HighlightBrowser
@@ -1983,6 +2183,7 @@ impl TuiFrontend {
                                         key_combo,
                                         action_type,
                                         value,
+                                        is_global,
                                     } => {
                                         use crate::frontend::tui::keybind_form::KeybindActionType;
                                         let action = match action_type {
@@ -1995,20 +2196,40 @@ impl TuiFrontend {
                                                 )
                                             }
                                         };
+                                        // Save to correct file based on scope
+                                        if let Err(e) = crate::config::Config::save_single_keybind(
+                                            &key_combo,
+                                            &action,
+                                            is_global,
+                                            app_core.config.connection.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to save keybind to file: {}", e);
+                                        }
+                                        // Also update in-memory config
                                         app_core.config.keybinds.insert(key_combo.clone(), action);
                                         app_core.rebuild_keybind_map();
                                         self.keybind_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved keybind: {}", key_combo);
+                                        tracing::info!("Saved keybind: {} (global={})", key_combo, is_global);
                                     }
                                     crate::frontend::tui::keybind_form::KeybindFormResult::Delete {
                                         key_combo,
+                                        is_global,
                                     } => {
+                                        // Delete from correct file based on scope
+                                        if let Err(e) = crate::config::Config::delete_single_keybind(
+                                            &key_combo,
+                                            is_global,
+                                            app_core.config.connection.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to delete keybind from file: {}", e);
+                                        }
+                                        // Also update in-memory config
                                         app_core.config.keybinds.remove(&key_combo);
                                         app_core.rebuild_keybind_map();
                                         self.keybind_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Deleted keybind: {}", key_combo);
+                                        tracing::info!("Deleted keybind: {} (global={})", key_combo, is_global);
                                     }
                                     crate::frontend::tui::keybind_form::KeybindFormResult::Cancel => {
                                         self.keybind_form = None;
@@ -2028,6 +2249,7 @@ impl TuiFrontend {
                                         key_combo,
                                         action_type,
                                         value,
+                                        is_global,
                                     } => {
                                         use crate::frontend::tui::keybind_form::KeybindActionType;
                                         let action = match action_type {
@@ -2040,20 +2262,40 @@ impl TuiFrontend {
                                                 )
                                             }
                                         };
+                                        // Save to correct file based on scope
+                                        if let Err(e) = crate::config::Config::save_single_keybind(
+                                            &key_combo,
+                                            &action,
+                                            is_global,
+                                            app_core.config.connection.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to save keybind to file: {}", e);
+                                        }
+                                        // Also update in-memory config
                                         app_core.config.keybinds.insert(key_combo.clone(), action);
                                         app_core.rebuild_keybind_map();
                                         self.keybind_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved keybind: {}", key_combo);
+                                        tracing::info!("Saved keybind: {} (global={})", key_combo, is_global);
                                     }
                                     crate::frontend::tui::keybind_form::KeybindFormResult::Delete {
                                         key_combo,
+                                        is_global,
                                     } => {
+                                        // Delete from correct file based on scope
+                                        if let Err(e) = crate::config::Config::delete_single_keybind(
+                                            &key_combo,
+                                            is_global,
+                                            app_core.config.connection.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to delete keybind from file: {}", e);
+                                        }
+                                        // Also update in-memory config
                                         app_core.config.keybinds.remove(&key_combo);
                                         app_core.rebuild_keybind_map();
                                         self.keybind_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Deleted keybind: {}", key_combo);
+                                        tracing::info!("Deleted keybind: {} (global={})", key_combo, is_global);
                                     }
                                     crate::frontend::tui::keybind_form::KeybindFormResult::Cancel => {
                                         self.keybind_form = None;
@@ -2109,32 +2351,52 @@ impl TuiFrontend {
                                     crate::frontend::tui::color_form::FormAction::Save {
                                         color,
                                         original_name,
+                                        is_global,
                                     } => {
-                                        if let Some(old_name) = original_name {
-                                            if old_name != color.name {
-                                                app_core
-                                                    .config
-                                                    .colors
-                                                    .color_palette
-                                                    .retain(|c| c.name != old_name);
+                                        // Save to appropriate file based on scope
+                                        let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
+                                        if let Err(e) = crate::config::ColorConfig::save_single_palette_color(
+                                            &color_with_slot,
+                                            is_global,
+                                            app_core.config.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to save color: {}", e);
+                                        }
+
+                                        // Handle rename: delete old name if changed
+                                        if let Some(ref old_name) = original_name {
+                                            if old_name != &color.name {
+                                                let _ = crate::config::ColorConfig::delete_single_palette_color(
+                                                    old_name,
+                                                    is_global,
+                                                    app_core.config.character.as_deref(),
+                                                );
                                             }
                                         }
-                                        if let Some(existing) = app_core
-                                            .config
-                                            .colors
-                                            .color_palette
-                                            .iter_mut()
-                                            .find(|c| c.name == color.name)
-                                        {
-                                            *existing = color.clone();
-                                        } else {
-                                            // Auto-assign next available slot for new colors
-                                            let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
-                                            app_core.config.colors.color_palette.push(color_with_slot);
+
+                                        // Reload colors to update in-memory state
+                                        if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
+                                            app_core.config.character.as_deref()
+                                        ) {
+                                            app_core.config.colors = colors;
                                         }
+
+                                        // Refresh browser if open
+                                        if let Some(ref mut browser) = self.color_palette_browser {
+                                            let global_colors = crate::config::ColorConfig::load_common_colors()
+                                                .map(|c| c.color_palette)
+                                                .unwrap_or_default();
+                                            let char_colors = crate::config::ColorConfig::load_character_colors_only(
+                                                app_core.config.character.as_deref()
+                                            )
+                                                .map(|c| c.color_palette)
+                                                .unwrap_or_default();
+                                            browser.update_items_with_source(&global_colors, &char_colors);
+                                        }
+
                                         self.color_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved color: {}", color.name);
+                                        tracing::info!("Saved color: {} ({})", color.name, if is_global { "global" } else { "character" });
                                     }
                                     crate::frontend::tui::color_form::FormAction::Delete => {
                                         self.color_form = None;
@@ -2158,32 +2420,52 @@ impl TuiFrontend {
                                     crate::frontend::tui::color_form::FormAction::Save {
                                         color,
                                         original_name,
+                                        is_global,
                                     } => {
-                                        if let Some(old_name) = original_name {
-                                            if old_name != color.name {
-                                                app_core
-                                                    .config
-                                                    .colors
-                                                    .color_palette
-                                                    .retain(|c| c.name != old_name);
+                                        // Save to appropriate file based on scope
+                                        let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
+                                        if let Err(e) = crate::config::ColorConfig::save_single_palette_color(
+                                            &color_with_slot,
+                                            is_global,
+                                            app_core.config.character.as_deref(),
+                                        ) {
+                                            tracing::error!("Failed to save color: {}", e);
+                                        }
+
+                                        // Handle rename: delete old name if changed
+                                        if let Some(ref old_name) = original_name {
+                                            if old_name != &color.name {
+                                                let _ = crate::config::ColorConfig::delete_single_palette_color(
+                                                    old_name,
+                                                    is_global,
+                                                    app_core.config.character.as_deref(),
+                                                );
                                             }
                                         }
-                                        if let Some(existing) = app_core
-                                            .config
-                                            .colors
-                                            .color_palette
-                                            .iter_mut()
-                                            .find(|c| c.name == color.name)
-                                        {
-                                            *existing = color.clone();
-                                        } else {
-                                            // Auto-assign next available slot for new colors
-                                            let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
-                                            app_core.config.colors.color_palette.push(color_with_slot);
+
+                                        // Reload colors to update in-memory state
+                                        if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
+                                            app_core.config.character.as_deref()
+                                        ) {
+                                            app_core.config.colors = colors;
                                         }
+
+                                        // Refresh browser if open
+                                        if let Some(ref mut browser) = self.color_palette_browser {
+                                            let global_colors = crate::config::ColorConfig::load_common_colors()
+                                                .map(|c| c.color_palette)
+                                                .unwrap_or_default();
+                                            let char_colors = crate::config::ColorConfig::load_character_colors_only(
+                                                app_core.config.character.as_deref()
+                                            )
+                                                .map(|c| c.color_palette)
+                                                .unwrap_or_default();
+                                            browser.update_items_with_source(&global_colors, &char_colors);
+                                        }
+
                                         self.color_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved color: {}", color.name);
+                                        tracing::info!("Saved color: {} ({})", color.name, if is_global { "global" } else { "character" });
                                     }
                                     crate::frontend::tui::color_form::FormAction::Delete => {
                                         self.color_form = None;

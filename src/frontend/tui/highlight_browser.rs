@@ -26,6 +26,7 @@ pub struct HighlightEntry {
     pub redirect_to: Option<String>,
     pub redirect_mode: Option<crate::config::RedirectMode>,
     pub replace: Option<String>,
+    pub is_global: bool, // true = from global/, false = from character profile
 }
 
 /// Popup list component used for browsing configured highlights.
@@ -44,27 +45,69 @@ pub struct HighlightBrowser {
 }
 
 impl HighlightBrowser {
+    /// Create browser with source tracking for [G]/[C] indicators
+    /// global_highlights: highlights from global/highlights.toml
+    /// character_highlights: highlights from profiles/{char}/highlights.toml
+    pub fn new_with_source(
+        global_highlights: &HashMap<String, crate::config::HighlightPattern>,
+        character_highlights: &HashMap<String, crate::config::HighlightPattern>,
+    ) -> Self {
+        let mut entries: Vec<HighlightEntry> = Vec::new();
+
+        // Add global highlights (mark as is_global = true)
+        for (name, pattern) in global_highlights {
+            // Skip if overridden by character highlight
+            if character_highlights.contains_key(name) {
+                continue;
+            }
+            entries.push(Self::pattern_to_entry(name, pattern, true));
+        }
+
+        // Add character highlights (mark as is_global = false)
+        for (name, pattern) in character_highlights {
+            entries.push(Self::pattern_to_entry(name, pattern, false));
+        }
+
+        Self::from_entries(entries)
+    }
+
+    /// Legacy constructor - treats all highlights as global (merged)
     pub fn new(highlights: &HashMap<String, crate::config::HighlightPattern>) -> Self {
-        let mut entries: Vec<HighlightEntry> = highlights
+        let entries: Vec<HighlightEntry> = highlights
             .iter()
-            .map(|(name, pattern)| HighlightEntry {
-                name: name.clone(),
-                pattern: pattern.pattern.clone(),
-                category: pattern.category.clone(),
-                fg: pattern.fg.clone(),
-                bg: pattern.bg.clone(),
-                has_sound: pattern.sound.is_some(),
-                is_squelched: pattern.squelch,
-                redirect_to: pattern.redirect_to.clone(),
-                redirect_mode: if pattern.redirect_to.is_some() {
-                    Some(pattern.redirect_mode.clone())
-                } else {
-                    None
-                },
-                replace: pattern.replace.clone(),
-            })
+            .map(|(name, pattern)| Self::pattern_to_entry(name, pattern, true))
             .collect();
 
+        Self::from_entries(entries)
+    }
+
+    /// Convert a HighlightPattern to a HighlightEntry
+    fn pattern_to_entry(
+        name: &str,
+        pattern: &crate::config::HighlightPattern,
+        is_global: bool,
+    ) -> HighlightEntry {
+        HighlightEntry {
+            name: name.to_string(),
+            pattern: pattern.pattern.clone(),
+            category: pattern.category.clone(),
+            fg: pattern.fg.clone(),
+            bg: pattern.bg.clone(),
+            has_sound: pattern.sound.is_some(),
+            is_squelched: pattern.squelch,
+            redirect_to: pattern.redirect_to.clone(),
+            redirect_mode: if pattern.redirect_to.is_some() {
+                Some(pattern.redirect_mode.clone())
+            } else {
+                None
+            },
+            replace: pattern.replace.clone(),
+            is_global,
+        }
+    }
+
+    /// Create browser from pre-built entries
+    fn from_entries(mut entries: Vec<HighlightEntry>) -> Self {
         // Sort by category, then by name
         entries.sort_by(|a, b| match (&a.category, &b.category) {
             (Some(cat_a), Some(cat_b)) => cat_a.cmp(cat_b).then_with(|| a.name.cmp(&b.name)),
@@ -417,7 +460,30 @@ impl HighlightBrowser {
                     .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
             }
 
-            // Col 13+: Entry name (cyan normally, gold when selected)
+            // Col 11: Scope indicator [G]/[C]
+            let scope_text = if entry.is_global { "[G]" } else { "[C]" };
+            let scope_style = if is_selected {
+                ratatui::style::Style::default()
+                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
+            } else if entry.is_global {
+                ratatui::style::Style::default()
+                    .fg(crossterm_bridge::to_ratatui_color(theme.text_disabled))
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
+            } else {
+                ratatui::style::Style::default()
+                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_normal))
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
+            };
+
+            for (i, ch) in scope_text.chars().enumerate() {
+                let col = x + 11 + i as u16;
+                if col < x + width - 1 {
+                    buf[(col, current_y)].set_char(ch).set_style(scope_style);
+                }
+            }
+
+            // Col 15+: Entry name (cyan normally, gold when selected)
             let name_style = if is_selected {
                 ratatui::style::Style::default()
                     .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
@@ -445,9 +511,9 @@ impl HighlightBrowser {
             } else {
                 String::new()
             };
-            let name_with_indicators = format!("   {}{}{}{}{}", entry.name, sound_indicator, replace_indicator, redirect_indicator, squelch_indicator);
+            let name_with_indicators = format!(" {}{}{}{}{}", entry.name, sound_indicator, replace_indicator, redirect_indicator, squelch_indicator);
             for (i, ch) in name_with_indicators.chars().enumerate() {
-                let col = x + 13 + i as u16;
+                let col = x + 15 + i as u16;
                 if col < x + width - 1 {
                     buf[(col, current_y)].set_char(ch).set_style(name_style);
                 }
@@ -555,26 +621,48 @@ impl HighlightBrowser {
         self.page_up();
     }
 
-    /// Update the list of highlight entries
+    /// Update the list of highlight entries with source tracking for [G]/[C] indicators
+    pub fn update_items_with_source(
+        &mut self,
+        global_highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>,
+        character_highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>,
+    ) {
+        self.entries.clear();
+
+        // Add global highlights (mark as is_global = true)
+        for (name, pattern) in global_highlights {
+            // Skip if overridden by character highlight
+            if character_highlights.contains_key(name) {
+                continue;
+            }
+            self.entries.push(Self::pattern_to_entry(name, pattern, true));
+        }
+
+        // Add character highlights (mark as is_global = false)
+        for (name, pattern) in character_highlights {
+            self.entries.push(Self::pattern_to_entry(name, pattern, false));
+        }
+
+        // Sort by category, then by name
+        self.entries.sort_by(|a, b| match (&a.category, &b.category) {
+            (Some(cat_a), Some(cat_b)) => cat_a.cmp(cat_b).then_with(|| a.name.cmp(&b.name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name),
+        });
+
+        // Reset selection if out of bounds
+        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
+            self.selected_index = self.entries.len() - 1;
+        }
+    }
+
+    /// Update the list of highlight entries (legacy - all marked as global)
+    #[allow(dead_code)]
     pub fn update_items(&mut self, highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>) {
         self.entries.clear();
         for (name, highlight) in highlights {
-            self.entries.push(HighlightEntry {
-                name: name.clone(),
-                pattern: highlight.pattern.clone(),
-                category: None,
-                fg: highlight.fg.clone(),
-                bg: highlight.bg.clone(),
-                has_sound: highlight.sound.is_some(),
-                is_squelched: highlight.squelch,
-                redirect_to: highlight.redirect_to.clone(),
-                redirect_mode: if highlight.redirect_to.is_some() {
-                    Some(highlight.redirect_mode.clone())
-                } else {
-                    None
-                },
-                replace: highlight.replace.clone(),
-            });
+            self.entries.push(Self::pattern_to_entry(name, highlight, true));
         }
         // Sort by name
         self.entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -583,6 +671,12 @@ impl HighlightBrowser {
         if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
             self.selected_index = self.entries.len() - 1;
         }
+    }
+
+    /// Get the is_global status of the currently selected highlight
+    pub fn get_selected_is_global(&self) -> Option<bool> {
+        let filtered = self.filtered_entries();
+        filtered.get(self.selected_index).map(|e| e.is_global)
     }
 }
 

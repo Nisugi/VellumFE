@@ -23,12 +23,12 @@
 #   tts_next, tts_previous, tts_pause_resume, tts_mute_toggle
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GLOBAL KEYBINDS (Always active, highest priority)
+# APPLICATION KEYBINDS (Always active, highest priority)
 # ═══════════════════════════════════════════════════════════════════════════
 # These keybinds work in all modes and cannot be overridden by user keybinds.
-# Change these to customize your global shortcuts.
+# Change these to customize your application-wide shortcuts.
 
-[global]
+[app]
 quit = "ctrl+c"                    # Exit VellumFE
 start_search = "ctrl+f"            # Open search mode
 next_search_match = "ctrl+pagedown"  # Jump to next search result

@@ -20,9 +20,11 @@ pub enum KeybindFormResult {
         key_combo: String,
         action_type: KeybindActionType,
         value: String,
+        is_global: bool, // true = save to global/keybinds.toml, false = character profile
     },
     Delete {
         key_combo: String,
+        is_global: bool, // true = delete from global, false = delete from character
     },
     Cancel,
 }
@@ -53,8 +55,10 @@ pub struct KeybindFormWidget {
     action_type: KeybindActionType,
     action_dropdown_index: usize, // Index in AVAILABLE_ACTIONS
     macro_text: TextArea<'static>,
+    is_global: bool, // Scope: true = global, false = character-specific
 
-    focused_field: usize, // 0=action_type_action, 1=action_type_macro, 2=key_combo, 3=action/macro field
+    // 0=action_type_action, 1=action_type_macro, 2=key_combo, 3=action/macro field, 4=scope_global, 5=scope_char
+    focused_field: usize,
     status_message: String,
     key_combo_error: Option<String>,
     mode: FormMode,
@@ -114,6 +118,7 @@ impl KeybindFormWidget {
             action_type: KeybindActionType::Action,
             action_dropdown_index: 0,
             macro_text,
+            is_global: true, // Default to global scope for new keybinds
             focused_field: 0,
             status_message: String::new(),
             key_combo_error: None,
@@ -126,10 +131,11 @@ impl KeybindFormWidget {
         }
     }
 
-    pub fn new_edit(key_combo: String, action_type: KeybindActionType, value: String) -> Self {
+    pub fn new_edit(key_combo: String, action_type: KeybindActionType, value: String, is_global: bool) -> Self {
         let mut form = Self::new();
         form.key_combo.insert_str(&key_combo);
         form.action_type = action_type.clone();
+        form.is_global = is_global;
 
         match action_type {
             KeybindActionType::Action => {
@@ -206,13 +212,19 @@ impl KeybindFormWidget {
                 None
             }
             MenuAction::Select | MenuAction::Toggle => {
-                // Enter/Space - toggle radio buttons for action type selection
+                // Enter/Space - toggle radio buttons for action type or scope selection
                 match self.focused_field {
                     0 => {
                         self.action_type = KeybindActionType::Action;
                     }
                     1 => {
                         self.action_type = KeybindActionType::Macro;
+                    }
+                    4 => {
+                        self.is_global = true; // Select Global scope
+                    }
+                    5 => {
+                        self.is_global = false; // Select Character scope
                     }
                     _ => {}
                 }
@@ -362,6 +374,7 @@ impl KeybindFormWidget {
             key_combo,
             action_type: self.action_type.clone(),
             value,
+            is_global: self.is_global,
         })
     }
 
@@ -369,6 +382,7 @@ impl KeybindFormWidget {
         if let FormMode::Edit { ref original_key } = self.mode {
             Some(KeybindFormResult::Delete {
                 key_combo: original_key.clone(),
+                is_global: self.is_global,
             })
         } else {
             None
@@ -383,7 +397,7 @@ impl KeybindFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let width = 52;
-        let height = 9;
+        let height = 10; // Increased by 1 for scope row
 
         // Center on first render
         if self.popup_x == 0 && self.popup_y == 0 {
@@ -613,6 +627,57 @@ impl KeybindFormWidget {
                 );
             }
         }
+        current_y += 1;
+
+        // Row: Scope (radio buttons) - Fields 4 and 5
+        let scope_label_color = crossterm_bridge::to_ratatui_color(if focused_field == 4 || focused_field == 5  {
+            theme.form_label_focused
+        } else {
+            theme.form_label
+        });
+        let scope_label = "Scope:";
+        for (i, ch) in scope_label.chars().enumerate() {
+            buf[(x + 2 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(scope_label_color)
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        // Global radio button (Field 4)
+        let global_color = crossterm_bridge::to_ratatui_color(if focused_field == 4  {
+            theme.form_label_focused
+        } else {
+            theme.form_label
+        });
+        let global_text = if self.is_global {
+            "[X] Global"
+        } else {
+            "[ ] Global"
+        };
+        for (i, ch) in global_text.chars().enumerate() {
+            buf[(x + 9 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(global_color)
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        // Character radio button (Field 5)
+        let char_color = crossterm_bridge::to_ratatui_color(if focused_field == 5  {
+            theme.form_label_focused
+        } else {
+            theme.form_label
+        });
+        let char_text = if !self.is_global {
+            "[X] Character"
+        } else {
+            "[ ] Character"
+        };
+        for (i, ch) in char_text.chars().enumerate() {
+            buf[(x + 23 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(char_color)
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
     }
 
     fn render_text_row(
@@ -801,19 +866,20 @@ impl TextEditable for KeybindFormWidget {
 
 impl FieldNavigable for KeybindFormWidget {
     fn next_field(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 4;
+        // Fields: 0=Action, 1=Macro, 2=KeyCombo, 3=ActionDropdown/MacroText, 4=GlobalScope, 5=CharScope
+        self.focused_field = (self.focused_field + 1) % 6;
     }
 
     fn previous_field(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            3
+            5
         } else {
             self.focused_field - 1
         };
     }
 
     fn field_count(&self) -> usize {
-        4
+        6
     }
 
     fn current_field(&self) -> usize {

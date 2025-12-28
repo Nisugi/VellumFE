@@ -72,6 +72,7 @@ pub struct SettingItem {
     pub description: Option<String>,
     pub editable: bool,
     pub name_width: Option<u16>, // Custom width for name column
+    pub is_global: bool,         // true = from global config, false = character override
 }
 
 pub struct SettingsEditor {
@@ -265,6 +266,126 @@ impl SettingsEditor {
         }
     }
 
+    /// Toggle scope between global and character for the selected setting
+    /// NOTE: Connection settings CANNOT be toggled - they are always character-specific
+    pub fn toggle_scope(&mut self) {
+        if let Some(item) = self.get_selected_mut() {
+            // Connection settings are ALWAYS character-specific (never allow global)
+            if item.key.starts_with("connection.") {
+                // Cannot toggle - connection is always character-specific
+                return;
+            }
+            item.is_global = !item.is_global;
+        }
+    }
+
+    /// Get the scope of the selected setting
+    pub fn get_selected_is_global(&self) -> Option<bool> {
+        self.get_selected().map(|item| item.is_global)
+    }
+
+    /// Get the key and is_global of the selected setting
+    pub fn get_selected_key_and_scope(&self) -> Option<(String, bool)> {
+        self.get_selected().map(|item| (item.key.clone(), item.is_global))
+    }
+
+    /// Get an iterator over all settings items
+    pub fn all_items(&self) -> impl Iterator<Item = &SettingItem> {
+        self.items.iter()
+    }
+
+    /// Apply all setting values from the editor back to a Config
+    pub fn apply_to_config(&self, config: &mut crate::config::Config) {
+        for item in &self.items {
+            match item.key.as_str() {
+                // Connection settings
+                "connection.host" => {
+                    if let SettingValue::String(ref v) = item.value {
+                        config.connection.host = v.clone();
+                    }
+                }
+                "connection.port" => {
+                    if let SettingValue::Number(v) = item.value {
+                        config.connection.port = v as u16;
+                    }
+                }
+                "connection.character" => {
+                    if let SettingValue::String(ref v) = item.value {
+                        config.connection.character = Some(v.clone());
+                    }
+                }
+
+                // UI settings
+                "ui.buffer_size" => {
+                    if let SettingValue::Number(v) = item.value {
+                        config.ui.buffer_size = v as usize;
+                    }
+                }
+                "ui.border_style" => {
+                    if let SettingValue::Enum(ref v, _) = item.value {
+                        config.ui.border_style = v.clone();
+                    }
+                }
+                "ui.countdown_icon" => {
+                    if let SettingValue::String(ref v) = item.value {
+                        config.ui.countdown_icon = v.clone();
+                    }
+                }
+                "ui.selection_enabled" => {
+                    if let SettingValue::Boolean(v) = item.value {
+                        config.ui.selection_enabled = v;
+                    }
+                }
+                "ui.selection_respect_window_boundaries" => {
+                    if let SettingValue::Boolean(v) = item.value {
+                        config.ui.selection_respect_window_boundaries = v;
+                    }
+                }
+                "ui.selection_auto_copy" => {
+                    if let SettingValue::Boolean(v) = item.value {
+                        config.ui.selection_auto_copy = v;
+                    }
+                }
+                "ui.drag_modifier_key" => {
+                    if let SettingValue::Enum(ref v, _) = item.value {
+                        config.ui.drag_modifier_key = v.clone();
+                    }
+                }
+                "ui.min_command_length" => {
+                    if let SettingValue::Number(v) = item.value {
+                        config.ui.min_command_length = v as usize;
+                    }
+                }
+
+                // Sound settings
+                "sound.enabled" => {
+                    if let SettingValue::Boolean(v) = item.value {
+                        config.sound.enabled = v;
+                    }
+                }
+                "sound.volume" => {
+                    if let SettingValue::Float(v) = item.value {
+                        config.sound.volume = v as f32;
+                    }
+                }
+                "sound.cooldown_ms" => {
+                    if let SettingValue::Number(v) = item.value {
+                        config.sound.cooldown_ms = v as u64;
+                    }
+                }
+
+                // Theme settings
+                "active_theme" => {
+                    if let SettingValue::String(ref v) = item.value {
+                        config.active_theme = v.clone();
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
     fn cycle_enum(&mut self, forward: bool) {
         if let Some(item) = self.get_selected_mut() {
             if let SettingValue::Enum(ref mut current, ref options) = item.value {
@@ -362,6 +483,11 @@ impl SettingsEditor {
                         }
                     }
                     false
+                }
+                KeyCode::Char('g') => {
+                    // Toggle scope (global/character)
+                    self.toggle_scope();
+                    true
                 }
                 _ => false,
             }
@@ -483,7 +609,7 @@ impl SettingsEditor {
             (self.selected_index + 1).min(total)
         };
         let help = format!(
-            " ↑/↓:Nav  Enter:Edit  Space:Toggle  Esc:Close  ({}/{}) ",
+            " ↑↓:Nav  Enter:Edit  Space:Toggle  g:Scope  ^S:Save  Esc:Close  ({}/{}) ",
             current, total
         );
         let help_x = popup_area.x + popup_area.width.saturating_sub(help.len() as u16 + 1);
@@ -641,7 +767,28 @@ impl SettingsEditor {
         textarea_bg: Color,
         theme: &crate::theme::AppTheme,
     ) {
+        // Render [G] or [C] scope indicator first
+        let scope_indicator = if item.is_global { "[G]" } else { "[C]" };
+        let scope_style = Style::default()
+            .fg(if item.is_global {
+                super::colors::rgb_to_ratatui_color(100, 200, 100) // Green for global
+            } else {
+                super::colors::rgb_to_ratatui_color(200, 150, 100) // Orange for character
+            })
+            .bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+
+        for (i, ch) in scope_indicator.chars().enumerate() {
+            let px = x + i as u16;
+            if let Some(cell) = buf.cell_mut((px, y)) {
+                cell.set_char(ch);
+                cell.set_style(scope_style);
+            }
+        }
+
+        // Adjust positions for the rest (scope indicator is 4 chars including space)
+        let name_x = x + 4; // "[G] " or "[C] "
         let name_width = item.name_width.unwrap_or(25);
+        let adjusted_name_width = name_width.saturating_sub(4);
         let value_width = width.saturating_sub(name_width + 3);
 
         // Render name
@@ -656,13 +803,19 @@ impl SettingsEditor {
                 .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
         };
 
+        // Add space after scope indicator
+        if let Some(cell) = buf.cell_mut((x + 3, y)) {
+            cell.set_char(' ');
+            cell.set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
         for (i, ch) in item
             .display_name
             .chars()
-            .take(name_width as usize)
+            .take(adjusted_name_width as usize)
             .enumerate()
         {
-            let px = x + i as u16;
+            let px = name_x + i as u16;
             if let Some(cell) = buf.cell_mut((px, y)) {
                 cell.set_char(ch);
                 cell.set_style(name_style);
@@ -670,8 +823,9 @@ impl SettingsEditor {
         }
 
         // Fill remaining name space
-        for i in item.display_name.len()..(name_width as usize) {
-            let px = x + i as u16;
+        let rendered_name_len = item.display_name.len().min(adjusted_name_width as usize);
+        for i in rendered_name_len..(adjusted_name_width as usize) {
+            let px = name_x + i as u16;
             if let Some(cell) = buf.cell_mut((px, y)) {
                 cell.set_char(' ');
                 cell.set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));

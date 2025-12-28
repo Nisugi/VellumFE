@@ -13,9 +13,16 @@ use ratatui::{
     widgets::{Clear, Widget},
 };
 
+/// Wrapper for PaletteColor with source tracking
+#[derive(Clone)]
+pub struct PaletteColorEntry {
+    pub color: PaletteColor,
+    pub is_global: bool, // true = from global/, false = from character profile
+}
+
 /// Browser for viewing and managing color palette
 pub struct ColorPaletteBrowser {
-    colors: Vec<PaletteColor>,
+    entries: Vec<PaletteColorEntry>,
     selected_index: usize,
     scroll_offset: usize,
     filter: String, // Filter by name or category
@@ -29,17 +36,66 @@ pub struct ColorPaletteBrowser {
 }
 
 impl ColorPaletteBrowser {
+    /// Create browser with source tracking for [G]/[C] indicators
+    /// global_colors: palette colors from global/colors.toml
+    /// character_colors: palette colors from profiles/{char}/colors.toml
+    pub fn new_with_source(
+        global_colors: &[PaletteColor],
+        character_colors: &[PaletteColor],
+    ) -> Self {
+        let mut entries: Vec<PaletteColorEntry> = Vec::new();
+
+        // Build set of character color names for quick lookup
+        let char_names: std::collections::HashSet<_> = character_colors
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+
+        // Add global colors (mark as is_global = true), skip if overridden
+        for color in global_colors {
+            if !char_names.contains(color.name.as_str()) {
+                entries.push(PaletteColorEntry {
+                    color: color.clone(),
+                    is_global: true,
+                });
+            }
+        }
+
+        // Add character colors (mark as is_global = false)
+        for color in character_colors {
+            entries.push(PaletteColorEntry {
+                color: color.clone(),
+                is_global: false,
+            });
+        }
+
+        Self::from_entries(entries)
+    }
+
+    /// Legacy constructor - treats all colors as global
     pub fn new(colors: Vec<PaletteColor>) -> Self {
+        let entries: Vec<PaletteColorEntry> = colors
+            .into_iter()
+            .map(|color| PaletteColorEntry {
+                color,
+                is_global: true,
+            })
+            .collect();
+
+        Self::from_entries(entries)
+    }
+
+    /// Create browser from pre-built entries
+    fn from_entries(mut entries: Vec<PaletteColorEntry>) -> Self {
         // Sort by category, then by name
-        let mut sorted_colors = colors;
-        sorted_colors.sort_by(|a, b| {
-            a.category
-                .cmp(&b.category)
-                .then_with(|| a.name.cmp(&b.name))
+        entries.sort_by(|a, b| {
+            a.color.category
+                .cmp(&b.color.category)
+                .then_with(|| a.color.name.cmp(&b.color.name))
         });
 
         Self {
-            colors: sorted_colors,
+            entries,
             selected_index: 0,
             scroll_offset: 0,
             filter: String::new(),
@@ -57,22 +113,33 @@ impl ColorPaletteBrowser {
         self.scroll_offset = 0;
     }
 
-    pub fn filtered_colors(&self) -> Vec<&PaletteColor> {
+    pub fn filtered_entries(&self) -> Vec<&PaletteColorEntry> {
         if self.filter.is_empty() {
-            self.colors.iter().collect()
+            self.entries.iter().collect()
         } else {
-            self.colors
+            self.entries
                 .iter()
-                .filter(|c| {
-                    c.name.to_lowercase().contains(&self.filter)
-                        || c.category.to_lowercase().contains(&self.filter)
+                .filter(|e| {
+                    e.color.name.to_lowercase().contains(&self.filter)
+                        || e.color.category.to_lowercase().contains(&self.filter)
                 })
                 .collect()
         }
     }
 
-    pub fn get_colors(&self) -> &Vec<PaletteColor> {
-        &self.colors
+    /// Legacy method for compatibility
+    pub fn filtered_colors(&self) -> Vec<&PaletteColor> {
+        self.filtered_entries().iter().map(|e| &e.color).collect()
+    }
+
+    pub fn get_colors(&self) -> Vec<&PaletteColor> {
+        self.entries.iter().map(|e| &e.color).collect()
+    }
+
+    /// Get the is_global status of the currently selected color
+    pub fn get_selected_is_global(&self) -> Option<bool> {
+        let filtered = self.filtered_entries();
+        filtered.get(self.selected_index).map(|e| e.is_global)
     }
 
     pub fn navigate_up(&mut self) {
@@ -155,8 +222,8 @@ impl ColorPaletteBrowser {
     pub fn toggle_favorite(&mut self) {
         if let Some(color) = self.get_selected_color() {
             let name = color.name.clone();
-            if let Some(c) = self.colors.iter_mut().find(|c| c.name == name) {
-                c.favorite = !c.favorite;
+            if let Some(e) = self.entries.iter_mut().find(|e| e.color.name == name) {
+                e.color.favorite = !e.color.favorite;
             }
         }
     }
@@ -242,12 +309,12 @@ impl ColorPaletteBrowser {
 
         // Draw title
         let title = if self.filter.is_empty() {
-            format!(" Color Palette ({}) ", self.colors.len())
+            format!(" Color Palette ({}) ", self.entries.len())
         } else {
             format!(
                 " Color Palette ({}/{}) - Filter: {} ",
-                self.filtered_colors().len(),
-                self.colors.len(),
+                self.filtered_entries().len(),
+                self.entries.len(),
                 self.filter
             )
         };
@@ -306,7 +373,7 @@ impl ColorPaletteBrowser {
             height: popup_area.height.saturating_sub(4),
         };
 
-        let filtered = self.filtered_colors();
+        let filtered = self.filtered_entries();
         if filtered.is_empty() {
             // Show "No colors" message
             let msg = if self.filter.is_empty() {
@@ -334,7 +401,8 @@ impl ColorPaletteBrowser {
         let visible_start = self.scroll_offset;
         let visible_end = visible_start + list_area.height as usize;
 
-        for (abs_idx, color) in filtered.iter().enumerate() {
+        for (abs_idx, entry) in filtered.iter().enumerate() {
+            let color = &entry.color;
             // Check if we need a category header
             if last_category != Some(&color.category) {
                 // Always increment display_row for the header
@@ -408,11 +476,12 @@ impl ColorPaletteBrowser {
 
             let is_selected = abs_idx == self.selected_index;
 
-            // Format: preview(3) + 3 spaces + fav + 3 spaces + name + color code + slot
+            // Format: preview(3) + space + scope(3) + space + fav + 2 spaces + name + color code + slot
             let preview = "███"; // 3-character preview swatch (full blocks)
+            let scope_indicator = if entry.is_global { "[G]" } else { "[C]" };
             let fav_char = if color.favorite { '*' } else { ' ' };
             let slot_str = color.slot.map_or(String::new(), |s| format!(" [{}]", s));
-            let content = format!("   {}   {:<18} {}{}", fav_char, color.name, color.color, slot_str);
+            let content = format!(" {} {}  {:<18} {}{}", scope_indicator, fav_char, color.name, color.color, slot_str);
             // Parse the color for preview
             let preview_color = Self::parse_hex_color(&color.color).unwrap_or(Color::White);
 
@@ -508,30 +577,82 @@ impl ColorPaletteBrowser {
 
     /// Move to next page (alias for page_down)
     pub fn next_page(&mut self) {
-        if self.colors.is_empty() {
+        if self.entries.is_empty() {
             return;
         }
-        let max_index = self.colors.len() - 1;
+        let max_index = self.entries.len() - 1;
         self.selected_index = (self.selected_index + 10).min(max_index);
     }
 
     /// Move to previous page (alias for page_up)
     pub fn previous_page(&mut self) {
-        if self.colors.is_empty() {
+        if self.entries.is_empty() {
             return;
         }
         self.selected_index = self.selected_index.saturating_sub(10);
     }
 
-    /// Update the list of color palette entries
-    pub fn update_items(&mut self, palette: Vec<crate::config::PaletteColor>) {
-        self.colors = palette;
-        // Sort by name
-        self.colors.sort_by(|a, b| a.name.cmp(&b.name));
+    /// Update the list of color palette entries with source tracking
+    pub fn update_items_with_source(
+        &mut self,
+        global_colors: &[crate::config::PaletteColor],
+        character_colors: &[crate::config::PaletteColor],
+    ) {
+        self.entries.clear();
+
+        // Build set of character color names for quick lookup
+        let char_names: std::collections::HashSet<_> = character_colors
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+
+        // Add global colors (mark as is_global = true), skip if overridden
+        for color in global_colors {
+            if !char_names.contains(color.name.as_str()) {
+                self.entries.push(PaletteColorEntry {
+                    color: color.clone(),
+                    is_global: true,
+                });
+            }
+        }
+
+        // Add character colors (mark as is_global = false)
+        for color in character_colors {
+            self.entries.push(PaletteColorEntry {
+                color: color.clone(),
+                is_global: false,
+            });
+        }
+
+        // Sort by category, then by name
+        self.entries.sort_by(|a, b| {
+            a.color.category
+                .cmp(&b.color.category)
+                .then_with(|| a.color.name.cmp(&b.color.name))
+        });
 
         // Reset selection if out of bounds
-        if self.selected_index >= self.colors.len() && !self.colors.is_empty() {
-            self.selected_index = self.colors.len() - 1;
+        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
+            self.selected_index = self.entries.len() - 1;
+        }
+    }
+
+    /// Legacy update method - marks all as global
+    #[allow(dead_code)]
+    pub fn update_items(&mut self, palette: Vec<crate::config::PaletteColor>) {
+        self.entries = palette
+            .into_iter()
+            .map(|color| PaletteColorEntry {
+                color,
+                is_global: true,
+            })
+            .collect();
+        // Sort by name
+        self.entries.sort_by(|a, b| a.color.name.cmp(&b.color.name));
+
+        // Reset selection if out of bounds
+        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
+            self.selected_index = self.entries.len() - 1;
         }
     }
 }
@@ -564,8 +685,8 @@ impl Selectable for ColorPaletteBrowser {
 
     fn delete_selected(&mut self) -> Option<String> {
         let name = self.get_selected()?;
-        self.colors.retain(|c| c.name != name);
-        let filtered = self.filtered_colors();
+        self.entries.retain(|e| e.color.name != name);
+        let filtered = self.filtered_entries();
         if self.selected_index >= filtered.len() && self.selected_index > 0 {
             self.selected_index = filtered.len() - 1;
         }

@@ -24,10 +24,21 @@ pub fn build_config_submenu() -> Vec<PopupMenuItem> {
 }
 
 /// Build settings items from config
+/// Uses merged config for values, character_config_exists to determine source
 pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
+    // Default: all settings come from global (merged config is used)
+    build_settings_items_with_source(config, false)
+}
+
+/// Build settings items with source tracking
+/// If character_config_exists is true, non-connection settings are marked as character overrides
+pub fn build_settings_items_with_source(
+    config: &config::Config,
+    character_config_exists: bool,
+) -> Vec<SettingItem> {
     let mut items = Vec::new();
 
-    // Connection settings
+    // Connection settings - ALWAYS character-specific (never global)
     items.push(SettingItem {
         category: "Connection".to_string(),
         key: "connection.host".to_string(),
@@ -36,6 +47,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Game server hostname or IP address".to_string()),
         editable: true,
         name_width: None,
+        is_global: false, // Connection is ALWAYS character-specific
     });
 
     items.push(SettingItem {
@@ -46,6 +58,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Game server port number".to_string()),
         editable: true,
         name_width: None,
+        is_global: false, // Connection is ALWAYS character-specific
     });
 
     if let Some(ref character) = config.connection.character {
@@ -57,10 +70,13 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
             description: Some("Default character name".to_string()),
             editable: true,
             name_width: None,
+            is_global: false, // Connection is ALWAYS character-specific
         });
     }
 
-    // UI settings
+    // UI settings - can be global or character override
+    let ui_is_global = !character_config_exists;
+
     items.push(SettingItem {
         category: "UI".to_string(),
         key: "ui.buffer_size".to_string(),
@@ -69,6 +85,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Number of lines to keep in text window buffers".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     // NOTE: show_timestamps removed from global config - use per-window settings instead
@@ -90,6 +107,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Widget border style".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -100,6 +118,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Unicode character for countdown blocks".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -110,6 +129,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Enable text selection with mouse".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -120,6 +140,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Prevent selection from crossing window boundaries".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -130,6 +151,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Copy mouse selection to clipboard on release".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -143,6 +165,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Modifier key required for drag and drop".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
     items.push(SettingItem {
@@ -153,9 +176,12 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Minimum command length to save to history".to_string()),
         editable: true,
         name_width: None,
+        is_global: ui_is_global,
     });
 
-    // Sound settings
+    // Sound settings - can be global or character override
+    let sound_is_global = !character_config_exists;
+
     items.push(SettingItem {
         category: "Sound".to_string(),
         key: "sound.enabled".to_string(),
@@ -164,6 +190,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Enable sound effects".to_string()),
         editable: true,
         name_width: None,
+        is_global: sound_is_global,
     });
 
     items.push(SettingItem {
@@ -174,6 +201,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Master volume (0.0 to 1.0)".to_string()),
         editable: true,
         name_width: None,
+        is_global: sound_is_global,
     });
 
     items.push(SettingItem {
@@ -184,9 +212,12 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Cooldown between same sound plays".to_string()),
         editable: true,
         name_width: None,
+        is_global: sound_is_global,
     });
 
-    // Theme settings
+    // Theme settings - can be global or character override
+    let theme_is_global = !character_config_exists;
+
     items.push(SettingItem {
         category: "Theme".to_string(),
         key: "active_theme".to_string(),
@@ -195,6 +226,7 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
         description: Some("Currently active color theme".to_string()),
         editable: true,
         name_width: None,
+        is_global: theme_is_global,
     });
 
     items

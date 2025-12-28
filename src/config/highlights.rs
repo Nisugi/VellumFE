@@ -207,6 +207,124 @@ impl Config {
         Ok(())
     }
 
+    /// Load ONLY character-specific highlights (no merge with global)
+    /// Used for source tracking in UI to distinguish [G] vs [C] highlights
+    pub fn load_character_highlights_only(
+        character: Option<&str>,
+    ) -> Result<HashMap<String, HighlightPattern>> {
+        let highlights_path = Self::highlights_path(character)?;
+
+        if !highlights_path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let contents =
+            fs::read_to_string(&highlights_path).context("Failed to read highlights.toml")?;
+        let highlights: HashMap<String, HighlightPattern> =
+            toml::from_str(&contents).context("Failed to parse highlights.toml")?;
+
+        Ok(highlights)
+    }
+
+    /// Save a single highlight to the appropriate file based on scope
+    /// is_global = true: saves to global/highlights.toml
+    /// is_global = false: saves to profiles/{char}/highlights.toml
+    pub fn save_single_highlight(
+        name: &str,
+        pattern: &HighlightPattern,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        if is_global {
+            Self::save_common_highlight(name, pattern)
+        } else {
+            Self::save_character_highlight(name, pattern, character)
+        }
+    }
+
+    /// Save a single highlight to character-specific highlights file
+    fn save_character_highlight(
+        name: &str,
+        pattern: &HighlightPattern,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let highlights_path = Self::highlights_path(character)?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = highlights_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        }
+
+        // Load existing character highlights
+        let mut highlights = Self::load_character_highlights_only(character)?;
+
+        // Add or update the pattern
+        highlights.insert(name.to_string(), pattern.clone());
+
+        // Write back to file
+        let toml = toml::to_string_pretty(&highlights)
+            .context("Failed to serialize character highlights")?;
+
+        fs::write(&highlights_path, toml)
+            .with_context(|| format!("Failed to write highlights: {:?}", highlights_path))?;
+
+        tracing::info!(
+            "Saved highlight '{}' to character highlights file: {:?}",
+            name,
+            highlights_path
+        );
+
+        Ok(())
+    }
+
+    /// Delete a single highlight from the appropriate file based on scope
+    /// is_global = true: deletes from global/highlights.toml
+    /// is_global = false: deletes from profiles/{char}/highlights.toml
+    pub fn delete_single_highlight(
+        name: &str,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        if is_global {
+            Self::delete_common_highlight(name)
+        } else {
+            Self::delete_character_highlight(name, character)
+        }
+    }
+
+    /// Delete a single highlight from character-specific highlights file
+    fn delete_character_highlight(name: &str, character: Option<&str>) -> Result<()> {
+        let highlights_path = Self::highlights_path(character)?;
+
+        if !highlights_path.exists() {
+            tracing::warn!(
+                "Cannot delete highlight '{}' - file does not exist: {:?}",
+                name,
+                highlights_path
+            );
+            return Ok(());
+        }
+
+        let mut highlights = Self::load_character_highlights_only(character)?;
+
+        if highlights.remove(name).is_some() {
+            let toml = toml::to_string_pretty(&highlights)
+                .context("Failed to serialize character highlights")?;
+
+            fs::write(&highlights_path, toml)
+                .with_context(|| format!("Failed to write highlights: {:?}", highlights_path))?;
+
+            tracing::info!(
+                "Deleted highlight '{}' from character highlights file: {:?}",
+                name,
+                highlights_path
+            );
+        }
+
+        Ok(())
+    }
+
     /// List all saved highlight profiles
     pub fn list_saved_highlights() -> Result<Vec<String>> {
         let highlights_dir = Self::highlights_dir()?;

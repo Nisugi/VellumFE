@@ -18,25 +18,26 @@ mod keybinds;
 
 pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
 pub use keybinds::{
-    parse_key_string, GlobalKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
+    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
 };
 
 // Embed default configuration files at compile time
-const DEFAULT_CONFIG: &str = include_str!("../defaults/config.toml");
-const DEFAULT_COLORS: &str = include_str!("../defaults/colors.toml");
-const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/highlights.toml");
-const DEFAULT_KEYBINDS: &str = include_str!("../defaults/keybinds.toml");
-const DEFAULT_CMDLIST: &str = include_str!("../defaults/cmdlist1.xml");
-const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/spell_abbrev.toml");
-const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/layout_template.toml");
-const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../defaults/config_template.toml");
+// Files are under defaults/globals/ to mirror the user's ~/.vellum-fe/global/ structure
+const DEFAULT_CONFIG: &str = include_str!("../defaults/globals/config.toml");
+const DEFAULT_COLORS: &str = include_str!("../defaults/globals/colors.toml");
+const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/globals/highlights.toml");
+const DEFAULT_KEYBINDS: &str = include_str!("../defaults/globals/keybinds.toml");
+const DEFAULT_CMDLIST: &str = include_str!("../defaults/globals/cmdlist1.xml");
+const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/globals/spell_abbrev.toml");
+const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/globals/templates/layout_template.toml");
+const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../defaults/globals/templates/config_template.toml");
 
 // Embed entire directories - automatically includes all files
-static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/layouts");
-static SOUNDS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/sounds");
+static LAYOUTS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/globals/layouts");
+static SOUNDS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/defaults/globals/sounds");
 
 // Keep embedded default layout for fallback
-const LAYOUT_DEFAULT: &str = include_str!("../defaults/layouts/layout.toml");
+const LAYOUT_DEFAULT: &str = include_str!("../defaults/globals/layouts/layout.toml");
 
 /// Widget category for organizing windows in menus
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -198,8 +199,8 @@ pub struct Config {
     pub highlights: HashMap<String, HighlightPattern>,
     #[serde(skip)] // Loaded from separate keybinds.toml file
     pub keybinds: HashMap<String, KeyBindAction>,
-    #[serde(skip)] // Loaded from [global] section of keybinds.toml
-    pub global_keybinds: GlobalKeybinds,
+    #[serde(skip)] // Loaded from [app] section of keybinds.toml
+    pub app_keybinds: AppKeybinds,
     #[serde(default)]
     pub sound: SoundConfig,
     #[serde(default)]
@@ -420,39 +421,128 @@ impl Default for ColorConfig {
 }
 
 impl ColorConfig {
-    /// Load colors from colors.toml for a character
+    /// Load colors from colors.toml for a character (with merge from global)
     pub fn load(character: Option<&str>) -> Result<Self> {
-        let colors_path = Config::colors_path(character)?;
+        // Try to load with merge (global + character)
+        Self::load_with_merge(character)
+    }
+
+    /// Load common (global) colors from global/colors.toml
+    pub fn load_common_colors() -> Result<Self> {
+        let colors_path = Config::common_colors_path()?;
 
         if colors_path.exists() {
-            tracing::info!("Loading colors from: {:?}", colors_path);
+            tracing::info!("Loading common colors from: {:?}", colors_path);
             let contents =
-                fs::read_to_string(&colors_path).context("Failed to read colors.toml")?;
+                fs::read_to_string(&colors_path).context("Failed to read global colors.toml")?;
             let mut colors: ColorConfig =
-                toml::from_str(&contents).context("Failed to parse colors.toml")?;
+                toml::from_str(&contents).context("Failed to parse global colors.toml")?;
 
-            // Merge defaults for missing presets (so users don't need to define all presets)
+            // Merge defaults for missing presets
             let defaults = Self::default();
             for (key, preset) in defaults.presets {
                 colors.presets.entry(key).or_insert(preset);
             }
 
-            // Merge defaults for missing color_palette (for backward compatibility)
+            // Merge defaults for missing color_palette
             if colors.color_palette.is_empty() {
                 colors.color_palette = defaults.color_palette;
             }
 
-            tracing::debug!(
-                "Loaded {} presets from colors.toml",
-                colors.presets.len()
-            );
-
             Ok(colors)
         } else {
-            tracing::info!("colors.toml not found at {:?}, using defaults", colors_path);
-            // Return default if file doesn't exist (will be created by extract_defaults)
+            tracing::info!(
+                "Global colors.toml not found at {:?}, using defaults",
+                colors_path
+            );
             Ok(Self::default())
         }
+    }
+
+    /// Load ONLY character-specific colors (no merge with global)
+    /// Used for source tracking in UI to distinguish [G] vs [C] colors
+    pub fn load_character_colors_only(character: Option<&str>) -> Result<Self> {
+        let colors_path = Config::colors_path(character)?;
+
+        if colors_path.exists() {
+            tracing::debug!("Loading character colors from: {:?}", colors_path);
+            let contents =
+                fs::read_to_string(&colors_path).context("Failed to read character colors.toml")?;
+            let colors: ColorConfig =
+                toml::from_str(&contents).context("Failed to parse character colors.toml")?;
+            Ok(colors)
+        } else {
+            // Return empty config if no character-specific file
+            Ok(Self {
+                presets: HashMap::new(),
+                prompt_colors: Vec::new(),
+                ui: UiColors::default(),
+                spell_colors: Vec::new(),
+                color_palette: Vec::new(),
+            })
+        }
+    }
+
+    /// Load with merge: global first, character overrides
+    pub fn load_with_merge(character: Option<&str>) -> Result<Self> {
+        // Start with global colors
+        let mut colors = Self::load_common_colors()?;
+
+        // Load character-specific colors
+        let char_colors = Self::load_character_colors_only(character)?;
+
+        // Merge character presets (override global)
+        for (key, preset) in char_colors.presets {
+            colors.presets.insert(key, preset);
+        }
+
+        // Merge character prompt_colors (replace entire list if not empty)
+        if !char_colors.prompt_colors.is_empty() {
+            colors.prompt_colors = char_colors.prompt_colors;
+        }
+
+        // Merge character UI colors (only override non-default values)
+        // For simplicity, we'll check if they differ from defaults
+        let default_ui = UiColors::default();
+        if char_colors.ui.command_echo_color != default_ui.command_echo_color {
+            colors.ui.command_echo_color = char_colors.ui.command_echo_color;
+        }
+        if char_colors.ui.border_color != default_ui.border_color {
+            colors.ui.border_color = char_colors.ui.border_color;
+        }
+        if char_colors.ui.focused_border_color != default_ui.focused_border_color {
+            colors.ui.focused_border_color = char_colors.ui.focused_border_color;
+        }
+        if char_colors.ui.text_color != default_ui.text_color {
+            colors.ui.text_color = char_colors.ui.text_color;
+        }
+        if char_colors.ui.background_color != default_ui.background_color {
+            colors.ui.background_color = char_colors.ui.background_color;
+        }
+        if char_colors.ui.selection_bg_color != default_ui.selection_bg_color {
+            colors.ui.selection_bg_color = char_colors.ui.selection_bg_color;
+        }
+        if char_colors.ui.textarea_background != default_ui.textarea_background {
+            colors.ui.textarea_background = char_colors.ui.textarea_background;
+        }
+
+        // Merge character spell_colors (replace entire list if not empty)
+        if !char_colors.spell_colors.is_empty() {
+            colors.spell_colors = char_colors.spell_colors;
+        }
+
+        // Merge character color_palette (replace entire list if not empty)
+        if !char_colors.color_palette.is_empty() {
+            colors.color_palette = char_colors.color_palette;
+        }
+
+        tracing::debug!(
+            "Loaded merged colors: {} presets, {} palette colors",
+            colors.presets.len(),
+            colors.color_palette.len()
+        );
+
+        Ok(colors)
     }
 
     /// Save colors to colors.toml for a character
@@ -460,6 +550,106 @@ impl ColorConfig {
         let colors_path = Config::colors_path(character)?;
         let contents = toml::to_string_pretty(self).context("Failed to serialize colors")?;
         fs::write(&colors_path, contents).context("Failed to write colors.toml")?;
+        Ok(())
+    }
+
+    /// Save colors to global colors.toml
+    pub fn save_common(&self) -> Result<()> {
+        let colors_path = Config::common_colors_path()?;
+
+        // Ensure global directory exists
+        if let Some(parent) = colors_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create global directory: {:?}", parent))?;
+        }
+
+        let contents = toml::to_string_pretty(self).context("Failed to serialize colors")?;
+        fs::write(&colors_path, contents).context("Failed to write global colors.toml")?;
+        tracing::info!("Saved colors to global file: {:?}", colors_path);
+        Ok(())
+    }
+
+    /// Save a single palette color to the appropriate file based on scope
+    pub fn save_single_palette_color(
+        color: &PaletteColor,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        if is_global {
+            Self::save_common_palette_color(color)
+        } else {
+            Self::save_character_palette_color(color, character)
+        }
+    }
+
+    /// Save a single palette color to global colors.toml
+    fn save_common_palette_color(color: &PaletteColor) -> Result<()> {
+        let mut colors = Self::load_common_colors()?;
+
+        // Find and update or add the color
+        if let Some(existing) = colors.color_palette.iter_mut().find(|c| c.name == color.name) {
+            *existing = color.clone();
+        } else {
+            colors.color_palette.push(color.clone());
+        }
+
+        colors.save_common()?;
+        tracing::info!("Saved palette color '{}' to global colors", color.name);
+        Ok(())
+    }
+
+    /// Save a single palette color to character colors.toml
+    fn save_character_palette_color(color: &PaletteColor, character: Option<&str>) -> Result<()> {
+        let mut colors = Self::load_character_colors_only(character)?;
+
+        // Find and update or add the color
+        if let Some(existing) = colors.color_palette.iter_mut().find(|c| c.name == color.name) {
+            *existing = color.clone();
+        } else {
+            colors.color_palette.push(color.clone());
+        }
+
+        colors.save(character)?;
+        tracing::info!("Saved palette color '{}' to character colors", color.name);
+        Ok(())
+    }
+
+    /// Delete a single palette color from the appropriate file based on scope
+    pub fn delete_single_palette_color(
+        name: &str,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        if is_global {
+            Self::delete_common_palette_color(name)
+        } else {
+            Self::delete_character_palette_color(name, character)
+        }
+    }
+
+    /// Delete a single palette color from global colors.toml
+    fn delete_common_palette_color(name: &str) -> Result<()> {
+        let mut colors = Self::load_common_colors()?;
+        let original_len = colors.color_palette.len();
+        colors.color_palette.retain(|c| c.name != name);
+
+        if colors.color_palette.len() < original_len {
+            colors.save_common()?;
+            tracing::info!("Deleted palette color '{}' from global colors", name);
+        }
+        Ok(())
+    }
+
+    /// Delete a single palette color from character colors.toml
+    fn delete_character_palette_color(name: &str, character: Option<&str>) -> Result<()> {
+        let mut colors = Self::load_character_colors_only(character)?;
+        let original_len = colors.color_palette.len();
+        colors.color_palette.retain(|c| c.name != name);
+
+        if colors.color_palette.len() < original_len {
+            colors.save(character)?;
+            tracing::info!("Deleted palette color '{}' from character colors", name);
+        }
         Ok(())
     }
 }
@@ -2933,8 +3123,12 @@ impl Layout {
     /// Pattern: custom-{widgettype}-1, custom-{widgettype}-2, etc.
     /// Example: custom-tabbedtext-1, custom-text-2, custom-progress-1
     pub fn generate_widget_name(&self, widget_type: &str) -> String {
-        // Normalize widget type to lowercase for consistent prefix matching
-        let normalized_type = widget_type.to_lowercase();
+        // Normalize widget type: lowercase and strip _custom suffix
+        // This ensures "tabbedtext_custom" → "custom-tabbedtext-1" (not "custom-tabbedtext_custom-1")
+        let lowercase = widget_type.to_lowercase();
+        let normalized_type = lowercase
+            .strip_suffix("_custom")
+            .unwrap_or(&lowercase);
         let prefix = format!("custom-{}-", normalized_type);
 
         let max_number = self
@@ -3334,7 +3528,7 @@ impl Config {
 
             "entity_custom" => Some(WindowDef::Targets {
                 base: WindowBase {
-                    name: "entity_custom".to_string(),
+                    name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
                     row: 0,
                     col: 0,
@@ -3561,7 +3755,7 @@ impl Config {
 
 "progress_custom" => Some(WindowDef::Progress {
                 base: WindowBase {
-                    name: "progress_custom".to_string(),
+                    name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
                     row: 0,
                     col: 0,
@@ -3646,7 +3840,7 @@ impl Config {
 
             "countdown_custom" => Some(WindowDef::Countdown {
                 base: WindowBase {
-                    name: "countdown_custom".to_string(),
+                    name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
                     row: 0,
                     col: 0,
@@ -3767,7 +3961,7 @@ impl Config {
 
             "active_effects_custom" => Some(WindowDef::ActiveEffects {
                 base: WindowBase {
-                    name: "active_effects_custom".to_string(),
+                    name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
                     rows: 10,
                     cols: 30,
@@ -4801,7 +4995,7 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
-        config.global_keybinds = Self::load_global_keybinds(character)?;
+        config.app_keybinds = Self::load_app_keybinds(character)?;
 
         // Validate and auto-fix menu keybinds
         let validation = menu_keybind_validator::validate_menu_keybinds(&config.menu_keybinds);
@@ -4841,8 +5035,9 @@ impl Config {
     /// Extract default files on first run
     /// Creates shared directories and profile-specific files
     ///
-    /// Global resources:
+    /// Global resources (shared by all characters):
     /// - ~/.vellum-fe/global/cmdlist1.xml
+    /// - ~/.vellum-fe/global/keybinds.toml (default keybinds, char overrides in profile)
     /// - ~/.vellum-fe/global/sounds/wizard_music.mp3
     /// - ~/.vellum-fe/global/sounds/README.md
     ///
@@ -4854,6 +5049,7 @@ impl Config {
     /// Profile-specific (default or character):
     /// - ~/.vellum-fe/profiles/{profile}/config.toml
     /// - ~/.vellum-fe/profiles/{profile}/history.txt (empty)
+    /// Note: keybinds.toml in profile is optional (for character-specific overrides)
     fn extract_defaults(character: Option<&str>) -> Result<()> {
         // Create shared layouts directory and extract all embedded layouts
         let layouts_dir = Self::layouts_dir()?;
@@ -4949,30 +5145,34 @@ impl Config {
         fs::create_dir_all(&profile)?;
         tracing::info!("Created profile directory: {:?}", profile);
 
-        // Extract config.toml to profile (if it doesn't exist)
-        let config_path = profile.join("config.toml");
+        // Extract config.toml to global directory (shared defaults for all characters)
+        // Character-specific overrides can still be added to profile/config.toml
+        let config_path = Self::common_config_path()?;
         if !config_path.exists() {
             fs::write(&config_path, DEFAULT_CONFIG).context("Failed to write config.toml")?;
             tracing::info!("Extracted config.toml to {:?}", config_path);
         }
 
-        // Extract colors.toml to profile (if it doesn't exist)
-        let colors_path = profile.join("colors.toml");
+        // Extract colors.toml to global directory (shared across all characters)
+        // Character-specific overrides can still be added to profile/colors.toml
+        let colors_path = Self::common_colors_path()?;
         if !colors_path.exists() {
             fs::write(&colors_path, DEFAULT_COLORS).context("Failed to write colors.toml")?;
             tracing::info!("Extracted colors.toml to {:?}", colors_path);
         }
 
-        // Extract highlights.toml to profile (if it doesn't exist)
-        let highlights_path = profile.join("highlights.toml");
+        // Extract highlights.toml to global directory (shared across all characters)
+        // Character-specific overrides can still be added to profile/highlights.toml
+        let highlights_path = Self::common_highlights_path()?;
         if !highlights_path.exists() {
             fs::write(&highlights_path, DEFAULT_HIGHLIGHTS)
                 .context("Failed to write highlights.toml")?;
             tracing::info!("Extracted highlights.toml to {:?}", highlights_path);
         }
 
-        // Extract keybinds.toml to profile (if it doesn't exist)
-        let keybinds_path = profile.join("keybinds.toml");
+        // Extract keybinds.toml to global directory (shared across all characters)
+        // Character-specific overrides can still be added to profile/keybinds.toml
+        let keybinds_path = Self::common_keybinds_path()?;
         if !keybinds_path.exists() {
             fs::write(&keybinds_path, DEFAULT_KEYBINDS).context("Failed to write keybinds.toml")?;
             tracing::info!("Extracted keybinds.toml to {:?}", keybinds_path);
@@ -4988,18 +5188,97 @@ impl Config {
         Ok(())
     }
 
+    /// Load common (global) config defaults
+    /// Returns: Config from ~/.vellum-fe/global/config.toml, or defaults if not found
+    pub fn load_common_config() -> Result<Self> {
+        let global_path = Self::common_config_path()?;
+        if global_path.exists() {
+            let contents = fs::read_to_string(&global_path)
+                .context(format!("Failed to read global config: {:?}", global_path))?;
+            toml::from_str(&contents)
+                .context(format!("Failed to parse global config: {:?}", global_path))
+        } else {
+            // Return default config if no global file exists
+            Ok(Self::default())
+        }
+    }
+
+    /// Load ONLY character-specific config (no merge with global)
+    /// Returns: Config from ~/.vellum-fe/profiles/{char}/config.toml, or None if not found
+    pub fn load_character_config_only(character: Option<&str>) -> Result<Option<Self>> {
+        let config_path = Self::config_path(character)?;
+        if config_path.exists() {
+            let contents = fs::read_to_string(&config_path)
+                .context(format!("Failed to read character config: {:?}", config_path))?;
+            let config: Config = toml::from_str(&contents)
+                .context(format!("Failed to parse character config: {:?}", config_path))?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Merge character config overrides onto self
+    /// NOTE: connection section ALWAYS comes from character config (never merged)
+    pub fn merge_with(&mut self, character_config: Config) {
+        // Connection ALWAYS comes from character (credentials, host, game)
+        self.connection = character_config.connection;
+
+        // Other sections: character overrides global if non-default
+        // For now, character config completely overrides these sections if present
+        // UI settings
+        self.ui = character_config.ui;
+
+        // Sound settings
+        self.sound = character_config.sound;
+
+        // TTS settings
+        self.tts = character_config.tts;
+
+        // Target list settings
+        self.target_list = character_config.target_list;
+
+        // Logging settings
+        self.logging = character_config.logging;
+
+        // Event patterns: merge (character extends global)
+        for (key, pattern) in character_config.event_patterns {
+            self.event_patterns.insert(key, pattern);
+        }
+
+        // Layout mappings: character replaces global if provided
+        if !character_config.layout_mappings.is_empty() {
+            self.layout_mappings = character_config.layout_mappings;
+        }
+
+        // Menu keybinds: character overrides global
+        self.menu_keybinds = character_config.menu_keybinds;
+
+        // Active theme: character overrides global
+        self.active_theme = character_config.active_theme;
+
+        // Streams config: character overrides global
+        self.streams = character_config.streams;
+
+        // Highlight settings: character overrides global
+        self.highlight_settings = character_config.highlight_settings;
+
+        // Quickbars: character overrides global
+        self.quickbars = character_config.quickbars;
+    }
+
     pub fn load_with_options(character: Option<&str>, port_override: u16) -> Result<Self> {
         // Extract defaults on first run (idempotent - only creates missing files)
         Self::extract_defaults(character)?;
 
-        // Build character-specific config path
-        let config_path = Self::config_path(character)?;
+        // Load global config first (defaults for all characters)
+        let mut config = Self::load_common_config()?;
 
-        // Load config from profile
-        let contents = fs::read_to_string(&config_path)
-            .context(format!("Failed to read config file: {:?}", config_path))?;
-        let mut config: Config = toml::from_str(&contents)
-            .context(format!("Failed to parse config file: {:?}", config_path))?;
+        // Load character-specific config and merge (character overrides global)
+        if let Some(char_config) = Self::load_character_config_only(character)? {
+            config.merge_with(char_config);
+        }
+        // If no character config exists, we use global config with default connection
 
         // Override port from command line
         config.connection.port = port_override;
@@ -5007,14 +5286,11 @@ impl Config {
         // Store character name for later saves
         config.character = character.map(|s| s.to_string());
 
-        // === Backwards Compatibility Migrations ===
-        // === End Migrations ===
-
-        // Load from separate files
+        // Load from separate files (these already have global/character merge logic)
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
-        config.global_keybinds = Self::load_global_keybinds(character)?;
+        config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
 
         // Validate and auto-fix menu keybinds
@@ -5066,6 +5342,114 @@ impl Config {
         self.save_keybinds(char_name)?;
 
         Ok(())
+    }
+
+    /// Save config to global config.toml
+    pub fn save_common(&self) -> Result<()> {
+        let config_path = Self::common_config_path()?;
+
+        // Ensure global directory exists
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create global directory: {:?}", parent))?;
+        }
+
+        // Save main config
+        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&config_path, contents).context("Failed to write global config file")?;
+        tracing::info!("Saved config to global file: {:?}", config_path);
+        Ok(())
+    }
+
+    /// Save a single setting to the appropriate file based on scope
+    /// NOTE: Connection settings MUST always go to character config (never global)
+    pub fn save_single_setting(
+        &self,
+        key: &str,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        // Connection settings are ALWAYS character-specific
+        let actual_is_global = if key.starts_with("connection.") {
+            false
+        } else {
+            is_global
+        };
+
+        if actual_is_global {
+            self.save_setting_to_global(key)
+        } else {
+            self.save_setting_to_character(key, character)
+        }
+    }
+
+    /// Save a specific setting to global config
+    fn save_setting_to_global(&self, key: &str) -> Result<()> {
+        // Load current global config
+        let mut global_config = Self::load_common_config()?;
+
+        // Update the specific setting
+        Self::copy_setting(&mut global_config, self, key);
+
+        // Save global config
+        global_config.save_common()
+    }
+
+    /// Save a specific setting to character config
+    fn save_setting_to_character(&self, key: &str, character: Option<&str>) -> Result<()> {
+        // Load current character config (or create new if doesn't exist)
+        let mut char_config = Self::load_character_config_only(character)?
+            .unwrap_or_else(Self::default);
+
+        // Update the specific setting
+        Self::copy_setting(&mut char_config, self, key);
+
+        // Save to character config path
+        let config_path = Self::config_path(character)?;
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let contents = toml::to_string_pretty(&char_config).context("Failed to serialize config")?;
+        fs::write(&config_path, contents).context("Failed to write character config file")?;
+        tracing::info!("Saved setting '{}' to character config: {:?}", key, config_path);
+        Ok(())
+    }
+
+    /// Copy a specific setting from source to destination config
+    fn copy_setting(dest: &mut Config, src: &Config, key: &str) {
+        match key {
+            // Connection settings
+            "connection.host" => dest.connection.host = src.connection.host.clone(),
+            "connection.port" => dest.connection.port = src.connection.port,
+            "connection.character" => dest.connection.character = src.connection.character.clone(),
+            "connection.account" => dest.connection.account = src.connection.account.clone(),
+            "connection.password" => dest.connection.password = src.connection.password.clone(),
+            "connection.game" => dest.connection.game = src.connection.game.clone(),
+
+            // UI settings
+            "ui.buffer_size" => dest.ui.buffer_size = src.ui.buffer_size,
+            "ui.border_style" => dest.ui.border_style = src.ui.border_style.clone(),
+            "ui.countdown_icon" => dest.ui.countdown_icon = src.ui.countdown_icon.clone(),
+            "ui.selection_enabled" => dest.ui.selection_enabled = src.ui.selection_enabled,
+            "ui.selection_respect_window_boundaries" => {
+                dest.ui.selection_respect_window_boundaries = src.ui.selection_respect_window_boundaries
+            }
+            "ui.selection_auto_copy" => dest.ui.selection_auto_copy = src.ui.selection_auto_copy,
+            "ui.drag_modifier_key" => dest.ui.drag_modifier_key = src.ui.drag_modifier_key.clone(),
+            "ui.min_command_length" => dest.ui.min_command_length = src.ui.min_command_length,
+
+            // Sound settings
+            "sound.enabled" => dest.sound.enabled = src.sound.enabled,
+            "sound.volume" => dest.sound.volume = src.sound.volume,
+            "sound.cooldown_ms" => dest.sound.cooldown_ms = src.sound.cooldown_ms,
+
+            // Theme settings
+            "active_theme" => dest.active_theme = src.active_theme.clone(),
+
+            _ => {
+                tracing::warn!("Unknown setting key for copy: {}", key);
+            }
+        }
     }
 
     /// Expose base directory path (~/.vellum-fe) for other systems (e.g., direct auth).
@@ -5139,6 +5523,24 @@ impl Config {
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {
         Ok(Self::global_dir()?.join("highlights.toml"))
+    }
+
+    /// Get path to common (global) keybinds file
+    /// Returns: ~/.vellum-fe/global/keybinds.toml
+    pub fn common_keybinds_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("keybinds.toml"))
+    }
+
+    /// Get path to common (global) colors file
+    /// Returns: ~/.vellum-fe/global/colors.toml
+    pub fn common_colors_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("colors.toml"))
+    }
+
+    /// Get path to common (global) config file
+    /// Returns: ~/.vellum-fe/global/config.toml
+    pub fn common_config_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("config.toml"))
     }
 
     /// Get path to debug log for a character
@@ -5350,7 +5752,7 @@ impl Default for Config {
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
-            global_keybinds: GlobalKeybinds::default(), // Loaded from [global] section of keybinds.toml
+            app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
             colors: ColorConfig::default(), // Loaded from colors.toml
             sound: SoundConfig::default(),
             tts: TtsConfig::default(),

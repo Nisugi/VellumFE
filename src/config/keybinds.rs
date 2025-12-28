@@ -13,10 +13,29 @@ pub struct MacroAction {
     pub macro_text: String, // e.g., "sw\r" for southwest movement
 }
 
-/// Global keybinds that work across all modes or are mode-specific
+impl KeyBindAction {
+    /// Returns the type name of this keybind action
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            KeyBindAction::Action(_) => "Action",
+            KeyBindAction::Macro(_) => "Macro",
+        }
+    }
+
+    /// Returns the display value for this keybind action
+    pub fn display_value(&self) -> String {
+        match self {
+            KeyBindAction::Action(a) => a.clone(),
+            KeyBindAction::Macro(m) => m.macro_text.clone(),
+        }
+    }
+}
+
+/// Application keybinds that work across all modes or are mode-specific
 /// These are checked in Layer 1 of the keybind dispatch system (before menu and game keybinds)
+/// Note: Previously called GlobalKeybinds, renamed to avoid confusion with "global" folder
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalKeybinds {
+pub struct AppKeybinds {
     /// Quit the application (default: "ctrl+c")
     #[serde(default = "default_quit_keybind")]
     pub quit: String,
@@ -58,7 +77,7 @@ fn default_close_window_keybind() -> String {
     "esc".to_string()
 }
 
-impl Default for GlobalKeybinds {
+impl Default for AppKeybinds {
     fn default() -> Self {
         Self {
             quit: default_quit_keybind(),
@@ -622,8 +641,39 @@ pub fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
 }
 
 impl Config {
-/// Load keybinds from [user] section of keybinds.toml for a character
+    /// Load common (global) keybinds that apply to all characters
+    /// Returns: HashMap of global keybinds, or empty if file doesn't exist
+    pub fn load_common_keybinds() -> Result<HashMap<String, KeyBindAction>> {
+        let path = Self::common_keybinds_path()?;
+
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
+
+        // Parse the entire TOML file to get the [user] section
+        let toml_value: toml::Value = toml::from_str(&contents)
+            .context("Failed to parse common keybinds TOML")?;
+
+        // Extract [user] section if it exists
+        if let Some(user_section) = toml_value.get("user") {
+            let keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+                .context("Failed to parse [user] section from common keybinds")?;
+            Ok(keybinds)
+        } else {
+            Ok(HashMap::new())
+        }
+    }
+
+    /// Load keybinds for a character, merging global + character-specific
+    /// Character-specific keybinds override global ones with the same key
     pub fn load_keybinds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+        // Start with global/common keybinds
+        let mut keybinds = Self::load_common_keybinds()?;
+
+        // Load character-specific keybinds
         let keybinds_path = Self::keybinds_path(character)?;
 
         if keybinds_path.exists() {
@@ -636,16 +686,42 @@ impl Config {
 
             // Extract [user] section if it exists
             if let Some(user_section) = toml_value.get("user") {
-                let keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+                let character_keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
                     .context("Failed to parse [user] section")?;
-                Ok(keybinds)
-            } else {
-                // No [user] section - return defaults
-                Ok(default_keybinds())
+                // Character keybinds override global (HashMap::extend)
+                keybinds.extend(character_keybinds);
             }
+        } else if keybinds.is_empty() {
+            // No global and no character keybinds - use embedded defaults
+            keybinds = toml::from_str(DEFAULT_KEYBINDS).unwrap_or_else(|_| default_keybinds());
+        }
+
+        Ok(keybinds)
+    }
+
+    /// Load only character-specific keybinds (not merged with global)
+    /// Returns: HashMap of character keybinds, or empty if file doesn't exist
+    pub fn load_character_keybinds_only(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+        let keybinds_path = Self::keybinds_path(character)?;
+
+        if !keybinds_path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let contents = fs::read_to_string(&keybinds_path)
+            .with_context(|| format!("Failed to read character keybinds: {:?}", keybinds_path))?;
+
+        // Parse the entire TOML file to get the [user] section
+        let toml_value: toml::Value = toml::from_str(&contents)
+            .context("Failed to parse character keybinds TOML")?;
+
+        // Extract [user] section if it exists
+        if let Some(user_section) = toml_value.get("user") {
+            let keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+                .context("Failed to parse [user] section from character keybinds")?;
+            Ok(keybinds)
         } else {
-            // Return defaults from embedded file
-            Ok(toml::from_str(DEFAULT_KEYBINDS).unwrap_or_else(|_| default_keybinds()))
+            Ok(HashMap::new())
         }
     }
 
@@ -658,8 +734,143 @@ impl Config {
         Ok(())
     }
 
-    /// Validate global keybinds and log warnings for any issues
-    fn validate_global_keybinds(keybinds: &GlobalKeybinds) {
+    /// Save a single keybind to the appropriate file based on scope
+    ///
+    /// # Arguments
+    /// * `key` - The key combo (e.g., "f5", "ctrl+e")
+    /// * `action` - The keybind action
+    /// * `is_global` - If true, save to global/keybinds.toml; if false, save to character profile
+    /// * `character` - Character name (required if is_global is false)
+    pub fn save_single_keybind(
+        key: &str,
+        action: &KeyBindAction,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let path = if is_global {
+            Self::common_keybinds_path()?
+        } else {
+            Self::keybinds_path(character)?
+        };
+
+        // Load existing content or create new
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            // Ensure parent directory exists
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+
+        // Get or create [user] section
+        let user_section = toml_table
+            .entry("user".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+
+        if let toml::Value::Table(user_table) = user_section {
+            // Convert KeyBindAction to TOML value
+            let action_value = match action {
+                KeyBindAction::Action(a) => toml::Value::String(a.clone()),
+                KeyBindAction::Macro(m) => {
+                    let mut macro_table = toml::value::Table::new();
+                    macro_table.insert(
+                        "macro_text".to_string(),
+                        toml::Value::String(m.macro_text.clone()),
+                    );
+                    toml::Value::Table(macro_table)
+                }
+            };
+            user_table.insert(key.to_string(), action_value);
+        }
+
+        // Write back to file
+        let contents = toml::to_string_pretty(&toml_table)
+            .context("Failed to serialize keybinds")?;
+        fs::write(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+
+        tracing::info!(
+            "Saved keybind '{}' to {} keybinds file: {:?}",
+            key,
+            if is_global { "global" } else { "character" },
+            path
+        );
+
+        Ok(())
+    }
+
+    /// Delete a single keybind from the appropriate file based on scope
+    ///
+    /// # Arguments
+    /// * `key` - The key combo to delete
+    /// * `is_global` - If true, delete from global/keybinds.toml; if false, from character profile
+    /// * `character` - Character name (required if is_global is false)
+    pub fn delete_single_keybind(
+        key: &str,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let path = if is_global {
+            Self::common_keybinds_path()?
+        } else {
+            Self::keybinds_path(character)?
+        };
+
+        if !path.exists() {
+            tracing::warn!(
+                "Cannot delete keybind '{}' - file does not exist: {:?}",
+                key,
+                path
+            );
+            return Ok(());
+        }
+
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+
+        let mut toml_table: toml::value::Table = toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse keybinds file: {:?}", path))?;
+
+        // Get [user] section and remove the key
+        if let Some(toml::Value::Table(user_table)) = toml_table.get_mut("user") {
+            if user_table.remove(key).is_some() {
+                // Write back to file
+                let contents = toml::to_string_pretty(&toml_table)
+                    .context("Failed to serialize keybinds")?;
+                fs::write(&path, contents)
+                    .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+
+                tracing::info!(
+                    "Deleted keybind '{}' from {} keybinds file: {:?}",
+                    key,
+                    if is_global { "global" } else { "character" },
+                    path
+                );
+            } else {
+                tracing::warn!(
+                    "Keybind '{}' not found in [user] section of {:?}",
+                    key,
+                    path
+                );
+            }
+        } else {
+            tracing::warn!(
+                "No [user] section found in {:?} - cannot delete keybind '{}'",
+                path,
+                key
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Validate app keybinds and log warnings for any issues
+    fn validate_app_keybinds(keybinds: &AppKeybinds) {
         // Check each critical global keybind
         if keybinds.quit.is_empty() {
             tracing::warn!("Global keybind 'quit' is empty - application may be difficult to exit");
@@ -692,79 +903,122 @@ impl Config {
         }
     }
 
-    /// Load global keybinds from [global] section of keybinds.toml
-    pub fn load_global_keybinds(character: Option<&str>) -> Result<GlobalKeybinds> {
-        let keybinds_path = Self::keybinds_path(character)?;
+    /// Load common (global) app keybinds from global/keybinds.toml [app] section
+    /// Returns: AppKeybinds from global, or default if file doesn't exist
+    fn load_common_app_keybinds() -> Result<AppKeybinds> {
+        let path = Self::common_keybinds_path()?;
 
-        if keybinds_path.exists() {
-            let contents =
-                fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
+        if !path.exists() {
+            return Ok(AppKeybinds::default());
+        }
 
-            // Parse the entire TOML file to get the [global] section
-            let toml_value: toml::Value = toml::from_str(&contents)
-                .context("Failed to parse keybinds.toml")?;
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
 
-            // Extract [global] section if it exists
-            if let Some(global_section) = toml_value.get("global") {
-                let global_keybinds: GlobalKeybinds = global_section.clone().try_into()
-                    .context("Failed to parse [global] section")?;
+        let toml_value: toml::Value = toml::from_str(&contents)
+            .context("Failed to parse common keybinds TOML")?;
 
-                // Validate global keybinds and warn about any issues
-                Self::validate_global_keybinds(&global_keybinds);
-
-                Ok(global_keybinds)
-            } else {
-                // No [global] section - use defaults
-                tracing::warn!("No [global] section in keybinds.toml, using default global keybinds");
-                Ok(GlobalKeybinds::default())
-            }
+        // Try [app] section first
+        if let Some(app_section) = toml_value.get("app") {
+            let app_keybinds: AppKeybinds = app_section.clone().try_into()
+                .context("Failed to parse [app] section from common keybinds")?;
+            Ok(app_keybinds)
+        } else if let Some(global_section) = toml_value.get("global") {
+            // Backward compatibility
+            tracing::warn!("Using deprecated [global] section in global keybinds.toml - please rename to [app]");
+            let app_keybinds: AppKeybinds = global_section.clone().try_into()
+                .context("Failed to parse [global] section from common keybinds")?;
+            Ok(app_keybinds)
         } else {
-            // No keybinds file - use defaults
-            Ok(GlobalKeybinds::default())
+            Ok(AppKeybinds::default())
         }
     }
 
-    /// Load menu keybinds from [menu] section of keybinds.toml
-    pub fn load_menu_keybinds(character: Option<&str>) -> Result<MenuKeybinds> {
-        tracing::info!("🔑 load_menu_keybinds() called for character: {:?}", character);
+    /// Load app keybinds, checking character file first, then global, then defaults
+    /// For backward compatibility, also checks for deprecated [global] section
+    pub fn load_app_keybinds(character: Option<&str>) -> Result<AppKeybinds> {
+        // First, try character-specific keybinds
         let keybinds_path = Self::keybinds_path(character)?;
-        tracing::info!("   Keybinds path: {}", keybinds_path.display());
 
         if keybinds_path.exists() {
             let contents =
                 fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
 
-            // Parse the entire TOML file to get the [menu] section
             let toml_value: toml::Value = toml::from_str(&contents)
                 .context("Failed to parse keybinds.toml")?;
 
-            // Extract [menu] section if it exists
-            if let Some(menu_section) = toml_value.get("menu") {
-                tracing::info!("   Found [menu] section, parsing...");
-                let menu_keybinds: MenuKeybinds = menu_section.clone().try_into()
-                    .context("Failed to parse [menu] section")?;
-
-                // Log loaded values
-                tracing::info!("   ✓ Loaded menu keybinds:");
-                tracing::info!("     - navigate_up: {}", menu_keybinds.navigate_up);
-                tracing::info!("     - navigate_down: {}", menu_keybinds.navigate_down);
-                tracing::info!("     - next_field: {}", menu_keybinds.next_field);
-                tracing::info!("     - previous_field: {}", menu_keybinds.previous_field);
-                tracing::info!("     - select: {}", menu_keybinds.select);
-                tracing::info!("     - cancel: {}", menu_keybinds.cancel);
-                tracing::info!("     - save: {}", menu_keybinds.save);
-
-                Ok(menu_keybinds)
-            } else {
-                // No [menu] section - use defaults
-                tracing::warn!("   ⚠ No [menu] section in keybinds.toml, using default menu keybinds");
-                Ok(MenuKeybinds::default())
+            // Check if character file has [app] or [global] section
+            if let Some(app_section) = toml_value.get("app") {
+                let app_keybinds: AppKeybinds = app_section.clone().try_into()
+                    .context("Failed to parse [app] section")?;
+                Self::validate_app_keybinds(&app_keybinds);
+                return Ok(app_keybinds);
+            } else if let Some(global_section) = toml_value.get("global") {
+                tracing::warn!("Using deprecated [global] section in keybinds.toml - please rename to [app]");
+                let app_keybinds: AppKeybinds = global_section.clone().try_into()
+                    .context("Failed to parse [global] section")?;
+                Self::validate_app_keybinds(&app_keybinds);
+                return Ok(app_keybinds);
             }
+            // Character file exists but has no [app] section - fall through to global
+        }
+
+        // Try global keybinds
+        let app_keybinds = Self::load_common_app_keybinds()?;
+        Self::validate_app_keybinds(&app_keybinds);
+        Ok(app_keybinds)
+    }
+
+    /// Load common (global) menu keybinds from global/keybinds.toml [menu] section
+    /// Returns: MenuKeybinds from global, or default if file doesn't exist
+    fn load_common_menu_keybinds() -> Result<MenuKeybinds> {
+        let path = Self::common_keybinds_path()?;
+
+        if !path.exists() {
+            return Ok(MenuKeybinds::default());
+        }
+
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
+
+        let toml_value: toml::Value = toml::from_str(&contents)
+            .context("Failed to parse common keybinds TOML")?;
+
+        if let Some(menu_section) = toml_value.get("menu") {
+            let menu_keybinds: MenuKeybinds = menu_section.clone().try_into()
+                .context("Failed to parse [menu] section from common keybinds")?;
+            Ok(menu_keybinds)
         } else {
-            // No keybinds file - use defaults
-            tracing::warn!("   ⚠ No keybinds file found, using default menu keybinds");
             Ok(MenuKeybinds::default())
         }
+    }
+
+    /// Load menu keybinds, checking character file first, then global, then defaults
+    pub fn load_menu_keybinds(character: Option<&str>) -> Result<MenuKeybinds> {
+        tracing::debug!("load_menu_keybinds() called for character: {:?}", character);
+
+        // First, try character-specific keybinds
+        let keybinds_path = Self::keybinds_path(character)?;
+
+        if keybinds_path.exists() {
+            let contents =
+                fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
+
+            let toml_value: toml::Value = toml::from_str(&contents)
+                .context("Failed to parse keybinds.toml")?;
+
+            // Check if character file has [menu] section
+            if let Some(menu_section) = toml_value.get("menu") {
+                tracing::debug!("Found [menu] section in character keybinds");
+                let menu_keybinds: MenuKeybinds = menu_section.clone().try_into()
+                    .context("Failed to parse [menu] section")?;
+                return Ok(menu_keybinds);
+            }
+            // Character file exists but has no [menu] section - fall through to global
+        }
+
+        // Try global keybinds
+        Self::load_common_menu_keybinds()
     }
 }
 
@@ -1296,12 +1550,12 @@ mod tests {
     }
 
     // ===========================================
-    // GlobalKeybinds tests
+    // AppKeybinds tests
     // ===========================================
 
     #[test]
-    fn test_global_keybinds_default() {
-        let keybinds = GlobalKeybinds::default();
+    fn test_app_keybinds_default() {
+        let keybinds = AppKeybinds::default();
         assert_eq!(keybinds.quit, "ctrl+c");
         assert_eq!(keybinds.start_search, "ctrl+f");
         assert_eq!(keybinds.next_search_match, "ctrl+pagedown");
@@ -1310,8 +1564,8 @@ mod tests {
     }
 
     #[test]
-    fn test_global_keybinds_clone() {
-        let keybinds = GlobalKeybinds::default();
+    fn test_app_keybinds_clone() {
+        let keybinds = AppKeybinds::default();
         let cloned = keybinds.clone();
         assert_eq!(cloned.quit, keybinds.quit);
         assert_eq!(cloned.start_search, keybinds.start_search);

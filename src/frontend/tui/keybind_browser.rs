@@ -19,6 +19,7 @@ pub struct KeybindEntry {
     pub key_combo: String,
     pub action_type: String, // "Action" or "Macro"
     pub action_value: String,
+    pub is_global: bool,     // true = from global/, false = from character profile
 }
 
 /// Scrollable inventory of current keybinding entries with optional drag handle.
@@ -37,29 +38,78 @@ pub struct KeybindBrowser {
 }
 
 impl KeybindBrowser {
+    /// Create browser from keybinds with source tracking
+    /// global_keybinds: keybinds from global/keybinds.toml
+    /// character_keybinds: keybinds from profiles/{char}/keybinds.toml
+    pub fn new_with_source(
+        global_keybinds: &HashMap<String, crate::config::KeyBindAction>,
+        character_keybinds: &HashMap<String, crate::config::KeyBindAction>,
+    ) -> Self {
+        let mut entries: Vec<KeybindEntry> = Vec::new();
+
+        // Add global keybinds (mark as is_global = true)
+        for (key_combo, action) in global_keybinds {
+            // Skip if overridden by character keybind
+            if character_keybinds.contains_key(key_combo) {
+                continue;
+            }
+            let (action_type, action_value) = Self::format_action(action);
+            entries.push(KeybindEntry {
+                key_combo: key_combo.clone(),
+                action_type,
+                action_value,
+                is_global: true,
+            });
+        }
+
+        // Add character keybinds (mark as is_global = false)
+        for (key_combo, action) in character_keybinds {
+            let (action_type, action_value) = Self::format_action(action);
+            entries.push(KeybindEntry {
+                key_combo: key_combo.clone(),
+                action_type,
+                action_value,
+                is_global: false,
+            });
+        }
+
+        Self::from_entries(entries)
+    }
+
+    /// Legacy constructor - treats all keybinds as character-specific
     pub fn new(keybinds: &HashMap<String, crate::config::KeyBindAction>) -> Self {
-        let mut entries: Vec<KeybindEntry> = keybinds
+        let entries: Vec<KeybindEntry> = keybinds
             .iter()
             .map(|(key_combo, action)| {
-                let (action_type, action_value) = match action {
-                    crate::config::KeyBindAction::Action(a) => ("Action".to_string(), a.clone()),
-                    crate::config::KeyBindAction::Macro(m) => {
-                        // Escape control characters for display
-                        let escaped = m
-                            .macro_text
-                            .replace('\r', "\\r")
-                            .replace('\n', "\\n")
-                            .replace('\t', "\\t");
-                        ("Macro".to_string(), escaped)
-                    }
-                };
+                let (action_type, action_value) = Self::format_action(action);
                 KeybindEntry {
                     key_combo: key_combo.clone(),
                     action_type,
                     action_value,
+                    is_global: false, // Legacy: assume character-specific
                 }
             })
             .collect();
+
+        Self::from_entries(entries)
+    }
+
+    fn format_action(action: &crate::config::KeyBindAction) -> (String, String) {
+        match action {
+            crate::config::KeyBindAction::Action(a) => ("Action".to_string(), a.clone()),
+            crate::config::KeyBindAction::Macro(m) => {
+                // Escape control characters for display
+                let escaped = m
+                    .macro_text
+                    .replace('\r', "\\r")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t");
+                ("Macro".to_string(), escaped)
+            }
+        }
+    }
+
+    fn from_entries(mut entries: Vec<KeybindEntry>) -> Self {
 
         // Sort by action type (Actions first, then Macros), then by key combo
         entries.sort_by(|a, b| {
@@ -362,11 +412,15 @@ impl KeybindBrowser {
             let is_selected = idx == self.selected_index;
             let current_y = list_y + render_row as u16;
 
-            // Format as 3 columns: Key (20 chars) | Type (10 chars) | Value (remaining)
-            let key_width = 20;
+            // Format as 4 columns: Scope (4) | Key (17 chars) | Type (10 chars) | Value (remaining)
+            let scope_width = 4;  // "[G] " or "[C] "
+            let key_width = 17;
             let type_width = 10;
-            let value_start = key_width + type_width;
+            let value_start = scope_width + key_width + type_width;
             let value_width = (width as usize).saturating_sub(value_start + 4); // -4 for borders and padding
+
+            // Scope indicator [G] or [C]
+            let scope_text = if entry.is_global { "[G] " } else { "[C] " };
 
             // Truncate or pad key combo
             let key_text = if entry.key_combo.len() > key_width {
@@ -389,13 +443,33 @@ impl KeybindBrowser {
             };
 
             let entry_color = crossterm_bridge::to_ratatui_color(if is_selected  {
-            theme.browser_item_focused
-        } else {
-            theme.browser_item_normal
-        });
+                theme.browser_item_focused
+            } else {
+                theme.browser_item_normal
+            });
+
+            // Scope indicator color (dimmer for global)
+            let scope_color = crossterm_bridge::to_ratatui_color(if is_selected {
+                theme.browser_item_focused
+            } else if entry.is_global {
+                theme.text_disabled
+            } else {
+                theme.browser_item_normal
+            });
+
+            // Render scope column [G]/[C]
+            let scope_x = x + 2;
+            for (i, ch) in scope_text.chars().enumerate() {
+                if (scope_x + i as u16) < (x + width - 1) {
+                    buf[(scope_x + i as u16, current_y)]
+                        .set_char(ch)
+                        .set_fg(scope_color)
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                }
+            }
 
             // Render key combo column
-            let key_x = x + 2;
+            let key_x = scope_x + scope_width as u16;
             for (i, ch) in key_text.chars().enumerate() {
                 if (key_x + i as u16) < (x + width - 1) {
                     buf[(key_x + i as u16, current_y)]
@@ -490,18 +564,63 @@ impl KeybindBrowser {
         // Would need to be implemented based on browser's filter requirements
     }
 
-    /// Update the list of keybind entries
+    /// Update the list of keybind entries with source tracking
+    ///
+    /// # Arguments
+    /// * `global_keybinds` - Keybinds from global/keybinds.toml
+    /// * `character_keybinds` - Keybinds from profiles/{char}/keybinds.toml (overrides global)
+    pub fn update_items_with_source(
+        &mut self,
+        global_keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
+        character_keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
+    ) {
+        self.entries.clear();
+
+        // Add global keybinds first (will be shown as [G])
+        for (key, action) in global_keybinds {
+            // Skip if overridden by character keybind
+            if character_keybinds.contains_key(key) {
+                continue;
+            }
+            self.entries.push(KeybindEntry {
+                key_combo: key.clone(),
+                action_type: action.type_name().to_string(),
+                action_value: action.display_value(),
+                is_global: true,
+            });
+        }
+
+        // Add character keybinds (will be shown as [C])
+        for (key, action) in character_keybinds {
+            self.entries.push(KeybindEntry {
+                key_combo: key.clone(),
+                action_type: action.type_name().to_string(),
+                action_value: action.display_value(),
+                is_global: false,
+            });
+        }
+
+        // Sort by key combo
+        self.entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
+
+        // Reset selection if out of bounds
+        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
+            self.selected_index = self.entries.len() - 1;
+        }
+    }
+
+    /// Update the list of keybind entries (legacy - all marked as global)
+    ///
+    /// Prefer `update_items_with_source` for proper [G]/[C] indicators.
+    #[allow(dead_code)]
     pub fn update_items(&mut self, keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>) {
         self.entries.clear();
         for (key, action) in keybinds {
-            let (action_type, value) = match action {
-                crate::config::KeyBindAction::Action(a) => ("Action".to_string(), a.clone()),
-                crate::config::KeyBindAction::Macro(m) => ("Macro".to_string(), m.macro_text.clone()),
-            };
             self.entries.push(KeybindEntry {
                 key_combo: key.clone(),
-                action_type,
-                action_value: value,
+                action_type: action.type_name().to_string(),
+                action_value: action.display_value(),
+                is_global: true, // Default to global when source unknown
             });
         }
         // Sort by key combo

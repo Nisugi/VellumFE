@@ -31,9 +31,11 @@ pub enum FormResult {
     Save {
         name: String,
         pattern: HighlightPattern,
+        is_global: bool, // true = save to global/, false = save to character profile
     },
     Delete {
         name: String,
+        is_global: bool, // true = delete from global/, false = delete from character profile
     },
     Cancel,
 }
@@ -70,6 +72,9 @@ pub struct HighlightFormWidget {
 
     // Redirect dropdown (Off=0, Only=1, Copy=2)
     redirect_mode_index: usize,
+
+    // Scope (Global vs Character)
+    is_global: bool, // true = save to global/, false = save to character profile
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -171,6 +176,7 @@ impl HighlightFormWidget {
             sound_files: Self::load_sound_files(),
             sound_file_index: 0, // Default to "none"
             redirect_mode_index: 0, // Default to "Off"
+            is_global: true, // Default to global scope
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -257,15 +263,25 @@ impl HighlightFormWidget {
         Self::new_edit(name, &pattern)
     }
 
+    /// Set the scope (global vs character) for this form
+    pub fn set_scope(&mut self, is_global: bool) {
+        self.is_global = is_global;
+    }
+
+    /// Get the current scope setting
+    pub fn is_global(&self) -> bool {
+        self.is_global
+    }
+
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 15; // 0-14
+        self.focused_field = (self.focused_field + 1) % 17; // 0-16 (added scope fields 15-16)
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            14
+            16
         } else {
             self.focused_field - 1
         };
@@ -411,6 +427,8 @@ impl HighlightFormWidget {
                     12 => self.fast_parse = !self.fast_parse,
                     13 => self.squelch = !self.squelch,
                     14 => self.silent_prompt = !self.silent_prompt,
+                    15 => self.is_global = true,  // Select "Global" scope
+                    16 => self.is_global = false, // Select "Character" scope
                     _ => {}
                 }
                 None
@@ -560,6 +578,7 @@ impl HighlightFormWidget {
         Some(FormResult::Save {
             name: name.to_string(),
             pattern,
+            is_global: self.is_global,
         })
     }
 
@@ -1085,6 +1104,93 @@ impl HighlightFormWidget {
             } else {
                 theme.form_label
             }))
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        current_y += 1;
+
+        // Fields 15-16: Scope radio buttons (Global / Character)
+        let scope_label = "Scope: ";
+        for (i, ch) in scope_label.chars().enumerate() {
+            buf[(x + 2 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        // Field 15: Global radio button
+        let global_start = x + 2 + scope_label.len() as u16;
+        buf[(global_start, current_y)]
+            .set_char('(')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(global_start + 1, current_y)]
+            .set_char(if self.is_global { '●' } else { ' ' })
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(global_start + 2, current_y)]
+            .set_char(')')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        let global_label = " Global  ";
+        for (i, ch) in global_label.chars().enumerate() {
+            buf[(global_start + 3 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                }))
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        // Field 16: Character radio button
+        let char_start = global_start + 3 + global_label.len() as u16;
+        buf[(char_start, current_y)]
+            .set_char('(')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(char_start + 1, current_y)]
+            .set_char(if !self.is_global { '●' } else { ' ' })
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        buf[(char_start + 2, current_y)]
+            .set_char(')')
+            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            }))
+            .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        let char_label = " Character";
+        for (i, ch) in char_label.chars().enumerate() {
+            buf[(char_start + 3 + i as u16, current_y)]
+                .set_char(ch)
+                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                }))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
     }

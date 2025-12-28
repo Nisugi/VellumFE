@@ -171,10 +171,15 @@ pub fn handle_menu_action(
                 app_core.needs_render = true;
             }
             "action:highlights" => {
-                // Open highlight browser
+                // Open highlight browser with source tracking
+                let global_highlights = crate::config::Config::load_common_highlights().unwrap_or_default();
+                let character_highlights = crate::config::Config::load_character_highlights_only(
+                    app_core.config.character.as_deref()
+                ).unwrap_or_default();
                 frontend.highlight_browser =
-                    Some(crate::frontend::tui::highlight_browser::HighlightBrowser::new(
-                        &app_core.config.highlights,
+                    Some(crate::frontend::tui::highlight_browser::HighlightBrowser::new_with_source(
+                        &global_highlights,
+                        &character_highlights,
                     ));
                 // Close menus so focus goes to the browser
                 close_all_menus(&mut app_core.ui_state);
@@ -189,10 +194,18 @@ pub fn handle_menu_action(
                 app_core.ui_state.input_mode = InputMode::HighlightForm;
             }
             "action:keybinds" => {
-                // Open keybind browser
+                // Open keybind browser with source tracking ([G]/[C] indicators)
+                // Load global and character keybinds separately to show their origin
+                let global_keybinds = crate::config::Config::load_common_keybinds()
+                    .unwrap_or_default();
+                let character_keybinds = crate::config::Config::load_character_keybinds_only(
+                    app_core.config.connection.character.as_deref()
+                ).unwrap_or_default();
+
                 frontend.keybind_browser = Some(
-                    crate::frontend::tui::keybind_browser::KeybindBrowser::new(
-                        &app_core.config.keybinds,
+                    crate::frontend::tui::keybind_browser::KeybindBrowser::new_with_source(
+                        &global_keybinds,
+                        &character_keybinds,
                     ),
                 );
                 // Close menus so focus moves to the browser
@@ -209,10 +222,21 @@ pub fn handle_menu_action(
                 app_core.ui_state.input_mode = InputMode::KeybindForm;
             }
             "action:colors" => {
-                // Open color palette browser
+                // Open color palette browser with source tracking for [G]/[C] indicators
+                let global_colors = match crate::config::ColorConfig::load_common_colors() {
+                    Ok(c) => c.color_palette,
+                    Err(_) => Vec::new(),
+                };
+                let character_colors = match crate::config::ColorConfig::load_character_colors_only(
+                    app_core.config.character.as_deref()
+                ) {
+                    Ok(c) => c.color_palette,
+                    Err(_) => Vec::new(),
+                };
                 frontend.color_palette_browser = Some(
-                    crate::frontend::tui::color_palette_browser::ColorPaletteBrowser::new(
-                        app_core.config.colors.color_palette.clone(),
+                    crate::frontend::tui::color_palette_browser::ColorPaletteBrowser::new_with_source(
+                        &global_colors,
+                        &character_colors,
                     ),
                 );
                 close_all_menus(&mut app_core.ui_state);
@@ -251,8 +275,16 @@ pub fn handle_menu_action(
                 app_core.ui_state.input_mode = InputMode::SpellColorForm;
             }
             "action:settings" => {
-                // Open settings editor
-                let settings_items = menu_builders::build_settings_items(&app_core.config);
+                // Open settings editor with source tracking
+                // Check if character-specific config exists to determine setting sources
+                let character_config_exists = crate::config::Config::load_character_config_only(
+                    app_core.config.character.as_deref()
+                ).ok().flatten().is_some();
+
+                let settings_items = menu_builders::build_settings_items_with_source(
+                    &app_core.config,
+                    character_config_exists,
+                );
                 frontend.settings_editor = Some(
                     crate::frontend::tui::settings_editor::SettingsEditor::new(settings_items),
                 );

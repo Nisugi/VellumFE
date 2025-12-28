@@ -31,11 +31,12 @@ pub struct ColorForm {
     name: TextArea<'static>,
     color: TextArea<'static>,
     category: TextArea<'static>,
+    is_global: bool, // true = save to global/, false = save to character profile
     favorite: bool,
     original_slot: Option<u8>, // Preserved slot assignment for editing
 
     // UI state
-    focused_field: usize, // 0=name, 1=color, 2=category, 3=favorite
+    focused_field: usize, // 0=name, 1=category, 2=color, 3=scope, 4=favorite
     mode: FormMode,
 
     // Popup position (for dragging)
@@ -62,6 +63,7 @@ impl ColorForm {
             name,
             color,
             category,
+            is_global: true, // Default to global for new colors
             favorite: false,
             original_slot: None, // New colors have no slot assignment
             focused_field: 0,
@@ -74,8 +76,13 @@ impl ColorForm {
         }
     }
 
-    /// Create a form for editing an existing color
+    /// Create a form for editing an existing color (without scope info - defaults to global)
     pub fn new_edit(palette_color: &PaletteColor) -> Self {
+        Self::new_edit_with_scope(palette_color, true)
+    }
+
+    /// Create a form for editing an existing color with scope tracking
+    pub fn new_edit_with_scope(palette_color: &PaletteColor, is_global: bool) -> Self {
         let mut original_name = ['\0'; 64];
         let original_len = palette_color.name.len().min(64);
         for (i, ch) in palette_color.name.chars().take(64).enumerate() {
@@ -95,6 +102,7 @@ impl ColorForm {
             name,
             color,
             category,
+            is_global, // Use the provided scope
             favorite: palette_color.favorite,
             original_slot: palette_color.slot, // Preserve slot assignment when editing
             focused_field: 0,
@@ -108,6 +116,11 @@ impl ColorForm {
             drag_offset_x: 0,
             drag_offset_y: 0,
         }
+    }
+
+    /// Get the current scope setting
+    pub fn get_is_global(&self) -> bool {
+        self.is_global
     }
 
     pub fn handle_input(&mut self, key_event: KeyEvent) -> Option<FormAction> {
@@ -151,14 +164,23 @@ impl ColorForm {
 
         match action {
             MenuAction::Select => {
-                // Enter key - toggle if on checkbox, otherwise do nothing (field navigation handled elsewhere)
-                if self.focused_field == 3 {
-                    self.favorite = !self.favorite;
-                    None
-                } else {
-                    // On text fields, Enter doesn't do anything special
-                    // (NextField is handled by MenuAction::NextField routing)
-                    None
+                // Enter key - toggle if on scope or favorite checkbox, otherwise do nothing
+                match self.focused_field {
+                    3 => {
+                        // Scope field toggle
+                        self.is_global = !self.is_global;
+                        None
+                    }
+                    4 => {
+                        // Favorite field toggle
+                        self.favorite = !self.favorite;
+                        None
+                    }
+                    _ => {
+                        // On text fields, Enter doesn't do anything special
+                        // (NextField is handled by MenuAction::NextField routing)
+                        None
+                    }
                 }
             }
             MenuAction::Save => {
@@ -170,20 +192,24 @@ impl ColorForm {
     }
 
     fn next_field(&mut self) {
+        // 0=name, 1=category, 2=color, 3=scope, 4=favorite
         self.focused_field = match self.focused_field {
             0 => 1,
             1 => 2,
             2 => 3,
+            3 => 4,
             _ => 0,
         };
     }
 
     fn previous_field(&mut self) {
+        // 0=name, 1=category, 2=color, 3=scope, 4=favorite
         self.focused_field = match self.focused_field {
-            0 => 3,
+            0 => 4,
             1 => 0,
             2 => 1,
-            _ => 2,
+            3 => 2,
+            _ => 3,
         };
     }
 
@@ -235,6 +261,7 @@ impl ColorForm {
                 slot: self.original_slot, // Preserve slot assignment when editing
             },
             original_name,
+            is_global: self.is_global,
         })
     }
 
@@ -294,7 +321,7 @@ impl ColorForm {
         theme: &crate::theme::AppTheme,
     ) {
         let popup_width = 52;
-        let popup_height = 9;
+        let popup_height = 10; // 5 fields + title + border + status
 
         // Center on first render
         if self.popup_x == 0 && self.popup_y == 0 {
@@ -418,10 +445,25 @@ impl ColorForm {
         );
         y += 1;
 
-        // Favorite row
-        Self::render_favorite_row(
+        // Scope row (field 3)
+        Self::render_scope_row(
             focused,
             3,
+            "Scope:",
+            self.is_global,
+            self.popup_x + 2,
+            y,
+            popup_width,
+            buf,
+            textarea_bg,
+            theme,
+        );
+        y += 1;
+
+        // Favorite row (field 4)
+        Self::render_favorite_row(
+            focused,
+            4,
             "Favorite:",
             self.favorite,
             self.popup_x + 2,
@@ -603,6 +645,50 @@ impl ColorForm {
         buf.set_string(x + 10, y, val_text, base_style);
     }
 
+    fn render_scope_row(
+        focused_field: usize,
+        field_id: usize,
+        label: &str,
+        is_global: bool,
+        x: u16,
+        y: u16,
+        _width: u16,
+        buf: &mut Buffer,
+        textarea_bg: Color,
+        theme: &crate::theme::AppTheme,
+    ) {
+        let is_focused = focused_field == field_id;
+        let label_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(super::colors::rgb_to_ratatui_color(100, 149, 237))
+        };
+        let label_span = Span::styled(label, label_style);
+        let label_area = Rect {
+            x,
+            y,
+            width: 14,
+            height: 1,
+        };
+        let label_para = Paragraph::new(Line::from(label_span));
+        RatatuiWidget::render(label_para, label_area, buf);
+
+        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let selected_style = Style::default()
+            .fg(Color::Green)
+            .bg(textarea_bg)
+            .add_modifier(Modifier::BOLD);
+
+        // Render radio button style: [●] Global  [ ] Character
+        let global_indicator = if is_global { "[●]" } else { "[ ]" };
+        let char_indicator = if is_global { "[ ]" } else { "[●]" };
+
+        buf.set_string(x + 10, y, global_indicator, if is_global { selected_style } else { base_style });
+        buf.set_string(x + 14, y, "Global  ", if is_global { selected_style } else { base_style });
+        buf.set_string(x + 22, y, char_indicator, if !is_global { selected_style } else { base_style });
+        buf.set_string(x + 26, y, "Character", if !is_global { selected_style } else { base_style });
+    }
+
     /// Parse hex color string to ratatui Color
     fn parse_hex_color(hex: &str) -> Option<Color> {
         // Use centralized mode-aware color parser
@@ -626,6 +712,7 @@ pub enum FormAction {
     Save {
         color: PaletteColor,
         original_name: Option<String>,
+        is_global: bool, // true = save to global/, false = save to character profile
     },
     Delete,
     Cancel,
@@ -665,7 +752,7 @@ impl FieldNavigable for ColorForm {
     }
 
     fn field_count(&self) -> usize {
-        4
+        5 // name, category, color, scope, favorite
     }
 
     fn current_field(&self) -> usize {
@@ -685,11 +772,18 @@ impl super::widget_traits::Saveable for ColorForm {
 
 impl Toggleable for ColorForm {
     fn toggle_focused(&mut self) -> Option<bool> {
-        if self.focused_field == 3 {
-            self.favorite = !self.favorite;
-            Some(self.favorite)
-        } else {
-            None
+        match self.focused_field {
+            3 => {
+                // Scope field toggle
+                self.is_global = !self.is_global;
+                Some(self.is_global)
+            }
+            4 => {
+                // Favorite field toggle
+                self.favorite = !self.favorite;
+                Some(self.favorite)
+            }
+            _ => None,
         }
     }
 }
