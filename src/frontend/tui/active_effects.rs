@@ -145,6 +145,27 @@ impl ActiveEffects {
 pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         self.container.render_with_focus(area, buf, focused);
     }
+
+    /// Convert mouse position to text coordinates
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        self.container.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+    }
+
+    /// Extract text from a selection range
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        self.container.extract_selection_text(start_line, start_col, end_line, end_col)
+    }
 }
 
 #[cfg(test)]

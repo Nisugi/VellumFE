@@ -267,87 +267,71 @@ impl AppCore {
         true
     }
 
-    fn perf_overlay_data(&self, enabled: bool) -> PerformanceWidgetData {
-        if let Some(WindowDef::Performance { data, .. }) =
-            Config::get_window_template("performance")
-        {
-            let mut data = data.clone();
-            data.enabled = enabled;
-            return data;
-        }
-
+    /// Build performance overlay data from config.ui settings
+    pub fn perf_overlay_data(&self, enabled: bool) -> PerformanceWidgetData {
         PerformanceWidgetData {
             enabled,
-            show_fps: true,
-            show_frame_times: false,
-            show_render_times: true,
-            show_ui_times: true,
-            show_wrap_times: true,
-            show_net: true,
-            show_parse: true,
-            show_events: true,
-            show_memory: true,
-            show_lines: true,
-            show_uptime: true,
-            show_jitter: false,
-            show_frame_spikes: false,
-            show_event_lag: false,
-            show_memory_delta: true,
+            show_fps: self.config.ui.perf_show_fps,
+            show_frame_times: self.config.ui.perf_show_frame_times,
+            show_render_times: self.config.ui.perf_show_render_times,
+            show_ui_times: self.config.ui.perf_show_ui_times,
+            show_wrap_times: self.config.ui.perf_show_wrap_times,
+            show_net: self.config.ui.perf_show_net,
+            show_parse: self.config.ui.perf_show_parse,
+            show_events: self.config.ui.perf_show_events,
+            show_memory: self.config.ui.perf_show_memory,
+            show_lines: self.config.ui.perf_show_lines,
+            show_uptime: self.config.ui.perf_show_uptime,
+            show_jitter: self.config.ui.perf_show_jitter,
+            show_frame_spikes: self.config.ui.perf_show_frame_spikes,
+            show_event_lag: self.config.ui.perf_show_event_lag,
+            show_memory_delta: self.config.ui.perf_show_memory_delta,
         }
     }
 
     fn build_perf_overlay_def(&self) -> WindowDef {
-        if let Some(WindowDef::Performance { base, data }) =
+        // Get base from template if available, otherwise use defaults
+        let base = if let Some(WindowDef::Performance { base, .. }) =
             Config::get_window_template("performance")
         {
-            return WindowDef::Performance { base, data };
-        }
-
-        let base = WindowBase {
-            name: "performance".to_string(),
-            row: self.config.ui.perf_stats_y,
-            col: self.config.ui.perf_stats_x,
-            rows: self.config.ui.perf_stats_height.max(1),
-            cols: self.config.ui.perf_stats_width.max(1),
-            show_border: true,
-            border_style: "single".to_string(),
-            border_sides: BorderSides::default(),
-            border_color: None,
-            show_title: true,
-            title: Some("Performance Stats".to_string()),
-            title_position: "top-left".to_string(),
-            background_color: None,
-            text_color: None,
-            transparent_background: false,
-            locked: false,
-            min_rows: None,
-            max_rows: None,
-            min_cols: None,
-            max_cols: None,
-            visible: true,
-            content_align: None,
+            let mut base = base;
+            // Override position/size with config.ui settings
+            base.row = self.config.ui.perf_stats_y;
+            base.col = self.config.ui.perf_stats_x;
+            base.rows = self.config.ui.perf_stats_height.max(1);
+            base.cols = self.config.ui.perf_stats_width.max(1);
+            base
+        } else {
+            WindowBase {
+                name: "performance".to_string(),
+                row: self.config.ui.perf_stats_y,
+                col: self.config.ui.perf_stats_x,
+                rows: self.config.ui.perf_stats_height.max(1),
+                cols: self.config.ui.perf_stats_width.max(1),
+                show_border: true,
+                border_style: "single".to_string(),
+                border_sides: BorderSides::default(),
+                border_color: None,
+                show_title: true,
+                title: Some("Performance Stats".to_string()),
+                title_position: "top-left".to_string(),
+                background_color: None,
+                text_color: None,
+                transparent_background: false,
+                locked: false,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visible: true,
+                content_align: None,
+            }
         };
 
+        // Use config.ui settings for metric toggles
         WindowDef::Performance {
             base,
-            data: PerformanceWidgetData {
-                enabled: true,
-                show_fps: true,
-                show_frame_times: true,
-                show_render_times: true,
-                show_ui_times: true,
-                show_wrap_times: true,
-                show_net: true,
-                show_parse: true,
-                show_events: true,
-                show_memory: true,
-                show_lines: true,
-                show_uptime: true,
-                show_jitter: true,
-                show_frame_spikes: true,
-                show_event_lag: true,
-                show_memory_delta: true,
-            },
+            data: self.perf_overlay_data(true),
         }
     }
 }

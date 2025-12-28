@@ -3,7 +3,7 @@ use super::*;
 impl TuiFrontend {
     pub fn ensure_command_input_exists(&mut self, window_name: &str) {
         if !self.widget_manager.command_inputs.contains_key(window_name) {
-            let mut cmd_input = command_input::CommandInput::new(1000);
+            let mut cmd_input = command_input::CommandInput::new(100);
             cmd_input.set_title("Command".to_string());
             self.widget_manager.command_inputs
                 .insert(window_name.to_string(), cmd_input);

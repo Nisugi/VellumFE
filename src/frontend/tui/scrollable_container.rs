@@ -467,4 +467,82 @@ impl ScrollableContainer {
         // Return the item
         self.items.get(item_id)
     }
+
+    /// Convert mouse position to text coordinates
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        let border_offset = if self.show_border { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            return None;
+        }
+
+        let line_idx = self.scroll_offset + (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        Some((line_idx, col_offset))
+    }
+
+    /// Extract text from a selection range
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        let mut result = String::new();
+
+        for line_idx in start_line..=end_line.min(self.item_order.len().saturating_sub(1)) {
+            if line_idx >= self.item_order.len() {
+                break;
+            }
+
+            let item_id = &self.item_order[line_idx];
+            let item = match self.items.get(item_id) {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let line_text = if self.show_alternate_text {
+                item.alternate_text.as_deref().unwrap_or(&item.text)
+            } else {
+                &item.text
+            };
+            let line_len = line_text.chars().count();
+
+            if start_line == end_line {
+                // Single line selection
+                let start = start_col.min(line_len);
+                let end = end_col.min(line_len);
+                if start < end {
+                    result.push_str(&line_text.chars().skip(start).take(end - start).collect::<String>());
+                }
+            } else if line_idx == start_line {
+                // First line of multi-line selection
+                let start = start_col.min(line_len);
+                result.push_str(&line_text.chars().skip(start).collect::<String>());
+                result.push('\n');
+            } else if line_idx == end_line {
+                // Last line of multi-line selection
+                let end = end_col.min(line_len);
+                result.push_str(&line_text.chars().take(end).collect::<String>());
+            } else {
+                // Middle lines - take all
+                result.push_str(line_text);
+                result.push('\n');
+            }
+        }
+
+        result
+    }
 }

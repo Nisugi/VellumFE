@@ -92,14 +92,14 @@ pub enum GameType {
 
 impl GameType {
     /// Determine game type from game string (e.g., "prime", "dr", "drplatinum")
+    /// Defaults to GS4 when game string is None or unknown (most common case)
     pub fn from_game_string(game: Option<&str>) -> Option<Self> {
-        game.map(|g| {
-            if g.to_ascii_lowercase().starts_with("dr") {
-                GameType::DR
-            } else {
-                GameType::GS4
-            }
-        })
+        match game {
+            Some(g) if g.to_ascii_lowercase().starts_with("dr") => Some(GameType::DR),
+            // Default to GS4 for all other cases (including None)
+            // This ensures GS4-specific templates show when connecting via Lich without --game
+            _ => Some(GameType::GS4),
+        }
     }
 }
 
@@ -1315,6 +1315,9 @@ pub struct DialogPosition {
 pub struct SavedDialogPositions {
     #[serde(default)]
     pub dialogs: HashMap<String, DialogPosition>,
+    /// Saved positions for ephemeral container windows (keyed by container title)
+    #[serde(default)]
+    pub containers: HashMap<String, DialogPosition>,
 }
 
 fn default_dashboard_layout() -> String {
@@ -1669,7 +1672,8 @@ pub struct EncumbranceWidgetData {
     pub color_critical: Option<String>,
 }
 
-/// MiniVitals widget data (horizontal 4-bar layout) - GS4 only
+/// MiniVitals widget data (horizontal 4-bar layout)
+/// Works with both GS4 (mana) and DR (concentration)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct MiniVitalsWidgetData {
     /// Show numbers only (226/300 instead of "health 226/300") - default false
@@ -1678,6 +1682,11 @@ pub struct MiniVitalsWidgetData {
     /// Show current value only (226 instead of 226/300) - default false
     #[serde(default)]
     pub current_only: bool,
+    /// Order of bars to display. Valid values: "health", "mana", "stamina", "spirit"
+    /// Default: ["health", "mana", "stamina", "spirit"]
+    /// Example: ["health", "stamina", "mana", "spirit"] puts stamina before mana
+    #[serde(default = "default_minivitals_bar_order", skip_serializing_if = "is_default_bar_order")]
+    pub bar_order: Vec<String>,
     /// Health bar color (default: red)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_color: Option<String>,
@@ -1690,6 +1699,9 @@ pub struct MiniVitalsWidgetData {
     /// Spirit bar color (default: magenta)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spirit_color: Option<String>,
+    /// Concentration bar color (default: cyan) - DR specific
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concentration_color: Option<String>,
 }
 
 /// Betrayer widget data (blood pool progress bar + item list) - GS4 only
@@ -1705,6 +1717,19 @@ pub struct BetrayerWidgetData {
 
 fn default_true() -> bool {
     true
+}
+
+pub fn default_minivitals_bar_order() -> Vec<String> {
+    vec![
+        "health".to_string(),
+        "mana".to_string(),
+        "stamina".to_string(),
+        "spirit".to_string(),
+    ]
+}
+
+fn is_default_bar_order(order: &Vec<String>) -> bool {
+    *order == default_minivitals_bar_order()
 }
 
 /// Window definition - enum with widget-specific variants
@@ -2136,6 +2161,37 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
+    // Performance overlay metric toggles
+    #[serde(default = "default_true")]
+    pub perf_show_fps: bool,
+    #[serde(default)]
+    pub perf_show_frame_times: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_render_times: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_ui_times: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_wrap_times: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_net: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_parse: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_events: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_memory: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_lines: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_uptime: bool,
+    #[serde(default)]
+    pub perf_show_jitter: bool,
+    #[serde(default)]
+    pub perf_show_frame_spikes: bool,
+    #[serde(default)]
+    pub perf_show_event_lag: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_memory_delta: bool,
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
@@ -2168,6 +2224,21 @@ impl Default for UiConfig {
             perf_stats_y: default_perf_stats_y(),
             perf_stats_width: default_perf_stats_width(),
             perf_stats_height: default_perf_stats_height(),
+            perf_show_fps: true,
+            perf_show_frame_times: false,
+            perf_show_render_times: true,
+            perf_show_ui_times: true,
+            perf_show_wrap_times: true,
+            perf_show_net: true,
+            perf_show_parse: true,
+            perf_show_events: true,
+            perf_show_memory: true,
+            perf_show_lines: true,
+            perf_show_uptime: true,
+            perf_show_jitter: false,
+            perf_show_frame_spikes: false,
+            perf_show_event_lag: false,
+            perf_show_memory_delta: true,
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
             betrayer_active_color: default_betrayer_active_color(),
@@ -3162,11 +3233,16 @@ impl Layout {
         let mut window_def = Config::get_window_template(name)
             .ok_or_else(|| anyhow::anyhow!("Unknown window template: {}", name))?;
 
-        // Special handling for spacer: auto-generate unique name
-        if name == "spacer" {
-            let auto_name = self.generate_spacer_name();
+        // Auto-generate unique name for templates with empty names
+        // This includes spacers and custom widgets (tabbedtext_custom, text_custom, etc.)
+        if window_def.base().name.is_empty() {
+            let auto_name = if name == "spacer" {
+                self.generate_spacer_name()
+            } else {
+                self.generate_widget_name(name)
+            };
             window_def.base_mut().name = auto_name.clone();
-            tracing::info!("Auto-generated spacer name: {}", auto_name);
+            tracing::info!("Auto-generated window name: {} for template '{}'", auto_name, name);
         }
 
         // Set visible
@@ -3550,10 +3626,10 @@ impl Config {
                     title: Some("Dashboard".to_string()),
                     row: 0,
                     col: 0,
-                    rows: 5,
-                    cols: 40,
-                    min_rows: Some(3),
-                    min_cols: Some(10),
+                    rows: 3,
+                    cols: 10,
+                    min_rows: Some(1),
+                    min_cols: Some(1),
                     ..base_defaults.clone()
                 },
                 data: DashboardWidgetData {
@@ -4465,6 +4541,8 @@ impl Config {
                     mana_color: None,
                     stamina_color: None,
                     spirit_color: None,
+                    concentration_color: None,
+                    bar_order: default_minivitals_bar_order(),
                 },
             }),
 
@@ -4600,11 +4678,11 @@ impl Config {
             "injuries".to_string(),
             "quickbar".to_string(),
             "spacer".to_string(),
-            "performance".to_string(),
+            // "performance" removed - now overlay-only via F12
             "perception".to_string(),
             "experience".to_string(),     // DR-specific
             "gs4_experience".to_string(), // GS4-specific
-            "encum".to_string(),          // GS4-specific
+            "encum".to_string(),          // Available for both games
             "minivitals".to_string(),     // GS4-specific
             "betrayer".to_string(),       // GS4-specific
             // command_input is NOT in this list - it's always present and can't be added/removed
@@ -4645,8 +4723,8 @@ impl Config {
             // DR-specific templates
             "experience" | "concentration" | "perception" => Some(GameType::DR),
             // GS4-specific templates
-            "gs4_experience" | "encum" | "minivitals" | "betrayer" => Some(GameType::GS4),
-            // All others available for both games
+            "gs4_experience" | "betrayer" | "minivitals" => Some(GameType::GS4),
+            // All others (including encum) available for both games
             _ => None,
         }
     }
@@ -4863,9 +4941,10 @@ impl Config {
         categories
     }
 
-    /// Get addable templates by category (excluding visible windows)
+    /// Get addable templates by category (excluding visible windows and wrong game type)
     pub fn get_addable_templates_by_category(
         layout: &crate::config::Layout,
+        game_type: Option<GameType>,
     ) -> HashMap<WidgetCategory, Vec<String>> {
         let all_by_category = Self::get_templates_by_category();
 
@@ -4875,6 +4954,14 @@ impl Config {
                 let available: Vec<String> = templates
                     .into_iter()
                     .filter(|name| {
+                        // Filter by game type first
+                        match Self::template_game_type(name) {
+                            None => true, // Available for all games
+                            Some(required_game) => game_type == Some(required_game),
+                        }
+                    })
+                    .filter(|name| {
+                        // Then filter out already visible windows
                         !layout
                             .windows
                             .iter()
@@ -5740,6 +5827,21 @@ impl Default for Config {
                 perf_stats_y: default_perf_stats_y(),
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
+                perf_show_fps: true,
+                perf_show_frame_times: false,
+                perf_show_render_times: true,
+                perf_show_ui_times: true,
+                perf_show_wrap_times: true,
+                perf_show_net: true,
+                perf_show_parse: true,
+                perf_show_events: true,
+                perf_show_memory: true,
+                perf_show_lines: true,
+                perf_show_uptime: true,
+                perf_show_jitter: false,
+                perf_show_frame_spikes: false,
+                perf_show_event_lag: false,
+                perf_show_memory_delta: true,
                 color_mode: ColorMode::default(),
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),

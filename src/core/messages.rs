@@ -85,6 +85,10 @@ pub struct MessageProcessor {
 
     /// Saved dialog positions for persistence across sessions
     pub saved_dialog_positions: SavedDialogPositions,
+
+    /// Buffered bounty data: raw text and parsed compact lines
+    /// Updated whenever bounty stream text arrives, regardless of whether a bounty window exists
+    bounty_buffer: Option<(String, Vec<String>)>,
 }
 
 impl MessageProcessor {
@@ -155,6 +159,7 @@ impl MessageProcessor {
             newly_registered_container: None,
             pending_sounds: Vec::new(),
             saved_dialog_positions,
+            bounty_buffer: None,
         };
 
         // Initialize squelch patterns from config
@@ -162,6 +167,12 @@ impl MessageProcessor {
         // Initialize redirect cache from config
         processor.update_redirect_cache();
         processor
+    }
+
+    /// Take buffered bounty data (raw text, compact lines) if any.
+    /// Returns Some((raw_text, compact_lines)) and clears the buffer.
+    pub fn take_bounty_buffer(&mut self) -> Option<(String, Vec<String>)> {
+        self.bounty_buffer.take()
     }
 
     /// Refresh internal config, parser presets, and caches after a reload.
@@ -821,10 +832,11 @@ impl MessageProcessor {
                     }
                 }
 
-                // Update MiniVitals state for GS4 minivitals dialog
+                // Update MiniVitals state for minivitals dialog (GS4 and DR)
                 // This captures the full text for display options (numbers_only, current_only)
+                // Note: DR uses "concentration" instead of "mana"
                 match id.as_str() {
-                    "health" | "mana" | "stamina" | "spirit" => {
+                    "health" | "mana" | "concentration" | "stamina" | "spirit" => {
                         game_state.minivitals.update_vital(id, *value, *max, text.clone());
                     }
                     _ => {}
@@ -2102,6 +2114,24 @@ impl MessageProcessor {
                 "Discarding text segment from room stream (room uses components, not text)"
             );
             return;
+        }
+
+        // Buffer bounty stream data for later use (e.g., when adding a bounty window later)
+        // This happens regardless of whether a bounty window exists
+        if self.current_stream.eq_ignore_ascii_case("bounty") {
+            // Extract plain text from segments
+            let plain_text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
+
+            // Always parse to compact form and buffer both raw and compact
+            let compact_lines = if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
+                compact.lines
+            } else {
+                vec![plain_text.clone()] // Fallback to raw text if parsing fails
+            };
+
+            self.bounty_buffer = Some((plain_text, compact_lines));
+            tracing::debug!("Buffered bounty data for later use");
+            // Continue processing - don't return here, still send to windows
         }
 
         // Special handling for inv stream - buffer instead of directly adding to window

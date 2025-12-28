@@ -118,6 +118,10 @@ pub struct GameState {
     /// MiniVitals state (from minivitals dialog) - GS4 only
     pub minivitals: MiniVitalsState,
 
+    /// Bounty state - stores raw text and parsed compact lines
+    /// Buffered so bounty windows added later can immediately show data
+    pub bounty: BountyState,
+
     /// Estimated lag between system time and game server time (in milliseconds)
     /// Positive = system clock ahead of game, Negative = game ahead of system
     /// Recalculated periodically (every LAG_CHECK_INTERVAL_SECS)
@@ -175,10 +179,11 @@ pub struct MiniVitalsState {
 
 impl MiniVitalsState {
     /// Update a vital entry. Returns true if changed.
+    /// Note: "concentration" (DR) maps to the mana slot
     pub fn update_vital(&mut self, id: &str, value: u32, max: u32, text: String) -> bool {
         let entry = match id {
             "health" => &mut self.health,
-            "mana" => &mut self.mana,
+            "mana" | "concentration" => &mut self.mana, // DR uses concentration
             "stamina" => &mut self.stamina,
             "spirit" => &mut self.spirit,
             _ => return false,
@@ -193,6 +198,39 @@ impl MiniVitalsState {
         } else {
             false
         }
+    }
+}
+
+/// Bounty state - stores raw bounty text and parsed compact lines
+/// This allows bounty windows added later to immediately show current bounty
+#[derive(Clone, Debug, Default)]
+pub struct BountyState {
+    /// The raw bounty text line as received from the game
+    pub raw_text: String,
+    /// Parsed compact bounty lines (task, creature, location, etc.)
+    pub compact_lines: Vec<String>,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl BountyState {
+    /// Update bounty state with new text. Always parses both raw and compact.
+    pub fn update(&mut self, raw_text: String, compact_lines: Vec<String>) {
+        self.raw_text = raw_text;
+        self.compact_lines = compact_lines;
+        self.generation += 1;
+    }
+
+    /// Check if there's any bounty data
+    pub fn has_data(&self) -> bool {
+        !self.raw_text.is_empty()
+    }
+
+    /// Clear bounty data (e.g., when bounty is completed)
+    pub fn clear(&mut self) {
+        self.raw_text.clear();
+        self.compact_lines.clear();
+        self.generation += 1;
     }
 }
 
@@ -585,6 +623,7 @@ impl GameState {
             encumbrance: EncumbranceState::default(),
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
+            bounty: BountyState::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
             sound_queue: SoundQueue::new(),

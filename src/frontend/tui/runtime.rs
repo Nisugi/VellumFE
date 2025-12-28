@@ -79,14 +79,18 @@ async fn async_run(
         }
     }
 
-    // Load command history
+    // Get terminal size and initialize windows
+    let (width, height) = frontend.size();
+    app_core.init_windows(width, height);
+
+    // Initial render to create widgets (needed before loading history)
+    frontend.render(&mut app_core)?;
+
+    // Load command history (must be after widgets are created)
     if let Err(e) = frontend.command_input_load_history("command_input", character.as_deref()) {
         tracing::warn!("Failed to load command history: {}", e);
     }
 
-    // Get terminal size and initialize windows
-    let (width, height) = frontend.size();
-    app_core.init_windows(width, height);
     if direct.is_none() {
         app_core.seed_default_quickbars_if_empty();
         if app_core

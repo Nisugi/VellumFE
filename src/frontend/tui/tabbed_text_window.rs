@@ -354,6 +354,54 @@ impl TabbedTextWindow {
         self.active_tab_index
     }
 
+    /// Convert mouse position to text coordinates (delegated to active tab)
+    /// Returns None if position is outside content area
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        let active_tab = self.tabs.get(self.active_tab_index)?;
+
+        // Account for tab bar height and border
+        let border_offset = if self.show_border { 1 } else { 0 };
+        let tab_bar_height = 1;
+
+        // Calculate inner rect for the text window
+        let inner_rect = match self.tab_bar_position {
+            TabBarPosition::Top => Rect {
+                x: window_rect.x + border_offset,
+                y: window_rect.y + border_offset + tab_bar_height,
+                width: window_rect.width.saturating_sub(2 * border_offset),
+                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height),
+            },
+            TabBarPosition::Bottom => Rect {
+                x: window_rect.x + border_offset,
+                y: window_rect.y + border_offset,
+                width: window_rect.width.saturating_sub(2 * border_offset),
+                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height),
+            },
+        };
+
+        active_tab.window.mouse_to_text_coords(mouse_col, mouse_row, inner_rect)
+    }
+
+    /// Extract text from a selection range (delegated to active tab)
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        if let Some(active_tab) = self.tabs.get(self.active_tab_index) {
+            active_tab.window.extract_selection_text(start_line, start_col, end_line, end_col)
+        } else {
+            String::new()
+        }
+    }
+
     /// Check if any tabs have unread messages
     pub fn has_unread_tabs(&self) -> bool {
         self.tabs.iter().any(|t| t.has_unread)

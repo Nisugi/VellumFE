@@ -6,13 +6,14 @@
 //!
 //! Reads data from GameState.encumbrance (populated from dialogData updates).
 
+use crate::config::BorderSides;
 use crate::core::state::EncumbranceState;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Widget},
 };
 
 /// Encumbrance widget - shows progress bar and optional description
@@ -21,6 +22,12 @@ pub struct Encumbrance {
     align: Alignment,
     /// Whether to show the descriptive blurb
     show_label: bool,
+    /// Whether to show the title
+    show_title: bool,
+    /// Whether to show the border
+    show_border: bool,
+    /// Which border sides to show
+    border_sides: BorderSides,
     /// Cached state for rendering
     value: u32,
     text: String,
@@ -55,6 +62,9 @@ impl Encumbrance {
             title: title.to_string(),
             align: alignment,
             show_label,
+            show_title: true,
+            show_border: true,
+            border_sides: BorderSides::default(),
             value: 0,
             text: String::new(),
             blurb: String::new(),
@@ -87,6 +97,21 @@ impl Encumbrance {
     /// Set whether to show the label
     pub fn set_show_label(&mut self, show: bool) {
         self.show_label = show;
+    }
+
+    /// Set whether to show the title
+    pub fn set_show_title(&mut self, show: bool) {
+        self.show_title = show;
+    }
+
+    /// Set whether to show the border
+    pub fn set_show_border(&mut self, show: bool) {
+        self.show_border = show;
+    }
+
+    /// Set which border sides to show
+    pub fn set_border_sides(&mut self, sides: BorderSides) {
+        self.border_sides = sides;
     }
 
     /// Set the light encumbrance color (0-20)
@@ -205,14 +230,21 @@ impl Encumbrance {
             }
         }
 
-        // Create block with border and title
-        let block = Block::default()
-            .title(self.title.as_str())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.border_color));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        // Conditionally create block with border and/or title
+        let inner = if self.show_border && self.border_sides.any() {
+            let borders = super::crossterm_bridge::to_ratatui_borders(&self.border_sides);
+            let mut block = Block::default()
+                .borders(borders)
+                .border_style(Style::default().fg(self.border_color));
+            if self.show_title {
+                block = block.title(self.title.as_str());
+            }
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        };
 
         if inner.width == 0 || inner.height == 0 {
             return;

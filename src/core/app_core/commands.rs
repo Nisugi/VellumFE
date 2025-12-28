@@ -12,60 +12,79 @@ impl AppCore {
             return self.handle_dot_command(&command);
         }
 
-        // Echo command to main window (prompt + command)
+        // Echo command to windows subscribed to "main" stream
         if self.config.ui.command_echo && !command.is_empty() {
-            tracing::info!("[SEND_COMMAND] Echoing command to main window: '{}'", command);
-            if let Some(main_window) = self.ui_state.windows.get_mut("main") {
-                if let WindowContent::Text(ref mut content) = main_window.content {
-                    let mut segments = Vec::new();
+            // Get windows subscribed to "main" stream
+            let subscribers: Vec<String> = self
+                .message_processor
+                .get_stream_subscribers("main")
+                .to_vec();
 
-                    // Add prompt with per-character coloring (same as prompt rendering)
-                    tracing::debug!(
-                        "[SEND_COMMAND] Building styled line with prompt: '{}'",
-                        self.game_state.last_prompt
-                    );
-                    for ch in self.game_state.last_prompt.chars() {
-                        let char_str = ch.to_string();
+            tracing::info!(
+                "[SEND_COMMAND] Echoing command to {} windows subscribed to 'main': {:?}",
+                subscribers.len(),
+                subscribers
+            );
 
-                        // Find color for this character in prompt_colors config
-                        let color = self
-                            .config
-                            .colors
-                            .prompt_colors
-                            .iter()
-                            .find(|pc| pc.character == char_str)
-                            .and_then(|pc| {
-                                // Prefer fg, fallback to color (legacy)
-                                pc.fg.as_ref().or(pc.color.as_ref()).cloned()
-                            })
-                            .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
+            // Build the styled line once
+            let mut segments = Vec::new();
 
-                        segments.push(TextSegment {
-                            text: char_str,
-                            fg: Some(color),
-                            bg: None,
-                            bold: false,
-                            span_type: SpanType::Normal,
-                            link_data: None,
-                        });
+            // Add prompt with per-character coloring (same as prompt rendering)
+            tracing::debug!(
+                "[SEND_COMMAND] Building styled line with prompt: '{}'",
+                self.game_state.last_prompt
+            );
+            for ch in self.game_state.last_prompt.chars() {
+                let char_str = ch.to_string();
+
+                // Find color for this character in prompt_colors config
+                let color = self
+                    .config
+                    .colors
+                    .prompt_colors
+                    .iter()
+                    .find(|pc| pc.character == char_str)
+                    .and_then(|pc| {
+                        // Prefer fg, fallback to color (legacy)
+                        pc.fg.as_ref().or(pc.color.as_ref()).cloned()
+                    })
+                    .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
+
+                segments.push(TextSegment {
+                    text: char_str,
+                    fg: Some(color),
+                    bg: None,
+                    bold: false,
+                    span_type: SpanType::Normal,
+                    link_data: None,
+                });
+            }
+
+            // Add the command text (in default color)
+            segments.push(TextSegment {
+                text: command.clone(),
+                fg: Some("#ffffff".to_string()), // White text for command
+                bg: None,
+                bold: false,
+                span_type: SpanType::Normal,
+                link_data: None,
+            });
+
+            let styled_line = StyledLine {
+                segments,
+                stream: String::from("main"),
+            };
+
+            // Add the styled line to each subscriber window
+            for window_name in subscribers {
+                if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
+                    if let WindowContent::Text(ref mut content) = window.content {
+                        content.add_line(styled_line.clone());
+                        tracing::info!(
+                            "[SEND_COMMAND] Added command echo to window '{}'",
+                            window_name
+                        );
                     }
-
-                    // Add the command text (in default color)
-                    segments.push(TextSegment {
-                        text: command.clone(),
-                        fg: Some("#ffffff".to_string()), // White text for command
-                        bg: None,
-                        bold: false,
-                        span_type: SpanType::Normal,
-                        link_data: None,
-                    });
-
-                    // Add the styled line to the main window
-                    content.add_line(StyledLine { segments: segments.clone(), stream: String::from("main") });
-                    tracing::info!(
-                        "[SEND_COMMAND] Added StyledLine with {} segments to main window",
-                        segments.len()
-                    );
                 }
             }
         }
@@ -395,7 +414,7 @@ impl AppCore {
                 tracing::debug!("handle_dot_command: reload complete");
             }
 
-            "toggletransparency" | "transparency" => {
+            "transparent" => {
                 self.toggle_transparent_background_all();
             }
 

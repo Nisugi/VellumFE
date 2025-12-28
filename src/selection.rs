@@ -23,11 +23,13 @@ pub struct SelectionState {
     pub end: TextPosition,
     /// Whether the selection is currently active
     pub active: bool,
+    /// The name of the window where the selection started
+    pub window_name: String,
 }
 
 impl SelectionState {
     /// Create a new selection anchored at the provided window/line/column.
-    pub fn new(window_index: usize, line: usize, col: usize) -> Self {
+    pub fn new(window_index: usize, line: usize, col: usize, window_name: String) -> Self {
         let pos = TextPosition {
             window_index,
             line,
@@ -37,6 +39,7 @@ impl SelectionState {
             start: pos,
             end: pos,
             active: true,
+            window_name,
         }
     }
 
@@ -156,22 +159,23 @@ mod tests {
 
     #[test]
     fn test_selection_new() {
-        let selection = SelectionState::new(0, 5, 10);
+        let selection = SelectionState::new(0, 5, 10, "main".to_string());
 
         assert!(selection.active);
         assert_eq!(selection.start.window_index, 0);
         assert_eq!(selection.start.line, 5);
         assert_eq!(selection.start.col, 10);
+        assert_eq!(selection.window_name, "main");
         // Start and end should be the same initially
         assert_eq!(selection.start, selection.end);
     }
 
     #[test]
     fn test_selection_is_empty() {
-        let selection = SelectionState::new(0, 5, 10);
+        let selection = SelectionState::new(0, 5, 10, "main".to_string());
         assert!(selection.is_empty());
 
-        let mut selection2 = SelectionState::new(0, 5, 10);
+        let mut selection2 = SelectionState::new(0, 5, 10, "main".to_string());
         selection2.update_end(0, 5, 15);
         assert!(!selection2.is_empty());
     }
@@ -180,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_update_end_same_window() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 7, 20);
 
         assert_eq!(selection.end.line, 7);
@@ -192,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_update_end_different_window_ignored() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(1, 7, 20); // Different window
 
         // End should NOT be updated (window boundary respected)
@@ -204,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_normalized_range_forward_selection() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 8, 15);
 
         let (start, end) = selection.normalized_range();
@@ -216,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_normalized_range_backward_selection() {
-        let mut selection = SelectionState::new(0, 8, 15);
+        let mut selection = SelectionState::new(0, 8, 15, "main".to_string());
         selection.update_end(0, 5, 10);
 
         let (start, end) = selection.normalized_range();
@@ -229,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_normalized_range_same_line_backward() {
-        let mut selection = SelectionState::new(0, 5, 20);
+        let mut selection = SelectionState::new(0, 5, 20, "main".to_string());
         selection.update_end(0, 5, 10);
 
         let (start, end) = selection.normalized_range();
@@ -241,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_contains_single_line_selection() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 5, 20);
 
         // Within range
@@ -265,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_contains_multi_line_selection() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 8, 15);
 
         // Start line - from col onwards
@@ -292,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_contains_inactive_selection() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 5, 20);
         selection.clear();
 
@@ -303,7 +307,7 @@ mod tests {
     #[test]
     fn test_contains_backward_selection() {
         // Select from (8, 15) back to (5, 10)
-        let mut selection = SelectionState::new(0, 8, 15);
+        let mut selection = SelectionState::new(0, 8, 15, "main".to_string());
         selection.update_end(0, 5, 10);
 
         // Should still work correctly (normalized internally)
@@ -317,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_clear_selection() {
-        let mut selection = SelectionState::new(0, 5, 10);
+        let mut selection = SelectionState::new(0, 5, 10, "main".to_string());
         selection.update_end(0, 8, 15);
 
         assert!(selection.active);

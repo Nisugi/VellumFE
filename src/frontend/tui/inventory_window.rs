@@ -129,6 +129,27 @@ pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::th
         // For now, just call regular render - theme colors will be applied in future update
         self.render(area, buf);
     }
+
+    /// Convert mouse position to text coordinates
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+    }
+
+    /// Extract text from a selection range
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+    }
 }
 
 #[cfg(test)]

@@ -136,8 +136,6 @@ enum FieldRef {
     DashboardLayout,
     DashboardSpacing,
     DashboardHideInactive,
-    PerfEnableMonitor,
-    PerfChooseMetrics,
 
     // Perception widget fields
     // Note: stream and buffer_size are NOT configurable - hardcoded internally
@@ -163,6 +161,7 @@ enum FieldRef {
     MiniVitalsManaColor,
     MiniVitalsStaminaColor,
     MiniVitalsSpiritColor,
+    MiniVitalsEditBarOrder,
     // Betrayer widget fields
     BetrayerShowItems,
     BetrayerBarColor,
@@ -235,8 +234,6 @@ impl FieldRef {
             FieldRef::DashboardLayout => 57,
             FieldRef::DashboardSpacing => 58,
             FieldRef::DashboardHideInactive => 59,
-            FieldRef::PerfEnableMonitor => 63,
-            FieldRef::PerfChooseMetrics => 64,
             FieldRef::BufferSize => 78,
             FieldRef::Wordwrap => 79,
             FieldRef::Timestamps => 80,
@@ -270,6 +267,7 @@ impl FieldRef {
             FieldRef::MiniVitalsManaColor => 102,
             FieldRef::MiniVitalsStaminaColor => 103,
             FieldRef::MiniVitalsSpiritColor => 104,
+            FieldRef::MiniVitalsEditBarOrder => 115,
             FieldRef::BetrayerShowItems => 111,
             FieldRef::BetrayerBarColor => 112,
             FieldRef::TextCompact => 113,
@@ -948,6 +946,311 @@ impl IndicatorEditor {
     }
 }
 
+/// Bar order item for MiniVitals editor
+#[derive(Clone, Debug)]
+struct BarOrderItem {
+    id: String,           // "health", "mana", "stamina", "spirit", "concentration"
+    label: String,        // Display name
+    enabled: bool,        // Whether this bar is shown
+    color: Option<String>, // Custom color for the bar
+}
+
+/// Bar order editor focus - which column is active
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarOrderEditorFocus {
+    Toggle, // Focus on the checkbox/toggle column
+    Color,  // Focus on the color input column
+}
+
+/// Bar order editor for MiniVitals widget - supports 5 bars with colors
+/// Two-column layout: toggles on left, color previews + inputs on right
+#[derive(Clone, Debug)]
+struct BarOrderEditor {
+    bars: Vec<BarOrderItem>,
+    selected: usize,
+    focus: BarOrderEditorFocus,
+    color_input: TextArea<'static>,
+    /// Click areas for mouse support: (row_index, toggle_rect, color_rect)
+    click_areas: Vec<(usize, (u16, u16, u16, u16), (u16, u16, u16, u16))>,
+}
+
+impl BarOrderEditor {
+    const MAX_ENABLED: usize = 4; // Maximum bars that can be enabled at once
+
+    fn from_minivitals_data(data: &crate::config::MiniVitalsWidgetData) -> Self {
+        // All possible bars (5 total)
+        let all_bars = ["health", "mana", "stamina", "spirit", "concentration"];
+        let mut bars: Vec<BarOrderItem> = Vec::new();
+
+        // First, add bars in the order they appear in bar_order (these are enabled)
+        for bar_id in &data.bar_order {
+            let id = bar_id.to_lowercase();
+            if all_bars.contains(&id.as_str()) {
+                bars.push(BarOrderItem {
+                    id: id.clone(),
+                    label: Self::id_to_label(&id),
+                    enabled: true,
+                    color: Self::get_color_for_id(&id, data),
+                });
+            }
+        }
+
+        // Then add any remaining bars that aren't in bar_order (these are disabled)
+        for bar_id in all_bars {
+            if !bars.iter().any(|b| b.id == bar_id) {
+                bars.push(BarOrderItem {
+                    id: bar_id.to_string(),
+                    label: Self::id_to_label(bar_id),
+                    enabled: false,
+                    color: Self::get_color_for_id(bar_id, data),
+                });
+            }
+        }
+
+        // Initialize color input with first bar's color
+        let mut color_input = WindowEditor::create_textarea();
+        if let Some(first_bar) = bars.first() {
+            if let Some(ref color) = first_bar.color {
+                color_input.insert_str(color.clone());
+            } else {
+                color_input.insert_str(Self::default_color_for_id(&first_bar.id));
+            }
+        }
+
+        Self {
+            bars,
+            selected: 0,
+            focus: BarOrderEditorFocus::Toggle,
+            color_input,
+            click_areas: Vec::new(),
+        }
+    }
+
+    fn get_color_for_id(id: &str, data: &crate::config::MiniVitalsWidgetData) -> Option<String> {
+        match id {
+            "health" => data.health_color.clone(),
+            "mana" => data.mana_color.clone(),
+            "stamina" => data.stamina_color.clone(),
+            "spirit" => data.spirit_color.clone(),
+            "concentration" => data.concentration_color.clone(),
+            _ => None,
+        }
+    }
+
+    fn default_color_for_id(id: &str) -> &'static str {
+        match id {
+            "health" => "red",
+            "mana" => "blue",
+            "stamina" => "yellow",
+            "spirit" => "magenta",
+            "concentration" => "cyan",
+            _ => "white",
+        }
+    }
+
+    fn id_to_label(id: &str) -> String {
+        match id {
+            "health" => "Health".to_string(),
+            "mana" => "Mana".to_string(),
+            "stamina" => "Stamina".to_string(),
+            "spirit" => "Spirit".to_string(),
+            "concentration" => "Concentration".to_string(),
+            _ => id.to_string(),
+        }
+    }
+
+    fn to_bar_order(&self) -> Vec<String> {
+        self.bars
+            .iter()
+            .filter(|b| b.enabled)
+            .map(|b| b.id.clone())
+            .collect()
+    }
+
+    fn apply_colors_to_data(&self, data: &mut crate::config::MiniVitalsWidgetData) {
+        for bar in &self.bars {
+            match bar.id.as_str() {
+                "health" => data.health_color = bar.color.clone(),
+                "mana" => data.mana_color = bar.color.clone(),
+                "stamina" => data.stamina_color = bar.color.clone(),
+                "spirit" => data.spirit_color = bar.color.clone(),
+                "concentration" => data.concentration_color = bar.color.clone(),
+                _ => {}
+            }
+        }
+    }
+
+    fn enabled_count(&self) -> usize {
+        self.bars.iter().filter(|b| b.enabled).count()
+    }
+
+    fn toggle_selected(&mut self) -> bool {
+        // Pre-compute enabled count before borrowing mutably
+        let current_count = self.enabled_count();
+        if let Some(bar) = self.bars.get_mut(self.selected) {
+            if bar.enabled {
+                // Always allow disabling
+                bar.enabled = false;
+                true
+            } else if current_count < Self::MAX_ENABLED {
+                // Only enable if we haven't hit the limit
+                bar.enabled = true;
+                true
+            } else {
+                // Can't enable - at max
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.bars.swap(self.selected, self.selected - 1);
+            self.selected -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.bars.len() {
+            self.bars.swap(self.selected, self.selected + 1);
+            self.selected += 1;
+        }
+    }
+
+    fn nav_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        } else {
+            self.selected = self.bars.len().saturating_sub(1);
+        }
+    }
+
+    fn nav_down(&mut self) {
+        if self.selected + 1 < self.bars.len() {
+            self.selected += 1;
+        } else {
+            self.selected = 0;
+        }
+    }
+
+    /// Switch focus to color column
+    fn focus_color(&mut self) {
+        self.focus = BarOrderEditorFocus::Color;
+        self.sync_color_input_from_bar();
+    }
+
+    /// Switch focus to toggle column
+    fn focus_toggle(&mut self) {
+        // Save color before switching
+        self.save_color_to_bar();
+        self.focus = BarOrderEditorFocus::Toggle;
+    }
+
+    /// Sync the color_input textarea with the selected bar's current color
+    fn sync_color_input_from_bar(&mut self) {
+        self.color_input = WindowEditor::create_textarea();
+        if let Some(bar) = self.bars.get(self.selected) {
+            let color_str = bar.color.as_deref()
+                .unwrap_or_else(|| Self::default_color_for_id(&bar.id));
+            self.color_input.insert_str(color_str);
+        }
+    }
+
+    /// Save the current color_input value to the selected bar
+    fn save_color_to_bar(&mut self) {
+        if let Some(bar) = self.bars.get_mut(self.selected) {
+            let input = self.color_input.lines().join("");
+            let trimmed = input.trim();
+            if trimmed.is_empty() || trimmed == Self::default_color_for_id(&bar.id) {
+                bar.color = None; // Use default
+            } else {
+                bar.color = Some(trimmed.to_string());
+            }
+        }
+    }
+
+    /// Check if we're editing a color (focus on color column)
+    fn is_editing_color(&self) -> bool {
+        self.focus == BarOrderEditorFocus::Color
+    }
+
+    /// Handle mouse click - returns true if click was handled
+    fn handle_mouse_click(&mut self, col: u16, row: u16) -> bool {
+        // First, find which area was clicked (avoid borrowing issues)
+        enum ClickResult {
+            Toggle(usize),
+            Color(usize),
+            None,
+        }
+
+        let result = {
+            let mut found = ClickResult::None;
+            for (bar_idx, toggle_rect, color_rect) in &self.click_areas {
+                let (tx, ty, tw, th) = *toggle_rect;
+                let (cx, cy, cw, ch) = *color_rect;
+
+                // Check toggle area click
+                if col >= tx && col < tx + tw && row >= ty && row < ty + th {
+                    found = ClickResult::Toggle(*bar_idx);
+                    break;
+                }
+
+                // Check color area click
+                if col >= cx && col < cx + cw && row >= cy && row < cy + ch {
+                    found = ClickResult::Color(*bar_idx);
+                    break;
+                }
+            }
+            found
+        };
+
+        // Now act on the result
+        match result {
+            ClickResult::Toggle(bar_idx) => {
+                // Save any pending color edit
+                if self.is_editing_color() {
+                    self.save_color_to_bar();
+                }
+                self.selected = bar_idx;
+                self.focus = BarOrderEditorFocus::Toggle;
+                self.sync_color_input_from_bar();
+                // Toggle the bar
+                self.toggle_selected();
+                true
+            }
+            ClickResult::Color(bar_idx) => {
+                // Save any pending color edit if switching bars
+                let was_editing_color = self.is_editing_color();
+                let old_selected = self.selected;
+                if was_editing_color && old_selected != bar_idx {
+                    self.save_color_to_bar();
+                }
+                self.selected = bar_idx;
+                self.focus = BarOrderEditorFocus::Color;
+                if old_selected != bar_idx || !was_editing_color {
+                    self.sync_color_input_from_bar();
+                }
+                true
+            }
+            ClickResult::None => false,
+        }
+    }
+
+    /// Change selection - saves color if in color mode, then syncs new bar's color
+    fn change_selection(&mut self, new_selected: usize) {
+        if new_selected != self.selected && new_selected < self.bars.len() {
+            // Save current color if editing
+            if self.is_editing_color() {
+                self.save_color_to_bar();
+            }
+            self.selected = new_selected;
+            self.sync_color_input_from_bar();
+        }
+    }
+}
+
 /// Window editor widget - 70x20 popup with single-page layout
 pub struct WindowEditor {
     popup_x: u16,
@@ -1087,6 +1390,7 @@ pub struct WindowEditor {
     indicator_editor: Option<IndicatorEditor>,
     performance_metrics_editor: Option<PerformanceMetricsEditor>,
     text_replacements_editor: Option<TextReplacementsEditor>,
+    bar_order_editor: Option<BarOrderEditor>,
     /// Stores (y_position, field_ref) for click-to-select
     field_click_areas: Vec<(u16, u16, FieldRef)>, // (y, x_start, field)
 }
@@ -1264,8 +1568,12 @@ impl WindowEditor {
                 fields.push(FieldRef::CursorBg);
             }
             WindowDef::Text { .. } => {
-                fields.push(FieldRef::Streams);
-                fields.push(FieldRef::BufferSize);
+                // Bounty window is special: hide Streams and BufferSize
+                let is_bounty = window_def.base().name.eq_ignore_ascii_case("bounty");
+                if !is_bounty {
+                    fields.push(FieldRef::Streams);
+                    fields.push(FieldRef::BufferSize);
+                }
                 fields.push(FieldRef::Wordwrap);
                 fields.push(FieldRef::Timestamps);
                 fields.push(FieldRef::TextCompact);
@@ -1352,11 +1660,7 @@ impl WindowEditor {
             WindowDef::Container { .. } => {
                 // Could add container_id field in the future
             }
-            WindowDef::Spacer { .. } | WindowDef::Spells { .. } => {}
-            WindowDef::Performance { .. } => {
-                fields.push(FieldRef::PerfEnableMonitor);
-                fields.push(FieldRef::PerfChooseMetrics);
-            }
+            WindowDef::Spacer { .. } | WindowDef::Spells { .. } | WindowDef::Performance { .. } => {}
             WindowDef::Perception { .. } => {
                 // Only sort_direction is configurable (stream="percWindow", buffer_size=100 are hardcoded)
                 fields.push(FieldRef::PerceptionSortDirection);
@@ -1386,11 +1690,8 @@ impl WindowEditor {
                 // MiniVitals widget display mode toggles
                 fields.push(FieldRef::MiniVitalsNumbersOnly);
                 fields.push(FieldRef::MiniVitalsCurrentOnly);
-                // Bar color settings
-                fields.push(FieldRef::MiniVitalsHealthColor);
-                fields.push(FieldRef::MiniVitalsManaColor);
-                fields.push(FieldRef::MiniVitalsStaminaColor);
-                fields.push(FieldRef::MiniVitalsSpiritColor);
+                // Bar order and colors editor (handles all 5 bars)
+                fields.push(FieldRef::MiniVitalsEditBarOrder);
             }
             WindowDef::Betrayer { .. } => {
                 // Betrayer widget - show_items toggle and bar color
@@ -1997,6 +2298,7 @@ impl WindowEditor {
             indicator_editor: None,
             performance_metrics_editor: None,
             text_replacements_editor: None,
+            bar_order_editor: None,
             field_click_areas: Vec::new(),
         }
     }
@@ -2337,6 +2639,7 @@ impl WindowEditor {
             indicator_editor: None,
             performance_metrics_editor: None,
             text_replacements_editor: None,
+            bar_order_editor: None,
             field_click_areas: Vec::new(),
         }
     }
@@ -2410,7 +2713,7 @@ impl WindowEditor {
     }
 
     pub fn is_sub_editor_active(&self) -> bool {
-        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some()
+        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some() || self.bar_order_editor.is_some()
     }
 
     fn footer_help_text(&self) -> &str {
@@ -2431,6 +2734,9 @@ impl WindowEditor {
             if matches!(editor.mode, TextReplacementsEditorMode::List) {
                 return "[A: Add]─[E: Edit]─[Del: Delete]─[Shift+↑/↓: Re-order]─[Esc: Back]";
             }
+        }
+        if self.bar_order_editor.is_some() {
+            return "[Ctrl+S: Save]─[Shift+↑/↓: Reorder]─[Esc: Cancel]";
         }
         "[Ctrl+S: Save] [Esc: Cancel]"
     }
@@ -2469,6 +2775,30 @@ impl WindowEditor {
         } else {
             self.status_message =
                 "Text replacements editor only available for Perception windows".to_string();
+        }
+    }
+
+    fn open_bar_order_editor(&mut self) {
+        if let WindowDef::MiniVitals { data, .. } = &self.window_def {
+            self.bar_order_editor = Some(BarOrderEditor::from_minivitals_data(data));
+        } else {
+            self.status_message =
+                "Bar order editor only available for MiniVitals windows".to_string();
+        }
+    }
+
+    fn commit_bar_order_editor(&mut self) {
+        // Save any pending color input before committing
+        if let Some(ref mut editor) = self.bar_order_editor {
+            if editor.is_editing_color() {
+                editor.save_color_to_bar();
+            }
+        }
+        if let (Some(editor), WindowDef::MiniVitals { data, .. }) =
+            (self.bar_order_editor.clone(), &mut self.window_def)
+        {
+            data.bar_order = editor.to_bar_order();
+            editor.apply_colors_to_data(data);
         }
     }
 
@@ -2529,6 +2859,9 @@ impl WindowEditor {
         }
         if self.text_replacements_editor.is_some() {
             self.commit_text_replacements_editor();
+        }
+        if self.bar_order_editor.is_some() {
+            self.commit_bar_order_editor();
         }
     }
 
@@ -2651,6 +2984,11 @@ impl WindowEditor {
             self.text_replacements_editor = None;
             return true;
         }
+        if self.bar_order_editor.is_some() {
+            self.commit_bar_order_editor();
+            self.bar_order_editor = None;
+            return true;
+        }
         false
     }
 
@@ -2688,13 +3026,14 @@ impl WindowEditor {
                     | FieldRef::ProgressCurrentOnly
                     | FieldRef::TabSeparator
                     | FieldRef::DashboardHideInactive
-                    | FieldRef::PerfEnableMonitor
                     | FieldRef::EncumShowLabel
                     | FieldRef::GS4ExpShowLevel
                     | FieldRef::GS4ExpShowExpBar
                     | FieldRef::MiniVitalsNumbersOnly
                     | FieldRef::MiniVitalsCurrentOnly
                     | FieldRef::BetrayerShowItems
+                    | FieldRef::TextCompact
+                    | FieldRef::TargetsShowArmsCount
             )
         )
     }
@@ -2719,10 +3058,6 @@ impl WindowEditor {
         matches!(self.current_field_ref(), Some(FieldRef::TabBarPosition))
     }
 
-    pub fn is_on_perf_metrics_button(&self) -> bool {
-        matches!(self.current_field_ref(), Some(FieldRef::PerfChooseMetrics))
-    }
-
     /// Check if the current field is the Edit Tabs button
     pub fn is_on_edit_tabs(&self) -> bool {
         matches!(self.current_field_ref(), Some(FieldRef::EditTabs))
@@ -2731,6 +3066,11 @@ impl WindowEditor {
     /// Check if the current field is the Edit Indicators button
     pub fn is_on_edit_indicators(&self) -> bool {
         matches!(self.current_field_ref(), Some(FieldRef::EditIndicators))
+    }
+
+    /// Check if the current field is the Edit Bar Order button
+    pub fn is_on_edit_bar_order(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::MiniVitalsEditBarOrder))
     }
 
     /// Check if the current field is the Perception Sort Direction dropdown
@@ -2751,6 +3091,38 @@ impl WindowEditor {
     /// Toggle the perception short spell names setting
     pub fn toggle_perception_short_spell_names(&mut self) {
         self.perception_use_short_spell_names = !self.perception_use_short_spell_names;
+    }
+
+    /// Check if the current field is the Dashboard Layout dropdown
+    pub fn is_on_dashboard_layout(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::DashboardLayout))
+    }
+
+    /// Cycle through dashboard layout options
+    pub fn cycle_dashboard_layout(&mut self) {
+        let current = self
+            .dashboard_layout_input
+            .lines()
+            .get(0)
+            .map(|s| s.as_str())
+            .unwrap_or("horizontal")
+            .to_lowercase();
+        let options = [
+            "horizontal",
+            "vertical",
+            "flow",
+            "grid:2x2",
+            "grid:2x3",
+            "grid:3x3",
+        ];
+        let idx = options
+            .iter()
+            .position(|opt| opt.eq_ignore_ascii_case(&current))
+            .unwrap_or(0);
+        let next = options[(idx + 1) % options.len()];
+        let mut ta = Self::create_textarea();
+        ta.insert_str(next);
+        self.dashboard_layout_input = ta;
     }
 
     /// Cycle to the next/previous border style
@@ -3055,7 +3427,7 @@ impl WindowEditor {
                 // Checkbox field - do not accept text input (use Enter/Space to toggle)
             }
             _ if id == FieldRef::DashboardLayout.legacy_field_id() => {
-                self.dashboard_layout_input.input(input);
+                // Dropdown field - do not accept text input (use Enter/Space to cycle)
             }
             _ if id == FieldRef::DashboardSpacing.legacy_field_id() => {
                 self.dashboard_spacing_input.input(input);
@@ -3191,39 +3563,14 @@ impl WindowEditor {
                         FieldRef::PerceptionTextReplacements => {
                             self.open_perception_replacements_editor();
                         }
+                        FieldRef::MiniVitalsEditBarOrder => {
+                            self.open_bar_order_editor();
+                        }
                         FieldRef::DashboardHideInactive => {
                             self.dashboard_hide_inactive = !self.dashboard_hide_inactive;
                         }
                         FieldRef::DashboardLayout => {
-                            let current = self
-                                .dashboard_layout_input
-                                .lines()
-                                .get(0)
-                                .map(|s| s.as_str())
-                                .unwrap_or("horizontal")
-                                .to_lowercase();
-                            let options = [
-                                "horizontal",
-                                "vertical",
-                                "flow",
-                                "grid:2x2",
-                                "grid:2x3",
-                                "grid:3x3",
-                            ];
-                            let idx = options
-                                .iter()
-                                .position(|opt| opt.eq_ignore_ascii_case(&current))
-                                .unwrap_or(0);
-                            let next = options[(idx + 1) % options.len()];
-                            let mut ta = Self::create_textarea();
-                            ta.insert_str(next);
-                            self.dashboard_layout_input = ta;
-                        }
-                        FieldRef::PerfEnableMonitor => {
-                            self.perf_enabled = !self.perf_enabled;
-                        }
-                        FieldRef::PerfChooseMetrics => {
-                            self.open_performance_metrics_editor();
+                            self.cycle_dashboard_layout();
                         }
                         FieldRef::EncumShowLabel => {
                             let prev_show = self.show_label_encum;
@@ -3424,6 +3771,15 @@ impl WindowEditor {
             return true;
         }
 
+        if let Some(editor) = self.bar_order_editor.as_mut() {
+            if down {
+                editor.nav_down();
+            } else {
+                editor.nav_up();
+            }
+            return true;
+        }
+
         false
     }
 
@@ -3463,6 +3819,15 @@ impl WindowEditor {
                 }
                 return true;
             }
+        }
+
+        if let Some(editor) = self.bar_order_editor.as_mut() {
+            if down {
+                editor.move_down();
+            } else {
+                editor.move_up();
+            }
+            return true;
         }
 
         false
@@ -3745,6 +4110,108 @@ impl WindowEditor {
                                 editor.replace_input.input(ev);
                             }
                         };
+                        return true;
+                    }
+                },
+            }
+        }
+
+        if let Some(editor) = self.bar_order_editor.as_mut() {
+            match editor.focus {
+                BarOrderEditorFocus::Toggle => match key_event.code {
+                    KeyCode::Up => {
+                        if key_event.modifiers.contains_shift() {
+                            editor.move_up();
+                        } else {
+                            editor.nav_up();
+                            editor.sync_color_input_from_bar();
+                        }
+                        return true;
+                    }
+                    KeyCode::Down => {
+                        if key_event.modifiers.contains_shift() {
+                            editor.move_down();
+                        } else {
+                            editor.nav_down();
+                            editor.sync_color_input_from_bar();
+                        }
+                        return true;
+                    }
+                    KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Char(' ') | KeyCode::Enter => {
+                        if !editor.toggle_selected() {
+                            self.status_message = format!(
+                                "Max {} bars enabled. Disable one first.",
+                                BarOrderEditor::MAX_ENABLED
+                            );
+                        }
+                        return true;
+                    }
+                    KeyCode::Tab | KeyCode::Right => {
+                        // T→C: Move to color column (same row)
+                        editor.focus_color();
+                        return true;
+                    }
+                    KeyCode::BackTab | KeyCode::Left => {
+                        // Go to previous row's color (wrap to last if at first)
+                        if editor.selected > 0 {
+                            editor.selected -= 1;
+                        } else {
+                            editor.selected = editor.bars.len().saturating_sub(1);
+                        }
+                        editor.sync_color_input_from_bar();
+                        editor.focus_color();
+                        return true;
+                    }
+                    KeyCode::Esc => {
+                        self.close_sub_editor();
+                        return true;
+                    }
+                    _ => {}
+                },
+                BarOrderEditorFocus::Color => match key_event.code {
+                    KeyCode::Esc => {
+                        self.close_sub_editor();
+                        return true;
+                    }
+                    KeyCode::Tab | KeyCode::Right => {
+                        // C→T: Save color, move to next row's toggle (wrap to first if at last)
+                        editor.save_color_to_bar();
+                        if editor.selected + 1 < editor.bars.len() {
+                            editor.selected += 1;
+                        } else {
+                            editor.selected = 0;
+                        }
+                        editor.sync_color_input_from_bar();
+                        editor.focus_toggle();
+                        return true;
+                    }
+                    KeyCode::BackTab | KeyCode::Left => {
+                        // C→T: Save and move back to same row's toggle
+                        editor.focus_toggle();
+                        return true;
+                    }
+                    KeyCode::Up => {
+                        // Save current, move to previous bar's color
+                        editor.save_color_to_bar();
+                        editor.nav_up();
+                        editor.sync_color_input_from_bar();
+                        return true;
+                    }
+                    KeyCode::Down | KeyCode::Enter => {
+                        // Save current, move to next bar's color
+                        editor.save_color_to_bar();
+                        editor.nav_down();
+                        editor.sync_color_input_from_bar();
+                        return true;
+                    }
+                    _ => {
+                        // Forward keypress to color input textarea
+                        let ct_code = crossterm_bridge::to_crossterm_keycode(key_event.code);
+                        let ct_mods =
+                            crossterm_bridge::to_crossterm_modifiers(key_event.modifiers);
+                        let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
+                        let ev = textarea_bridge::to_textarea_event(key);
+                        editor.color_input.input(ev);
                         return true;
                     }
                 },
@@ -4297,6 +4764,13 @@ impl WindowEditor {
             }
         }
 
+        // Handle bar order editor clicks
+        if let Some(ref mut editor) = self.bar_order_editor {
+            if editor.handle_mouse_click(mouse_col, mouse_row) {
+                return WindowEditorMouseAction::None;
+            }
+        }
+
         // Check if click is on a tracked field area
         // field_click_areas contains (y, x_start, field_ref)
         // We match by y (exact row) and distinguish side-by-side fields by x
@@ -4348,6 +4822,16 @@ impl WindowEditor {
                         self.cycle_title_position(false);
                     } else if self.is_on_border_style() {
                         self.cycle_border_style(false);
+                    } else if self.is_on_dashboard_layout() {
+                        self.cycle_dashboard_layout();
+                    } else if self.is_on_edit_indicators() {
+                        self.open_indicator_editor();
+                    } else if self.is_on_edit_bar_order() {
+                        self.open_bar_order_editor();
+                    } else if self.is_on_perception_sort_direction() {
+                        self.cycle_perception_sort_direction();
+                    } else if self.is_on_perception_replacements() {
+                        self.open_perception_replacements_editor();
                     }
 
                     return WindowEditorMouseAction::None;
@@ -4456,6 +4940,140 @@ impl WindowEditor {
         if let Some(mut editor) = self.text_replacements_editor.take() {
             self.render_text_replacements_editor(area, buf, theme, &mut editor);
             self.text_replacements_editor = Some(editor);
+            return;
+        }
+
+        if let Some(mut editor) = self.bar_order_editor.take() {
+            self.render_bar_order_editor(area, buf, theme, &mut editor);
+            self.bar_order_editor = Some(editor);
+        }
+    }
+
+    fn render_bar_order_editor(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &EditorTheme,
+        editor: &mut BarOrderEditor,
+    ) {
+        let header_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.section_header_color));
+        let label_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.label_color));
+        let focused_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.focused_label_color));
+        let text_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.text_color));
+        let cursor_style = Style::default()
+            .fg(ratatui::style::Color::Black)
+            .bg(crossterm_bridge::to_ratatui_color(theme.cursor_color));
+
+        // Clear click areas for fresh population
+        editor.click_areas.clear();
+
+        // Title with enabled count indicator
+        let title = format!(
+            "Bar Order Editor ({}/{} enabled)",
+            editor.enabled_count(),
+            BarOrderEditor::MAX_ENABLED
+        );
+        buf.set_string(area.x + 1, area.y, &title, header_style);
+
+        // Two-column layout:
+        // Left column: "  [x] Health" (toggles)
+        // Right column: "██ red_____" (color preview + input)
+        let toggle_col_x = area.x + 1;
+        let color_col_x = area.x + 22; // Start color column after toggle column
+        let color_input_width = 12usize; // Width for color input
+
+        let max_rows = area.height.saturating_sub(2);
+        for (idx, bar) in editor.bars.iter().enumerate() {
+            if idx as u16 >= max_rows {
+                break;
+            }
+            let y = area.y + 1 + idx as u16;
+            let is_sel = idx == editor.selected;
+            let is_toggle_focus = is_sel && editor.focus == BarOrderEditorFocus::Toggle;
+            let is_color_focus = is_sel && editor.focus == BarOrderEditorFocus::Color;
+
+            // Left column: Toggle checkbox
+            let prefix = if is_toggle_focus { "→ " } else { "  " };
+            let checkbox = if bar.enabled { "[x]" } else { "[ ]" };
+            let toggle_style = if is_toggle_focus { focused_style } else { label_style };
+            let toggle_text = format!("{}{} {}", prefix, checkbox, bar.label);
+            buf.set_string(toggle_col_x, y, &toggle_text, toggle_style);
+
+            // Store toggle click area
+            let toggle_rect = (toggle_col_x, y, 20, 1);
+
+            // Right column: Color preview swatch + color input
+            let color_str = if is_color_focus {
+                // Show current input for selected bar
+                editor.color_input.lines().join("")
+            } else {
+                bar.color.clone()
+                    .unwrap_or_else(|| BarOrderEditor::default_color_for_id(&bar.id).to_string())
+            };
+
+            // Draw color preview swatch (2 chars)
+            let preview_color_str = if color_str.trim().is_empty() {
+                BarOrderEditor::default_color_for_id(&bar.id)
+            } else {
+                color_str.trim()
+            };
+            if let Some(ratatui_color) = super::colors::parse_color_to_ratatui(preview_color_str) {
+                let swatch_style = Style::default().bg(ratatui_color);
+                buf.set_string(color_col_x, y, "  ", swatch_style);
+            } else {
+                buf.set_string(color_col_x, y, "??", label_style);
+            }
+
+            // Draw color input field
+            let input_x = color_col_x + 3;
+            if is_color_focus {
+                // Render with cursor for active editing
+                let cursor_pos = editor.color_input.cursor().1;
+                let chars: Vec<char> = color_str.chars().collect();
+
+                for (i, ch) in chars.iter().enumerate().take(color_input_width) {
+                    let x = input_x + i as u16;
+                    if x < area.x + area.width {
+                        if i == cursor_pos {
+                            buf.set_string(x, y, &ch.to_string(), cursor_style);
+                        } else {
+                            buf.set_string(x, y, &ch.to_string(), focused_style);
+                        }
+                    }
+                }
+                // Cursor at end
+                if cursor_pos >= chars.len() {
+                    let x = input_x + chars.len() as u16;
+                    if x < area.x + area.width {
+                        buf.set_string(x, y, " ", cursor_style);
+                    }
+                }
+                // Fill remaining with underscores
+                let filled = chars.len().min(color_input_width);
+                let start = if cursor_pos >= chars.len() { filled + 1 } else { filled };
+                for i in start..color_input_width {
+                    let x = input_x + i as u16;
+                    if x < area.x + area.width {
+                        buf.set_string(x, y, "_", text_style);
+                    }
+                }
+            } else {
+                // Just show the color value
+                let display: String = color_str.chars().take(color_input_width).collect();
+                let padded = format!("{:<width$}", display, width = color_input_width);
+                let style = if is_sel { focused_style } else { text_style };
+                buf.set_string(input_x, y, &padded, style);
+            }
+
+            // Store color click area
+            let color_rect = (color_col_x, y, (3 + color_input_width) as u16, 1);
+
+            // Add click areas for this bar
+            editor.click_areas.push((idx, toggle_rect, color_rect));
         }
     }
 
@@ -5214,64 +5832,115 @@ impl WindowEditor {
                 );
             }
             WindowDef::Text { .. } => {
-                self.render_textarea_compact(
-                    FieldRef::Streams.legacy_field_id(),
-                    "Streams:",
-                    &self.streams_input,
-                    left_x,
-                    special_row,
-                    column_width as usize,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::Streams, self.focused_field),
-                );
-                self.render_checkbox_compact(
-                    FieldRef::Wordwrap.legacy_field_id(),
-                    "Wordwrap",
-                    self.text_wordwrap,
-                    right_x,
-                    special_row,
-                    column_width,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::Wordwrap, self.focused_field),
-                );
-                special_row += 1;
-                self.render_textarea_compact(
-                    FieldRef::BufferSize.legacy_field_id(),
-                    "Buffer Size:",
-                    &self.buffer_size_input,
-                    left_x,
-                    special_row,
-                    8,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::BufferSize, self.focused_field),
-                );
-                self.render_checkbox_compact(
-                    FieldRef::Timestamps.legacy_field_id(),
-                    "Timestamps",
-                    self.text_show_timestamps,
-                    right_x,
-                    special_row,
-                    column_width,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::Timestamps, self.focused_field),
-                );
-                special_row += 1;
-                // Compact mode checkbox (for bounty window, etc.)
-                self.render_checkbox_compact(
-                    FieldRef::TextCompact.legacy_field_id(),
-                    "Compact",
-                    self.text_compact,
-                    left_x,
-                    special_row,
-                    column_width,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::TextCompact, self.focused_field),
-                );
+                // Bounty window is special: hide Streams and BufferSize
+                let is_bounty = self.window_def.base().name.eq_ignore_ascii_case("bounty");
+
+                if is_bounty {
+                    // Bounty layout: Wordwrap (left), Timestamps (right) on row 1
+                    // TextCompact (left) on row 2
+                    self.render_checkbox_compact(
+                        FieldRef::Wordwrap.legacy_field_id(),
+                        "Wordwrap",
+                        self.text_wordwrap,
+                        left_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::Wordwrap, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, left_x, FieldRef::Wordwrap));
+                    self.render_checkbox_compact(
+                        FieldRef::Timestamps.legacy_field_id(),
+                        "Timestamps",
+                        self.text_show_timestamps,
+                        right_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::Timestamps, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, right_x, FieldRef::Timestamps));
+                    special_row += 1;
+                    self.render_checkbox_compact(
+                        FieldRef::TextCompact.legacy_field_id(),
+                        "Compact",
+                        self.text_compact,
+                        left_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::TextCompact, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, left_x, FieldRef::TextCompact));
+                } else {
+                    // Standard text window layout
+                    self.render_textarea_compact(
+                        FieldRef::Streams.legacy_field_id(),
+                        "Streams:",
+                        &self.streams_input,
+                        left_x,
+                        special_row,
+                        column_width as usize,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::Streams, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, left_x, FieldRef::Streams));
+                    self.render_checkbox_compact(
+                        FieldRef::Wordwrap.legacy_field_id(),
+                        "Wordwrap",
+                        self.text_wordwrap,
+                        right_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::Wordwrap, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, right_x, FieldRef::Wordwrap));
+                    special_row += 1;
+                    self.render_textarea_compact(
+                        FieldRef::BufferSize.legacy_field_id(),
+                        "Buffer Size:",
+                        &self.buffer_size_input,
+                        left_x,
+                        special_row,
+                        8,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::BufferSize, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, left_x, FieldRef::BufferSize));
+                    self.render_checkbox_compact(
+                        FieldRef::Timestamps.legacy_field_id(),
+                        "Timestamps",
+                        self.text_show_timestamps,
+                        right_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::Timestamps, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, right_x, FieldRef::Timestamps));
+                    special_row += 1;
+                    // Compact mode checkbox
+                    self.render_checkbox_compact(
+                        FieldRef::TextCompact.legacy_field_id(),
+                        "Compact",
+                        self.text_compact,
+                        left_x,
+                        special_row,
+                        column_width,
+                        buf,
+                        theme,
+                        is_focus(FieldRef::TextCompact, self.focused_field),
+                    );
+                    self.field_click_areas.push((special_row, left_x, FieldRef::TextCompact));
+                }
             }
             WindowDef::Inventory { .. } => {
                 self.render_textarea_compact(
@@ -5285,6 +5954,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Streams, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::Streams));
                 self.render_checkbox_compact(
                     FieldRef::Wordwrap.legacy_field_id(),
                     "Wordwrap",
@@ -5296,6 +5966,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Wordwrap, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::Wordwrap));
                 special_row += 1;
                 self.render_textarea_compact(
                     FieldRef::BufferSize.legacy_field_id(),
@@ -5308,6 +5979,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::BufferSize, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::BufferSize));
                 self.render_checkbox_compact(
                     FieldRef::Timestamps.legacy_field_id(),
                     "Timestamps",
@@ -5319,6 +5991,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Timestamps, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::Timestamps));
             }
             WindowDef::Targets { .. } => {
                 self.render_textarea_compact(
@@ -5332,6 +6005,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EntityId, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::EntityId));
                 self.render_checkbox_compact(
                     FieldRef::TargetsShowArmsCount.legacy_field_id(),
                     "Show 709 Arms",
@@ -5343,6 +6017,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TargetsShowArmsCount, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TargetsShowArmsCount));
             }
             WindowDef::Players { .. } => {
                 self.render_textarea_compact(
@@ -5356,6 +6031,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EntityId, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::EntityId));
             }
             WindowDef::TabbedText { .. } => {
                 let special_left_x = left_x + 2;
@@ -5513,6 +6189,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ProgressId, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ProgressId));
                 self.render_color_field(
                     FieldRef::TextColor.legacy_field_id(),
                     "Text Color",
@@ -5524,6 +6201,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TextColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TextColor));
                 special_row += 1;
                 self.render_checkbox_compact(
                     FieldRef::ProgressNumbersOnly.legacy_field_id(),
@@ -5536,6 +6214,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ProgressNumbersOnly, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ProgressNumbersOnly));
                 self.render_color_field(
                     FieldRef::ProgressColor.legacy_field_id(),
                     "Bar Color",
@@ -5547,6 +6226,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ProgressColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::ProgressColor));
                 special_row += 1;
                 self.render_checkbox_compact(
                     FieldRef::ProgressCurrentOnly.legacy_field_id(),
@@ -5559,6 +6239,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ProgressCurrentOnly, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ProgressCurrentOnly));
             }
             WindowDef::Countdown { .. } => {
                 self.render_textarea_compact(
@@ -5876,26 +6557,7 @@ impl WindowEditor {
                 );
             }
             WindowDef::Performance { .. } => {
-                self.render_checkbox_compact(
-                    FieldRef::PerfEnableMonitor.legacy_field_id(),
-                    "Enable Monitor",
-                    self.perf_enabled,
-                    left_x,
-                    special_row,
-                    column_width,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::PerfEnableMonitor, self.focused_field),
-                );
-                self.render_button(
-                    FieldRef::PerfChooseMetrics.legacy_field_id(),
-                    "[ Choose Metrics ]",
-                    right_x,
-                    special_row,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::PerfChooseMetrics, self.focused_field),
-                );
+                // Performance widget uses overlay-only system, no fields to render here
             }
             WindowDef::Perception { .. } => {
                 // Only sort_direction is configurable (stream="percWindow", buffer_size=100 hardcoded)
@@ -5949,6 +6611,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::GS4ExpShowLevel, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::GS4ExpShowLevel));
                 self.render_checkbox_compact(
                     FieldRef::GS4ExpShowExpBar.legacy_field_id(),
                     "Show Exp Bar",
@@ -5960,6 +6623,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::GS4ExpShowExpBar, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::GS4ExpShowExpBar));
                 // Row 2: Bar colors
                 self.render_color_field(
                     FieldRef::GS4ExpMindBarColor.legacy_field_id(),
@@ -5972,6 +6636,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::GS4ExpMindBarColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 1, left_x, FieldRef::GS4ExpMindBarColor));
                 self.render_color_field(
                     FieldRef::GS4ExpExpBarColor.legacy_field_id(),
                     "Exp",
@@ -5983,6 +6648,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::GS4ExpExpBarColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 1, right_x, FieldRef::GS4ExpExpBarColor));
             }
             WindowDef::Encumbrance { .. } => {
                 // Row 1: Show label checkbox
@@ -5997,6 +6663,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EncumShowLabel, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::EncumShowLabel));
                 // Row 2: Light (0-20) and Moderate (21-50) colors
                 self.render_color_field(
                     FieldRef::EncumColorLight.legacy_field_id(),
@@ -6009,6 +6676,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EncumColorLight, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 1, left_x, FieldRef::EncumColorLight));
                 self.render_color_field(
                     FieldRef::EncumColorModerate.legacy_field_id(),
                     "Moderate",
@@ -6020,6 +6688,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EncumColorModerate, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 1, right_x, FieldRef::EncumColorModerate));
                 // Row 3: Heavy (51-80) and Critical (81-100) colors
                 self.render_color_field(
                     FieldRef::EncumColorHeavy.legacy_field_id(),
@@ -6032,6 +6701,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EncumColorHeavy, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 2, left_x, FieldRef::EncumColorHeavy));
                 self.render_color_field(
                     FieldRef::EncumColorCritical.legacy_field_id(),
                     "Critical",
@@ -6043,6 +6713,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EncumColorCritical, self.focused_field),
                 );
+                self.field_click_areas.push((special_row + 2, right_x, FieldRef::EncumColorCritical));
             }
             WindowDef::MiniVitals { .. } => {
                 // Row 1: Display mode checkboxes
@@ -6057,6 +6728,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::MiniVitalsNumbersOnly, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::MiniVitalsNumbersOnly));
                 self.render_checkbox_compact(
                     FieldRef::MiniVitalsCurrentOnly.legacy_field_id(),
                     "Current Only",
@@ -6068,52 +6740,18 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::MiniVitalsCurrentOnly, self.focused_field),
                 );
-                // Row 2: Health and Mana colors
-                self.render_color_field(
-                    FieldRef::MiniVitalsHealthColor.legacy_field_id(),
-                    "Health",
-                    &self.minivitals_health_color_input,
+                self.field_click_areas.push((special_row, right_x, FieldRef::MiniVitalsCurrentOnly));
+                // Row 2: Bar order and colors editor button (handles all 5 bars)
+                self.render_button(
+                    FieldRef::MiniVitalsEditBarOrder.legacy_field_id(),
+                    "[ Edit Bars & Colors ]",
                     left_x,
                     special_row + 1,
-                    8,
                     buf,
                     theme,
-                    is_focus(FieldRef::MiniVitalsHealthColor, self.focused_field),
+                    is_focus(FieldRef::MiniVitalsEditBarOrder, self.focused_field),
                 );
-                self.render_color_field(
-                    FieldRef::MiniVitalsManaColor.legacy_field_id(),
-                    "Mana",
-                    &self.minivitals_mana_color_input,
-                    right_x,
-                    special_row + 1,
-                    8,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::MiniVitalsManaColor, self.focused_field),
-                );
-                // Row 3: Stamina and Spirit colors
-                self.render_color_field(
-                    FieldRef::MiniVitalsStaminaColor.legacy_field_id(),
-                    "Stamina",
-                    &self.minivitals_stamina_color_input,
-                    left_x,
-                    special_row + 2,
-                    8,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::MiniVitalsStaminaColor, self.focused_field),
-                );
-                self.render_color_field(
-                    FieldRef::MiniVitalsSpiritColor.legacy_field_id(),
-                    "Spirit",
-                    &self.minivitals_spirit_color_input,
-                    right_x,
-                    special_row + 2,
-                    8,
-                    buf,
-                    theme,
-                    is_focus(FieldRef::MiniVitalsSpiritColor, self.focused_field),
-                );
+                self.field_click_areas.push((special_row + 1, left_x, FieldRef::MiniVitalsEditBarOrder));
             }
             WindowDef::Betrayer { .. } => {
                 // Betrayer widget: show_items toggle and bar color

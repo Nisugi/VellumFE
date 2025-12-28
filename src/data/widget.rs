@@ -283,6 +283,71 @@ impl TabbedTextContent {
 
         None
     }
+
+    /// Update tabs from new layout definition while preserving content for existing tabs.
+    /// New tabs are added with empty content. Tabs not in the new definition are removed.
+    /// Returns true if the tabs structure changed (requiring widget cache reset).
+    pub fn update_tabs(
+        &mut self,
+        new_tabs: Vec<(String, Vec<String>, bool, bool, TimestampPosition)>,
+        max_lines_per_tab: usize,
+    ) -> bool {
+        // Quick check: if tab count and names match, no structural change needed
+        let old_names: Vec<&str> = self.tabs.iter().map(|t| t.definition.name.as_str()).collect();
+        let new_names: Vec<&str> = new_tabs.iter().map(|(name, _, _, _, _)| name.as_str()).collect();
+
+        if old_names == new_names {
+            // Just update definitions (streams, settings) without recreating
+            for (tab, (_, streams, show_ts, ignore, ts_pos)) in self.tabs.iter_mut().zip(new_tabs.iter()) {
+                tab.definition.streams = streams.clone();
+                tab.definition.show_timestamps = *show_ts;
+                tab.definition.ignore_activity = *ignore;
+                tab.definition.timestamp_position = *ts_pos;
+            }
+            return false; // No structural change
+        }
+
+        // Structural change - rebuild tabs, preserving content where possible
+        let mut old_tabs: std::collections::HashMap<String, TabState> = self
+            .tabs
+            .drain(..)
+            .map(|t| (t.definition.name.clone(), t))
+            .collect();
+
+        self.tabs = new_tabs
+            .into_iter()
+            .map(|(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
+                let definition = TabDefinition {
+                    name: name.clone(),
+                    streams,
+                    show_timestamps,
+                    ignore_activity,
+                    timestamp_position,
+                };
+
+                // Reuse existing tab content if available
+                if let Some(mut old_tab) = old_tabs.remove(&name) {
+                    old_tab.definition = definition;
+                    old_tab
+                } else {
+                    // New tab - empty content
+                    let content = TextContent::new(&name, max_lines_per_tab);
+                    TabState {
+                        definition,
+                        content,
+                        has_unread: false,
+                    }
+                }
+            })
+            .collect();
+
+        // Ensure active_tab_index is valid
+        if self.active_tab_index >= self.tabs.len() {
+            self.active_tab_index = self.tabs.len().saturating_sub(1);
+        }
+
+        true // Structural change occurred
+    }
 }
 
 impl TextContent {
@@ -781,5 +846,84 @@ mod tests {
         assert_eq!(effect.text, "Fasthr's Reward");
         assert_eq!(effect.value, 74);
         assert_eq!(effect.time, "03:06:54");
+    }
+
+    // ==================== TabbedTextContent update_tabs Tests ====================
+
+    #[test]
+    fn test_tabbed_text_content_update_tabs_no_change() {
+        use super::TabbedTextContent;
+        use crate::config::TimestampPosition;
+
+        let mut tabbed = TabbedTextContent::new(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+            ],
+            1000,
+        );
+
+        // Same tabs - should return false (no structural change)
+        let changed = tabbed.update_tabs(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+            ],
+            1000,
+        );
+        assert!(!changed);
+        assert_eq!(tabbed.tabs.len(), 2);
+    }
+
+    #[test]
+    fn test_tabbed_text_content_update_tabs_add_tab() {
+        use super::TabbedTextContent;
+        use crate::config::TimestampPosition;
+
+        let mut tabbed = TabbedTextContent::new(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+            ],
+            1000,
+        );
+
+        // Add a new tab - should return true (structural change)
+        let changed = tabbed.update_tabs(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+            ],
+            1000,
+        );
+        assert!(changed);
+        assert_eq!(tabbed.tabs.len(), 2);
+        assert_eq!(tabbed.tabs[0].definition.name, "Main");
+        assert_eq!(tabbed.tabs[1].definition.name, "Combat");
+    }
+
+    #[test]
+    fn test_tabbed_text_content_update_tabs_remove_tab() {
+        use super::TabbedTextContent;
+        use crate::config::TimestampPosition;
+
+        let mut tabbed = TabbedTextContent::new(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+            ],
+            1000,
+        );
+        tabbed.active_tab_index = 1; // Set to Combat tab
+
+        // Remove Combat tab - should return true and fix active_tab_index
+        let changed = tabbed.update_tabs(
+            vec![
+                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+            ],
+            1000,
+        );
+        assert!(changed);
+        assert_eq!(tabbed.tabs.len(), 1);
+        assert_eq!(tabbed.active_tab_index, 0); // Should be clamped
     }
 }

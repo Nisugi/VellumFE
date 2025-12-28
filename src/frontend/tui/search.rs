@@ -1,6 +1,8 @@
 use super::*;
 
 impl TuiFrontend {
+    /// Convert mouse coordinates to text coordinates for a window.
+    /// Works with text windows, tabbed text windows, and other text-containing widgets.
     pub fn mouse_to_text_coords(
         &self,
         window_name: &str,
@@ -8,8 +10,57 @@ impl TuiFrontend {
         mouse_row: u16,
         window_rect: ratatui::layout::Rect,
     ) -> Option<(usize, usize)> {
-        let text_window = self.widget_manager.text_windows.get(window_name)?;
-        text_window.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        // Check text windows first
+        if let Some(text_window) = self.widget_manager.text_windows.get(window_name) {
+            return text_window.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check tabbed text windows (use active tab's text window)
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get(window_name) {
+            return tabbed.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check room windows
+        if let Some(room) = self.widget_manager.room_windows.get(window_name) {
+            return room.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check inventory windows
+        if let Some(inv) = self.widget_manager.inventory_windows.get(window_name) {
+            return inv.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check container windows
+        if let Some(container) = self.widget_manager.container_widgets.get(window_name) {
+            return container.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check spells windows
+        if let Some(spells) = self.widget_manager.spells_windows.get(window_name) {
+            return spells.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check active effects windows
+        if let Some(effects) = self.widget_manager.active_effects_windows.get(window_name) {
+            return effects.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check targets windows
+        if let Some(targets) = self.widget_manager.targets_widgets.get(window_name) {
+            return targets.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check players windows
+        if let Some(players) = self.widget_manager.players_widgets.get(window_name) {
+            return players.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        // Check hand widgets
+        if let Some(hand) = self.widget_manager.hand_widgets.get(window_name) {
+            return hand.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
+        None
     }
 
     /// Handle a tab click for a tabbed text window; returns Some(new_index) if a tab was activated.
@@ -28,7 +79,7 @@ impl TuiFrontend {
         None
     }
 
-    /// Extract selected text from a text window
+    /// Extract selected text from any text-supporting window
     pub fn extract_selection_text(
         &self,
         window_name: &str,
@@ -37,8 +88,57 @@ impl TuiFrontend {
         end_line: usize,
         end_col: usize,
     ) -> Option<String> {
-        let text_window = self.widget_manager.text_windows.get(window_name)?;
-        Some(text_window.extract_selection_text(start_line, start_col, end_line, end_col))
+        // Check text windows first
+        if let Some(text_window) = self.widget_manager.text_windows.get(window_name) {
+            return Some(text_window.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check tabbed text windows
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get(window_name) {
+            return Some(tabbed.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check room windows
+        if let Some(room) = self.widget_manager.room_windows.get(window_name) {
+            return Some(room.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check inventory windows
+        if let Some(inv) = self.widget_manager.inventory_windows.get(window_name) {
+            return Some(inv.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check container windows
+        if let Some(container) = self.widget_manager.container_widgets.get(window_name) {
+            return Some(container.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check spells windows
+        if let Some(spells) = self.widget_manager.spells_windows.get(window_name) {
+            return Some(spells.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check active effects windows
+        if let Some(effects) = self.widget_manager.active_effects_windows.get(window_name) {
+            return Some(effects.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check targets windows
+        if let Some(targets) = self.widget_manager.targets_widgets.get(window_name) {
+            return Some(targets.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check players windows
+        if let Some(players) = self.widget_manager.players_widgets.get(window_name) {
+            return Some(players.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check hand widgets
+        if let Some(hand) = self.widget_manager.hand_widgets.get(window_name) {
+            return Some(hand.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        None
     }
 
     /// Ensure a command input widget exists (should be called during init)

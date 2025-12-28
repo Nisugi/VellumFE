@@ -1074,6 +1074,29 @@ impl AppCore {
                 let mut text_content = TextContent::new(title, buffer_size);
                 text_content.streams = streams;
                 text_content.compact = compact;
+
+                // For bounty windows: pre-populate with buffered bounty data if available
+                if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
+                    // Use compact lines if window is in compact mode, otherwise raw text
+                    let lines = if compact {
+                        &self.game_state.bounty.compact_lines
+                    } else {
+                        // For non-compact, use raw text as single line
+                        std::slice::from_ref(&self.game_state.bounty.raw_text)
+                    };
+
+                    for line_text in lines {
+                        text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
+                            line_text.clone(),
+                            "bounty",
+                        ));
+                    }
+                    tracing::info!(
+                        "Pre-populated bounty window with {} buffered lines",
+                        lines.len()
+                    );
+                }
+
                 WindowContent::Text(text_content)
             }
             WidgetType::TabbedText => {
@@ -1316,6 +1339,45 @@ impl AppCore {
         }
     }
 
+    /// Sync tabbed window tabs from layout definition.
+    /// Called after window editor saves changes to a TabbedText window.
+    /// Returns true if structural changes occurred (requiring widget cache reset).
+    pub fn sync_tabbed_window_tabs(&mut self, window_name: &str) -> bool {
+        // Find the layout definition
+        let window_def = self.layout.windows.iter().find(|w| w.name() == window_name);
+        let Some(crate::config::WindowDef::TabbedText { data, base: _ }) = window_def else {
+            return false;
+        };
+
+        // Get the TabbedTextContent from ui_state
+        let Some(window) = self.ui_state.windows.get_mut(window_name) else {
+            return false;
+        };
+        let crate::data::WindowContent::TabbedText(tabbed_content) = &mut window.content else {
+            return false;
+        };
+
+        // Build new tab definitions from layout
+        let global_ts_pos = self.config.ui.timestamp_position;
+        let new_tabs: Vec<_> = data
+            .tabs
+            .iter()
+            .map(|tab| {
+                let show_ts = tab.show_timestamps.unwrap_or(false);
+                let ignore = tab.ignore_activity.unwrap_or(false);
+                let ts_pos = tab.timestamp_position.unwrap_or(global_ts_pos);
+                (tab.name.clone(), tab.get_streams(), show_ts, ignore, ts_pos)
+            })
+            .collect();
+
+        // Update and return whether structural change occurred
+        let changed = tabbed_content.update_tabs(new_tabs, data.buffer_size);
+        if changed {
+            tracing::info!("Updated tabs for window '{}'", window_name);
+        }
+        changed
+    }
+
     /// Remove a window from UI state
     pub fn remove_window(&mut self, name: &str) {
         self.ui_state.remove_window(name);
@@ -1346,6 +1408,11 @@ impl AppCore {
                 self.game_state.queue_sound(sound);
             }
 
+            // Transfer bounty buffer to GameState if any
+            if let Some((raw_text, compact_lines)) = self.message_processor.take_bounty_buffer() {
+                self.game_state.bounty.update(raw_text, compact_lines);
+            }
+
             return Ok(());
         }
 
@@ -1370,6 +1437,11 @@ impl AppCore {
             // Transfer pending sounds from MessageProcessor to GameState
             for sound in self.message_processor.pending_sounds.drain(..) {
                 self.game_state.queue_sound(sound);
+            }
+
+            // Transfer bounty buffer to GameState if any
+            if let Some((raw_text, compact_lines)) = self.message_processor.take_bounty_buffer() {
+                self.game_state.bounty.update(raw_text, compact_lines);
             }
         }
 
@@ -1802,12 +1874,16 @@ impl AppCore {
                 let clamped_y = ui_pos.y.min(terminal_height.saturating_sub(1));
 
                 // Ensure width doesn't exceed available space
+                // Use window's min_cols constraint (default 1) instead of hardcoded 10
                 let max_width = terminal_width.saturating_sub(clamped_x);
-                let clamped_width = ui_pos.width.min(max_width).max(10);
+                let min_width = base.min_cols.unwrap_or(1);
+                let clamped_width = ui_pos.width.min(max_width).max(min_width);
 
                 // Ensure height doesn't exceed available space
+                // Use window's min_rows constraint (default 1)
                 let max_height = terminal_height.saturating_sub(clamped_y);
-                let clamped_height = ui_pos.height.min(max_height).max(1);
+                let min_height = base.min_rows.unwrap_or(1);
+                let clamped_height = ui_pos.height.min(max_height).max(min_height);
 
                 if clamped_x != ui_pos.x
                     || clamped_y != ui_pos.y
@@ -2073,7 +2149,7 @@ impl AppCore {
         self.hide_window(name);
     }
 
-    /// Create an ephemeral container window at screen center
+    /// Create an ephemeral container window at screen center (or saved position if available)
     pub fn create_ephemeral_container_window(
         &mut self,
         container_title: &str,
@@ -2094,10 +2170,21 @@ impl AppCore {
             return;
         }
 
-        // Center position with reasonable defaults
-        let (w, h) = (40u16, 15u16);
-        let x = terminal_width.saturating_sub(w) / 2;
-        let y = terminal_height.saturating_sub(h) / 2;
+        // Check for saved position, otherwise center with reasonable defaults
+        let (x, y, w, h) = if let Some(saved) = self.saved_dialog_positions.containers.get(&window_name) {
+            let width = saved.width.unwrap_or(40);
+            let height = saved.height.unwrap_or(15);
+            // Clamp to terminal bounds
+            let x = saved.x.min(terminal_width.saturating_sub(width));
+            let y = saved.y.min(terminal_height.saturating_sub(height));
+            tracing::debug!("Using saved position for container '{}': ({}, {}) {}x{}", window_name, x, y, width, height);
+            (x, y, width, height)
+        } else {
+            let (w, h) = (40u16, 15u16);
+            let x = terminal_width.saturating_sub(w) / 2;
+            let y = terminal_height.saturating_sub(h) / 2;
+            (x, y, w, h)
+        };
 
         let window = WindowState {
             name: window_name.clone(),
@@ -2780,11 +2867,7 @@ impl AppCore {
                 command: "menu:editwindow".to_string(),
                 disabled: false,
             },
-            crate::data::ui_state::PopupMenuItem {
-                text: "Edit Performance".to_string(),
-                command: "action:editperformance".to_string(),
-                disabled: false,
-            },
+            // "Edit Performance" removed - now use right-click on overlay to toggle metrics
             crate::data::ui_state::PopupMenuItem {
                 text: "Hide window >".to_string(),
                 command: "menu:hidewindow".to_string(),
@@ -3473,7 +3556,7 @@ impl AppCore {
 
     /// Build the top-level "Add Window" menu showing widget categories
     pub fn build_add_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout);
+        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout, self.game_type());
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -3496,7 +3579,7 @@ impl AppCore {
         &self,
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout);
+        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout, self.game_type());
 
         if let Some(templates) = categories_map.get(category) {
             // Filter out templates already present in the layout (so they disappear once added)

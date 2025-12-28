@@ -178,9 +178,30 @@ impl Players {
 
     /// Handle a click at the given coordinates.
     /// Returns a LinkData if a player was clicked (can be used for targeting/interacting).
-pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
+    pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
         // Delegate to ListWidget's click handling (x=0 since ListWidget doesn't use it)
         self.widget.handle_click(0, y, area)
+    }
+
+    /// Convert mouse position to text coordinates
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+    }
+
+    /// Extract text from a selection range
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 

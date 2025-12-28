@@ -730,6 +730,88 @@ impl RoomWindow {
             }
         })
     }
+
+    /// Convert mouse position to text coordinates
+    /// Returns (line_index, column_index) if position is within content area
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        let border_offset = if self.show_border { 1 } else { 0 };
+
+        // Bounds check within content area
+        if mouse_col < window_rect.x + border_offset
+            || mouse_col >= window_rect.x + window_rect.width - border_offset
+            || mouse_row < window_rect.y + border_offset
+            || mouse_row >= window_rect.y + window_rect.height - border_offset
+        {
+            return None;
+        }
+
+        let visible_height = (window_rect.height.saturating_sub(2 * border_offset)) as usize;
+        let total_lines = self.wrapped_lines.len();
+        let start_line = if total_lines > visible_height + self.scroll_offset {
+            total_lines - visible_height - self.scroll_offset
+        } else {
+            0
+        };
+
+        let line_idx = start_line + (mouse_row - window_rect.y - border_offset) as usize;
+        let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+        Some((line_idx, col_offset))
+    }
+
+    /// Extract text from a selection range
+    pub fn extract_selection_text(
+        &self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) -> String {
+        if self.wrapped_lines.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+
+        for line_idx in start_line..=end_line.min(self.wrapped_lines.len().saturating_sub(1)) {
+            if line_idx >= self.wrapped_lines.len() {
+                break;
+            }
+
+            let line = &self.wrapped_lines[line_idx];
+            let line_text: String = line.iter().map(|seg| seg.text.as_str()).collect();
+            let line_len = line_text.chars().count();
+
+            if start_line == end_line {
+                // Single line selection
+                let start = start_col.min(line_len);
+                let end = end_col.min(line_len);
+                if start < end {
+                    result.push_str(&line_text.chars().skip(start).take(end - start).collect::<String>());
+                }
+            } else if line_idx == start_line {
+                // First line of multi-line selection
+                let start = start_col.min(line_len);
+                result.push_str(&line_text.chars().skip(start).collect::<String>());
+                result.push('\n');
+            } else if line_idx == end_line {
+                // Last line of multi-line selection
+                let end = end_col.min(line_len);
+                result.push_str(&line_text.chars().take(end).collect::<String>());
+            } else {
+                // Middle lines - take all
+                result.push_str(&line_text);
+                result.push('\n');
+            }
+        }
+
+        result
+    }
 }
 
 #[cfg(test)]

@@ -1131,11 +1131,67 @@ impl TuiFrontend {
                                 return Ok((true, None));
                             }
 
+                            // Handle perf menu close
+                            if command == "__PERF_MENU_CLOSE__" {
+                                app_core.ui_state.popup_menu = None;
+                                app_core.ui_state.input_mode = InputMode::Normal;
+                                app_core.needs_render = true;
+                                return Ok((true, None));
+                            }
+
+                            // Handle performance metric toggle from right-click menu
+                            if let Some(metric) = command.strip_prefix("__TOGGLE_PERF__") {
+                                match metric {
+                                    "fps" => app_core.config.ui.perf_show_fps = !app_core.config.ui.perf_show_fps,
+                                    "frame_times" => app_core.config.ui.perf_show_frame_times = !app_core.config.ui.perf_show_frame_times,
+                                    "render_times" => app_core.config.ui.perf_show_render_times = !app_core.config.ui.perf_show_render_times,
+                                    "ui_times" => app_core.config.ui.perf_show_ui_times = !app_core.config.ui.perf_show_ui_times,
+                                    "wrap_times" => app_core.config.ui.perf_show_wrap_times = !app_core.config.ui.perf_show_wrap_times,
+                                    "net" => app_core.config.ui.perf_show_net = !app_core.config.ui.perf_show_net,
+                                    "parse" => app_core.config.ui.perf_show_parse = !app_core.config.ui.perf_show_parse,
+                                    "events" => app_core.config.ui.perf_show_events = !app_core.config.ui.perf_show_events,
+                                    "memory" => app_core.config.ui.perf_show_memory = !app_core.config.ui.perf_show_memory,
+                                    "lines" => app_core.config.ui.perf_show_lines = !app_core.config.ui.perf_show_lines,
+                                    "uptime" => app_core.config.ui.perf_show_uptime = !app_core.config.ui.perf_show_uptime,
+                                    "jitter" => app_core.config.ui.perf_show_jitter = !app_core.config.ui.perf_show_jitter,
+                                    "frame_spikes" => app_core.config.ui.perf_show_frame_spikes = !app_core.config.ui.perf_show_frame_spikes,
+                                    "event_lag" => app_core.config.ui.perf_show_event_lag = !app_core.config.ui.perf_show_event_lag,
+                                    "memory_delta" => app_core.config.ui.perf_show_memory_delta = !app_core.config.ui.perf_show_memory_delta,
+                                    _ => {}
+                                }
+                                // Re-apply enabled flags to perf_stats collector
+                                let data = app_core.perf_overlay_data(true);
+                                app_core.perf_stats.apply_enabled_from(&data);
+                                // Rebuild menu with updated checkmarks (keep it open)
+                                if let Some(ref mut menu) = app_core.ui_state.popup_menu {
+                                    menu.items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
+                                    // Keep selection in bounds
+                                    if menu.selected >= menu.items.len() {
+                                        menu.selected = menu.items.len().saturating_sub(1);
+                                    }
+                                }
+                                app_core.needs_render = true;
+                                return Ok((true, None));
+                            }
+
                             // Check if this is an internal action or game command
                             if command.starts_with("action:") {
                                 // Internal action - handle it
                                 if let Err(e) = handle_menu_action_fn(app_core, self, &command) {
                                     tracing::error!("Menu action error: {}", e);
+                                }
+                                app_core.needs_render = true;
+                                return Ok((true, None));
+                            } else if command.starts_with(".") {
+                                // Dot command - close menu and process through normal dot command handler
+                                app_core.ui_state.popup_menu = None;
+                                app_core.ui_state.submenu = None;
+                                app_core.ui_state.nested_submenu = None;
+                                app_core.ui_state.deep_submenu = None;
+                                app_core.ui_state.input_mode = InputMode::Normal;
+                                // Process the dot command (e.g., .menu, .help)
+                                if let Err(e) = app_core.send_command(command.to_string()) {
+                                    tracing::error!("Dot command error: {}", e);
                                 }
                                 app_core.needs_render = true;
                                 return Ok((true, None));
@@ -1348,6 +1404,7 @@ impl TuiFrontend {
                                         window_index,
                                         line,
                                         col,
+                                        window_name.clone(),
                                     ));
                             }
                         }
@@ -1635,6 +1692,30 @@ impl TuiFrontend {
                                 drag_state.window_name, base.col, base.row, base.cols, base.rows);
                             app_core.layout_modified_since_save = true;
                         }
+
+                        // Save ephemeral container window positions to widget_state.toml
+                        if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
+                            use crate::config::{Config, DialogPosition};
+                            let pos = DialogPosition {
+                                x: window.position.x,
+                                y: window.position.y,
+                                width: Some(window.position.width),
+                                height: Some(window.position.height),
+                            };
+                            app_core.saved_dialog_positions.containers.insert(
+                                drag_state.window_name.clone(),
+                                pos,
+                            );
+                            // Save to disk asynchronously (best-effort)
+                            let character = app_core.config.character.clone();
+                            let positions = app_core.saved_dialog_positions.clone();
+                            std::thread::spawn(move || {
+                                if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
+                                    tracing::warn!("Failed to save container positions: {}", e);
+                                }
+                            });
+                            tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
+                        }
                     }
                 }
 
@@ -1646,65 +1727,34 @@ impl TuiFrontend {
                     let auto_copy = app_core.config.ui.selection_auto_copy;
 
                     if auto_copy && !selection.is_empty() {
-                        // Extract text from selection
+                        // Extract text from selection using the stored window name
                         let (start, end) = selection.normalized_range();
+                        let window_name = &selection.window_name;
 
-                        // Find the window (for now assume main window)
-                        if let Some((_line, _col)) = self.mouse_to_text_coords(
-                            "main",
-                            *x,
-                            *y,
-                            ratatui::layout::Rect {
-                                x: app_core
-                                    .ui_state
-                                    .windows
-                                    .get("main")
-                                    .map(|w| w.position.x)
-                                    .unwrap_or(0),
-                                y: app_core
-                                    .ui_state
-                                    .windows
-                                    .get("main")
-                                    .map(|w| w.position.y)
-                                    .unwrap_or(0),
-                                width: app_core
-                                    .ui_state
-                                    .windows
-                                    .get("main")
-                                    .map(|w| w.position.width)
-                                    .unwrap_or(80),
-                                height: app_core
-                                    .ui_state
-                                    .windows
-                                    .get("main")
-                                    .map(|w| w.position.height)
-                                    .unwrap_or(24),
-                            },
+                        if let Some(text) = self.extract_selection_text(
+                            window_name, start.line, start.col, end.line, end.col,
                         ) {
-                            if let Some(text) = self.extract_selection_text(
-                                "main", start.line, start.col, end.line, end.col,
-                            ) {
-                                // Copy to clipboard
-                                match arboard::Clipboard::new() {
-                                    Ok(mut clipboard) => {
-                                        if let Err(e) = clipboard.set_text(&text) {
-                                            tracing::warn!(
-                                                "Failed to copy to clipboard: {}",
-                                                e
-                                            );
-                                        } else {
-                                            tracing::info!(
-                                                "Copied {} chars to clipboard",
-                                                text.len()
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
+                            // Copy to clipboard
+                            match arboard::Clipboard::new() {
+                                Ok(mut clipboard) => {
+                                    if let Err(e) = clipboard.set_text(&text) {
                                         tracing::warn!(
-                                            "Failed to access clipboard: {}",
+                                            "Failed to copy to clipboard: {}",
                                             e
                                         );
+                                    } else {
+                                        tracing::info!(
+                                            "Copied {} chars to clipboard from '{}'",
+                                            text.len(),
+                                            window_name
+                                        );
                                     }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to access clipboard: {}",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -1719,6 +1769,21 @@ impl TuiFrontend {
                 return Ok((true, command_to_send));
             }
             MouseEventKind::Down(crate::frontend::MouseButton::Right) => {
+                // Right-click on performance overlay: show metrics toggle menu
+                if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
+                    let pos = &window.position;
+                    if *x >= pos.x && *x < pos.x + pos.width
+                       && *y >= pos.y && *y < pos.y + pos.height {
+                        // Build performance metrics context menu
+                        let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
+                        app_core.ui_state.popup_menu =
+                            Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
+                        app_core.ui_state.input_mode = InputMode::Menu;
+                        app_core.needs_render = true;
+                        return Ok((true, None));
+                    }
+                }
+
                 // Right-click: show context menu for window title bars
                 for (name, window) in &app_core.ui_state.windows {
                     let pos = &window.position;
@@ -3687,7 +3752,7 @@ impl TuiFrontend {
             app_core.needs_render = true;
         } else if command == "__SUBMENU_INDICATORS" {
             // Indicator submenu under Status (replaces deep_submenu since we're at level 4)
-            let templates = crate::config::Config::get_addable_templates_by_category(&app_core.layout)
+            let templates = crate::config::Config::get_addable_templates_by_category(&app_core.layout, app_core.game_type())
                 .get(&crate::config::WidgetCategory::Status)
                 .cloned()
                 .unwrap_or_default();
@@ -3839,13 +3904,12 @@ impl TuiFrontend {
                     // Only add the NEW window to UI state, don't overwrite existing windows
                     // (sync_layout_to_ui_state was overwriting all windows, resetting user changes)
 
-                    // For spacers, the actual name is auto-generated (spacer_1, spacer_2, etc.)
-                    // so we need to get the last window in the layout instead
-                    let window_def = if window_name == "spacer" {
-                        app_core.layout.windows.last().cloned()
-                    } else {
-                        app_core.layout.get_window(window_name).cloned()
-                    };
+                    // For templates with auto-generated names (spacer, tabbedtext_custom, etc.)
+                    // we need to get the last window in the layout since the template name
+                    // differs from the actual window name (e.g., "tabbedtext_custom" → "custom-tabbedtext-1")
+                    // First try direct lookup, then fallback to last window if template doesn't match
+                    let window_def = app_core.layout.get_window(window_name).cloned()
+                        .or_else(|| app_core.layout.windows.last().cloned());
 
                     if let Some(window_def) = window_def {
                         let actual_name = window_def.name().to_string();
@@ -3930,14 +3994,59 @@ impl TuiFrontend {
                 app_core.hide_window(window_name);
             }
             app_core.needs_render = true;
+        } else if command == "__PERF_MENU_CLOSE__" {
+            // Close the perf metrics menu
+            app_core.ui_state.popup_menu = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
+            app_core.needs_render = true;
+        } else if let Some(metric) = command.strip_prefix("__TOGGLE_PERF__") {
+            // Handle performance overlay metric toggle from right-click menu
+            match metric {
+                "fps" => app_core.config.ui.perf_show_fps = !app_core.config.ui.perf_show_fps,
+                "frame_times" => app_core.config.ui.perf_show_frame_times = !app_core.config.ui.perf_show_frame_times,
+                "render_times" => app_core.config.ui.perf_show_render_times = !app_core.config.ui.perf_show_render_times,
+                "ui_times" => app_core.config.ui.perf_show_ui_times = !app_core.config.ui.perf_show_ui_times,
+                "wrap_times" => app_core.config.ui.perf_show_wrap_times = !app_core.config.ui.perf_show_wrap_times,
+                "net" => app_core.config.ui.perf_show_net = !app_core.config.ui.perf_show_net,
+                "parse" => app_core.config.ui.perf_show_parse = !app_core.config.ui.perf_show_parse,
+                "events" => app_core.config.ui.perf_show_events = !app_core.config.ui.perf_show_events,
+                "memory" => app_core.config.ui.perf_show_memory = !app_core.config.ui.perf_show_memory,
+                "lines" => app_core.config.ui.perf_show_lines = !app_core.config.ui.perf_show_lines,
+                "uptime" => app_core.config.ui.perf_show_uptime = !app_core.config.ui.perf_show_uptime,
+                "jitter" => app_core.config.ui.perf_show_jitter = !app_core.config.ui.perf_show_jitter,
+                "frame_spikes" => app_core.config.ui.perf_show_frame_spikes = !app_core.config.ui.perf_show_frame_spikes,
+                "event_lag" => app_core.config.ui.perf_show_event_lag = !app_core.config.ui.perf_show_event_lag,
+                "memory_delta" => app_core.config.ui.perf_show_memory_delta = !app_core.config.ui.perf_show_memory_delta,
+                _ => {}
+            }
+            // Re-apply enabled flags to perf_stats collector
+            let data = app_core.perf_overlay_data(true);
+            app_core.perf_stats.apply_enabled_from(&data);
+            // Rebuild menu with updated checkmarks (keep it open)
+            if let Some(ref mut menu) = app_core.ui_state.popup_menu {
+                menu.items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
+                // Keep selection in bounds
+                if menu.selected >= menu.items.len() {
+                    menu.selected = menu.items.len().saturating_sub(1);
+                }
+            }
+            app_core.needs_render = true;
         } else {
             // Internal action commands should manage menus themselves
             if command.starts_with("action:") {
                 handle_menu_action_fn(app_core, self, &command)?;
                 app_core.needs_render = true;
             } else if command.starts_with(".") {
-                let action_command = format!("action:{}", &command[1..]);
-                handle_menu_action_fn(app_core, self, &action_command)?;
+                // Dot command - close menu and process through normal dot command handler
+                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.submenu = None;
+                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
+                app_core.ui_state.input_mode = InputMode::Normal;
+                // Process the dot command (e.g., .menu, .help)
+                if let Err(e) = app_core.send_command(command.to_string()) {
+                    tracing::error!("Dot command error: {}", e);
+                }
                 app_core.needs_render = true;
             } else {
                 if let Some(id) = command.strip_prefix("_qlink change ") {
@@ -3997,6 +4106,100 @@ impl TuiFrontend {
     /// Build configuration submenu (delegates to menu_builders module)
     fn build_config_submenu() -> Vec<crate::data::ui_state::PopupMenuItem> {
         menu_builders::build_config_submenu()
+    }
+
+    /// Build performance overlay metrics context menu with checkmarks for enabled metrics
+    fn build_perf_metrics_context_menu(ui: &crate::config::UiConfig) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        let check = |on: bool| if on { "✓" } else { " " };
+        vec![
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] FPS", check(ui.perf_show_fps)),
+                command: "__TOGGLE_PERF__fps".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Render Times", check(ui.perf_show_render_times)),
+                command: "__TOGGLE_PERF__render_times".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] UI Times", check(ui.perf_show_ui_times)),
+                command: "__TOGGLE_PERF__ui_times".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Wrap Times", check(ui.perf_show_wrap_times)),
+                command: "__TOGGLE_PERF__wrap_times".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Network", check(ui.perf_show_net)),
+                command: "__TOGGLE_PERF__net".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Parse Stats", check(ui.perf_show_parse)),
+                command: "__TOGGLE_PERF__parse".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Events", check(ui.perf_show_events)),
+                command: "__TOGGLE_PERF__events".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Memory", check(ui.perf_show_memory)),
+                command: "__TOGGLE_PERF__memory".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Lines/Windows", check(ui.perf_show_lines)),
+                command: "__TOGGLE_PERF__lines".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Uptime", check(ui.perf_show_uptime)),
+                command: "__TOGGLE_PERF__uptime".to_string(),
+                disabled: false,
+            },
+            // Advanced metrics (usually disabled by default)
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Frame Times", check(ui.perf_show_frame_times)),
+                command: "__TOGGLE_PERF__frame_times".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Jitter", check(ui.perf_show_jitter)),
+                command: "__TOGGLE_PERF__jitter".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Frame Spikes", check(ui.perf_show_frame_spikes)),
+                command: "__TOGGLE_PERF__frame_spikes".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Event Lag", check(ui.perf_show_event_lag)),
+                command: "__TOGGLE_PERF__event_lag".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] Memory Delta", check(ui.perf_show_memory_delta)),
+                command: "__TOGGLE_PERF__memory_delta".to_string(),
+                disabled: false,
+            },
+            // Separator and Close button
+            crate::data::ui_state::PopupMenuItem {
+                text: "─────────────".to_string(),
+                command: String::new(),
+                disabled: true,
+            },
+            crate::data::ui_state::PopupMenuItem {
+                text: "Close".to_string(),
+                command: "__PERF_MENU_CLOSE__".to_string(),
+                disabled: false,
+            },
+        ]
     }
 
     /// Handle WindowEditor mode keyboard events (extracted from main.rs Phase 4.2)
@@ -4060,7 +4263,6 @@ impl TuiFrontend {
                         app_core.needs_render = true;
                     } else if editor.is_on_edit_tabs()
                         || editor.is_on_edit_indicators()
-                        || editor.is_on_perf_metrics_button()
                         || editor.is_on_perception_replacements()
                     {
                         editor.toggle_field();
@@ -4101,7 +4303,6 @@ impl TuiFrontend {
                             || editor.is_on_border_style()
                             || editor.is_on_edit_tabs()
                             || editor.is_on_edit_indicators()
-                            || editor.is_on_perf_metrics_button()
                             || editor.is_on_perception_sort_direction()
                             || editor.is_on_perception_short_spell_names()
                             || editor.is_on_perception_replacements()
@@ -4122,7 +4323,6 @@ impl TuiFrontend {
                                 editor.cycle_border_style(false);
                             } else if editor.is_on_edit_tabs()
                                 || editor.is_on_edit_indicators()
-                                || editor.is_on_perf_metrics_button()
                                 || editor.is_on_perception_replacements()
                             {
                                 editor.toggle_field();
@@ -4173,6 +4373,14 @@ impl TuiFrontend {
                                 *existing = window_def.clone();
                                 tracing::info!("Updated window: {}", window_def.name());
                                 app_core.update_window_position(&window_def, width, height);
+
+                                // For TabbedText windows, sync tabs and reset widget cache if structure changed
+                                if matches!(window_def, crate::config::WindowDef::TabbedText { .. }) {
+                                    let window_name = window_def.name().to_string();
+                                    if app_core.sync_tabbed_window_tabs(&window_name) {
+                                        app_core.ui_state.needs_widget_reset = true;
+                                    }
+                                }
                             }
                         }
                         app_core.mark_layout_modified();

@@ -7,19 +7,26 @@
 //!
 //! Reads data from GameState.gs4_experience (populated from dialogData updates).
 
+use crate::config::BorderSides;
 use crate::core::state::GS4ExperienceState;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Widget},
 };
 
 /// GS4 Experience widget - shows level, mind state, and exp progress
 pub struct GS4Experience {
     title: String,
     align: Alignment,
+    /// Whether to show the title
+    show_title: bool,
+    /// Whether to show the border
+    show_border: bool,
+    /// Which border sides to show
+    border_sides: BorderSides,
     /// Cached state for rendering
     level_text: String,
     mind_value: u32,
@@ -55,6 +62,9 @@ impl GS4Experience {
         Self {
             title: title.to_string(),
             align: alignment,
+            show_title: true,
+            show_border: true,
+            border_sides: BorderSides::default(),
             level_text: String::new(),
             mind_value: 0,
             mind_text: String::new(),
@@ -89,6 +99,21 @@ impl GS4Experience {
     /// Set whether to show the exp bar
     pub fn set_show_exp_bar(&mut self, show: bool) {
         self.show_exp_bar = show;
+    }
+
+    /// Set whether to show the title
+    pub fn set_show_title(&mut self, show: bool) {
+        self.show_title = show;
+    }
+
+    /// Set whether to show the border
+    pub fn set_show_border(&mut self, show: bool) {
+        self.show_border = show;
+    }
+
+    /// Set which border sides to show
+    pub fn set_border_sides(&mut self, sides: BorderSides) {
+        self.border_sides = sides;
     }
 
     /// Set the background color (from theme)
@@ -205,14 +230,21 @@ impl GS4Experience {
             }
         }
 
-        // Create block with border and title
-        let block = Block::default()
-            .title(self.title.as_str())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.border_color));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        // Conditionally create block with border and/or title
+        let inner = if self.show_border && self.border_sides.any() {
+            let borders = super::crossterm_bridge::to_ratatui_borders(&self.border_sides);
+            let mut block = Block::default()
+                .borders(borders)
+                .border_style(Style::default().fg(self.border_color));
+            if self.show_title {
+                block = block.title(self.title.as_str());
+            }
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        };
 
         if inner.width == 0 || inner.height == 0 {
             return;

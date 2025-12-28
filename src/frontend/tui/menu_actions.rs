@@ -134,31 +134,7 @@ pub fn handle_menu_action(
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
             }
-            "action:editperformance" => {
-                // If the performance overlay is active, remove it before opening the editor to avoid recursion
-                let overlay_removed = app_core.ui_state.remove_window("performance_overlay").is_some();
-                if overlay_removed {
-                    app_core.config.ui.performance_stats_enabled = false;
-                    if let Some(config::WindowDef::Performance { data, .. }) =
-                        config::Config::get_window_template("performance")
-                    {
-                        let mut disabled = data.clone();
-                        disabled.enabled = false;
-                        app_core.perf_stats.apply_enabled_from(&disabled);
-                    }
-                }
-
-                // Open the performance template directly in the window editor
-                if let Some(template) = config::Config::get_window_template("performance") {
-                    frontend.window_editor =
-                        Some(crate::frontend::tui::window_editor::WindowEditor::new(template));
-                    close_all_menus(&mut app_core.ui_state);
-                    app_core.ui_state.input_mode = InputMode::WindowEditor;
-                    app_core.needs_render = true;
-                } else {
-                    tracing::warn!("Performance template not found");
-                }
-            }
+            // "action:editperformance" removed - use right-click on overlay to toggle metrics
             "action:windows" => {
                 // List all windows (dot command handled locally)
                 app_core.send_command(".windows".to_string())?;

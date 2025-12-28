@@ -1,46 +1,19 @@
 terminal_width = 122
-terminal_height = 64
-base_layout = "sidebar"
-theme = "solarized-dark"
-
-[[windows]]
-widget_type = "text"
-name = "main"
-row = 10
-col = 20
-rows = 40
-cols = 102
-show_border = true
-border_style = "single"
-border_sides = [
-    "top",
-    "bottom",
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = false
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-visible = true
-streams = ["main"]
-buffer_size = 10000
-wordwrap = true
-show_timestamps = false
+terminal_height = 69
+base_layout = "test3"
+theme = "retro-terminal"
 
 [[windows]]
 widget_type = "command_input"
 name = "command_input"
-row = 63
-col = 20
-rows = 1
-cols = 102
+row = 65
+col = 22
+rows = 2
+cols = 100
 show_border = true
 border_style = "single"
 border_sides = [
+    "bottom",
     "left",
     "right",
 ]
@@ -48,22 +21,22 @@ border_color = "-"
 show_title = true
 title_position = "top-left"
 background_color = "-"
-text_color = "-"
+text_color = "----"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
+min_rows = 2
+max_rows = 4
 min_cols = 20
 visible = true
-prompt_icon = "#"
+prompt_icon = ">"
 
 [[windows]]
 widget_type = "tabbedtext"
-name = "chat"
-row = 51
-col = 20
-rows = 12
-cols = 102
+name = "pirmary"
+row = 13
+col = 22
+rows = 41
+cols = 100
 show_border = true
 border_style = "single"
 border_sides = [
@@ -73,8 +46,7 @@ border_sides = [
     "right",
 ]
 border_color = "-"
-show_title = false
-title = "Chat"
+show_title = true
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
@@ -86,42 +58,81 @@ tab_bar_position = "top"
 tab_separator = true
 
 [[windows.tabs]]
-name = "Thoughts"
-streams = ["thoughts"]
-show_timestamps = true
-ignore_activity = false
-
-[[windows.tabs]]
-name = "Speech"
-streams = ["speech"]
-show_timestamps = true
-ignore_activity = false
-
-[[windows.tabs]]
-name = "Announcements"
-streams = ["announcements"]
+name = "Main"
+streams = ["main"]
 show_timestamps = false
 ignore_activity = false
 
 [[windows.tabs]]
-name = "Loot"
-streams = ["loot"]
+name = "Familiar"
+streams = ["familiar"]
 show_timestamps = false
 ignore_activity = false
-
-[[windows.tabs]]
-name = "Ambients"
-streams = ["ambients"]
-show_timestamps = true
-ignore_activity = true
 
 [[windows]]
-widget_type = "text"
-name = "speech"
-row = 41
-col = 35
+widget_type = "quickbar"
+name = "quickbar"
+row = 67
+col = 0
+rows = 2
+cols = 122
+show_border = true
+border_style = "single"
+border_sides = [
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Quickbar"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+visible = true
+
+[[windows]]
+widget_type = "minivitals"
+name = "minivitals"
+row = 64
+col = 22
+rows = 1
+cols = 100
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 40
+visible = true
+numbers_only = false
+current_only = false
+health_color = "#6e0202"
+mana_color = "#08086d"
+stamina_color = "#bd7b00"
+spirit_color = "#6e727c"
+
+[[windows]]
+widget_type = "room"
+name = "room"
+row = 54
+col = 22
 rows = 10
-cols = 40
+cols = 100
 show_border = true
 border_style = "single"
 border_sides = [
@@ -132,25 +143,55 @@ border_sides = [
 ]
 border_color = "-"
 show_title = true
-title = "Speech"
+title = "Room"
 title_position = "top-left"
 background_color = "-"
-text_color = "#FFD700"
+text_color = "-"
 transparent_background = false
 locked = false
-visible = false
-streams = ["speech"]
-buffer_size = 1000
-wordwrap = true
-show_timestamps = false
+min_rows = 5
+visible = true
+buffer_size = 0
+show_desc = true
+show_objs = true
+show_players = true
+show_exits = true
+show_name = false
 
 [[windows]]
-widget_type = "progress"
-name = "health"
-row = 55
+widget_type = "hand"
+name = "left"
+row = 62
+col = 0
+rows = 2
+cols = 22
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Left Hand"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 2
+max_rows = 2
+visible = true
+icon = "L:"
+
+[[windows]]
+widget_type = "hand"
+name = "right"
+row = 64
 col = 0
 rows = 1
-cols = 20
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -159,7 +200,7 @@ border_sides = [
 ]
 border_color = "-"
 show_title = false
-title = "Health"
+title = "Right Hand"
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
@@ -167,121 +208,47 @@ transparent_background = false
 locked = false
 min_rows = 1
 max_rows = 1
-min_cols = 20
-max_cols = 20
 visible = true
-id = "health"
-label = "Health"
-color = "#6e0202"
-numbers_only = false
-current_only = false
+icon = "R:"
 
 [[windows]]
-widget_type = "progress"
-name = "mana"
-row = 54
+widget_type = "hand"
+name = "spell"
+row = 65
 col = 0
-rows = 1
-cols = 20
+rows = 2
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
+    "bottom",
     "left",
     "right",
 ]
 border_color = "-"
 show_title = false
-title = "Mana"
+title = "Spell"
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
+min_rows = 2
+max_rows = 2
 visible = true
-id = "mana"
-label = "Mana"
-color = "#08086d"
-numbers_only = false
-current_only = false
-
-[[windows]]
-widget_type = "progress"
-name = "stamina"
-row = 53
-col = 0
-rows = 1
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = false
-title = "Stamina"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
-visible = true
-id = "stamina"
-label = "Stamina"
-color = "#bd7b00"
-numbers_only = false
-current_only = false
-
-[[windows]]
-widget_type = "progress"
-name = "spirit"
-row = 52
-col = 0
-rows = 1
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = false
-title = "Spirit"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
-visible = true
-id = "spirit"
-label = "Spirit"
-color = "#6e727c"
-numbers_only = false
-current_only = false
+icon = "S:"
 
 [[windows]]
 widget_type = "injury_doll"
 name = "injuries"
-row = 57
+row = 54
 col = 0
-rows = 7
+rows = 8
 cols = 10
 show_border = true
 border_style = "single"
 border_sides = [
+    "top",
     "bottom",
     "left",
 ]
@@ -293,12 +260,10 @@ background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 7
-max_rows = 7
-min_cols = 10
-max_cols = 10
+min_rows = 6
+min_cols = 7
 visible = true
-content_align = "top-right"
+content_align = "center"
 injury1_color = "#aa5500"
 injury2_color = "#ff8800"
 injury3_color = "#ff0000"
@@ -309,9 +274,9 @@ scar3_color = "#555555"
 [[windows]]
 widget_type = "compass"
 name = "compass"
-row = 60
-col = 10
-rows = 4
+row = 57
+col = 12
+rows = 5
 cols = 10
 show_border = true
 border_style = "single"
@@ -327,10 +292,8 @@ background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 4
-max_rows = 4
-min_cols = 10
-max_cols = 10
+min_rows = 2
+min_cols = 6
 visible = true
 content_align = "bottom-center"
 active_color = "#00FF00"
@@ -339,51 +302,85 @@ inactive_color = "#333333"
 [[windows]]
 widget_type = "dashboard"
 name = "dashboard"
-row = 56
-col = 0
-rows = 1
-cols = 20
+row = 54
+col = 10
+rows = 8
+cols = 10
 show_border = true
 border_style = "single"
 border_sides = [
-    "left",
-    "right",
+    "top",
+    "bottom",
 ]
 border_color = "-"
 show_title = false
-title = "Status"
+title = "Dashboard"
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
+min_rows = 3
+min_cols = 2
 visible = true
-dashboard_layout = "horizontal"
-dashboard_spacing = 1
-dashboard_hide_inactive = true
+content_align = "bottom-left"
+dashboard_layout = "vertical"
+dashboard_spacing = 0
+dashboard_hide_inactive = false
 
 [[windows.dashboard_indicators]]
-id = "poisoned"
-icon = "?"
+id = "BLEEDING"
+icon = ""
 colors = [
-    "#000000",
+    "#555555",
+    "#ff0000",
+]
+
+[[windows.dashboard_indicators]]
+id = "DISEASED"
+icon = ""
+colors = [
+    "#555555",
+    "#8b4513",
+]
+
+[[windows.dashboard_indicators]]
+id = "POISONED"
+icon = ""
+colors = [
+    "#555555",
     "#00ff00",
+]
+
+[[windows.dashboard_indicators]]
+id = "STUNNED"
+icon = "󱐌"
+colors = [
+    "#555555",
+    "#ffff00",
+]
+
+[[windows.dashboard_indicators]]
+id = "WEBBED"
+icon = "󰯊"
+colors = [
+    "#555555",
+    "#cccccc",
 ]
 
 [[windows]]
 widget_type = "countdown"
 name = "roundtime"
-row = 58
-col = 10
-rows = 1
+row = 54
+col = 12
+rows = 2
 cols = 10
 show_border = true
 border_style = "single"
-border_sides = ["right"]
+border_sides = [
+    "top",
+    "right",
+]
 border_color = "-"
 show_title = false
 title = "RT"
@@ -392,10 +389,6 @@ background_color = "-"
 text_color = "#FF0000"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 10
-max_cols = 10
 visible = true
 id = "roundtime"
 icon = ""
@@ -404,67 +397,37 @@ color = "#FF0000"
 [[windows]]
 widget_type = "countdown"
 name = "casttime"
-row = 59
-col = 10
+row = 56
+col = 12
 rows = 1
 cols = 10
 show_border = true
 border_style = "single"
 border_sides = ["right"]
 border_color = "-"
-show_title = false
+show_title = true
 title = "Cast"
 title_position = "top-left"
 background_color = "-"
 text_color = "#00BFFF"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 10
-max_cols = 10
 visible = true
 id = "casttime"
 icon = ""
 color = "#00BFFF"
 
 [[windows]]
-widget_type = "countdown"
-name = "stuntime"
-row = 57
-col = 10
-rows = 1
-cols = 10
-show_border = true
-border_style = "single"
-border_sides = ["right"]
-border_color = "-"
-show_title = false
-title = "Stun"
-title_position = "top-left"
-background_color = "-"
-text_color = "#FFFF00"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 10
-max_cols = 10
-visible = true
-id = "stuntime"
-icon = ""
-color = "#FFFF00"
-
-[[windows]]
 widget_type = "progress"
-name = "pbarStance"
-row = 51
+name = "stance"
+row = 52
 col = 0
-rows = 1
-cols = 20
+rows = 2
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
+    "bottom",
     "left",
     "right",
 ]
@@ -476,10 +439,8 @@ background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
+min_rows = 2
+max_rows = 2
 visible = true
 id = "pbarStance"
 label = "Stance"
@@ -488,138 +449,12 @@ numbers_only = false
 current_only = false
 
 [[windows]]
-widget_type = "progress"
-name = "mindState"
-row = 49
-col = 0
-rows = 1
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = false
-title = "Mind"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
-visible = true
-id = "mindState"
-label = "Mind"
-color = "#008b8b"
-numbers_only = false
-current_only = false
-
-[[windows]]
-widget_type = "progress"
-name = "lblBPs"
-row = 47
-col = 0
-rows = 2
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "top",
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = true
-title = "Status"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 2
-max_rows = 2
-min_cols = 20
-max_cols = 20
-visible = true
-id = "lblBPs"
-label = "Blood Points"
-color = "#451349"
-numbers_only = false
-current_only = false
-
-[[windows]]
-widget_type = "room"
-name = "room"
-row = 0
-col = 20
-rows = 10
-cols = 102
-show_border = true
-border_style = "single"
-border_sides = [
-    "top",
-    "bottom",
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = true
-title = "Room"
-title_position = "bottom-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 5
-visible = true
-buffer_size = 0
-show_desc = true
-show_objs = true
-show_players = true
-show_exits = true
-show_name = false
-
-[[windows]]
-widget_type = "players"
-name = "players"
-row = 46
-col = 0
-rows = 1
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "top",
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = true
-title = "Players"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-min_cols = 20
-max_cols = 20
-visible = true
-entity_id = "playercount"
-
-[[windows]]
 widget_type = "targets"
 name = "targets"
-row = 39
+row = 36
 col = 0
-rows = 7
-cols = 20
+rows = 13
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -638,17 +473,76 @@ transparent_background = false
 locked = false
 min_rows = 4
 min_cols = 20
-max_cols = 20
 visible = true
 entity_id = "targetcount"
+show_body_part_count = false
+
+[[windows]]
+widget_type = "players"
+name = "players"
+row = 49
+col = 0
+rows = 1
+cols = 22
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Players"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_cols = 20
+visible = true
+entity_id = "playercount"
+
+[[windows]]
+widget_type = "encum"
+name = "encum"
+row = 51
+col = 0
+rows = 1
+cols = 22
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Encumbrance"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 15
+visible = true
+align = "left"
+show_label = false
+color_light = "#00FF00"
+color_moderate = "#FFFF00"
+color_heavy = "#FFA500"
+color_critical = "#FF0000"
 
 [[windows]]
 widget_type = "active_effects"
 name = "debuffs"
-row = 34
+row = 31
 col = 0
 rows = 5
-cols = 20
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -662,53 +556,19 @@ show_title = true
 title = "Debuffs"
 title_position = "top-left"
 background_color = "-"
-text_color = "#FF0000"
+text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 5
-max_rows = 5
-min_cols = 20
-max_cols = 20
 visible = true
 category = "Debuffs"
 
 [[windows]]
 widget_type = "active_effects"
-name = "cooldowns"
-row = 29
-col = 0
-rows = 5
-cols = 20
-show_border = true
-border_style = "single"
-border_sides = [
-    "top",
-    "bottom",
-    "left",
-    "right",
-]
-border_color = "-"
-show_title = true
-title = "Cooldowns"
-title_position = "top-left"
-background_color = "-"
-text_color = "#FFA500"
-transparent_background = false
-locked = false
-min_rows = 5
-max_rows = 5
-min_cols = 20
-max_cols = 20
-visible = true
-category = "Cooldowns"
-
-[[windows]]
-widget_type = "active_effects"
 name = "buffs"
-row = 19
+row = 16
 col = 0
 rows = 10
-cols = 20
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -722,95 +582,45 @@ show_title = true
 title = "Buffs"
 title_position = "top-left"
 background_color = "-"
-text_color = "#00FF00"
+text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 10
-max_rows = 10
-min_cols = 20
-max_cols = 20
 visible = true
 category = "Buffs"
 
 [[windows]]
-widget_type = "hand"
-name = "left"
-row = 50
-col = 20
-rows = 1
-cols = 34
-show_border = true
-border_style = "single"
-border_sides = ["left"]
-border_color = "-"
-show_title = false
-title = "Left Hand"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-visible = true
-icon = "L:"
-
-[[windows]]
-widget_type = "hand"
-name = "right"
-row = 50
-col = 54
-rows = 1
-cols = 34
-show_border = true
-border_style = "single"
-border_sides = ["left"]
-border_color = "-"
-show_title = false
-title = "Right Hand"
-title_position = "top-left"
-background_color = "-"
-text_color = "-"
-transparent_background = false
-locked = false
-min_rows = 1
-max_rows = 1
-visible = true
-icon = "R:"
-
-[[windows]]
-widget_type = "hand"
-name = "spell"
-row = 50
-col = 88
-rows = 1
-cols = 34
+widget_type = "active_effects"
+name = "cooldowns"
+row = 26
+col = 0
+rows = 5
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
+    "top",
+    "bottom",
     "left",
     "right",
 ]
 border_color = "-"
-show_title = false
-title = "Spell"
+show_title = true
+title = "Cooldowns"
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
-min_rows = 1
-max_rows = 1
 visible = true
-icon = "S:"
+category = "Cooldowns"
 
 [[windows]]
 widget_type = "active_effects"
 name = "active_spells"
-row = 9
+row = 6
 col = 0
 rows = 10
-cols = 20
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -824,11 +634,9 @@ show_title = true
 title = "Active Spells"
 title_position = "top-left"
 background_color = "-"
-text_color = "#00BFFF"
+text_color = "-"
 transparent_background = false
 locked = false
-min_cols = 20
-max_cols = 20
 visible = true
 category = "ActiveSpells"
 
@@ -837,8 +645,8 @@ widget_type = "text"
 name = "bounty"
 row = 0
 col = 0
-rows = 9
-cols = 20
+rows = 6
+cols = 22
 show_border = true
 border_style = "single"
 border_sides = [
@@ -852,24 +660,53 @@ show_title = true
 title = "Bounties"
 title_position = "top-left"
 background_color = "-"
-text_color = "#FFD700"
+text_color = "-"
 transparent_background = false
 locked = false
-min_cols = 20
-max_cols = 20
 visible = true
 streams = ["bounty"]
-buffer_size = 0
+buffer_size = 10
 wordwrap = true
 show_timestamps = false
+compact = true
 
 [[windows]]
-widget_type = "countdown"
-name = "countdown_custom"
-row = 4
+widget_type = "gs4_experience"
+name = "gs4_experience"
+row = 50
 col = 0
-rows = 3
-cols = 20
+rows = 1
+cols = 22
+show_border = true
+border_style = "single"
+border_sides = [
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = false
+title = "Experience"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+min_rows = 1
+max_rows = 1
+min_cols = 20
+visible = true
+align = "center"
+show_level = false
+show_exp_bar = false
+mind_bar_color = "#00FFFF"
+
+[[windows]]
+widget_type = "tabbedtext"
+name = "chat"
+row = 0
+col = 22
+rows = 13
+cols = 100
 show_border = true
 border_style = "single"
 border_sides = [
@@ -880,12 +717,85 @@ border_sides = [
 ]
 border_color = "-"
 show_title = true
-title = "Custom"
+title = "Chat"
+title_position = "top-left"
+background_color = "-"
+text_color = "-"
+transparent_background = false
+locked = false
+visible = true
+buffer_size = 5000
+tab_bar_position = "top"
+tab_separator = true
+
+[[windows.tabs]]
+name = "Thoughts"
+streams = ["thoughts"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Speech"
+streams = ["speech"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Announcements"
+streams = ["announcements"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Loot"
+streams = ["loot"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Ambients"
+streams = ["ambients"]
+show_timestamps = false
+ignore_activity = false
+
+[[windows.tabs]]
+name = "Logons"
+streams = ["logons"]
+show_timestamps = true
+ignore_activity = true
+
+[[windows.tabs]]
+name = "Deaths"
+streams = ["death"]
+show_timestamps = true
+ignore_activity = true
+
+[[windows]]
+widget_type = "text"
+name = "society"
+row = 0
+col = 0
+rows = 15
+cols = 50
+show_border = true
+border_style = "single"
+border_sides = [
+    "top",
+    "bottom",
+    "left",
+    "right",
+]
+border_color = "-"
+show_title = true
+title = "Society Tasks"
 title_position = "top-left"
 background_color = "-"
 text_color = "-"
 transparent_background = false
 locked = false
 visible = false
-id = "roundtime"
-icon = ""
+streams = ["society"]
+buffer_size = 10
+wordwrap = true
+show_timestamps = false
+compact = false

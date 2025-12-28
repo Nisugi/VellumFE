@@ -256,7 +256,7 @@ impl TuiFrontend {
 
             // Ensure the backing widget exists so we can apply configuration
             let cmd_input = self.widget_manager.command_inputs.entry(name.clone()).or_insert_with(|| {
-                let mut widget = command_input::CommandInput::new(1000);
+                let mut widget = command_input::CommandInput::new(100);
                 if let Some(base) = base_config.as_ref() {
                     let title_text = if base.show_title {
                         base.title.clone().unwrap_or_default()
@@ -1605,8 +1605,20 @@ impl TuiFrontend {
                 None => (None, None),
             };
 
-            // Fallback to performance template (used by overlay)
-            if base.is_none() || perf_data.is_none() {
+            // For performance_overlay, always read from config.ui (live settings)
+            // For other performance windows, fall back to template
+            if name == "performance_overlay" {
+                // Get live data from config.ui
+                perf_data = Some(app_core.perf_overlay_data(true));
+                if base.is_none() {
+                    if let Some(crate::config::WindowDef::Performance { base: tpl_base, .. }) =
+                        crate::config::Config::get_window_template("performance")
+                    {
+                        base = Some(tpl_base.clone());
+                    }
+                }
+            } else if base.is_none() || perf_data.is_none() {
+                // Fallback to performance template for layout-based performance windows
                 if let Some(crate::config::WindowDef::Performance { base: tpl_base, data: tpl_data }) =
                     crate::config::Config::get_window_template("performance")
                 {
@@ -2115,6 +2127,20 @@ impl TuiFrontend {
                         super::gs4_experience::GS4Experience::new(&title, &align)
                     });
 
+                // Update show_border, show_title, border_sides on every sync
+                let show_border = window_def
+                    .map(|wd| wd.base().show_border)
+                    .unwrap_or(true);
+                let show_title = window_def
+                    .map(|wd| wd.base().show_title)
+                    .unwrap_or(true);
+                let border_sides = window_def
+                    .map(|wd| wd.base().border_sides.clone())
+                    .unwrap_or_default();
+                gs4_exp_widget.set_show_border(show_border);
+                gs4_exp_widget.set_show_title(show_title);
+                gs4_exp_widget.set_border_sides(border_sides);
+
                 // Apply theme colors and config toggles
                 if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = window_def {
                     let colors = resolve_window_colors(window_def.unwrap().base(), theme);
@@ -2192,6 +2218,20 @@ impl TuiFrontend {
                 // Update show_label on every sync (cached widget may have stale value)
                 enc_widget.set_show_label(show_label);
 
+                // Update show_border, show_title, border_sides on every sync
+                let show_border = window_def
+                    .map(|wd| wd.base().show_border)
+                    .unwrap_or(true);
+                let show_title = window_def
+                    .map(|wd| wd.base().show_title)
+                    .unwrap_or(true);
+                let border_sides = window_def
+                    .map(|wd| wd.base().border_sides.clone())
+                    .unwrap_or_default();
+                enc_widget.set_show_border(show_border);
+                enc_widget.set_show_title(show_title);
+                enc_widget.set_border_sides(border_sides);
+
                 // Apply theme colors
                 if let Some(def) = window_def {
                     let colors = resolve_window_colors(def.base(), theme);
@@ -2247,8 +2287,8 @@ impl TuiFrontend {
                 // Look up the WindowDef from layout to get config
                 let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
 
-                // Get display options and bar colors from WindowDef
-                let (numbers_only, current_only, health_color, mana_color, stamina_color, spirit_color) =
+                // Get display options, bar colors, and bar order from WindowDef
+                let (numbers_only, current_only, health_color, mana_color, stamina_color, spirit_color, bar_order) =
                     if let Some(crate::config::WindowDef::MiniVitals { data, .. }) = window_def {
                         (
                             data.numbers_only,
@@ -2257,15 +2297,22 @@ impl TuiFrontend {
                             data.mana_color.clone(),
                             data.stamina_color.clone(),
                             data.spirit_color.clone(),
+                            data.bar_order.clone(),
                         )
                     } else {
-                        (false, false, None, None, None, None)
+                        (false, false, None, None, None, None, crate::config::default_minivitals_bar_order())
                     };
 
-                // Get show_border from WindowDef
+                // Get show_border, show_title, and border_sides from WindowDef
                 let show_border = window_def
                     .map(|wd| wd.base().show_border)
                     .unwrap_or(false);
+                let show_title = window_def
+                    .map(|wd| wd.base().show_title)
+                    .unwrap_or(true);
+                let border_sides = window_def
+                    .map(|wd| wd.base().border_sides.clone())
+                    .unwrap_or_default();
 
                 // Get or create the widget
                 let mv_widget = self
@@ -2279,9 +2326,12 @@ impl TuiFrontend {
                         super::minivitals::MiniVitals::new(&title, show_border)
                     });
 
-                // Update show_border and display mode on every sync (not just creation)
+                // Update show_border, show_title, border_sides, display mode, and bar order on every sync (not just creation)
                 mv_widget.set_show_border(show_border);
+                mv_widget.set_show_title(show_title);
+                mv_widget.set_border_sides(border_sides);
                 mv_widget.set_display_mode(numbers_only, current_only);
+                mv_widget.set_bar_order(bar_order);
 
                 // Apply theme colors
                 if let Some(def) = window_def {

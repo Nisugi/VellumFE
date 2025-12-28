@@ -284,8 +284,54 @@ impl Hand {
         }
     }
 
-pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
         self.render(area, buf);
+    }
+
+    /// Convert mouse position to text coordinates
+    /// For Hand widget, line is always 0, col is relative to content start
+    pub fn mouse_to_text_coords(
+        &self,
+        mouse_col: u16,
+        mouse_row: u16,
+        window_rect: Rect,
+    ) -> Option<(usize, usize)> {
+        // Check if click is within the window area
+        if mouse_row < window_rect.y || mouse_row >= window_rect.y + window_rect.height {
+            return None;
+        }
+        if mouse_col < window_rect.x || mouse_col >= window_rect.x + window_rect.width {
+            return None;
+        }
+
+        // Hand is a single-line widget
+        let line = 0;
+        let col = (mouse_col - window_rect.x) as usize;
+        Some((line, col))
+    }
+
+    /// Extract text from a selection range
+    /// For Hand widget, returns icon + content as a single line
+    pub fn extract_selection_text(
+        &self,
+        _start_line: usize,
+        start_col: usize,
+        _end_line: usize,
+        end_col: usize,
+    ) -> String {
+        // Build the full display line: icon + space + content
+        let full_text = format!("{} {}", self.icon, self.content);
+
+        // Extract the selected portion
+        let chars: Vec<char> = full_text.chars().collect();
+        let start = start_col.min(chars.len());
+        let end = end_col.min(chars.len());
+
+        if start >= end {
+            return String::new();
+        }
+
+        chars[start..end].iter().collect()
     }
 }
 

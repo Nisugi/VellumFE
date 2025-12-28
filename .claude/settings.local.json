@@ -8,7 +8,8 @@
       "Bash(grep:*)",
       "Bash(\"c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\input_handlers_temp.rs\")",
       "Bash(powershell -Command \"(Get-Content ''c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\mod.rs'').Count\")",
-      "Bash(powershell -Command \"\\(Get-Content ''c:\\\\Gemstone\\\\Projects\\\\VellumFE\\\\src\\\\config\\\\highlights.rs''\\).Count\")"
+      "Bash(powershell -Command \"\\(Get-Content ''c:\\\\Gemstone\\\\Projects\\\\VellumFE\\\\src\\\\config\\\\highlights.rs''\\).Count\")",
+      "Bash(powershell -Command:*)"
     ]
   },
   "enabledMcpjsonServers": [
