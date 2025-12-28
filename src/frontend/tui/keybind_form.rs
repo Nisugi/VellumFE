@@ -13,6 +13,19 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
+/// Actions that can result from mouse interaction with the keybind form
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeybindFormMouseAction {
+    /// No special action, just drag or field focus
+    None,
+    /// User clicked Save button
+    Save,
+    /// User clicked Delete button
+    Delete,
+    /// User clicked Cancel button
+    Cancel,
+}
+
 /// Result of keybind form interaction
 #[derive(Debug, Clone)]
 pub enum KeybindFormResult {
@@ -777,10 +790,10 @@ impl KeybindFormWidget {
         }
     }
 
-    /// Handle mouse events for dragging
-    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
-        let popup_width = 52;
-        let popup_height = 9;
+    /// Handle mouse events for the form
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> KeybindFormMouseAction {
+        let popup_width: u16 = 52;
+        let popup_height: u16 = 10;
 
         // Check if click is on title bar (top border, excluding corners)
         let on_title_bar =
@@ -792,7 +805,7 @@ impl KeybindFormWidget {
                 self.is_dragging = true;
                 self.drag_offset_x = col.saturating_sub(self.popup_x);
                 self.drag_offset_y = row.saturating_sub(self.popup_y);
-                return true;
+                return KeybindFormMouseAction::None;
             } else if self.is_dragging {
                 // Continue dragging
                 let new_x = col.saturating_sub(self.drag_offset_x);
@@ -801,17 +814,110 @@ impl KeybindFormWidget {
                 // Clamp to terminal bounds
                 self.popup_x = new_x.min(terminal_area.width.saturating_sub(popup_width));
                 self.popup_y = new_y.min(terminal_area.height.saturating_sub(popup_height));
-                return true;
+                return KeybindFormMouseAction::None;
             }
         } else {
             // Mouse released
             if self.is_dragging {
                 self.is_dragging = false;
-                return true;
+                return KeybindFormMouseAction::None;
+            }
+            // Don't process anything else on mouse release
+            return KeybindFormMouseAction::None;
+        }
+
+        // Only process clicks inside popup
+        let inside_popup = col >= self.popup_x
+            && col < self.popup_x + popup_width
+            && row > self.popup_y
+            && row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return KeybindFormMouseAction::None;
+        }
+
+        let x = self.popup_x;
+        let y = self.popup_y;
+
+        // Check footer row (y + 7) for button clicks
+        // Footer: "Ctrl+s:Save Ctrl+D:Delete Esc:Cancel" (centered in 52-width popup)
+        let footer_y = y + 7;
+        if row == footer_y {
+            let rel_x = col.saturating_sub(x);
+            // Footer is centered, approximately: "Ctrl+s:Save Ctrl+D:Delete Esc:Cancel"
+            // Rough positions: Save ~8-18, Delete ~20-32, Cancel ~34-44
+            if rel_x >= 8 && rel_x <= 18 {
+                return KeybindFormMouseAction::Save;
+            } else if rel_x >= 20 && rel_x <= 32 {
+                return KeybindFormMouseAction::Delete;
+            } else if rel_x >= 34 && rel_x <= 44 {
+                return KeybindFormMouseAction::Cancel;
             }
         }
 
-        false
+        // Check field rows for clicks
+        // Row 2 (y+2): Type radios - Action at x+8, Macro at x+23
+        if row == y + 2 {
+            let rel_x = col.saturating_sub(x);
+            if rel_x >= 8 && rel_x <= 18 {
+                // Clicked Action radio
+                self.focused_field = 0;
+                self.action_type = KeybindActionType::Action;
+                return KeybindFormMouseAction::None;
+            } else if rel_x >= 23 && rel_x <= 32 {
+                // Clicked Macro radio
+                self.focused_field = 1;
+                self.action_type = KeybindActionType::Macro;
+                return KeybindFormMouseAction::None;
+            }
+        }
+
+        // Row 3 (y+3): Key Combo text field
+        if row == y + 3 {
+            self.focused_field = 2;
+            return KeybindFormMouseAction::None;
+        }
+
+        // Row 5 (y+5): Action dropdown or Macro text
+        if row == y + 5 {
+            self.focused_field = 3;
+            // If it's a dropdown and user clicked, cycle the value
+            if self.action_type == KeybindActionType::Action {
+                self.cycle_action_dropdown(false);
+            }
+            return KeybindFormMouseAction::None;
+        }
+
+        // Row 6 (y+6): Scope radios - Global at x+9, Character at x+23
+        if row == y + 6 {
+            let rel_x = col.saturating_sub(x);
+            if rel_x >= 9 && rel_x <= 19 {
+                // Clicked Global radio
+                self.focused_field = 4;
+                self.is_global = true;
+                return KeybindFormMouseAction::None;
+            } else if rel_x >= 23 && rel_x <= 36 {
+                // Clicked Character radio
+                self.focused_field = 5;
+                self.is_global = false;
+                return KeybindFormMouseAction::None;
+            }
+        }
+
+        KeybindFormMouseAction::None
+    }
+
+    /// Cycle action dropdown forward
+    fn cycle_action_dropdown(&mut self, backward: bool) {
+        if backward {
+            if self.action_dropdown_index > 0 {
+                self.action_dropdown_index -= 1;
+            } else {
+                self.action_dropdown_index = AVAILABLE_ACTIONS.len() - 1;
+            }
+        } else {
+            self.action_dropdown_index = (self.action_dropdown_index + 1) % AVAILABLE_ACTIONS.len();
+        }
     }
 
     /// Parse hex color string to ratatui Color

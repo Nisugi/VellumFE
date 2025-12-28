@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/spell_abbrev.toml");
+const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/globals/spell_abbrev.toml");
 
 #[derive(Deserialize)]
 struct SpellAbbrevFile {

@@ -15,6 +15,17 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
+/// Actions that can result from mouse interaction with the color form
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColorFormMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked Save button
+    Save,
+    /// User clicked Cancel button
+    Cancel,
+}
+
 /// Mode for the color form (Create new or Edit existing)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FormMode {
@@ -265,15 +276,16 @@ impl ColorForm {
         })
     }
 
-    /// Handle mouse events for dragging the popup
+    /// Handle mouse events for the popup
     pub fn handle_mouse(
         &mut self,
         mouse_col: u16,
         mouse_row: u16,
         mouse_down: bool,
-        area: Rect,
-    ) -> bool {
-        let popup_width = 52;
+        _area: Rect,
+    ) -> ColorFormMouseAction {
+        let popup_width: u16 = 52;
+        let popup_height: u16 = 10;
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -285,7 +297,7 @@ impl ColorForm {
             self.is_dragging = true;
             self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
             self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
-            return true;
+            return ColorFormMouseAction::None;
         }
 
         if self.is_dragging {
@@ -293,24 +305,99 @@ impl ColorForm {
                 // Continue dragging
                 self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
                 self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-
-                // Keep popup within bounds
-                if self.popup_x + popup_width > area.width {
-                    self.popup_x = area.width.saturating_sub(popup_width);
-                }
-                if self.popup_y + 9 > area.height {
-                    self.popup_y = area.height.saturating_sub(9);
-                }
-
-                return true;
+                return ColorFormMouseAction::None;
             } else {
                 // Stop dragging
                 self.is_dragging = false;
-                return true;
+                return ColorFormMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (mouse_down), not releases
+        if !mouse_down {
+            return ColorFormMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = mouse_col >= self.popup_x
+            && mouse_col < self.popup_x + popup_width
+            && mouse_row > self.popup_y
+            && mouse_row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return ColorFormMouseAction::None;
+        }
+
+        // Field layout:
+        // y+2: Name field (field 0)
+        // y+3: Category field (field 1)
+        // y+4: Color field (field 2)
+        // y+5: Scope radio (field 3)
+        // y+6: Favorite checkbox (field 4)
+        // y+8: Status bar with hints
+
+        let field_y_start = self.popup_y + 2;
+        let field_x_start = self.popup_x + 2;
+        let input_x_start = self.popup_x + 12; // After label
+
+        // Check field clicks
+        if mouse_row == field_y_start {
+            // Name field
+            if mouse_col >= input_x_start {
+                self.focused_field = 0;
+            }
+            return ColorFormMouseAction::None;
+        } else if mouse_row == field_y_start + 1 {
+            // Category field
+            if mouse_col >= input_x_start {
+                self.focused_field = 1;
+            }
+            return ColorFormMouseAction::None;
+        } else if mouse_row == field_y_start + 2 {
+            // Color field
+            if mouse_col >= input_x_start {
+                self.focused_field = 2;
+            }
+            return ColorFormMouseAction::None;
+        } else if mouse_row == field_y_start + 3 {
+            // Scope radio buttons
+            self.focused_field = 3;
+            // Check if clicked on Global or Character
+            let global_x = field_x_start + 10;
+            let char_x = field_x_start + 22;
+            if mouse_col >= global_x && mouse_col < global_x + 12 {
+                self.is_global = true;
+            } else if mouse_col >= char_x {
+                self.is_global = false;
+            }
+            return ColorFormMouseAction::None;
+        } else if mouse_row == field_y_start + 4 {
+            // Favorite checkbox
+            self.focused_field = 4;
+            // Toggle favorite if clicking on the checkbox
+            let checkbox_x = field_x_start + 10;
+            if mouse_col >= checkbox_x && mouse_col < checkbox_x + 3 {
+                self.favorite = !self.favorite;
+            }
+            return ColorFormMouseAction::None;
+        }
+
+        // Check status bar for clickable hints (y+8)
+        // Status: "Tab:Next  Shift+Tab:Prev  Enter:Save  Esc:Close"
+        let status_y = self.popup_y + popup_height - 2;
+        if mouse_row == status_y {
+            let rel_x = mouse_col.saturating_sub(self.popup_x + 2);
+            // "Enter:Save" is around position 28-37, "Esc:Close" is around 40-48
+            if rel_x >= 28 && rel_x <= 37 {
+                // User clicked on "Enter:Save"
+                return ColorFormMouseAction::Save;
+            } else if rel_x >= 40 && rel_x <= 48 {
+                // User clicked on "Esc:Close"
+                return ColorFormMouseAction::Cancel;
+            }
+        }
+
+        ColorFormMouseAction::None
     }
 
     pub fn render(

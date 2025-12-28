@@ -13,6 +13,21 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
+/// Actions that can result from mouse interaction with the highlight browser
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HighlightBrowserMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked Edit button or double-action on row
+    Edit,
+    /// User clicked Delete button
+    Delete,
+    /// User clicked Add button
+    Add,
+    /// User wants to close the browser
+    Close,
+}
+
 /// Highlight entry for display in browser
 #[derive(Clone)]
 pub struct HighlightEntry {
@@ -222,15 +237,35 @@ impl HighlightBrowser {
         filtered.get(self.selected_index).map(|e| e.name.clone())
     }
 
-    /// Handle mouse events for dragging the popup
+    /// Handle mouse events for the popup
+    /// scroll_direction: -1 for scroll up, 1 for scroll down, 0 for no scroll
     pub fn handle_mouse(
         &mut self,
         mouse_col: u16,
         mouse_row: u16,
         mouse_down: bool,
-        area: Rect,
-    ) -> bool {
-        let popup_width = 70.min(area.width);
+        scroll_direction: i8,
+        _area: Rect,
+    ) -> HighlightBrowserMouseAction {
+        let popup_width: u16 = 70;
+        let popup_height: u16 = 20;
+
+        // Handle scroll wheel first (regardless of position, as long as mouse is over popup)
+        if scroll_direction != 0 {
+            let inside_popup = mouse_col >= self.popup_x
+                && mouse_col < self.popup_x + popup_width
+                && mouse_row >= self.popup_y
+                && mouse_row < self.popup_y + popup_height;
+
+            if inside_popup {
+                if scroll_direction < 0 {
+                    self.navigate_up();
+                } else {
+                    self.navigate_down();
+                }
+                return HighlightBrowserMouseAction::None;
+            }
+        }
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -241,21 +276,111 @@ impl HighlightBrowser {
             self.is_dragging = true;
             self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
             self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
-            return true;
+            return HighlightBrowserMouseAction::None;
         }
 
         if self.is_dragging {
             if mouse_down {
                 self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
                 self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-                return true;
+                return HighlightBrowserMouseAction::None;
             } else {
                 self.is_dragging = false;
-                return true;
+                return HighlightBrowserMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (mouse_down), not releases
+        if !mouse_down {
+            return HighlightBrowserMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = mouse_col >= self.popup_x
+            && mouse_col < self.popup_x + popup_width
+            && mouse_row > self.popup_y
+            && mouse_row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return HighlightBrowserMouseAction::None;
+        }
+
+        // Check footer row (y + 19) for button clicks
+        // Footer: " Ctrl+S:Save | A:Add | E:Edit | Del:Delete | Esc:Back "
+        let footer_y = self.popup_y + popup_height - 1;
+        if mouse_row == footer_y {
+            let rel_x = mouse_col.saturating_sub(self.popup_x);
+            // Approximate button regions based on footer text
+            // "Ctrl+S:Save" ~1-11, "A:Add" ~15-19, "E:Edit" ~23-28, "Del:Delete" ~32-41, "Esc:Back" ~45-52
+            if rel_x >= 15 && rel_x <= 19 {
+                return HighlightBrowserMouseAction::Add;
+            } else if rel_x >= 23 && rel_x <= 28 {
+                return HighlightBrowserMouseAction::Edit;
+            } else if rel_x >= 32 && rel_x <= 41 {
+                return HighlightBrowserMouseAction::Delete;
+            } else if rel_x >= 45 && rel_x <= 52 {
+                return HighlightBrowserMouseAction::Close;
+            }
+        }
+
+        // Check list area for item clicks
+        // List starts at y + 1, has 16 rows of content
+        let list_y = self.popup_y + 1;
+        let list_height: u16 = 16;
+
+        if mouse_row > list_y && mouse_row < list_y + list_height {
+            // Calculate which display row was clicked
+            let clicked_display_row = (mouse_row - list_y - 1) as usize;
+
+            // Map display row to entry index, accounting for category headers
+            if let Some(entry_idx) = self.display_row_to_entry_index(clicked_display_row) {
+                if entry_idx < self.filtered_entries().len() {
+                    self.selected_index = entry_idx;
+                    self.adjust_scroll();
+                    return HighlightBrowserMouseAction::None;
+                }
+            }
+        }
+
+        HighlightBrowserMouseAction::None
+    }
+
+    /// Convert a display row (visible row in the list) to an entry index
+    /// Returns None if the row is a category header
+    fn display_row_to_entry_index(&self, target_display_row: usize) -> Option<usize> {
+        let entries = self.filtered_entries();
+        let mut display_row = 0;
+        let mut last_category: Option<&str> = None;
+        let visible_start = self.scroll_offset;
+
+        for (idx, entry) in entries.iter().enumerate() {
+            let entry_category = entry.category.as_deref().unwrap_or("Uncategorized");
+
+            // Account for category header
+            if last_category != Some(entry_category) {
+                if display_row >= visible_start {
+                    // This row is a category header
+                    let visible_row = display_row.saturating_sub(visible_start);
+                    if visible_row == target_display_row {
+                        // Clicked on a category header, not an entry
+                        return None;
+                    }
+                }
+                display_row += 1;
+                last_category = Some(entry_category);
+            }
+
+            if display_row >= visible_start {
+                let visible_row = display_row.saturating_sub(visible_start);
+                if visible_row == target_display_row {
+                    return Some(idx);
+                }
+            }
+
+            display_row += 1;
+        }
+
+        None
     }
 
     pub fn render(

@@ -480,6 +480,11 @@ impl XmlParser {
         text_buffer: &mut String,
         elements: &mut Vec<ParsedElement>,
     ) {
+        // Debug: log tags that might be LaunchURL
+        if tag.contains("LaunchURL") || tag.contains("launch") {
+            tracing::info!("process_tag received potential LaunchURL: {}", tag);
+        }
+
         // Determine if this tag changes color state
         let color_opening = tag.starts_with("<preset ")
             || tag.starts_with("<color ")
@@ -2006,8 +2011,10 @@ impl XmlParser {
     fn handle_launch_url(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <LaunchURL src="/gs4/play/cm/loader.asp?uname=..."/>
         if let Some(src) = Self::extract_attribute(tag, "src") {
-            // tracing::debug!("Parsed LaunchURL: src={}", src);
+            tracing::info!("Parsed LaunchURL: src={}", src);
             elements.push(ParsedElement::LaunchURL { url: src });
+        } else {
+            tracing::warn!("LaunchURL tag without src attribute: {}", tag);
         }
     }
 

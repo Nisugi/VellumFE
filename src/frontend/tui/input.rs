@@ -225,7 +225,7 @@ impl TuiFrontend {
             }
         }
 
-        // Handle highlight form mouse events (draggable popup)
+        // Handle highlight form mouse events
         if self.highlight_form.is_some() {
             let (width, height) = self.size();
             let area = ratatui::layout::Rect {
@@ -236,28 +236,56 @@ impl TuiFrontend {
             };
 
             if let Some(ref mut form) = self.highlight_form {
-                match kind {
+                use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
+
+                let action = match kind {
                     MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        return Ok((true, None));
+                        form.handle_mouse(*x, *y, true, area)
                     }
                     MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        return Ok((true, None));
+                        form.handle_mouse(*x, *y, true, area)
                     }
                     MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area);
-                        app_core.needs_render = true;
+                        form.handle_mouse(*x, *y, false, area)
+                    }
+                    _ => HighlightFormMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    HighlightFormMouseAction::Save => {
+                        // Trigger save via simulated Ctrl+S key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('s'),
+                            KeyModifiers::CTRL,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
                         return Ok((true, None));
                     }
-                    _ => {}
+                    HighlightFormMouseAction::Cancel => {
+                        // Trigger cancel via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    HighlightFormMouseAction::None => {
+                        return Ok((true, None));
+                    }
                 }
             }
         }
 
-        // Handle highlight browser mouse events (draggable popup)
+        // Handle highlight browser mouse events
         if self.highlight_browser.is_some() {
             let (width, height) = self.size();
             let area = ratatui::layout::Rect {
@@ -268,23 +296,499 @@ impl TuiFrontend {
             };
 
             if let Some(ref mut browser) = self.highlight_browser {
-                match kind {
+                use crate::frontend::tui::highlight_browser::HighlightBrowserMouseAction;
+
+                // Determine scroll direction
+                let scroll_direction: i8 = match kind {
+                    MouseEventKind::ScrollUp => -1,
+                    MouseEventKind::ScrollDown => 1,
+                    _ => 0,
+                };
+
+                let action = match kind {
                     MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        return Ok((true, None));
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
                     MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        return Ok((true, None));
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
                     MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, false, area);
-                        app_core.needs_render = true;
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    _ => HighlightBrowserMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    HighlightBrowserMouseAction::Edit => {
+                        // Trigger edit via simulated Enter key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Enter,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
                         return Ok((true, None));
                     }
-                    _ => {}
+                    HighlightBrowserMouseAction::Delete => {
+                        // Trigger delete via simulated Delete key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Delete,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    HighlightBrowserMouseAction::Add => {
+                        // Trigger add via simulated 'a' key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('a'),
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    HighlightBrowserMouseAction::Close => {
+                        // Trigger close via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    HighlightBrowserMouseAction::None => {
+                        return Ok((true, None));
+                    }
+                }
+            }
+        }
+
+        // Handle keybind browser mouse events
+        if self.keybind_browser.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            if let Some(ref mut browser) = self.keybind_browser {
+                use crate::frontend::tui::keybind_browser::KeybindBrowserMouseAction;
+
+                // Determine scroll direction
+                let scroll_direction: i8 = match kind {
+                    MouseEventKind::ScrollUp => -1,
+                    MouseEventKind::ScrollDown => 1,
+                    _ => 0,
+                };
+
+                let action = match kind {
+                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    _ => KeybindBrowserMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    KeybindBrowserMouseAction::Edit => {
+                        // Trigger edit via simulated Enter key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Enter,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindBrowserMouseAction::Delete => {
+                        // Trigger delete via simulated Delete key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Delete,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindBrowserMouseAction::Add => {
+                        // Trigger add via simulated 'a' key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('a'),
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindBrowserMouseAction::Close => {
+                        // Trigger close via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindBrowserMouseAction::None => {
+                        return Ok((true, None));
+                    }
+                }
+            }
+        }
+
+        // Handle keybind form mouse events
+        if self.keybind_form.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            if let Some(ref mut form) = self.keybind_form {
+                use crate::frontend::tui::keybind_form::KeybindFormMouseAction;
+
+                let action = match kind {
+                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, true, area)
+                    }
+                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, true, area)
+                    }
+                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, false, area)
+                    }
+                    _ => KeybindFormMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    KeybindFormMouseAction::Save => {
+                        // Trigger save via simulated Ctrl+S key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('s'),
+                            KeyModifiers::CTRL,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindFormMouseAction::Delete => {
+                        // Trigger delete via simulated Ctrl+D key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('d'),
+                            KeyModifiers::CTRL,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindFormMouseAction::Cancel => {
+                        // Trigger cancel via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    KeybindFormMouseAction::None => {
+                        return Ok((true, None));
+                    }
+                }
+            }
+        }
+
+        // Handle color palette browser mouse events
+        if self.color_palette_browser.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            if let Some(ref mut browser) = self.color_palette_browser {
+                use crate::frontend::tui::color_palette_browser::ColorPaletteBrowserMouseAction;
+
+                // Determine scroll direction
+                let scroll_direction: i8 = match kind {
+                    MouseEventKind::ScrollUp => -1,
+                    MouseEventKind::ScrollDown => 1,
+                    _ => 0,
+                };
+
+                let action = match kind {
+                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    _ => ColorPaletteBrowserMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    ColorPaletteBrowserMouseAction::Edit => {
+                        // Trigger edit via simulated Enter key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Enter,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorPaletteBrowserMouseAction::Delete => {
+                        // Trigger delete via simulated Delete key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Delete,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorPaletteBrowserMouseAction::Add => {
+                        // Trigger add via simulated 'a' key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('a'),
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorPaletteBrowserMouseAction::ToggleFavorite => {
+                        // Favorite already toggled in handle_mouse, just trigger save via 'f' key
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('f'),
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorPaletteBrowserMouseAction::Close => {
+                        // Trigger close via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorPaletteBrowserMouseAction::None => {
+                        return Ok((true, None));
+                    }
+                }
+            }
+        }
+
+        // Handle color form mouse events
+        if self.color_form.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            if let Some(ref mut form) = self.color_form {
+                use crate::frontend::tui::color_form::ColorFormMouseAction;
+
+                let action = match kind {
+                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, true, area)
+                    }
+                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, true, area)
+                    }
+                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, false, area)
+                    }
+                    _ => ColorFormMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    ColorFormMouseAction::Save => {
+                        // Trigger save via simulated Ctrl+S key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('s'),
+                            KeyModifiers::CTRL,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorFormMouseAction::Cancel => {
+                        // Trigger cancel via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    ColorFormMouseAction::None => {
+                        return Ok((true, None));
+                    }
+                }
+            }
+        }
+
+        // Handle settings editor mouse events
+        if self.settings_editor.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+
+            if let Some(ref mut editor) = self.settings_editor {
+                use crate::frontend::tui::settings_editor::SettingsEditorMouseAction;
+
+                // Determine scroll direction
+                let scroll_direction: i8 = match kind {
+                    MouseEventKind::ScrollUp => -1,
+                    MouseEventKind::ScrollDown => 1,
+                    _ => 0,
+                };
+
+                let action = match kind {
+                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
+                    }
+                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
+                    }
+                    _ => SettingsEditorMouseAction::None,
+                };
+
+                app_core.needs_render = true;
+
+                match action {
+                    SettingsEditorMouseAction::EditValue => {
+                        // Trigger edit via simulated Enter key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Enter,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    SettingsEditorMouseAction::ToggleScope => {
+                        // Trigger scope toggle via simulated 'g' key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Char('g'),
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    SettingsEditorMouseAction::Close => {
+                        // Trigger close via simulated Esc key press
+                        use crate::frontend::KeyCode;
+                        use crate::frontend::KeyModifiers;
+                        let _ = self.handle_key_event(
+                            KeyCode::Esc,
+                            KeyModifiers::NONE,
+                            app_core,
+                            &handle_menu_action_fn,
+                        );
+                        return Ok((true, None));
+                    }
+                    SettingsEditorMouseAction::SelectRow | SettingsEditorMouseAction::None => {
+                        return Ok((true, None));
+                    }
                 }
             }
         }
@@ -1235,6 +1739,12 @@ impl TuiFrontend {
                         items.push(crate::data::ui_state::PopupMenuItem {
                             text: "Edit Window...".to_string(),
                             command: format!("action:editwindow:{}", name),
+                            disabled: false,
+                        });
+
+                        items.push(crate::data::ui_state::PopupMenuItem {
+                            text: "Open Menu".to_string(),
+                            command: ".menu".to_string(),
                             disabled: false,
                         });
 

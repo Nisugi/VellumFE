@@ -18,6 +18,17 @@ use tui_textarea::TextArea;
 const POPUP_WIDTH: u16 = 70;
 const POPUP_HEIGHT: u16 = 21;
 
+/// Actions that can result from mouse interaction with the highlight form
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HighlightFormMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked Save button
+    Save,
+    /// User clicked Cancel button
+    Cancel,
+}
+
 /// Form mode - Create new or Edit existing
 #[derive(Debug, Clone, PartialEq)]
 pub enum FormMode {
@@ -1423,48 +1434,156 @@ impl HighlightFormWidget {
         Ok(Color::Rgb(r, g, b))
     }
 
-    /// Handle mouse events for dragging
-    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> bool {
+    /// Handle mouse events for the popup
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, _terminal_area: Rect) -> HighlightFormMouseAction {
         let popup_width = POPUP_WIDTH;
         let popup_height = POPUP_HEIGHT;
 
-        let popup_area = Rect {
-            x: self.popup_x,
-            y: self.popup_y,
-            width: popup_width.min(terminal_area.width.saturating_sub(self.popup_x)),
-            height: popup_height.min(terminal_area.height.saturating_sub(self.popup_y)),
-        };
-
         // Check if click is on title bar (top border, excluding corners)
         let on_title_bar =
-            row == popup_area.y && col > popup_area.x && col < popup_area.x + popup_area.width - 1;
+            row == self.popup_y && col > self.popup_x && col < self.popup_x + popup_width - 1;
 
-        if pressed {
-            if on_title_bar && !self.is_dragging {
-                // Start dragging
-                self.is_dragging = true;
-                self.drag_offset_x = col.saturating_sub(self.popup_x);
-                self.drag_offset_y = row.saturating_sub(self.popup_y);
-                return true;
-            } else if self.is_dragging {
+        if pressed && on_title_bar && !self.is_dragging {
+            // Start dragging
+            self.is_dragging = true;
+            self.drag_offset_x = col.saturating_sub(self.popup_x);
+            self.drag_offset_y = row.saturating_sub(self.popup_y);
+            return HighlightFormMouseAction::None;
+        }
+
+        if self.is_dragging {
+            if pressed {
                 // Continue dragging
-                let new_x = col.saturating_sub(self.drag_offset_x);
-                let new_y = row.saturating_sub(self.drag_offset_y);
-
-                // Clamp to terminal bounds
-                self.popup_x = new_x.min(terminal_area.width.saturating_sub(popup_width));
-                self.popup_y = new_y.min(terminal_area.height.saturating_sub(popup_height));
-                return true;
-            }
-        } else {
-            // Mouse released
-            if self.is_dragging {
+                self.popup_x = col.saturating_sub(self.drag_offset_x);
+                self.popup_y = row.saturating_sub(self.drag_offset_y);
+                return HighlightFormMouseAction::None;
+            } else {
+                // Mouse released
                 self.is_dragging = false;
-                return true;
+                return HighlightFormMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (pressed), not releases
+        if !pressed {
+            return HighlightFormMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = col >= self.popup_x
+            && col < self.popup_x + popup_width
+            && row > self.popup_y
+            && row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return HighlightFormMouseAction::None;
+        }
+
+        // Field layout (from render):
+        // y+1: Name (field 0)
+        // y+2: Pattern (field 1)
+        // y+3: Category (field 2)
+        // y+4: FG Color / BG Color (fields 3, 4)
+        // y+5: Sound File (field 5)
+        // y+6: Volume (field 6)
+        // y+7: Redirect (field 9) / Redirect To (field 7)
+        // y+8: Replace (field 8)
+        // y+9: Checkboxes row 1: Bold(10), Line(11), FastParse(12)
+        // y+10: Checkboxes row 2: Squelch(13), SilentPrompt(14)
+        // y+11: Scope (fields 15/16)
+        // y+19 (footer): Ctrl+S:Save  Esc:Back
+
+        let field_y = self.popup_y + 1;
+        let _input_x = self.popup_x + 16; // After label (reserved for future use)
+
+        // Check field clicks (simplified - focus based on row)
+        if row == field_y {
+            self.focused_field = 0; // Name
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 1 {
+            self.focused_field = 1; // Pattern
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 2 {
+            self.focused_field = 2; // Category
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 3 {
+            // FG Color / BG Color - check X position
+            let mid_x = self.popup_x + 35;
+            if col < mid_x {
+                self.focused_field = 3; // FG Color
+            } else {
+                self.focused_field = 4; // BG Color
+            }
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 4 {
+            self.focused_field = 5; // Sound File dropdown
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 5 {
+            self.focused_field = 6; // Volume
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 6 {
+            // Redirect / Redirect To - check X position
+            let rel_x = col.saturating_sub(self.popup_x);
+            if rel_x < 25 {
+                self.focused_field = 9; // Redirect mode dropdown
+            } else {
+                self.focused_field = 7; // Redirect To
+            }
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 7 {
+            self.focused_field = 8; // Replace
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 8 {
+            // Checkboxes row 1: Bold, Line, FastParse
+            let rel_x = col.saturating_sub(self.popup_x);
+            if rel_x < 20 {
+                self.focused_field = 10; // Bold
+                self.bold = !self.bold;
+            } else if rel_x < 40 {
+                self.focused_field = 11; // Line
+                self.color_entire_line = !self.color_entire_line;
+            } else {
+                self.focused_field = 12; // FastParse
+                self.fast_parse = !self.fast_parse;
+            }
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 9 {
+            // Checkboxes row 2: Squelch, SilentPrompt
+            let rel_x = col.saturating_sub(self.popup_x);
+            if rel_x < 30 {
+                self.focused_field = 13; // Squelch
+                self.squelch = !self.squelch;
+            } else {
+                self.focused_field = 14; // SilentPrompt
+                self.silent_prompt = !self.silent_prompt;
+            }
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 10 {
+            // Scope row (Global/Character radio)
+            self.focused_field = 15;
+            let rel_x = col.saturating_sub(self.popup_x + 16);
+            if rel_x < 12 {
+                self.is_global = true;
+            } else {
+                self.is_global = false;
+            }
+            return HighlightFormMouseAction::None;
+        }
+
+        // Check footer for Save/Back buttons
+        let footer_y = self.popup_y + popup_height - 2;
+        if row == footer_y {
+            let rel_x = col.saturating_sub(self.popup_x + 2);
+            // Footer: "Ctrl+S:Save  Esc:Back"
+            // Save is ~0-10, Esc:Back is ~13-21
+            if rel_x <= 10 {
+                return HighlightFormMouseAction::Save;
+            } else if rel_x >= 13 && rel_x <= 21 {
+                return HighlightFormMouseAction::Cancel;
+            }
+        }
+
+        HighlightFormMouseAction::None
     }
 }
 

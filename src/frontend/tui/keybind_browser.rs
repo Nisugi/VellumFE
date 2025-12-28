@@ -13,6 +13,21 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
+/// Actions that can result from mouse interaction with the keybind browser
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeybindBrowserMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked Edit button or double-action on row
+    Edit,
+    /// User clicked Delete button
+    Delete,
+    /// User clicked Add button
+    Add,
+    /// User wants to close the browser
+    Close,
+}
+
 /// Keybind entry for display in browser
 #[derive(Clone)]
 pub struct KeybindEntry {
@@ -215,15 +230,35 @@ impl KeybindBrowser {
         self.entries.get(self.selected_index)
     }
 
-    /// Handle mouse events for dragging the popup
+    /// Handle mouse events for the popup
+    /// scroll_direction: -1 for scroll up, 1 for scroll down, 0 for no scroll
     pub fn handle_mouse(
         &mut self,
         mouse_col: u16,
         mouse_row: u16,
         mouse_down: bool,
+        scroll_direction: i8,
         _area: Rect,
-    ) -> bool {
-        let popup_width = 70;
+    ) -> KeybindBrowserMouseAction {
+        let popup_width: u16 = 70;
+        let popup_height: u16 = 20;
+
+        // Handle scroll wheel first (regardless of position, as long as mouse is over popup)
+        if scroll_direction != 0 {
+            let inside_popup = mouse_col >= self.popup_x
+                && mouse_col < self.popup_x + popup_width
+                && mouse_row >= self.popup_y
+                && mouse_row < self.popup_y + popup_height;
+
+            if inside_popup {
+                if scroll_direction < 0 {
+                    self.navigate_up();
+                } else {
+                    self.navigate_down();
+                }
+                return KeybindBrowserMouseAction::None;
+            }
+        }
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -235,7 +270,7 @@ impl KeybindBrowser {
             self.is_dragging = true;
             self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
             self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
-            return true;
+            return KeybindBrowserMouseAction::None;
         }
 
         if self.is_dragging {
@@ -243,15 +278,103 @@ impl KeybindBrowser {
                 // Continue dragging
                 self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
                 self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-                return true;
+                return KeybindBrowserMouseAction::None;
             } else {
                 // Stop dragging
                 self.is_dragging = false;
-                return true;
+                return KeybindBrowserMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (mouse_down), not releases
+        if !mouse_down {
+            return KeybindBrowserMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = mouse_col >= self.popup_x
+            && mouse_col < self.popup_x + popup_width
+            && mouse_row > self.popup_y
+            && mouse_row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return KeybindBrowserMouseAction::None;
+        }
+
+        // Check footer row (y + 18) for button clicks
+        // Footer: "↑/↓:Nav PgUp/PgDn:Page Enter:Edit Del:Remove Esc:Close"
+        let footer_y = self.popup_y + 18;
+        if mouse_row == footer_y {
+            let rel_x = mouse_col.saturating_sub(self.popup_x + 2);
+            // "Enter:Edit" is around chars 24-33 (after "↑/↓:Nav PgUp/PgDn:Page ")
+            // "Del:Remove" is around chars 35-44
+            // "Esc:Close" is around chars 46-54
+            if rel_x >= 24 && rel_x <= 33 {
+                return KeybindBrowserMouseAction::Edit;
+            } else if rel_x >= 35 && rel_x <= 44 {
+                return KeybindBrowserMouseAction::Delete;
+            } else if rel_x >= 46 && rel_x <= 54 {
+                return KeybindBrowserMouseAction::Close;
+            }
+        }
+
+        // Check list area for item clicks
+        // List starts at y + 1, has 16 rows of content
+        let list_y = self.popup_y + 1;
+        let list_height: u16 = 16;
+
+        if mouse_row > list_y && mouse_row < list_y + list_height {
+            // Calculate which display row was clicked
+            let clicked_display_row = (mouse_row - list_y - 1) as usize;
+
+            // Map display row to entry index, accounting for section headers
+            if let Some(entry_idx) = self.display_row_to_entry_index(clicked_display_row) {
+                if entry_idx < self.entries.len() {
+                    self.selected_index = entry_idx;
+                    self.adjust_scroll();
+                    return KeybindBrowserMouseAction::None;
+                }
+            }
+        }
+
+        KeybindBrowserMouseAction::None
+    }
+
+    /// Convert a display row (visible row in the list) to an entry index
+    /// Returns None if the row is a section header
+    fn display_row_to_entry_index(&self, target_display_row: usize) -> Option<usize> {
+        let mut display_row = 0;
+        let mut last_section: Option<&str> = None;
+        let visible_start = self.scroll_offset;
+
+        for (idx, entry) in self.entries.iter().enumerate() {
+            let entry_section = &entry.action_type;
+
+            // Account for section header
+            if last_section != Some(entry_section) {
+                if display_row >= visible_start {
+                    // This row is a section header
+                    let visible_row = display_row.saturating_sub(visible_start);
+                    if visible_row == target_display_row {
+                        // Clicked on a section header, not an entry
+                        return None;
+                    }
+                }
+                display_row += 1;
+                last_section = Some(entry_section);
+            }
+
+            if display_row >= visible_start {
+                let visible_row = display_row.saturating_sub(visible_start);
+                if visible_row == target_display_row {
+                    return Some(idx);
+                }
+            }
+
+            display_row += 1;
+        }
+
+        None
     }
 
     pub fn render(

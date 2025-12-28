@@ -166,6 +166,10 @@ enum FieldRef {
     // Betrayer widget fields
     BetrayerShowItems,
     BetrayerBarColor,
+    // Text widget compact mode
+    TextCompact,
+    // Targets widget show arms/body parts count
+    TargetsShowArmsCount,
 }
 
 impl FieldRef {
@@ -268,6 +272,8 @@ impl FieldRef {
             FieldRef::MiniVitalsSpiritColor => 104,
             FieldRef::BetrayerShowItems => 111,
             FieldRef::BetrayerBarColor => 112,
+            FieldRef::TextCompact => 113,
+            FieldRef::TargetsShowArmsCount => 114,
         }
     }
 }
@@ -1067,6 +1073,12 @@ pub struct WindowEditor {
     betrayer_show_items: bool,
     betrayer_bar_color_input: TextArea<'static>,
 
+    // Text widget compact mode
+    text_compact: bool,
+
+    // Targets widget show arms count
+    targets_show_arms_count: bool,
+
     window_def: WindowDef,
     original_window_def: WindowDef,
     is_new: bool,
@@ -1251,7 +1263,14 @@ impl WindowEditor {
                 fields.push(FieldRef::CursorColor);
                 fields.push(FieldRef::CursorBg);
             }
-            WindowDef::Text { .. } | WindowDef::Inventory { .. } => {
+            WindowDef::Text { .. } => {
+                fields.push(FieldRef::Streams);
+                fields.push(FieldRef::BufferSize);
+                fields.push(FieldRef::Wordwrap);
+                fields.push(FieldRef::Timestamps);
+                fields.push(FieldRef::TextCompact);
+            }
+            WindowDef::Inventory { .. } => {
                 fields.push(FieldRef::Streams);
                 fields.push(FieldRef::BufferSize);
                 fields.push(FieldRef::Wordwrap);
@@ -1323,7 +1342,11 @@ impl WindowEditor {
             WindowDef::ActiveEffects { .. } => {
                 fields.push(FieldRef::ActiveEffectsCategory);
             }
-            WindowDef::Targets { .. } | WindowDef::Players { .. } => {
+            WindowDef::Targets { .. } => {
+                fields.push(FieldRef::EntityId);
+                fields.push(FieldRef::TargetsShowArmsCount);
+            }
+            WindowDef::Players { .. } => {
                 fields.push(FieldRef::EntityId);
             }
             WindowDef::Container { .. } => {
@@ -1475,12 +1498,15 @@ impl WindowEditor {
         let mut buffer_size_input = Self::create_textarea();
         let mut text_wordwrap = true;
         let mut text_show_timestamps = false;
+        let mut text_compact = false;
         let mut entity_id_input = Self::create_textarea();
+        let mut targets_show_arms_count = false;
         if let crate::config::WindowDef::Text { data, .. } = &window_def {
             streams_input.insert_str(data.streams.join(", "));
             buffer_size_input.insert_str(data.buffer_size.to_string());
             text_wordwrap = data.wordwrap;
             text_show_timestamps = data.show_timestamps;
+            text_compact = data.compact;
         }
         if let crate::config::WindowDef::Inventory { data, .. } = &window_def {
             streams_input.insert_str(data.streams.join(", "));
@@ -1490,6 +1516,7 @@ impl WindowEditor {
         }
         if let crate::config::WindowDef::Targets { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
+            targets_show_arms_count = data.show_body_part_count;
         }
         if let crate::config::WindowDef::Players { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
@@ -1960,6 +1987,8 @@ impl WindowEditor {
             minivitals_spirit_color_input,
             betrayer_show_items,
             betrayer_bar_color_input,
+            text_compact,
+            targets_show_arms_count,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: false,
@@ -2110,7 +2139,9 @@ impl WindowEditor {
         buffer_size_input.insert_str("10000");
         let text_wordwrap = true;
         let text_show_timestamps = false;
+        let text_compact = false;
         let entity_id_input = Self::create_textarea();
+        let targets_show_arms_count = false;
         let text_color_input = Self::create_textarea();
         let prompt_icon_input = Self::create_textarea();
         let prompt_icon_color_input = Self::create_textarea();
@@ -2296,6 +2327,8 @@ impl WindowEditor {
             minivitals_spirit_color_input: Self::create_textarea(),
             betrayer_show_items: true,
             betrayer_bar_color_input: Self::create_textarea(),
+            text_compact,
+            targets_show_arms_count,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: true,
@@ -3125,6 +3158,12 @@ impl WindowEditor {
                         FieldRef::Timestamps => {
                             self.text_show_timestamps = !self.text_show_timestamps;
                         }
+                        FieldRef::TextCompact => {
+                            self.text_compact = !self.text_compact;
+                        }
+                        FieldRef::TargetsShowArmsCount => {
+                            self.targets_show_arms_count = !self.targets_show_arms_count;
+                        }
                         FieldRef::ProgressNumbersOnly => {
                             self.progress_numbers_only = !self.progress_numbers_only;
                         }
@@ -3770,6 +3809,7 @@ impl WindowEditor {
                 .unwrap_or(data.buffer_size);
             data.wordwrap = self.text_wordwrap;
             data.show_timestamps = self.text_show_timestamps;
+            data.compact = self.text_compact;
         }
 
         if let crate::config::WindowDef::Inventory { data, .. } = &mut self.window_def {
@@ -4135,6 +4175,7 @@ impl WindowEditor {
         }
         if let crate::config::WindowDef::Targets { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
+            data.show_body_part_count = self.targets_show_arms_count;
         }
         if let crate::config::WindowDef::Players { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
@@ -5172,7 +5213,67 @@ impl WindowEditor {
                     is_focus(FieldRef::CursorBg, self.focused_field),
                 );
             }
-            WindowDef::Text { .. } | WindowDef::Inventory { .. } => {
+            WindowDef::Text { .. } => {
+                self.render_textarea_compact(
+                    FieldRef::Streams.legacy_field_id(),
+                    "Streams:",
+                    &self.streams_input,
+                    left_x,
+                    special_row,
+                    column_width as usize,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::Streams, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::Wordwrap.legacy_field_id(),
+                    "Wordwrap",
+                    self.text_wordwrap,
+                    right_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::Wordwrap, self.focused_field),
+                );
+                special_row += 1;
+                self.render_textarea_compact(
+                    FieldRef::BufferSize.legacy_field_id(),
+                    "Buffer Size:",
+                    &self.buffer_size_input,
+                    left_x,
+                    special_row,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::BufferSize, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::Timestamps.legacy_field_id(),
+                    "Timestamps",
+                    self.text_show_timestamps,
+                    right_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::Timestamps, self.focused_field),
+                );
+                special_row += 1;
+                // Compact mode checkbox (for bounty window, etc.)
+                self.render_checkbox_compact(
+                    FieldRef::TextCompact.legacy_field_id(),
+                    "Compact",
+                    self.text_compact,
+                    left_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::TextCompact, self.focused_field),
+                );
+            }
+            WindowDef::Inventory { .. } => {
                 self.render_textarea_compact(
                     FieldRef::Streams.legacy_field_id(),
                     "Streams:",
@@ -5219,7 +5320,31 @@ impl WindowEditor {
                     is_focus(FieldRef::Timestamps, self.focused_field),
                 );
             }
-            WindowDef::Targets { .. } | WindowDef::Players { .. } => {
+            WindowDef::Targets { .. } => {
+                self.render_textarea_compact(
+                    FieldRef::EntityId.legacy_field_id(),
+                    "Entity ID:",
+                    &self.entity_id_input,
+                    left_x,
+                    special_row,
+                    column_width as usize,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EntityId, self.focused_field),
+                );
+                self.render_checkbox_compact(
+                    FieldRef::TargetsShowArmsCount.legacy_field_id(),
+                    "Show 709 Arms",
+                    self.targets_show_arms_count,
+                    right_x,
+                    special_row,
+                    column_width,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::TargetsShowArmsCount, self.focused_field),
+                );
+            }
+            WindowDef::Players { .. } => {
                 self.render_textarea_compact(
                     FieldRef::EntityId.legacy_field_id(),
                     "Entity ID:",
@@ -6574,6 +6699,37 @@ mod tests {
         };
 
         let editor = WindowEditor::new_window_with_layout("progress".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-progress-1");
+    }
+
+    #[test]
+    fn test_custom_suffix_stripped_in_widget_name() {
+        // Test that _custom suffix is stripped from widget type in auto-naming
+        // e.g. "tabbedtext_custom" → "custom-tabbedtext-1" (not "custom-tabbedtext_custom-1")
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+
+        // Test tabbedtext_custom generates same pattern as tabbedtext
+        let editor = WindowEditor::new_window_with_layout("tabbedtext_custom".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-tabbedtext-1");
+
+        // Test text_custom generates same pattern as text
+        let editor = WindowEditor::new_window_with_layout("text_custom".to_string(), &layout);
+        let lines = editor.name_input.lines();
+        let name = if !lines.is_empty() { &lines[0] } else { "" };
+        assert_eq!(name, "custom-text-1");
+
+        // Test progress_custom generates same pattern as progress
+        let editor = WindowEditor::new_window_with_layout("progress_custom".to_string(), &layout);
         let lines = editor.name_input.lines();
         let name = if !lines.is_empty() { &lines[0] } else { "" };
         assert_eq!(name, "custom-progress-1");

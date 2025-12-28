@@ -4607,9 +4607,6 @@ impl Config {
             "encum".to_string(),          // GS4-specific
             "minivitals".to_string(),     // GS4-specific
             "betrayer".to_string(),       // GS4-specific
-            // Target tracking
-            "targets".to_string(), // Target list
-            "players".to_string(), // Player list
             // command_input is NOT in this list - it's always present and can't be added/removed
         ];
 

@@ -12,6 +12,21 @@ use ratatui::{
     widgets::{Clear, Widget},
 };
 
+/// Actions that can result from mouse interaction with the settings editor
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsEditorMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked on a row, select it
+    SelectRow,
+    /// User clicked on value column, enter edit mode
+    EditValue,
+    /// User clicked on scope indicator, toggle scope
+    ToggleScope,
+    /// User clicked Close button
+    Close,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingValue {
     String(String),
@@ -494,14 +509,35 @@ impl SettingsEditor {
         }
     }
 
+    /// Handle mouse events for the popup
+    /// scroll_direction: -1 for scroll up, 1 for scroll down, 0 for no scroll
     pub fn handle_mouse(
         &mut self,
         mouse_col: u16,
         mouse_row: u16,
         mouse_down: bool,
-        area: Rect,
-    ) -> bool {
-        let popup_width = 70.min(area.width);
+        scroll_direction: i8,
+        _area: Rect,
+    ) -> SettingsEditorMouseAction {
+        let popup_width: u16 = 70;
+        let popup_height: u16 = 20;
+
+        // Handle scroll wheel first (regardless of position, as long as mouse is over popup)
+        if scroll_direction != 0 {
+            let inside_popup = mouse_col >= self.popup_x
+                && mouse_col < self.popup_x + popup_width
+                && mouse_row >= self.popup_y
+                && mouse_row < self.popup_y + popup_height;
+
+            if inside_popup {
+                if scroll_direction < 0 {
+                    self.navigate_up();
+                } else {
+                    self.navigate_down();
+                }
+                return SettingsEditorMouseAction::None;
+            }
+        }
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -513,7 +549,7 @@ impl SettingsEditor {
             self.is_dragging = true;
             self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
             self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
-            return true;
+            return SettingsEditorMouseAction::None;
         }
 
         if self.is_dragging {
@@ -521,15 +557,115 @@ impl SettingsEditor {
                 // Continue dragging
                 self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
                 self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-                return true;
+                return SettingsEditorMouseAction::None;
             } else {
                 // Stop dragging
                 self.is_dragging = false;
-                return true;
+                return SettingsEditorMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (mouse_down), not releases
+        if !mouse_down {
+            return SettingsEditorMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = mouse_col >= self.popup_x
+            && mouse_col < self.popup_x + popup_width
+            && mouse_row > self.popup_y
+            && mouse_row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return SettingsEditorMouseAction::None;
+        }
+
+        // Check footer row for button clicks
+        // Footer: "Enter:Edit  G:Toggle Scope  Esc:Close"
+        let footer_y = self.popup_y + popup_height - 1;
+        if mouse_row == footer_y {
+            let rel_x = mouse_col.saturating_sub(self.popup_x);
+            // "Enter:Edit" ~1-10, "G:Toggle Scope" ~13-26, "Esc:Close" ~29-37
+            if rel_x >= 1 && rel_x <= 10 {
+                return SettingsEditorMouseAction::EditValue;
+            } else if rel_x >= 13 && rel_x <= 26 {
+                return SettingsEditorMouseAction::ToggleScope;
+            } else if rel_x >= 29 && rel_x <= 37 {
+                return SettingsEditorMouseAction::Close;
+            }
+        }
+
+        // Check list area for item clicks
+        // List starts at y + 2 (after title and header), has ~15 rows of content
+        let list_y = self.popup_y + 2;
+        let list_height: u16 = 15;
+
+        if mouse_row >= list_y && mouse_row < list_y + list_height {
+            let filtered = self.filtered_items();
+            let clicked_row = (mouse_row - list_y) as usize;
+
+            // Account for category headers
+            if let Some(item_idx) = self.display_row_to_item_index(clicked_row) {
+                if item_idx < filtered.len() {
+                    self.selected_index = item_idx;
+                    self.adjust_scroll();
+
+                    // Check which column was clicked
+                    let rel_x = mouse_col.saturating_sub(self.popup_x);
+
+                    // Column layout: [G]/[C] ~2-4, Name ~6-30, Value ~32-68
+                    if rel_x >= 2 && rel_x <= 4 {
+                        // Clicked on scope indicator [G]/[C]
+                        return SettingsEditorMouseAction::ToggleScope;
+                    } else if rel_x >= 32 {
+                        // Clicked on value column - enter edit mode
+                        return SettingsEditorMouseAction::EditValue;
+                    } else {
+                        // Clicked on name column - just select
+                        return SettingsEditorMouseAction::SelectRow;
+                    }
+                }
+            }
+        }
+
+        SettingsEditorMouseAction::None
+    }
+
+    /// Convert a display row (visible row in the list) to an item index
+    /// Returns None if the row is a category header
+    fn display_row_to_item_index(&self, target_display_row: usize) -> Option<usize> {
+        let items = self.filtered_items();
+        let mut display_row = 0;
+        let mut last_category: Option<&str> = None;
+        let visible_start = self.scroll_offset;
+
+        for (idx, (_, item)) in items.iter().enumerate() {
+            let item_category = item.category.as_str();
+
+            // Account for category header
+            if last_category != Some(item_category) {
+                if display_row >= visible_start {
+                    let visible_row = display_row.saturating_sub(visible_start);
+                    if visible_row == target_display_row {
+                        // Clicked on a category header
+                        return None;
+                    }
+                }
+                display_row += 1;
+                last_category = Some(item_category);
+            }
+
+            if display_row >= visible_start {
+                let visible_row = display_row.saturating_sub(visible_start);
+                if visible_row == target_display_row {
+                    return Some(idx);
+                }
+            }
+
+            display_row += 1;
+        }
+
+        None
     }
 
     pub fn render(

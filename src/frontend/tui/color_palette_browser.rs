@@ -13,6 +13,23 @@ use ratatui::{
     widgets::{Clear, Widget},
 };
 
+/// Actions that can result from mouse interaction with the color palette browser
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColorPaletteBrowserMouseAction {
+    /// No special action, just drag or navigation
+    None,
+    /// User clicked Edit button or double-action on row
+    Edit,
+    /// User clicked Delete button
+    Delete,
+    /// User clicked Add button
+    Add,
+    /// User toggled favorite on a color
+    ToggleFavorite,
+    /// User wants to close the browser
+    Close,
+}
+
 /// Wrapper for PaletteColor with source tracking
 #[derive(Clone)]
 pub struct PaletteColorEntry {
@@ -228,15 +245,35 @@ impl ColorPaletteBrowser {
         }
     }
 
-    /// Handle mouse events for dragging the popup
+    /// Handle mouse events for the popup
+    /// scroll_direction: -1 for scroll up, 1 for scroll down, 0 for no scroll
     pub fn handle_mouse(
         &mut self,
         mouse_col: u16,
         mouse_row: u16,
         mouse_down: bool,
-        area: Rect,
-    ) -> bool {
-        let popup_width = 70.min(area.width);
+        scroll_direction: i8,
+        _area: Rect,
+    ) -> ColorPaletteBrowserMouseAction {
+        let popup_width: u16 = 70;
+        let popup_height: u16 = 20;
+
+        // Handle scroll wheel first (regardless of position, as long as mouse is over popup)
+        if scroll_direction != 0 {
+            let inside_popup = mouse_col >= self.popup_x
+                && mouse_col < self.popup_x + popup_width
+                && mouse_row >= self.popup_y
+                && mouse_row < self.popup_y + popup_height;
+
+            if inside_popup {
+                if scroll_direction < 0 {
+                    self.navigate_up();
+                } else {
+                    self.navigate_down();
+                }
+                return ColorPaletteBrowserMouseAction::None;
+            }
+        }
 
         // Check if mouse is on title bar
         let on_title_bar = mouse_row == self.popup_y
@@ -248,7 +285,7 @@ impl ColorPaletteBrowser {
             self.is_dragging = true;
             self.drag_offset_x = mouse_col.saturating_sub(self.popup_x);
             self.drag_offset_y = mouse_row.saturating_sub(self.popup_y);
-            return true;
+            return ColorPaletteBrowserMouseAction::None;
         }
 
         if self.is_dragging {
@@ -256,15 +293,117 @@ impl ColorPaletteBrowser {
                 // Continue dragging
                 self.popup_x = mouse_col.saturating_sub(self.drag_offset_x);
                 self.popup_y = mouse_row.saturating_sub(self.drag_offset_y);
-                return true;
+                return ColorPaletteBrowserMouseAction::None;
             } else {
                 // Stop dragging
                 self.is_dragging = false;
-                return true;
+                return ColorPaletteBrowserMouseAction::None;
             }
         }
 
-        false
+        // Only process clicks (mouse_down), not releases
+        if !mouse_down {
+            return ColorPaletteBrowserMouseAction::None;
+        }
+
+        // Check if click is inside the popup
+        let inside_popup = mouse_col >= self.popup_x
+            && mouse_col < self.popup_x + popup_width
+            && mouse_row > self.popup_y
+            && mouse_row < self.popup_y + popup_height;
+
+        if !inside_popup {
+            return ColorPaletteBrowserMouseAction::None;
+        }
+
+        // Check footer row (y + 18) for button clicks
+        // Footer: "A:Add E:Edit Del:Remove F:Favorite Esc:Close"
+        let footer_y = self.popup_y + 18;
+        if mouse_row == footer_y {
+            let rel_x = mouse_col.saturating_sub(self.popup_x + 2);
+            // "A:Add" ~0-4, "E:Edit" ~6-11, "Del:Remove" ~13-22, "F:Favorite" ~24-33, "Esc:Close" ~35-44
+            if rel_x <= 4 {
+                return ColorPaletteBrowserMouseAction::Add;
+            } else if rel_x >= 6 && rel_x <= 11 {
+                return ColorPaletteBrowserMouseAction::Edit;
+            } else if rel_x >= 13 && rel_x <= 22 {
+                return ColorPaletteBrowserMouseAction::Delete;
+            } else if rel_x >= 24 && rel_x <= 33 {
+                return ColorPaletteBrowserMouseAction::ToggleFavorite;
+            } else if rel_x >= 35 && rel_x <= 44 {
+                return ColorPaletteBrowserMouseAction::Close;
+            }
+        }
+
+        // Check list area for item clicks
+        // List starts at y + 1, has 16 rows of content
+        let list_y = self.popup_y + 1;
+        let list_height: u16 = 16;
+
+        if mouse_row > list_y && mouse_row < list_y + list_height {
+            // Calculate which display row was clicked
+            let clicked_display_row = (mouse_row - list_y - 1) as usize;
+
+            // Check if clicking on favorite column (first 3 chars: color preview with ★)
+            let rel_x = mouse_col.saturating_sub(self.popup_x + 2);
+            let clicked_favorite_column = rel_x <= 3;
+
+            // Map display row to entry index, accounting for category headers
+            if let Some(entry_idx) = self.display_row_to_entry_index(clicked_display_row) {
+                if entry_idx < self.filtered_entries().len() {
+                    self.selected_index = entry_idx;
+                    self.adjust_scroll();
+
+                    // If clicked favorite column, toggle favorite
+                    if clicked_favorite_column {
+                        self.toggle_favorite();
+                        return ColorPaletteBrowserMouseAction::ToggleFavorite;
+                    }
+
+                    return ColorPaletteBrowserMouseAction::None;
+                }
+            }
+        }
+
+        ColorPaletteBrowserMouseAction::None
+    }
+
+    /// Convert a display row (visible row in the list) to an entry index
+    /// Returns None if the row is a category header
+    fn display_row_to_entry_index(&self, target_display_row: usize) -> Option<usize> {
+        let entries = self.filtered_entries();
+        let mut display_row = 0;
+        let mut last_category: Option<&str> = None;
+        let visible_start = self.scroll_offset;
+
+        for (idx, entry) in entries.iter().enumerate() {
+            let entry_category = entry.color.category.as_str();
+
+            // Account for category header
+            if last_category != Some(entry_category) {
+                if display_row >= visible_start {
+                    // This row is a category header
+                    let visible_row = display_row.saturating_sub(visible_start);
+                    if visible_row == target_display_row {
+                        // Clicked on a category header, not an entry
+                        return None;
+                    }
+                }
+                display_row += 1;
+                last_category = Some(entry_category);
+            }
+
+            if display_row >= visible_start {
+                let visible_row = display_row.saturating_sub(visible_start);
+                if visible_row == target_display_row {
+                    return Some(idx);
+                }
+            }
+
+            display_row += 1;
+        }
+
+        None
     }
 
     pub fn render(
