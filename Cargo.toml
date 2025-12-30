@@ -59,6 +59,9 @@ arboard = "3"
 base64 = "0.22.1"
 sysinfo = "0.30"
 
+# URL opening (for LaunchURL)
+open = "5"
+
 [features]
 default = ["sound"]
 sound = ["dep:rodio"]
