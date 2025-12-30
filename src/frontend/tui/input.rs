@@ -1273,64 +1273,83 @@ impl TuiFrontend {
 
                 let mut found_window = None;
                 let mut drag_op = None;
-                let mut clicked_window_name: Option<String> = None;
                 let mut handled_tab_click: Option<(String, usize)> = None;
 
-                for (name, window) in &app_core.ui_state.windows {
+                // Use topmost window for click processing (respects z-order for overlapping windows)
+                let clicked_window_name = Some(topmost_window.clone());
+
+                tracing::debug!(
+                    "Mouse down at ({}, {}), topmost_window='{}'",
+                    *x, *y, topmost_window
+                );
+
+                if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
+                    tracing::debug!(
+                        "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
+                        window.position.y, window.position.height, *y, *y == window.position.y
+                    );
                     let pos = &window.position;
-                    if *x >= pos.x
-                        && *x < pos.x + pos.width
-                        && *y >= pos.y
-                        && *y < pos.y + pos.height
-                    {
-                        clicked_window_name = Some(name.clone());
+                    let name = &topmost_window;
 
-                        // Handle tabbed text tab switching on click
-                        if window.widget_type == WidgetType::TabbedText {
-                            let rect = Rect {
-                                x: pos.x,
-                                y: pos.y,
-                                width: pos.width,
-                                height: pos.height,
-                            };
-                            if let Some(new_index) =
-                                self.handle_tabbed_click(name, rect, *x, *y)
-                            {
-                                handled_tab_click = Some((name.clone(), new_index));
-                                break;
-                            }
+                    // Check if window is locked (affects resize handle detection)
+                    let is_window_locked = app_core
+                        .layout
+                        .windows
+                        .iter()
+                        .find(|w| w.base().name == *name)
+                        .is_some_and(|w| w.base().locked);
+
+                    // Handle tabbed text tab switching on click
+                    if window.widget_type == WidgetType::TabbedText {
+                        let rect = Rect {
+                            x: pos.x,
+                            y: pos.y,
+                            width: pos.width,
+                            height: pos.height,
+                        };
+                        if let Some(new_index) =
+                            self.handle_tabbed_click(name, rect, *x, *y)
+                        {
+                            handled_tab_click = Some((name.clone(), new_index));
                         }
+                    }
 
+                    if handled_tab_click.is_none() {
                         let right_col = pos.x + pos.width - 1;
                         let bottom_row = pos.y + pos.height - 1;
                         let has_horizontal_space = pos.width > 1;
-                        let has_vertical_space = pos.height > 1;
+                        // Only use bottom row as resize handle if:
+                        // 1. Window is NOT locked (locked windows can't be resized anyway)
+                        // 2. Window has enough height (> 2) so there's content area between
+                        //    top row (move) and bottom row (resize). For small widgets (height <= 2),
+                        //    bottom row IS the content area.
+                        let can_resize_bottom = !is_window_locked && pos.height > 2;
+                        let can_resize_right = !is_window_locked;
 
                         if has_horizontal_space
-                            && has_vertical_space
+                            && can_resize_bottom
                             && *x == right_col
                             && *y == bottom_row
                         {
                             drag_op = Some(DragOperation::ResizeBottomRight);
                             found_window = Some(name.clone());
-                            break;
-                        } else if has_horizontal_space && *x == right_col {
+                        } else if can_resize_right && has_horizontal_space && *x == right_col {
                             drag_op = Some(DragOperation::ResizeRight);
                             found_window = Some(name.clone());
-                            break;
-                        } else if has_vertical_space && *y == bottom_row {
+                        } else if can_resize_bottom && *y == bottom_row {
                             drag_op = Some(DragOperation::ResizeBottom);
                             found_window = Some(name.clone());
-                            break;
                         } else if *y == pos.y {
                             drag_op = Some(DragOperation::Move);
                             found_window = Some(name.clone());
-                            break;
                         }
                     }
                 }
 
                 if let Some((win_name, new_index)) = handled_tab_click {
+                    // Focus the tabbed window when clicking its tabs
+                    app_core.ui_state.set_focus(Some(win_name.clone()));
+
                     if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
                         if let crate::data::WindowContent::TabbedText(tabbed) =
                             &mut window_state.content
@@ -1344,17 +1363,79 @@ impl TuiFrontend {
                     return Ok((true, None));
                 }
 
-                if let (Some(window_name), Some(operation)) = (found_window, drag_op) {
-                    if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                        let pos = &window.position;
-                        app_core.ui_state.mouse_drag = Some(MouseDragState {
-                            operation,
-                            window_name,
-                            start_pos: (*x, *y),
-                            original_window_pos: (pos.x, pos.y, pos.width, pos.height),
-                        });
+                if let (Some(window_name), Some(operation)) = (found_window.clone(), drag_op.clone()) {
+                    // Check if window is locked
+                    let is_locked = app_core
+                        .layout
+                        .windows
+                        .iter()
+                        .find(|w| w.base().name == window_name)
+                        .is_some_and(|w| w.base().locked);
+
+                    // For Move operations, handle links based on modifiers and lock state:
+                    // - Ctrl+click on link: ALWAYS starts link drag (regardless of lock)
+                    // - Click on link + locked window: opens menu (can't move anyway)
+                    // - Click on link + unlocked window: starts window move (repositioning)
+                    let mut handled_as_link = false;
+                    if operation == DragOperation::Move {
+                        let has_ctrl = modifiers.ctrl;
+
+                        // Check for links if Ctrl is held OR window is locked
+                        if has_ctrl || is_locked {
+                            if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                                let pos = &window.position;
+                                let window_rect = ratatui::layout::Rect {
+                                    x: pos.x,
+                                    y: pos.y,
+                                    width: pos.width,
+                                    height: pos.height,
+                                };
+
+                                if let Some(link_data) =
+                                    self.link_at_position(&window_name, *x, *y, window_rect)
+                                {
+                                    if has_ctrl {
+                                        // Ctrl+click always starts link drag
+                                        app_core.ui_state.link_drag_state =
+                                            Some(LinkDragState {
+                                                link_data,
+                                                start_pos: (*x, *y),
+                                                current_pos: (*x, *y),
+                                            });
+                                    } else {
+                                        // Locked window without Ctrl: open menu
+                                        app_core.ui_state.pending_link_click =
+                                            Some(PendingLinkClick {
+                                                link_data,
+                                                click_pos: (*x, *y),
+                                            });
+                                    }
+                                    handled_as_link = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Only start window drag if not locked and not handled as link
+                    if !handled_as_link && !is_locked {
+                        if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                            let pos = &window.position;
+                            app_core.ui_state.mouse_drag = Some(MouseDragState {
+                                operation,
+                                window_name,
+                                start_pos: (*x, *y),
+                                original_window_pos: (pos.x, pos.y, pos.width, pos.height),
+                            });
+                        }
                     }
                 } else if let Some(window_name) = clicked_window_name {
+                    // Check if this window should receive focus (text/tabbedtext only)
+                    let should_focus = app_core
+                        .ui_state
+                        .get_window(&window_name)
+                        .map(|w| matches!(w.widget_type, WidgetType::Text | WidgetType::TabbedText))
+                        .unwrap_or(false);
+
                     if let Some(window) = app_core.ui_state.get_window(&window_name) {
                         let pos = &window.position;
                         let window_rect = ratatui::layout::Rect {
@@ -1364,9 +1445,15 @@ impl TuiFrontend {
                             height: pos.height,
                         };
 
+                        tracing::debug!(
+                            "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
+                            window_name, *x, *y, window_rect.y, window_rect.height
+                        );
+
                         if let Some(link_data) =
                             self.link_at_position(&window_name, *x, *y, window_rect)
                         {
+                            tracing::debug!("  Found link: {}", link_data.noun);
                             let has_ctrl = modifiers.ctrl;
 
                             if has_ctrl {
@@ -1408,6 +1495,11 @@ impl TuiFrontend {
                                     ));
                             }
                         }
+                    }
+
+                    // Apply focus after borrow on windows ends
+                    if should_focus {
+                        app_core.ui_state.set_focus(Some(window_name));
                     }
                 }
                 return Ok((true, None));

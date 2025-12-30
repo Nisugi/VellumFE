@@ -314,16 +314,37 @@ impl TuiFrontend {
         }
 
         // Try hand widget
+        // Hand widgets are single-row and only use left/right borders (no top/bottom),
+        // so we only apply border offset to X-axis, not Y-axis
         if let Some(hand_widget) = self.widget_manager.hand_widgets.get(window_name) {
+            tracing::debug!(
+                "Checking hand widget '{}' for link at ({}, {}), has_link={}",
+                window_name,
+                mouse_col,
+                mouse_row,
+                hand_widget.link_data().is_some()
+            );
             if let Some(link) = hand_widget.link_data() {
-                let border_offset = if hand_widget.has_border() { 1 } else { 0 };
-                if mouse_col >= window_rect.x + border_offset
-                    && mouse_col < window_rect.x + window_rect.width - border_offset
-                    && mouse_row >= window_rect.y + border_offset
-                    && mouse_row < window_rect.y + window_rect.height - border_offset
+                let x_border_offset = if hand_widget.has_border() { 1 } else { 0 };
+                tracing::debug!(
+                    "  Hand has link: exist_id={}, noun={}, x_border_offset={}",
+                    link.exist_id,
+                    link.noun,
+                    x_border_offset
+                );
+                // Only check X bounds with border offset; Y bounds use full height
+                // since hand widgets render content on the same row as left/right borders
+                if mouse_col >= window_rect.x + x_border_offset
+                    && mouse_col < window_rect.x + window_rect.width - x_border_offset
+                    && mouse_row >= window_rect.y
+                    && mouse_row < window_rect.y + window_rect.height
                 {
+                    tracing::debug!("  Returning link for hand widget");
                     return Some(link);
                 }
+                tracing::debug!("  Click outside hand widget content area");
+            } else {
+                tracing::debug!("  Hand widget has no link data");
             }
         }
 
@@ -450,6 +471,77 @@ impl TuiFrontend {
                     text: String::new(),
                     coord: None,
                 });
+            }
+        }
+
+        // Try tabbed text window
+        if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get(window_name) {
+            let border_offset = if tabbed_window.has_border() { 1 } else { 0 };
+            let tab_bar_offset: u16 = 1; // Tab bar is always 1 row
+
+            // Calculate content area bounds accounting for tab bar position
+            let (content_y_start, content_y_end) = if tabbed_window.tab_bar_at_top() {
+                // Tab bar at top: content starts after border + tab bar
+                let y_start = window_rect.y + border_offset + tab_bar_offset;
+                let y_end = window_rect.y + window_rect.height - border_offset;
+                (y_start, y_end)
+            } else {
+                // Tab bar at bottom: content starts after border, ends before tab bar
+                let y_start = window_rect.y + border_offset;
+                let y_end = window_rect.y + window_rect.height - border_offset - tab_bar_offset;
+                (y_start, y_end)
+            };
+
+            // Bounds check within content area
+            if mouse_col < window_rect.x + border_offset
+                || mouse_col >= window_rect.x + window_rect.width - border_offset
+                || mouse_row < content_y_start
+                || mouse_row >= content_y_end
+            {
+                return None;
+            }
+
+            let visible_height = (content_y_end - content_y_start) as usize;
+            let (_start_idx, visible_lines) = tabbed_window.get_visible_lines_info(visible_height);
+
+            let line_idx = (mouse_row - content_y_start) as usize;
+            let col_offset = (mouse_col - window_rect.x - border_offset) as usize;
+
+            if line_idx >= visible_lines.len() {
+                return None;
+            }
+
+            let line = &visible_lines[line_idx];
+            let mut col = 0usize;
+            for seg in &line.segments {
+                let seg_len = seg.text.chars().count();
+                if col_offset >= col && col_offset < col + seg_len {
+                    // Inside this segment
+                    if let Some(link) = seg.link_data.clone() {
+                        let mut data_link = crate::data::LinkData {
+                            exist_id: link.exist_id,
+                            noun: link.noun,
+                            text: link.text,
+                            coord: link.coord,
+                        };
+                        // For <d> tags without cmd attribute, populate text from segment
+                        if data_link.text.is_empty() {
+                            data_link.text = seg.text.clone();
+                        }
+                        return Some(data_link);
+                    }
+                    return None;
+                }
+                col += seg_len;
+            }
+
+            return None;
+        }
+
+        // Try players widget
+        if let Some(players_widget) = self.widget_manager.players_widgets.get(window_name) {
+            if let Some(link) = players_widget.handle_click(mouse_row, window_rect) {
+                return Some(link);
             }
         }
 

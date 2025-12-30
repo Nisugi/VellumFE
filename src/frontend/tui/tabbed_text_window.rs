@@ -402,6 +402,29 @@ impl TabbedTextWindow {
         }
     }
 
+    /// Get visible lines info from the active tab (for link detection)
+    /// Returns (start_line_index, visible_lines_with_segments)
+    pub fn get_visible_lines_info(
+        &self,
+        visible_height: usize,
+    ) -> (usize, Vec<super::text_window::LineSegments>) {
+        if let Some(active_tab) = self.tabs.get(self.active_tab_index) {
+            active_tab.window.get_visible_lines_info(visible_height)
+        } else {
+            (0, Vec::new())
+        }
+    }
+
+    /// Check if this window has a border
+    pub fn has_border(&self) -> bool {
+        self.show_border
+    }
+
+    /// Check if tab bar is at the top
+    pub fn tab_bar_at_top(&self) -> bool {
+        self.tab_bar_position == TabBarPosition::Top
+    }
+
     /// Check if any tabs have unread messages
     pub fn has_unread_tabs(&self) -> bool {
         self.tabs.iter().any(|t| t.has_unread)

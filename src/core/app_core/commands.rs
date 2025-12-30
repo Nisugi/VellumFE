@@ -418,19 +418,19 @@ impl AppCore {
                 self.toggle_transparent_background_all();
             }
 
-            // Lock/unlock all windows
-            "lockwindows" | "lockall" => {
+            // Lock/unlock all windows (toggle)
+            "lockwindows" | "lockall" | "unlockwindows" | "unlockall" => {
+                // Check if any window is currently locked
+                let any_locked = self.layout.windows.iter().any(|w| w.base().locked);
+                let new_state = !any_locked;
                 for window in &mut self.layout.windows {
-                    window.base_mut().locked = true;
+                    window.base_mut().locked = new_state;
                 }
-                self.add_system_message("All windows locked (cannot be moved/resized)");
-                self.needs_render = true;
-            }
-            "unlockwindows" | "unlockall" => {
-                for window in &mut self.layout.windows {
-                    window.base_mut().locked = false;
+                if new_state {
+                    self.add_system_message("All windows locked (cannot be moved/resized)");
+                } else {
+                    self.add_system_message("All windows unlocked (can be moved/resized)");
                 }
-                self.add_system_message("All windows unlocked (can be moved/resized)");
                 self.needs_render = true;
             }
 
