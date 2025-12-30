@@ -227,6 +227,8 @@ coloring_enabled = true     # Apply color highlighting
 enabled = true
 volume = 0.7           # Master volume (0.0 to 1.0)
 cooldown_ms = 500      # Minimum time between repeated sounds
+startup_music = true   # Play music on application startup
+startup_music_delay_ms = 0  # Delay before startup music (0 = immediate)
 
 
 # ------------------------------------------------------------

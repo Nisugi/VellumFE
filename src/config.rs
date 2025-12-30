@@ -2364,6 +2364,10 @@ pub struct SoundConfig {
     pub volume: f32, // Master volume (0.0 to 1.0)
     #[serde(default = "default_sound_cooldown")]
     pub cooldown_ms: u64, // Cooldown between same sound plays (milliseconds)
+    #[serde(default = "default_startup_music")]
+    pub startup_music: bool, // Play music on startup
+    #[serde(default = "default_startup_music_delay")]
+    pub startup_music_delay_ms: u64, // Delay before startup music (0 = immediate)
 }
 
 fn default_sound_enabled() -> bool {
@@ -2378,12 +2382,22 @@ fn default_sound_cooldown() -> u64 {
     500 // 500ms default cooldown
 }
 
+fn default_startup_music() -> bool {
+    true
+}
+
+fn default_startup_music_delay() -> u64 {
+    0 // 0 = immediate
+}
+
 impl Default for SoundConfig {
     fn default() -> Self {
         Self {
             enabled: default_sound_enabled(),
             volume: default_sound_volume(),
             cooldown_ms: default_sound_cooldown(),
+            startup_music: default_startup_music(),
+            startup_music_delay_ms: default_startup_music_delay(),
         }
     }
 }

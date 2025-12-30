@@ -91,6 +91,19 @@ async fn async_run(
         tracing::warn!("Failed to load command history: {}", e);
     }
 
+    // Play startup music if enabled (with optional delay)
+    if app_core.config.sound.startup_music {
+        if let Some(ref player) = app_core.sound_player {
+            let delay_ms = app_core.config.sound.startup_music_delay_ms;
+            if delay_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
+            if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
+                tracing::debug!("Startup music not available: {}", e);
+            }
+        }
+    }
+
     if direct.is_none() {
         app_core.seed_default_quickbars_if_empty();
         if app_core

@@ -218,9 +218,7 @@ impl SoundPlayer {
 /// 2. Uncomment and add entries like:
 ///    ("beep.wav", include_bytes!("../defaults/sounds/beep.wav")),
 const DEFAULT_SOUNDS: &[(&str, &[u8])] = &[
-    // Example (commented out until we have default sounds):
-    // ("beep.wav", include_bytes!("../defaults/sounds/beep.wav")),
-    // ("death.ogg", include_bytes!("../defaults/sounds/death.ogg")),
+    ("wizard_music.mp3", include_bytes!("../defaults/globals/sounds/wizard_music.mp3")),
 ];
 
 /// Create shared sounds directory if it doesn't exist and extract default sounds
