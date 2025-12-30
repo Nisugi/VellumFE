@@ -15,3 +15,4 @@ pub mod sound;
 pub mod spell_abbrevs;
 pub mod theme;
 pub mod tts;
+pub mod window_position;

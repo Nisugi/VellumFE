@@ -61,6 +61,26 @@ async fn async_run(
 
     // Create TUI frontend
     let mut frontend = TuiFrontend::new()?;
+
+    // Restore window position for this character (if saved)
+    if let Some(positioner) = crate::window_position::create_positioner() {
+        if let Ok(Some(saved)) = crate::window_position::load(character.as_deref()) {
+            use crate::window_position::WindowPositionerExt;
+            let rect = if positioner.is_visible(&saved.window) {
+                saved.window
+            } else {
+                // Clamp to visible area if monitors changed
+                match positioner.clamp_to_screen(&saved.window) {
+                    Ok(clamped) => clamped,
+                    Err(_) => saved.window,
+                }
+            };
+            if let Err(e) = positioner.set_position(&rect) {
+                tracing::debug!("Failed to restore window position: {}", e);
+            }
+        }
+    }
+
     // Ensure frontend theme cache matches whatever layout/theme AppCore activated
     let initial_theme_id = app_core.config.active_theme.clone();
     let initial_theme = app_core.config.get_theme();
@@ -285,6 +305,21 @@ async fn async_run(
     // Save command history
     if let Err(e) = frontend.command_input_save_history("command_input", character.as_deref()) {
         tracing::warn!("Failed to save command history: {}", e);
+    }
+
+    // Save window position for this character
+    if let Some(positioner) = crate::window_position::create_positioner() {
+        if let Ok(rect) = positioner.get_position() {
+            if let Ok(screens) = positioner.get_screen_bounds() {
+                let config = crate::window_position::WindowPositionConfig {
+                    window: rect,
+                    monitors: screens,
+                };
+                if let Err(e) = crate::window_position::save(character.as_deref(), &config) {
+                    tracing::warn!("Failed to save window position: {}", e);
+                }
+            }
+        }
     }
 
     // Cleanup

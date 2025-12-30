@@ -18,6 +18,7 @@ mod sound;
 mod spell_abbrevs;
 mod theme;
 mod tts;
+mod window_position;
 
 use anyhow::{bail, Result};
 use clap::{Parser as ClapParser, Subcommand};
