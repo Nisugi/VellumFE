@@ -1656,13 +1656,38 @@ impl TuiFrontend {
                                     break;
                                 }
 
-                                // Otherwise check if we dropped on a link
                                 let window_rect = ratatui::layout::Rect {
                                     x: pos.x,
                                     y: pos.y,
                                     width: pos.width,
                                     height: pos.height,
                                 };
+
+                                // Inventory window: check link first, fallback to wear
+                                if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
+                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
+                                        drop_target_id = Some(target_link.exist_id);
+                                    } else {
+                                        drop_target_hand = Some("wear".to_string());
+                                    }
+                                    break;
+                                }
+
+                                // Container windows: check link first, fallback to container
+                                if let crate::data::WindowContent::Container { ref container_title } = window.content {
+                                    // First: try to find a link at the drop position (nested container)
+                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
+                                        drop_target_id = Some(target_link.exist_id);
+                                    } else {
+                                        // Fallback: use the window's container ID
+                                        if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
+                                            drop_target_id = Some(container_data.id.clone());
+                                        }
+                                    }
+                                    break;  // Container window handled
+                                }
+
+                                // Otherwise check if we dropped on a link (non-container windows)
                                 if let Some(target_link) =
                                     self.link_at_position(name, *x, *y, window_rect)
                                 {
