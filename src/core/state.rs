@@ -122,6 +122,10 @@ pub struct GameState {
     /// Buffered so bounty windows added later can immediately show data
     pub bounty: BountyState,
 
+    /// Society state - stores society stream text for reload
+    /// Buffered so society windows show data on reload
+    pub society: SocietyState,
+
     /// Estimated lag between system time and game server time (in milliseconds)
     /// Positive = system clock ahead of game, Negative = game ahead of system
     /// Recalculated periodically (every LAG_CHECK_INTERVAL_SECS)
@@ -234,12 +238,50 @@ impl BountyState {
     }
 }
 
+/// Society state - stores society stream text for reload
+/// Similar to bounty caching but without parsing (just stores lines)
+#[derive(Clone, Debug, Default)]
+pub struct SocietyState {
+    /// Lines from society stream
+    pub lines: Vec<String>,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl SocietyState {
+    /// Update society state with new lines
+    pub fn update(&mut self, lines: Vec<String>) {
+        self.lines = lines;
+        self.generation += 1;
+    }
+
+    /// Add a single line
+    pub fn add_line(&mut self, line: String) {
+        self.lines.push(line);
+        self.generation += 1;
+    }
+
+    /// Check if there's any society data
+    pub fn has_data(&self) -> bool {
+        !self.lines.is_empty()
+    }
+
+    /// Clear society data
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.generation += 1;
+    }
+}
+
 /// Target list state from dDBTarget dropdown (for direct-connect users)
 /// Creature list is now in GameState.room_creatures (parsed from room objs)
 #[derive(Clone, Debug, Default)]
 pub struct TargetListState {
     /// Currently selected target ID (e.g., "#146101714")
     pub current_target: String,
+    /// Targetable creature IDs from dDBTarget content_value
+    /// Used to filter room_creatures - only show creatures in both lists
+    pub target_ids: Vec<String>,
 }
 
 /// A creature in the target list
@@ -624,6 +666,7 @@ impl GameState {
             minivitals: MiniVitalsState::default(),
             betrayer: BetrayerState::default(),
             bounty: BountyState::default(),
+            society: SocietyState::default(),
             estimated_lag_ms: None,
             last_lag_check_time: 0,
             sound_queue: SoundQueue::new(),

@@ -485,6 +485,12 @@ impl XmlParser {
             tracing::info!("process_tag received potential LaunchURL: {}", tag);
         }
 
+        // Debug: log any tag containing "container" or "inv" for troubleshooting
+        let tag_lower = tag.to_lowercase();
+        if tag_lower.contains("container") || tag_lower.starts_with("<inv ") || tag_lower.starts_with("</inv") {
+            tracing::info!("process_tag received container/inv tag: {}", &tag[..tag.len().min(150)]);
+        }
+
         // Determine if this tag changes color state
         let color_opening = tag.starts_with("<preset ")
             || tag.starts_with("<color ")
@@ -666,6 +672,7 @@ impl XmlParser {
         }
         // Handle container tags
         else if tag.starts_with("<container ") {
+            tracing::info!("Parser: Matched container tag: {}", &tag[..tag.len().min(100)]);
             self.handle_container(tag, elements);
         } else if tag.starts_with("<clearContainer ") {
             self.handle_clear_container(tag, elements);

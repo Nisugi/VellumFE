@@ -639,9 +639,11 @@ impl HighlightFormWidget {
             FormMode::Create => " Add Highlight ",
             FormMode::Edit(_) => " Edit Highlight ",
         };
+        let buf_width = area.width;
         for (i, ch) in title.chars().enumerate() {
-            if (x + 1 + i as u16) < (x + width) {
-                buf[(x + 1 + i as u16, y)]
+            let title_x = x + 1 + i as u16;
+            if title_x < (x + width) && title_x < buf_width && y < area.height {
+                buf[(title_x, y)]
                     .set_char(ch)
                     .set_fg(crossterm_bridge::to_ratatui_color(theme.browser_title))
                     .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
@@ -660,10 +662,11 @@ impl HighlightFormWidget {
         let footer_y = y + height - 1;
         let footer_x = x;
         for (i, ch) in footer.chars().enumerate() {
-            if footer_x + i as u16 >= x + width {
+            let fx = footer_x + i as u16;
+            if fx >= x + width || fx >= buf_width || footer_y >= area.height {
                 break;
             }
-            buf[(footer_x + i as u16, footer_y)]
+            buf[(fx, footer_y)]
                 .set_char(ch)
                 .set_fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
@@ -680,36 +683,54 @@ impl HighlightFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let buf_width = buf.area().width;
+        let buf_height = buf.area().height;
 
         // Top border
-        buf[(x, y)].set_char('┌').set_style(border_style);
-        for col in 1..width - 1 {
-            buf[(x + col, y)].set_char('─').set_style(border_style);
+        if x < buf_width && y < buf_height {
+            buf[(x, y)].set_char('┌').set_style(border_style);
         }
-        buf[(x + width - 1, y)]
-            .set_char('┐')
-            .set_style(border_style);
+        for col in 1..width - 1 {
+            if x + col < buf_width && y < buf_height {
+                buf[(x + col, y)].set_char('─').set_style(border_style);
+            }
+        }
+        if x + width - 1 < buf_width && y < buf_height {
+            buf[(x + width - 1, y)]
+                .set_char('┐')
+                .set_style(border_style);
+        }
 
         // Side borders
         for row in 1..height - 1 {
-            buf[(x, y + row)].set_char('│').set_style(border_style);
-            buf[(x + width - 1, y + row)]
-                .set_char('│')
-                .set_style(border_style);
+            if x < buf_width && y + row < buf_height {
+                buf[(x, y + row)].set_char('│').set_style(border_style);
+            }
+            if x + width - 1 < buf_width && y + row < buf_height {
+                buf[(x + width - 1, y + row)]
+                    .set_char('│')
+                    .set_style(border_style);
+            }
         }
 
         // Bottom border
-        buf[(x, y + height - 1)]
-            .set_char('└')
-            .set_style(border_style);
-        for col in 1..width - 1 {
-            buf[(x + col, y + height - 1)]
-                .set_char('─')
+        if x < buf_width && y + height - 1 < buf_height {
+            buf[(x, y + height - 1)]
+                .set_char('└')
                 .set_style(border_style);
         }
-        buf[(x + width - 1, y + height - 1)]
-            .set_char('┘')
-            .set_style(border_style);
+        for col in 1..width - 1 {
+            if x + col < buf_width && y + height - 1 < buf_height {
+                buf[(x + col, y + height - 1)]
+                    .set_char('─')
+                    .set_style(border_style);
+            }
+        }
+        if x + width - 1 < buf_width && y + height - 1 < buf_height {
+            buf[(x + width - 1, y + height - 1)]
+                .set_char('┘')
+                .set_style(border_style);
+        }
     }
 
     /// Render all form fields
@@ -809,21 +830,25 @@ impl HighlightFormWidget {
                 buf,
                 theme,
             );
-            // Color preview
+            // Color preview (with bounds checking)
+            let buf_width = buf.area().width;
+            let buf_height = buf.area().height;
             if input_width >= 2 {
                 let preview_x = input_start + input_width.saturating_sub(2);
-                buf[(preview_x, current_y)]
-                    .set_char(' ')
-                    .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
-                if !fg_text.is_empty() {
-                    if let Some(color) = self.parse_and_resolve_color(&fg_text, config) {
-                        buf[(preview_x, current_y)]
-                            .set_char(' ')
-                            .set_bg(color);
-                        if preview_x + 1 < x + width - 1 {
-                            buf[(preview_x + 1, current_y)]
+                if preview_x < buf_width && current_y < buf_height {
+                    buf[(preview_x, current_y)]
+                        .set_char(' ')
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    if !fg_text.is_empty() {
+                        if let Some(color) = self.parse_and_resolve_color(&fg_text, config) {
+                            buf[(preview_x, current_y)]
                                 .set_char(' ')
                                 .set_bg(color);
+                            if preview_x + 1 < buf_width && preview_x + 1 < x + width - 1 {
+                                buf[(preview_x + 1, current_y)]
+                                    .set_char(' ')
+                                    .set_bg(color);
+                            }
                         }
                     }
                 }
@@ -848,21 +873,25 @@ impl HighlightFormWidget {
                 buf,
                 theme,
             );
-            // Color preview
+            // Color preview (with bounds checking)
+            let buf_width = buf.area().width;
+            let buf_height = buf.area().height;
             if input_width >= 2 {
                 let preview_x = input_start + input_width.saturating_sub(2);
-                buf[(preview_x, current_y)]
-                    .set_char(' ')
-                    .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
-                if !bg_text.is_empty() {
-                    if let Some(color) = self.parse_and_resolve_color(&bg_text, config) {
-                        buf[(preview_x, current_y)]
-                            .set_char(' ')
-                            .set_bg(color);
-                        if preview_x + 1 < x + width - 1 {
-                            buf[(preview_x + 1, current_y)]
+                if preview_x < buf_width && current_y < buf_height {
+                    buf[(preview_x, current_y)]
+                        .set_char(' ')
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    if !bg_text.is_empty() {
+                        if let Some(color) = self.parse_and_resolve_color(&bg_text, config) {
+                            buf[(preview_x, current_y)]
                                 .set_char(' ')
                                 .set_bg(color);
+                            if preview_x + 1 < buf_width && preview_x + 1 < x + width - 1 {
+                                buf[(preview_x + 1, current_y)]
+                                    .set_char(' ')
+                                    .set_bg(color);
+                            }
                         }
                     }
                 }
@@ -1435,7 +1464,7 @@ impl HighlightFormWidget {
     }
 
     /// Handle mouse events for the popup
-    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, _terminal_area: Rect) -> HighlightFormMouseAction {
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> HighlightFormMouseAction {
         let popup_width = POPUP_WIDTH;
         let popup_height = POPUP_HEIGHT;
 
@@ -1453,9 +1482,14 @@ impl HighlightFormWidget {
 
         if self.is_dragging {
             if pressed {
-                // Continue dragging
-                self.popup_x = col.saturating_sub(self.drag_offset_x);
-                self.popup_y = row.saturating_sub(self.drag_offset_y);
+                // Continue dragging - clamp to keep popup fully within terminal bounds
+                let new_x = col.saturating_sub(self.drag_offset_x);
+                let new_y = row.saturating_sub(self.drag_offset_y);
+                // Ensure popup stays within terminal area
+                let max_x = terminal_area.width.saturating_sub(popup_width);
+                let max_y = terminal_area.height.saturating_sub(popup_height);
+                self.popup_x = new_x.min(max_x);
+                self.popup_y = new_y.min(max_y);
                 return HighlightFormMouseAction::None;
             } else {
                 // Mouse released
@@ -1479,24 +1513,28 @@ impl HighlightFormWidget {
             return HighlightFormMouseAction::None;
         }
 
-        // Field layout (from render):
-        // y+1: Name (field 0)
-        // y+2: Pattern (field 1)
-        // y+3: Category (field 2)
-        // y+4: FG Color / BG Color (fields 3, 4)
-        // y+5: Sound File (field 5)
-        // y+6: Volume (field 6)
-        // y+7: Redirect (field 9) / Redirect To (field 7)
-        // y+8: Replace (field 8)
-        // y+9: Checkboxes row 1: Bold(10), Line(11), FastParse(12)
-        // y+10: Checkboxes row 2: Squelch(13), SilentPrompt(14)
-        // y+11: Scope (fields 15/16)
-        // y+19 (footer): Ctrl+S:Save  Esc:Back
+        // Field layout (from render_fields - starts at y+2):
+        // y+2: Name (field 0)
+        // y+3: Pattern (field 1)
+        // y+4: Category (field 2)
+        // y+5: FG Color (field 3)
+        // y+6: BG Color (field 4)
+        // y+7: Sound File dropdown (field 5)
+        // y+8: Volume (field 6)
+        // y+9: Replace (field 7)
+        // y+10: Redirect To (field 8)
+        // y+11: Redirect Mode dropdown (field 9)
+        // y+13: Bold(10)
+        // y+14: Color entire line(11)
+        // y+15: Fast parse(12)
+        // y+16: Squelch(13)
+        // y+17: Silent Prompt(14)
+        // y+18: Scope (fields 15/16)
 
-        let field_y = self.popup_y + 1;
-        let _input_x = self.popup_x + 16; // After label (reserved for future use)
+        let field_y = self.popup_y + 2; // Fields start at y+2 in render_fields
 
-        // Check field clicks (simplified - focus based on row)
+        // Check field clicks based on row (matching render_fields layout)
+        // Each text field is 1 row, redirect mode has a +2 gap before checkboxes
         if row == field_y {
             self.focused_field = 0; // Name
             return HighlightFormMouseAction::None;
@@ -1507,78 +1545,73 @@ impl HighlightFormWidget {
             self.focused_field = 2; // Category
             return HighlightFormMouseAction::None;
         } else if row == field_y + 3 {
-            // FG Color / BG Color - check X position
-            let mid_x = self.popup_x + 35;
-            if col < mid_x {
-                self.focused_field = 3; // FG Color
-            } else {
-                self.focused_field = 4; // BG Color
-            }
+            self.focused_field = 3; // FG Color
             return HighlightFormMouseAction::None;
         } else if row == field_y + 4 {
-            self.focused_field = 5; // Sound File dropdown
+            self.focused_field = 4; // BG Color
             return HighlightFormMouseAction::None;
         } else if row == field_y + 5 {
-            self.focused_field = 6; // Volume
+            self.focused_field = 5; // Sound File dropdown
             return HighlightFormMouseAction::None;
         } else if row == field_y + 6 {
-            // Redirect / Redirect To - check X position
-            let rel_x = col.saturating_sub(self.popup_x);
-            if rel_x < 25 {
-                self.focused_field = 9; // Redirect mode dropdown
-            } else {
-                self.focused_field = 7; // Redirect To
-            }
+            self.focused_field = 6; // Volume
             return HighlightFormMouseAction::None;
         } else if row == field_y + 7 {
-            self.focused_field = 8; // Replace
+            self.focused_field = 7; // Replace
             return HighlightFormMouseAction::None;
         } else if row == field_y + 8 {
-            // Checkboxes row 1: Bold, Line, FastParse
-            let rel_x = col.saturating_sub(self.popup_x);
-            if rel_x < 20 {
-                self.focused_field = 10; // Bold
-                self.bold = !self.bold;
-            } else if rel_x < 40 {
-                self.focused_field = 11; // Line
-                self.color_entire_line = !self.color_entire_line;
-            } else {
-                self.focused_field = 12; // FastParse
-                self.fast_parse = !self.fast_parse;
-            }
+            self.focused_field = 8; // Redirect To
             return HighlightFormMouseAction::None;
         } else if row == field_y + 9 {
-            // Checkboxes row 2: Squelch, SilentPrompt
-            let rel_x = col.saturating_sub(self.popup_x);
-            if rel_x < 30 {
-                self.focused_field = 13; // Squelch
-                self.squelch = !self.squelch;
-            } else {
-                self.focused_field = 14; // SilentPrompt
-                self.silent_prompt = !self.silent_prompt;
-            }
+            self.focused_field = 9; // Redirect Mode dropdown
             return HighlightFormMouseAction::None;
-        } else if row == field_y + 10 {
+        } else if row == field_y + 11 {
+            // Bold checkbox (after +2 gap from redirect mode)
+            self.focused_field = 10;
+            self.bold = !self.bold;
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 12 {
+            // Color entire line checkbox
+            self.focused_field = 11;
+            self.color_entire_line = !self.color_entire_line;
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 13 {
+            // Fast parse checkbox
+            self.focused_field = 12;
+            self.fast_parse = !self.fast_parse;
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 14 {
+            // Squelch checkbox
+            self.focused_field = 13;
+            self.squelch = !self.squelch;
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 15 {
+            // Silent Prompt checkbox
+            self.focused_field = 14;
+            self.silent_prompt = !self.silent_prompt;
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 16 {
             // Scope row (Global/Character radio)
-            self.focused_field = 15;
-            let rel_x = col.saturating_sub(self.popup_x + 16);
+            let rel_x = col.saturating_sub(self.popup_x + 9); // "Scope: " is 7 chars + 2 margin
             if rel_x < 12 {
+                self.focused_field = 15;
                 self.is_global = true;
             } else {
+                self.focused_field = 16;
                 self.is_global = false;
             }
             return HighlightFormMouseAction::None;
         }
 
-        // Check footer for Save/Back buttons
-        let footer_y = self.popup_y + popup_height - 2;
+        // Check footer for Save/Back buttons (last row of popup)
+        let footer_y = self.popup_y + popup_height - 1;
         if row == footer_y {
-            let rel_x = col.saturating_sub(self.popup_x + 2);
-            // Footer: "Ctrl+S:Save  Esc:Back"
-            // Save is ~0-10, Esc:Back is ~13-21
-            if rel_x <= 10 {
+            let rel_x = col.saturating_sub(self.popup_x);
+            // Footer: "└─[Ctrl+S: Save]─[Esc: Back]..."
+            // Save is at ~3-15, Back is at ~18-26
+            if rel_x >= 3 && rel_x <= 15 {
                 return HighlightFormMouseAction::Save;
-            } else if rel_x >= 13 && rel_x <= 21 {
+            } else if rel_x >= 18 && rel_x <= 26 {
                 return HighlightFormMouseAction::Cancel;
             }
         }

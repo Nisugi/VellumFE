@@ -2140,7 +2140,7 @@ impl TuiFrontend {
                                 let global_keybinds = crate::config::Config::load_common_keybinds()
                                     .unwrap_or_default();
                                 let character_keybinds = crate::config::Config::load_character_keybinds_only(
-                                    app_core.config.connection.character.as_deref()
+                                    app_core.config.character.as_deref()
                                 ).unwrap_or_default();
                                 browser.update_items_with_source(&global_keybinds, &character_keybinds);
                                 tracing::info!("Deleted keybind: {}", key_combo);
@@ -2893,7 +2893,7 @@ impl TuiFrontend {
                                             &key_combo,
                                             &action,
                                             is_global,
-                                            app_core.config.connection.character.as_deref(),
+                                            app_core.config.character.as_deref(),
                                         ) {
                                             tracing::error!("Failed to save keybind to file: {}", e);
                                         }
@@ -2912,7 +2912,7 @@ impl TuiFrontend {
                                         if let Err(e) = crate::config::Config::delete_single_keybind(
                                             &key_combo,
                                             is_global,
-                                            app_core.config.connection.character.as_deref(),
+                                            app_core.config.character.as_deref(),
                                         ) {
                                             tracing::error!("Failed to delete keybind from file: {}", e);
                                         }
@@ -2959,7 +2959,7 @@ impl TuiFrontend {
                                             &key_combo,
                                             &action,
                                             is_global,
-                                            app_core.config.connection.character.as_deref(),
+                                            app_core.config.character.as_deref(),
                                         ) {
                                             tracing::error!("Failed to save keybind to file: {}", e);
                                         }
@@ -2978,7 +2978,7 @@ impl TuiFrontend {
                                         if let Err(e) = crate::config::Config::delete_single_keybind(
                                             &key_combo,
                                             is_global,
-                                            app_core.config.connection.character.as_deref(),
+                                            app_core.config.character.as_deref(),
                                         ) {
                                             tracing::error!("Failed to delete keybind from file: {}", e);
                                         }
@@ -4161,8 +4161,16 @@ impl TuiFrontend {
                 app_core.ui_state.deep_submenu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
                 // Process the dot command (e.g., .menu, .help)
-                if let Err(e) = app_core.send_command(command.to_string()) {
-                    tracing::error!("Dot command error: {}", e);
+                // IMPORTANT: Check return value for action: prefix - some dot commands
+                // return UI action strings that need to be handled by handle_menu_action
+                match app_core.send_command(command.to_string()) {
+                    Ok(action_str) if action_str.starts_with("action:") => {
+                        handle_menu_action_fn(app_core, self, &action_str)?;
+                    }
+                    Err(e) => {
+                        tracing::error!("Dot command error: {}", e);
+                    }
+                    _ => {}
                 }
                 app_core.needs_render = true;
             } else {

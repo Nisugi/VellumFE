@@ -147,35 +147,54 @@ impl TuiFrontend {
         window_name: &str,
         pattern: &str,
     ) -> Result<usize, regex::Error> {
-        if let Some(text_window) = self.widget_manager.text_windows.get_mut(window_name) {
-            // Make search case-insensitive by prepending (?i) unless user already specified flags
-            let case_insensitive_pattern = if pattern.starts_with("(?") {
-                pattern.to_string()
-            } else {
-                format!("(?i){}", pattern)
-            };
-            text_window.start_search(&case_insensitive_pattern)
+        // Make search case-insensitive by prepending (?i) unless user already specified flags
+        let case_insensitive_pattern = if pattern.starts_with("(?") {
+            pattern.to_string()
         } else {
-            Ok(0)
+            format!("(?i){}", pattern)
+        };
+
+        // Check text windows first
+        if let Some(text_window) = self.widget_manager.text_windows.get_mut(window_name) {
+            return text_window.start_search(&case_insensitive_pattern);
         }
+
+        // Check tabbed text windows
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get_mut(window_name) {
+            return tabbed.start_search(&case_insensitive_pattern);
+        }
+
+        Ok(0)
     }
 
     /// Go to next search match
     pub fn next_search_match(&mut self, window_name: &str) -> bool {
+        // Check text windows first
         if let Some(text_window) = self.widget_manager.text_windows.get_mut(window_name) {
-            text_window.next_match()
-        } else {
-            false
+            return text_window.next_match();
         }
+
+        // Check tabbed text windows
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get_mut(window_name) {
+            return tabbed.next_match();
+        }
+
+        false
     }
 
     /// Go to previous search match
     pub fn prev_search_match(&mut self, window_name: &str) -> bool {
+        // Check text windows first
         if let Some(text_window) = self.widget_manager.text_windows.get_mut(window_name) {
-            text_window.prev_match()
-        } else {
-            false
+            return text_window.prev_match();
         }
+
+        // Check tabbed text windows
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get_mut(window_name) {
+            return tabbed.prev_match();
+        }
+
+        false
     }
 
     /// Clear search from all text windows
@@ -183,13 +202,24 @@ impl TuiFrontend {
         for text_window in self.widget_manager.text_windows.values_mut() {
             text_window.clear_search();
         }
+        for tabbed in self.widget_manager.tabbed_text_windows.values_mut() {
+            tabbed.clear_search();
+        }
     }
 
     /// Get search info from a window (current match, total matches)
     pub fn get_search_info(&self, window_name: &str) -> Option<(usize, usize)> {
-        self.widget_manager.text_windows
-            .get(window_name)
-            .and_then(|tw| tw.search_info())
+        // Check text windows first
+        if let Some(tw) = self.widget_manager.text_windows.get(window_name) {
+            return tw.search_info();
+        }
+
+        // Check tabbed text windows
+        if let Some(tabbed) = self.widget_manager.tabbed_text_windows.get(window_name) {
+            return tabbed.search_info();
+        }
+
+        None
     }
 }
 

@@ -130,9 +130,9 @@ open_dialog_blocklist = [
 # If order is empty, VellumFE uses layout order filtered by focusable types.
 #
 # [ui.focus]
-# types = ["text", "tabbedtext", "quickbar", "targets", "players", "inventory", "spells"]
-# exclude = ["bounty", "society"]
-# order = ["main", "thoughts", "quickbar"]
+types = ["text", "tabbedtext"]
+exclude = ["bounty", "society"]
+order = []
 
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle

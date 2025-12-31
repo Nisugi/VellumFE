@@ -78,12 +78,28 @@ impl AppCore {
             // Add the styled line to each subscriber window
             for window_name in subscribers {
                 if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
-                    if let WindowContent::Text(ref mut content) = window.content {
-                        content.add_line(styled_line.clone());
-                        tracing::info!(
-                            "[SEND_COMMAND] Added command echo to window '{}'",
-                            window_name
-                        );
+                    match &mut window.content {
+                        WindowContent::Text(ref mut content) => {
+                            content.add_line(styled_line.clone());
+                            tracing::info!(
+                                "[SEND_COMMAND] Added command echo to text window '{}'",
+                                window_name
+                            );
+                        }
+                        WindowContent::TabbedText(ref mut tabbed_content) => {
+                            // Find tab(s) subscribed to "main" stream and add the line
+                            for tab in tabbed_content.tabs.iter_mut() {
+                                if tab.definition.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                                    tab.content.add_line(styled_line.clone());
+                                    tracing::info!(
+                                        "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
+                                        window_name,
+                                        tab.definition.name
+                                    );
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

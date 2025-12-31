@@ -31,6 +31,16 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        // Resolve "links" preset color for Link spans that don't have a color from the server
+        let link_preset_color = app_core
+            .config
+            .colors
+            .presets
+            .get("links")
+            .and_then(|preset| preset.fg.as_ref())
+            .map(|c| app_core.config.resolve_palette_color(c))
+            .and_then(|hex| parse_hex_color(&hex).ok());
+
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Text(text_content) = &window.content {
                 // Look up the WindowDef from layout to get config
@@ -157,13 +167,17 @@ impl TuiFrontend {
 
                         // Convert our data format to TextWindow's format
                         for segment in &line.segments {
+                            // Apply link preset color to Link spans that don't have a server color
+                            let fg = if segment.span_type == crate::data::SpanType::Link && segment.fg.is_none() {
+                                link_preset_color
+                            } else {
+                                segment.fg.as_ref().and_then(|hex| parse_hex_color(hex).ok())
+                            };
+
                             // TextWindow now uses the same SpanType and LinkData from data module
                             let styled_text = text_window::StyledText {
                                 content: segment.text.clone(),
-                                fg: segment
-                                    .fg
-                                    .as_ref()
-                                    .and_then(|hex| parse_hex_color(hex).ok()),
+                                fg,
                                 bg: segment
                                     .bg
                                     .as_ref()
@@ -990,26 +1004,34 @@ impl TuiFrontend {
                         creature_count
                     );
 
+                    // Get window definition for configuration
+                    let window_def = app_core.layout.windows.iter().find(|w| w.name() == name);
+
                     // Get widget width from window definition
-                    let widget_width = app_core
-                        .layout
-                        .windows
-                        .iter()
-                        .find(|w| w.name() == name)
+                    let widget_width = window_def
                         .map(|w| w.base().cols)
                         .unwrap_or(20); // Fallback width if not found
+
+                    // Get per-window status_position if configured
+                    let per_window_status_position = window_def.and_then(|w| {
+                        if let crate::config::WindowDef::Targets { data, .. } = w {
+                            data.status_position.as_deref()
+                        } else {
+                            None
+                        }
+                    });
 
                     widget.update_from_state(
                         &app_core.game_state.room_creatures,
                         &app_core.game_state.target_list.current_target,
+                        &app_core.game_state.target_list.target_ids,
                         &app_core.config.target_list,
                         widget_width,
+                        per_window_status_position,
                     );
 
                     // Apply configuration
-                    if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
-                    {
+                    if let Some(window_def) = window_def {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
                             window_def.base().show_border,
@@ -1287,6 +1309,16 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        // Resolve "links" preset color for Link spans that don't have a color from the server
+        let link_preset_color = app_core
+            .config
+            .colors
+            .presets
+            .get("links")
+            .and_then(|preset| preset.fg.as_ref())
+            .map(|c| app_core.config.resolve_palette_color(c))
+            .and_then(|hex| parse_hex_color(&hex).ok());
+
         // Note: Highlights are now applied in core (MessageProcessor)
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::TabbedText(tabbed_content) = &window.content {
@@ -1407,13 +1439,17 @@ impl TuiFrontend {
                                     text_window.set_current_stream(&line.stream);
 
                                     for segment in &line.segments {
+                                        // Apply link preset color to Link spans that don't have a server color
+                                        let fg = if segment.span_type == crate::data::SpanType::Link && segment.fg.is_none() {
+                                            link_preset_color
+                                        } else {
+                                            segment.fg.as_ref().and_then(|hex| parse_hex_color(hex).ok())
+                                        };
+
                                         // TextWindow now uses the same SpanType and LinkData from data module
                                         let styled_text = text_window::StyledText {
                                             content: segment.text.clone(),
-                                            fg: segment
-                                                .fg
-                                                .as_ref()
-                                                .and_then(|hex| parse_hex_color(hex).ok()),
+                                            fg,
                                             bg: segment
                                                 .bg
                                                 .as_ref()

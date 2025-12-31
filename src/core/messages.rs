@@ -89,6 +89,10 @@ pub struct MessageProcessor {
     /// Buffered bounty data: raw text and parsed compact lines
     /// Updated whenever bounty stream text arrives, regardless of whether a bounty window exists
     bounty_buffer: Option<(String, Vec<String>)>,
+
+    /// Buffered society stream lines for reload
+    /// Updated whenever society stream text arrives
+    society_buffer: Vec<String>,
 }
 
 impl MessageProcessor {
@@ -160,6 +164,7 @@ impl MessageProcessor {
             pending_sounds: Vec::new(),
             saved_dialog_positions,
             bounty_buffer: None,
+            society_buffer: Vec::new(),
         };
 
         // Initialize squelch patterns from config
@@ -173,6 +178,12 @@ impl MessageProcessor {
     /// Returns Some((raw_text, compact_lines)) and clears the buffer.
     pub fn take_bounty_buffer(&mut self) -> Option<(String, Vec<String>)> {
         self.bounty_buffer.take()
+    }
+
+    /// Take buffered society lines if any.
+    /// Returns the lines and clears the buffer.
+    pub fn take_society_buffer(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.society_buffer)
     }
 
     /// Refresh internal config, parser presets, and caches after a reload.
@@ -461,9 +472,11 @@ impl MessageProcessor {
                 }
 
                 // Decide whether to show this prompt based on chunk tracking
-                // Skip if: no main text was received since last prompt
+                // Skip if: no main text was received since last prompt AND prompt text is unchanged
                 // This handles both "silent updates only" and "empty chunk" cases
-                let should_skip = !self.chunk_has_main_text;
+                // But we always show the prompt if it changed (e.g., "R>" -> ">" when roundtime ends)
+                let prompt_changed = text.trim() != game_state.last_prompt.trim();
+                let should_skip = !self.chunk_has_main_text && !prompt_changed;
 
                 // Always reset to main stream when a prompt is received
                 // (prompts mark the end of a server response, returning control to main)
@@ -1456,18 +1469,20 @@ impl MessageProcessor {
             }
             ParsedElement::TargetList {
                 current_target,
-                targets: _,    // Ignore - creature list comes from room objs
-                target_ids: _, // Ignore - creature list comes from room objs
+                targets: _,  // Ignore names - we get richer data from room objs
+                target_ids,  // Store IDs to filter room_creatures
             } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Dropdown only tells us which creature is currently targeted
-                // Creature list comes from room objs component
+                // Store current target and targetable IDs from dropdown
+                // These IDs filter room_creatures to show only targetable creatures
                 game_state.target_list.current_target = current_target.clone();
+                game_state.target_list.target_ids = target_ids.clone();
 
                 tracing::debug!(
-                    "Updated current target from dropdown: '{}'",
-                    current_target
+                    "Updated targets from dropdown: current='{}', {} targetable IDs",
+                    current_target,
+                    target_ids.len()
                 );
             }
             ParsedElement::Container { id, title, .. } => {
@@ -1480,7 +1495,7 @@ impl MessageProcessor {
                 // The runtime will check if a window already exists before creating
                 if !title.is_empty() {
                     self.newly_registered_container = Some((id.clone(), title.clone()));
-                    tracing::debug!(
+                    tracing::info!(
                         "Container seen: id='{}', title='{}' (signaling for discovery)",
                         id,
                         title
@@ -1653,6 +1668,17 @@ impl MessageProcessor {
                 tracing::trace!("Room component {} unchanged - skipping processing", id);
                 return;
             }
+            // Debug: log when room objs changes (especially to empty)
+            if id == "room objs" {
+                tracing::debug!(
+                    "Room objs changed: prev_len={}, new_len={}, new_empty={}",
+                    previous_value.len(),
+                    value.len(),
+                    value.is_empty()
+                );
+            }
+        } else if id == "room objs" {
+            tracing::debug!("Room objs first seen: len={}, empty={}", value.len(), value.is_empty());
         }
 
         tracing::debug!(
@@ -1666,9 +1692,16 @@ impl MessageProcessor {
             .insert(id.to_string(), value.to_string());
 
         // Extract creatures from room objs (for targets widget)
-        // Creatures are in bold: <b><pushBold/>a <a exist='ID' noun='...'>name</a><popBold/></b> (status)
+        // Room objs contains items/creatures on ground. Creatures are in bold:
+        // <b><pushBold/>a <a exist='ID' noun='...'>name</a><popBold/></b> (status)
         if id == "room objs" {
+            let had_objs = !game_state.room_creatures.is_empty();
             game_state.room_creatures.clear();
+
+            // Log when room objs becomes empty (item picked up, etc.)
+            if value.is_empty() {
+                tracing::debug!("Room objs now empty (previously had creatures: {})", had_objs);
+            }
 
             let mut remaining = value;
             while let Some(bold_start) = remaining.find("<b>") {
@@ -1860,6 +1893,10 @@ impl MessageProcessor {
             .clear();
         *current_room_component = Some(id.to_string());
         tracing::debug!("Started/replaced room component: {}", id);
+
+        // Mark room window dirty when component is cleared (even if empty)
+        // This ensures the room window updates when items are picked up, etc.
+        *room_window_dirty = true;
 
         // Parse the component value to extract styled segments
         if !value.trim().is_empty() {
@@ -2131,6 +2168,15 @@ impl MessageProcessor {
 
             self.bounty_buffer = Some((plain_text, compact_lines));
             tracing::debug!("Buffered bounty data for later use");
+            // Continue processing - don't return here, still send to windows
+        }
+
+        // Buffer society stream data for reload
+        // This happens regardless of whether a society window exists
+        if self.current_stream.eq_ignore_ascii_case("society") {
+            let plain_text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
+            self.society_buffer.push(plain_text);
+            tracing::debug!("Buffered society line for reload ({} total)", self.society_buffer.len());
             // Continue processing - don't return here, still send to windows
         }
 

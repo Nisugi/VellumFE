@@ -284,10 +284,12 @@ impl MiniVitals {
                 ' '
             };
 
+            // Use theme background for unfilled portion (or Reset for transparency)
+            let unfilled_bg = self.background_color.unwrap_or(Color::Reset);
             let (fg, bg) = if is_filled {
                 (self.text_color, fill_color)
             } else {
-                (self.text_color, Color::DarkGray)
+                (self.text_color, unfilled_bg)
             };
 
             buf[(x, y)].set_char(ch);

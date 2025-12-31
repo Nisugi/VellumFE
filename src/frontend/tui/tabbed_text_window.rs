@@ -173,6 +173,11 @@ impl TabbedTextWindow {
         self.show_tab_separator = show;
     }
 
+    /// Check if tab separator is shown (needed for click detection)
+    pub fn has_tab_separator(&self) -> bool {
+        self.show_tab_separator
+    }
+
     pub fn set_content_align(&mut self, align: Option<String>) {
         for tab in &mut self.tabs {
             tab.window.set_content_align(align.clone());
@@ -364,23 +369,24 @@ impl TabbedTextWindow {
     ) -> Option<(usize, usize)> {
         let active_tab = self.tabs.get(self.active_tab_index)?;
 
-        // Account for tab bar height and border
+        // Account for tab bar height, border, and separator
         let border_offset = if self.show_border { 1 } else { 0 };
         let tab_bar_height = 1;
+        let separator_offset: u16 = if self.show_tab_separator { 1 } else { 0 };
 
         // Calculate inner rect for the text window
         let inner_rect = match self.tab_bar_position {
             TabBarPosition::Top => Rect {
                 x: window_rect.x + border_offset,
-                y: window_rect.y + border_offset + tab_bar_height,
+                y: window_rect.y + border_offset + tab_bar_height + separator_offset,
                 width: window_rect.width.saturating_sub(2 * border_offset),
-                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height),
+                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
             },
             TabBarPosition::Bottom => Rect {
                 x: window_rect.x + border_offset,
                 y: window_rect.y + border_offset,
                 width: window_rect.width.saturating_sub(2 * border_offset),
-                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height),
+                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
             },
         };
 

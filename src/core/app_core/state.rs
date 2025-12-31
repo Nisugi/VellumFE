@@ -795,8 +795,36 @@ impl AppCore {
                             (1000, vec![], false) // fallback
                         };
                     let mut text_content = TextContent::new(title, buffer_size);
-                    text_content.streams = streams;
+                    text_content.streams = streams.clone();
                     text_content.compact = compact;
+
+                    // Pre-populate bounty window with cached data on reload
+                    if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
+                        let lines = if compact {
+                            &self.game_state.bounty.compact_lines
+                        } else {
+                            std::slice::from_ref(&self.game_state.bounty.raw_text)
+                        };
+                        for line_text in lines {
+                            text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
+                                line_text.clone(),
+                                "bounty",
+                            ));
+                        }
+                        tracing::info!("Pre-populated bounty window with {} cached lines", lines.len());
+                    }
+
+                    // Pre-populate society window with cached data on reload
+                    if streams.iter().any(|s| s.eq_ignore_ascii_case("society")) && self.game_state.society.has_data() {
+                        for line_text in &self.game_state.society.lines {
+                            text_content.add_line(crate::data::widget::StyledLine::from_text_with_stream(
+                                line_text.clone(),
+                                "society",
+                            ));
+                        }
+                        tracing::info!("Pre-populated society window with {} cached lines", self.game_state.society.lines.len());
+                    }
+
                     WindowContent::Text(text_content)
                 }
                 WidgetType::TabbedText => {
@@ -1413,6 +1441,12 @@ impl AppCore {
                 self.game_state.bounty.update(raw_text, compact_lines);
             }
 
+            // Transfer society buffer to GameState if any
+            let society_lines = self.message_processor.take_society_buffer();
+            if !society_lines.is_empty() {
+                self.game_state.society.update(society_lines);
+            }
+
             return Ok(());
         }
 
@@ -1442,6 +1476,12 @@ impl AppCore {
             // Transfer bounty buffer to GameState if any
             if let Some((raw_text, compact_lines)) = self.message_processor.take_bounty_buffer() {
                 self.game_state.bounty.update(raw_text, compact_lines);
+            }
+
+            // Transfer society buffer to GameState if any
+            let society_lines = self.message_processor.take_society_buffer();
+            if !society_lines.is_empty() {
+                self.game_state.society.update(society_lines);
             }
         }
 
@@ -1594,11 +1634,9 @@ impl AppCore {
             // Toggles
             ".toggletransparency".to_string(),
             ".transparency".to_string(),
-            // Window locking
+            // Window locking (toggle)
             ".lockwindows".to_string(),
             ".lockall".to_string(),
-            ".unlockwindows".to_string(),
-            ".unlockall".to_string(),
             // Containers
             ".containers".to_string(),
             ".hidecontainers".to_string(),
@@ -1822,8 +1860,7 @@ impl AppCore {
 
         // Window locking
         self.add_system_message("WINDOW LOCKING:");
-        self.add_system_message("  .lockwindows / .lockall - Lock all windows (prevent move/resize)");
-        self.add_system_message("  .unlockwindows / .unlockall - Unlock all windows");
+        self.add_system_message("  .lockwindows / .lockall - Toggle lock on all windows (prevent move/resize)");
         self.add_system_message("");
 
         self.add_system_message("Type the command name for more details. Example: .help windows");
@@ -3455,13 +3492,23 @@ impl AppCore {
         match crate::config::ColorConfig::load(self.config.character.as_deref()) {
             Ok(colors) => {
                 self.config.colors = colors;
-                // Update parser with new presets
+                // Update parser with new presets - resolve palette names to hex values
                 let presets: Vec<(String, Option<String>, Option<String>)> = self
                     .config
                     .colors
                     .presets
                     .iter()
-                    .map(|(id, p)| (id.clone(), p.fg.clone(), p.bg.clone()))
+                    .map(|(id, preset)| {
+                        let resolved_fg = preset
+                            .fg
+                            .as_ref()
+                            .map(|c| self.config.resolve_palette_color(c));
+                        let resolved_bg = preset
+                            .bg
+                            .as_ref()
+                            .map(|c| self.config.resolve_palette_color(c));
+                        (id.clone(), resolved_fg, resolved_bg)
+                    })
                     .collect();
                 self.parser.update_presets(presets);
                 self.message_processor.apply_config(self.config.clone());

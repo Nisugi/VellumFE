@@ -32,7 +32,7 @@ prompt_icon = ">"
 
 [[windows]]
 widget_type = "tabbedtext"
-name = "pirmary"
+name = "primary"
 row = 13
 col = 22
 rows = 41

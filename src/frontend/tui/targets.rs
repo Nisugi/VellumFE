@@ -76,6 +76,8 @@ pub struct Targets {
     generation: u64,
     /// Cached creature IDs for change detection (comma-joined)
     creature_ids_cache: String,
+    /// Cached target IDs for change detection (comma-joined)
+    target_ids_cache: String,
     /// Color for the target indicator on current target (applied to text color)
     indicator_color: Option<String>,
     /// Count of filtered body parts (arms, tentacles, etc.)
@@ -95,6 +97,7 @@ impl Targets {
             current_target: String::new(),
             generation: 0,
             creature_ids_cache: String::new(),
+            target_ids_cache: String::new(),
             indicator_color: None,
             body_part_count: 0,
             show_body_part_count: false,
@@ -118,32 +121,38 @@ impl Targets {
     }
 
     /// Update the widget from room creatures and current target.
+    /// Only shows creatures that appear in both room_creatures and target_ids.
     /// Returns true if the display changed.
     pub fn update_from_state(
         &mut self,
         room_creatures: &[crate::core::state::Creature],
         current_target: &str,
+        target_ids: &[String],
         config: &crate::config::TargetListConfig,
         widget_width: u16,
+        per_window_status_position: Option<&str>,
     ) -> bool {
-        // Build new IDs string for comparison (detects room changes even with same count)
-        let new_ids: String = room_creatures
+        // Build cache strings for comparison
+        let new_creature_ids: String = room_creatures
             .iter()
             .map(|c| c.id.as_str())
             .collect::<Vec<_>>()
             .join(",");
+        let new_target_ids: String = target_ids.join(",");
         let new_count = room_creatures.len() as u32;
 
-        // Quick check: if IDs, current_target, and count all match, no change
-        if self.creature_ids_cache == new_ids
+        // Quick check: if all caches match, no change needed
+        if self.creature_ids_cache == new_creature_ids
+            && self.target_ids_cache == new_target_ids
             && self.current_target == current_target
             && self.count == new_count
         {
             return false;
         }
 
-        // Update cache
-        self.creature_ids_cache = new_ids;
+        // Update caches
+        self.creature_ids_cache = new_creature_ids;
+        self.target_ids_cache = new_target_ids;
 
         tracing::debug!(
             "Targets[{}]::update_from_state - old_count={}, new_count={}, current='{}'",
@@ -159,6 +168,17 @@ impl Targets {
         self.current_target = current_target.to_string();
 
         for creature in room_creatures.iter() {
+            // Intersect with target_ids: skip if creature not in targetable list
+            // (unless target_ids is empty - fallback to showing all room_creatures)
+            if !target_ids.is_empty() && !target_ids.contains(&creature.id) {
+                tracing::trace!(
+                    "Skipping non-targetable creature: name='{}', id='{}'",
+                    creature.name,
+                    creature.id
+                );
+                continue;
+            }
+
             // Apply Lich-style filtering (dead/gone, animated, body parts)
             let (should_filter, is_body_part) = should_filter_creature(creature);
             if is_body_part {
@@ -224,8 +244,11 @@ impl Targets {
             };
 
             // Build final display name with status positioned according to config
+            // Per-window setting overrides global config if set
+            let effective_status_position = per_window_status_position
+                .unwrap_or(config.status_position.as_str());
             let display_name = if let Some(ref status) = status_text {
-                if config.status_position == "start" {
+                if effective_status_position == "start" {
                     format!("{} {}", status, base_name)
                 } else {
                     // Default: "end"
@@ -268,7 +291,7 @@ impl Targets {
 
             tracing::debug!(
                 "Adding to container: display_name='{}' (is_current={}, avail_width={}, truncation_mode={}, status_pos={})",
-                display_name, is_current, available_width, config.truncation_mode, config.status_position
+                display_name, is_current, available_width, config.truncation_mode, effective_status_position
             );
 
             // Add to widget with link data for click handling
@@ -376,7 +399,7 @@ impl Targets {
             return;
         }
 
-        let text = format!(" Arms: {} ", self.body_part_count);
+        let text = format!(" Appendages: {} ", self.body_part_count);
         let bottom_y = area.y + area.height - 1;
 
         // Center the text on the bottom border
@@ -506,7 +529,8 @@ mod tests {
         }];
 
         let config = crate::config::TargetListConfig::default();
-        dt.update_from_state(&creatures, "123", &config, 30);
+        let target_ids: Vec<String> = vec![];
+        dt.update_from_state(&creatures, "123", &target_ids, &config, 30, None);
         assert_eq!(dt.get_generation(), 1);
     }
 
@@ -519,9 +543,10 @@ mod tests {
         let mut dt = Targets::new("Targets");
         let creatures: Vec<Creature> = vec![];
         let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
 
         // First update with empty state matches initial widget state, so no change
-        let changed = dt.update_from_state(&creatures, "", &config, 30);
+        let changed = dt.update_from_state(&creatures, "", &target_ids, &config, 30, None);
         assert!(!changed);
         assert_eq!(dt.count, 0);
     }
@@ -544,8 +569,9 @@ mod tests {
             },
         ];
         let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
 
-        let changed = dt.update_from_state(&creatures, "1", &config, 30);
+        let changed = dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         assert!(changed);
         assert_eq!(dt.count, 2);
         assert_eq!(dt.current_target, "1");
@@ -561,12 +587,13 @@ mod tests {
             status: None,
         }];
         let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         let initial_gen = dt.get_generation();
 
         // Same state again
-        let changed = dt.update_from_state(&creatures, "1", &config, 30);
+        let changed = dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         assert!(!changed);
         assert_eq!(dt.get_generation(), initial_gen); // Generation unchanged
     }
@@ -589,11 +616,12 @@ mod tests {
             },
         ];
         let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
 
         // Change current target
-        let changed = dt.update_from_state(&creatures, "2", &config, 30);
+        let changed = dt.update_from_state(&creatures, "2", &target_ids, &config, 30, None);
 
         assert!(changed);
         assert_eq!(dt.current_target, "2");
@@ -613,8 +641,9 @@ mod tests {
             status: None,
         }];
         let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         assert_eq!(dt.count, 1);
 
         dt.clear();
@@ -656,8 +685,9 @@ mod tests {
             noun: Some("goblin".to_string()),
             status: Some("stunned".to_string()),
         }];
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         dt.set_border_config(false, None, None);
 
         let area = Rect::new(0, 0, 30, 1);
@@ -680,8 +710,9 @@ mod tests {
             noun: Some("goblin".to_string()),
             status: Some("prone".to_string()),
         }];
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 30);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         dt.set_border_config(false, None, None);
 
         let area = Rect::new(0, 0, 30, 1);
@@ -704,8 +735,9 @@ mod tests {
             noun: Some("hog".to_string()),
             status: Some("stunned".to_string()),
         }];
+        let target_ids: Vec<String> = vec![];
 
-        dt.update_from_state(&creatures, "1", &config, 12);
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 12, None);
         dt.set_border_config(false, None, None);
 
         let area = Rect::new(0, 0, 30, 1);

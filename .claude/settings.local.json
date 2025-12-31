@@ -9,7 +9,9 @@
       "Bash(\"c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\input_handlers_temp.rs\")",
       "Bash(powershell -Command \"(Get-Content ''c:\\Gemstone\\Projects\\vellum-fe\\src\\frontend\\tui\\mod.rs'').Count\")",
       "Bash(powershell -Command \"\\(Get-Content ''c:\\\\Gemstone\\\\Projects\\\\VellumFE\\\\src\\\\config\\\\highlights.rs''\\).Count\")",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(if not exist \"c:\\\\Gemstone\\\\dev\\\\VellumFE\\\\.claude\\\\work-units\\\\archive\" mkdir \"c:\\\\Gemstone\\\\dev\\\\VellumFE\\\\.claude\\\\work-units\\\\archive\")",
+      "Bash(cargo clippy:*)"
     ]
   },
   "enabledMcpjsonServers": [

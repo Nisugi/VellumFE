@@ -16,31 +16,32 @@
 # Colors for game text streams (speech, whisper, links, etc.)
 
 [presets.links]
-fg = "Link Blue"
+fg = "Link"
 
 [presets.commands]
-fg = "Link Blue"
+fg = "Link"
 
 [presets.speech]
-fg = "ANSI Green"
+fg = "Speech"
 
 [presets.roomName]
-fg = "ANSI Green"
+fg = "Room Name"
+bg = "Room Name BG"
 
 [presets.monsterbold]
-fg = "#FFFF00"  # ANSI Yellow - used for creature names
+fg = "Monsterbold"
 
 [presets.target_indicator]
-fg = "#FFFFFF"  # ANSI Bright White - used for current target indicator
+fg = "#ad0d0dff"
 
 [presets.familiar]
 fg = "Familiar"
 
 [presets.thought]
-fg = "ANSI Cyan"
+fg = "Thoughts"
 
 [presets.whisper]
-fg = "ANSI Cyan"
+fg = "Whisper"
 
 [presets.voln]
 fg = "ANSI Teal"
@@ -52,20 +53,24 @@ fg = "ANSI Cyan"
 # Colors for prompt characters (R=RT, S=stance, H=hidden, >=prompt)
 
 [[prompt_colors]]
-character = "R"
+character = "R"  # roundtime
 color = "#ff0000"
 
 [[prompt_colors]]
-character = "S"
+character = "S"  # stunned
 color = "#ffff00"
 
 [[prompt_colors]]
-character = "H"
+character = "H"  # hiding
 color = "#9370db"
 
 [[prompt_colors]]
-character = ">"
+character = ">"  # prompt
 color = "#a9a9a9"
+
+[[prompt_colors]]
+character = "!"  # bleeding
+color = "#ff0000"
 
 # ─── UI Colors ───────────────────────────────────────────────────────────────
 # Default colors for UI elements (can be overridden per-widget in layout.toml)
@@ -178,13 +183,13 @@ bg_color = "#000000"
 # ─── Preset Colors ───────────────────────────────────────────────────────────
 
 [[color_palette]]
-name = "Link Blue"
+name = "Link"
 color = "#477ab3"
 category = "presets"
 slot = 16
 
 [[color_palette]]
-name = "Speech Green"
+name = "Speech"
 color = "#53a684"
 category = "presets"
 slot = 17
@@ -202,7 +207,7 @@ category = "presets"
 slot = 19
 
 [[color_palette]]
-name = "Monster Bold"
+name = "Monsterbold"
 color = "#a29900"
 category = "presets"
 slot = 20
@@ -285,7 +290,7 @@ category = "prompt"
 slot = 32
 
 [[color_palette]]
-name = "Prompt Gray"
+name = "Prompt Grey"
 color = "#a9a9a9"
 category = "prompt"
 slot = 33

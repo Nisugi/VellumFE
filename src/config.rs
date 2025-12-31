@@ -1039,19 +1039,36 @@ fn default_title_position() -> String {
 }
 
 fn default_focus_types() -> Vec<String> {
+    vec!["text".to_string(), "tabbedtext".to_string()]
+}
+
+fn default_focus_exclude() -> Vec<String> {
+    // Exclude all non-text widget types from focus by default
     vec![
-        "text".to_string(),
-        "tabbedtext".to_string(),
         "quickbar".to_string(),
         "targets".to_string(),
         "players".to_string(),
         "inventory".to_string(),
         "spells".to_string(),
+        "progress".to_string(),
+        "countdown".to_string(),
+        "compass".to_string(),
+        "indicator".to_string(),
+        "room".to_string(),
+        "dashboard".to_string(),
+        "injury_doll".to_string(),
+        "hand".to_string(),
+        "active_effects".to_string(),
+        "spacer".to_string(),
+        "performance".to_string(),
+        "perception".to_string(),
+        "container".to_string(),
+        "experience".to_string(),
+        "gs4_experience".to_string(),
+        "encum".to_string(),
+        "minivitals".to_string(),
+        "betrayer".to_string(),
     ]
-}
-
-fn default_focus_exclude() -> Vec<String> {
-    Vec::new()
 }
 
 fn default_betrayer_active_color() -> Option<String> {
@@ -1413,6 +1430,9 @@ pub struct TargetsWidgetData {
     /// Show count of filtered body parts (arms, tentacles, etc.) on bottom border
     #[serde(default)]
     pub show_body_part_count: bool,
+    /// Status display position: "start" or "end" (overrides global config if set)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_position: Option<String>,
 }
 
 /// Players widget specific data
@@ -3597,6 +3617,7 @@ impl Config {
                 data: TargetsWidgetData {
                     entity_id: default_target_entity_id(),
                     show_body_part_count: false,
+                    status_position: None,
                 },
             }),
             "players" => Some(WindowDef::Players {
@@ -3631,6 +3652,7 @@ impl Config {
                 data: TargetsWidgetData {
                     entity_id: String::new(),
                     show_body_part_count: false,
+                    status_position: None,
                 },
             }),
 

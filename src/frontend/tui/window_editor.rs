@@ -168,7 +168,9 @@ enum FieldRef {
     // Text widget compact mode
     TextCompact,
     // Targets widget show arms/body parts count
-    TargetsShowArmsCount,
+    TargetsShowAppendages,
+    // Targets widget status position (start/end)
+    TargetsStatusPosition,
 }
 
 impl FieldRef {
@@ -271,7 +273,8 @@ impl FieldRef {
             FieldRef::BetrayerShowItems => 111,
             FieldRef::BetrayerBarColor => 112,
             FieldRef::TextCompact => 113,
-            FieldRef::TargetsShowArmsCount => 114,
+            FieldRef::TargetsShowAppendages => 114,
+            FieldRef::TargetsStatusPosition => 116,
         }
     }
 }
@@ -309,6 +312,8 @@ struct TabEditor {
     show_timestamps: bool,
     ignore_activity: bool,
     editing_index: Option<usize>,
+    /// Click areas for mouse support: (row_index, y, x, width)
+    click_areas: Vec<(usize, u16, u16, u16)>,
 }
 
 impl TabEditor {
@@ -349,7 +354,22 @@ impl TabEditor {
             show_timestamps: initial_ts,
             ignore_activity: initial_ignore,
             editing_index: None,
+            click_areas: Vec::new(),
         }
+    }
+
+    /// Handle mouse click - returns true if click was handled
+    fn handle_mouse_click(&mut self, col: u16, row: u16) -> bool {
+        if self.mode != TabEditorMode::List {
+            return false;
+        }
+        for &(idx, y, x, width) in &self.click_areas {
+            if row == y && col >= x && col < x + width {
+                self.selected = idx;
+                return true;
+            }
+        }
+        false
     }
 
     fn to_tabs(&self) -> Vec<TabbedTextTab> {
@@ -649,6 +669,8 @@ struct IndicatorEditor {
     icon_input: TextArea<'static>,
     colors_input: TextArea<'static>,
     editing_index: Option<usize>,
+    /// Click areas for mouse support: (row_index, y, x, width)
+    click_areas: Vec<(usize, u16, u16, u16)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -783,7 +805,26 @@ impl IndicatorEditor {
             icon_input,
             colors_input,
             editing_index: None,
+            click_areas: Vec::new(),
         }
+    }
+
+    /// Handle mouse click - returns true if click was handled
+    fn handle_mouse_click(&mut self, col: u16, row: u16) -> bool {
+        if self.mode != IndicatorEditorMode::List {
+            return false;
+        }
+        for &(idx, y, x, width) in &self.click_areas {
+            if row == y && col >= x && col < x + width {
+                self.selected = idx;
+                // Toggle the indicator
+                if let Some(ind) = self.indicators.get_mut(idx) {
+                    ind.enabled = !ind.enabled;
+                }
+                return true;
+            }
+        }
+        false
     }
 
     fn to_defs(&self) -> Vec<DashboardIndicatorDef> {
@@ -1381,6 +1422,8 @@ pub struct WindowEditor {
 
     // Targets widget show arms count
     targets_show_arms_count: bool,
+    // Targets widget status position ("start" or "end")
+    targets_status_position: String,
 
     window_def: WindowDef,
     original_window_def: WindowDef,
@@ -1652,7 +1695,8 @@ impl WindowEditor {
             }
             WindowDef::Targets { .. } => {
                 fields.push(FieldRef::EntityId);
-                fields.push(FieldRef::TargetsShowArmsCount);
+                fields.push(FieldRef::TargetsShowAppendages);
+                fields.push(FieldRef::TargetsStatusPosition);
             }
             WindowDef::Players { .. } => {
                 fields.push(FieldRef::EntityId);
@@ -1802,6 +1846,7 @@ impl WindowEditor {
         let mut text_compact = false;
         let mut entity_id_input = Self::create_textarea();
         let mut targets_show_arms_count = false;
+        let mut targets_status_position = "end".to_string();
         if let crate::config::WindowDef::Text { data, .. } = &window_def {
             streams_input.insert_str(data.streams.join(", "));
             buffer_size_input.insert_str(data.buffer_size.to_string());
@@ -1818,6 +1863,7 @@ impl WindowEditor {
         if let crate::config::WindowDef::Targets { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
             targets_show_arms_count = data.show_body_part_count;
+            targets_status_position = data.status_position.clone().unwrap_or_else(|| "end".to_string());
         }
         if let crate::config::WindowDef::Players { data, .. } = &window_def {
             entity_id_input.insert_str(&data.entity_id);
@@ -2290,6 +2336,7 @@ impl WindowEditor {
             betrayer_bar_color_input,
             text_compact,
             targets_show_arms_count,
+            targets_status_position,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: false,
@@ -2444,6 +2491,7 @@ impl WindowEditor {
         let text_compact = false;
         let entity_id_input = Self::create_textarea();
         let targets_show_arms_count = false;
+        let targets_status_position = "end".to_string();
         let text_color_input = Self::create_textarea();
         let prompt_icon_input = Self::create_textarea();
         let prompt_icon_color_input = Self::create_textarea();
@@ -2631,6 +2679,7 @@ impl WindowEditor {
             betrayer_bar_color_input: Self::create_textarea(),
             text_compact,
             targets_show_arms_count,
+            targets_status_position,
             window_def: window_def.clone(),
             original_window_def: window_def,
             is_new: true,
@@ -3033,7 +3082,8 @@ impl WindowEditor {
                     | FieldRef::MiniVitalsCurrentOnly
                     | FieldRef::BetrayerShowItems
                     | FieldRef::TextCompact
-                    | FieldRef::TargetsShowArmsCount
+                    | FieldRef::TargetsShowAppendages
+                    | FieldRef::TargetsStatusPosition
             )
         )
     }
@@ -3533,8 +3583,16 @@ impl WindowEditor {
                         FieldRef::TextCompact => {
                             self.text_compact = !self.text_compact;
                         }
-                        FieldRef::TargetsShowArmsCount => {
+                        FieldRef::TargetsShowAppendages => {
                             self.targets_show_arms_count = !self.targets_show_arms_count;
+                        }
+                        FieldRef::TargetsStatusPosition => {
+                            // Cycle between "start" and "end"
+                            self.targets_status_position = if self.targets_status_position == "start" {
+                                "end".to_string()
+                            } else {
+                                "start".to_string()
+                            };
                         }
                         FieldRef::ProgressNumbersOnly => {
                             self.progress_numbers_only = !self.progress_numbers_only;
@@ -4643,6 +4701,12 @@ impl WindowEditor {
         if let crate::config::WindowDef::Targets { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
             data.show_body_part_count = self.targets_show_arms_count;
+            // Save status_position (None = use global config)
+            data.status_position = if self.targets_status_position == "end" {
+                None // Default, don't need to save
+            } else {
+                Some(self.targets_status_position.clone())
+            };
         }
         if let crate::config::WindowDef::Players { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
@@ -4771,6 +4835,20 @@ impl WindowEditor {
             }
         }
 
+        // Handle tab editor clicks
+        if let Some(ref mut editor) = self.tab_editor {
+            if editor.handle_mouse_click(mouse_col, mouse_row) {
+                return WindowEditorMouseAction::None;
+            }
+        }
+
+        // Handle indicator editor clicks
+        if let Some(ref mut editor) = self.indicator_editor {
+            if editor.handle_mouse_click(mouse_col, mouse_row) {
+                return WindowEditorMouseAction::None;
+            }
+        }
+
         // Check if click is on a tracked field area
         // field_click_areas contains (y, x_start, field_ref)
         // We match by y (exact row) and distinguish side-by-side fields by x
@@ -4826,12 +4904,16 @@ impl WindowEditor {
                         self.cycle_dashboard_layout();
                     } else if self.is_on_edit_indicators() {
                         self.open_indicator_editor();
+                    } else if self.is_on_edit_tabs() {
+                        self.open_tab_editor();
                     } else if self.is_on_edit_bar_order() {
                         self.open_bar_order_editor();
                     } else if self.is_on_perception_sort_direction() {
                         self.cycle_perception_sort_direction();
                     } else if self.is_on_perception_replacements() {
                         self.open_perception_replacements_editor();
+                    } else if self.is_on_tab_bar_position() {
+                        self.cycle_tab_bar_position();
                     }
 
                     return WindowEditorMouseAction::None;
@@ -5090,6 +5172,9 @@ impl WindowEditor {
 
         match editor.mode {
             TabEditorMode::List => {
+                // Clear click areas for fresh population
+                editor.click_areas.clear();
+
                 let max_rows = area.height.saturating_sub(2);
                 let available_width = area.width.saturating_sub(2) as usize;
                 let name_col_width = available_width
@@ -5132,6 +5217,8 @@ impl WindowEditor {
                         self.truncate_to_width(&line, available_width as u16),
                         Style::default().fg(color),
                     );
+                    // Add click area for this tab row
+                    editor.click_areas.push((idx, y, area.x + 1, available_width as u16));
                 }
 
             }
@@ -5196,6 +5283,9 @@ impl WindowEditor {
 
         match editor.mode {
             IndicatorEditorMode::List => {
+                // Clear click areas for fresh population
+                editor.click_areas.clear();
+
                 let max_rows = area.height.saturating_sub(2);
                 for (idx, ind) in editor.indicators.iter().enumerate() {
                     if idx as u16 >= max_rows {
@@ -5227,6 +5317,8 @@ impl WindowEditor {
                         style = style.add_modifier(Modifier::DIM);
                     }
                     buf.set_string(area.x + 1, y, line, style);
+                    // Add click area for this indicator row
+                    editor.click_areas.push((idx, y, area.x + 1, max_width as u16));
                 }
             }
             IndicatorEditorMode::Form => {
@@ -5780,6 +5872,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TextColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TextColor));
                 special_row += 1;
 
                 // Icon text + cursor foreground
@@ -5794,6 +5887,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::PromptIcon, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::PromptIcon));
                 self.render_color_field(
                     FieldRef::CursorColor.legacy_field_id(),
                     "Cursor FG",
@@ -5805,6 +5899,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CursorColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CursorColor));
                 special_row += 1;
 
                 // Icon color + cursor background
@@ -5819,6 +5914,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::PromptIconColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::PromptIconColor));
                 self.render_color_field(
                     FieldRef::CursorBg.legacy_field_id(),
                     "Cursor BG",
@@ -5830,6 +5926,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CursorBg, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CursorBg));
             }
             WindowDef::Text { .. } => {
                 // Bounty window is special: hide Streams and BufferSize
@@ -6007,17 +6104,38 @@ impl WindowEditor {
                 );
                 self.field_click_areas.push((special_row, left_x, FieldRef::EntityId));
                 self.render_checkbox_compact(
-                    FieldRef::TargetsShowArmsCount.legacy_field_id(),
-                    "Show 709 Arms",
+                    FieldRef::TargetsShowAppendages.legacy_field_id(),
+                    "Show Appendages",
                     self.targets_show_arms_count,
                     right_x,
                     special_row,
                     column_width,
                     buf,
                     theme,
-                    is_focus(FieldRef::TargetsShowArmsCount, self.focused_field),
+                    is_focus(FieldRef::TargetsShowAppendages, self.focused_field),
                 );
-                self.field_click_areas.push((special_row, right_x, FieldRef::TargetsShowArmsCount));
+                self.field_click_areas.push((special_row, right_x, FieldRef::TargetsShowAppendages));
+
+                // Second row: Status Position dropdown
+                let special_row_2 = special_row + 1;
+                // Convert internal value to display text
+                let status_display = if self.targets_status_position == "start" {
+                    "Left"
+                } else {
+                    "Right"
+                };
+                self.render_dropdown_compact(
+                    FieldRef::TargetsStatusPosition.legacy_field_id(),
+                    "Status Pos:",
+                    status_display,
+                    left_x,
+                    special_row_2,
+                    column_width as usize,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::TargetsStatusPosition, self.focused_field),
+                );
+                self.field_click_areas.push((special_row_2, left_x, FieldRef::TargetsStatusPosition));
             }
             WindowDef::Players { .. } => {
                 self.render_textarea_compact(
@@ -6050,6 +6168,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabBarPosition, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, special_left_x, FieldRef::TabBarPosition));
                 self.render_color_field(
                     FieldRef::TabActiveColor.legacy_field_id(),
                     "Active",
@@ -6061,6 +6180,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabActiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TabActiveColor));
                 special_row += 1;
                 self.render_checkbox_compact(
                     FieldRef::TabSeparator.legacy_field_id(),
@@ -6073,6 +6193,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabSeparator, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, special_left_x, FieldRef::TabSeparator));
                 self.render_color_field(
                     FieldRef::TabInactiveColor.legacy_field_id(),
                     "Inactive",
@@ -6084,6 +6205,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabInactiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TabInactiveColor));
                 special_row += 1;
                 self.render_textarea_compact(
                     FieldRef::TabUnreadPrefix.legacy_field_id(),
@@ -6096,6 +6218,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabUnreadPrefix, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, special_left_x, FieldRef::TabUnreadPrefix));
                 self.render_color_field(
                     FieldRef::TabUnreadColor.legacy_field_id(),
                     "Unread",
@@ -6107,6 +6230,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::TabUnreadColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::TabUnreadColor));
                 special_row += 1;
                 self.render_button(
                     FieldRef::EditTabs.legacy_field_id(),
@@ -6117,6 +6241,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EditTabs, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, special_left_x, FieldRef::EditTabs));
             }
             WindowDef::Room { .. } => {
                 self.render_checkbox_compact(
@@ -6130,6 +6255,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ShowName, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ShowName));
                 self.render_checkbox_compact(
                     FieldRef::ShowDesc.legacy_field_id(),
                     "Show Desc",
@@ -6141,6 +6267,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ShowDesc, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::ShowDesc));
                 special_row += 1;
                 self.render_checkbox_compact(
                     FieldRef::ShowObjs.legacy_field_id(),
@@ -6153,6 +6280,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ShowObjs, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ShowObjs));
                 self.render_checkbox_compact(
                     FieldRef::ShowPlayers.legacy_field_id(),
                     "Show Players",
@@ -6164,6 +6292,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ShowPlayers, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::ShowPlayers));
                 special_row += 1;
                 self.render_checkbox_compact(
                     FieldRef::ShowExits.legacy_field_id(),
@@ -6176,6 +6305,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ShowExits, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ShowExits));
             }
             WindowDef::Progress { .. } => {
                 self.render_textarea_compact(
@@ -6253,6 +6383,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CountdownIcon, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::CountdownIcon));
                 self.render_textarea_compact(
                     FieldRef::CountdownId.legacy_field_id(),
                     "Countdown ID:",
@@ -6264,6 +6395,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CountdownId, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CountdownId));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::CountdownColor.legacy_field_id(),
@@ -6276,6 +6408,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CountdownColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::CountdownColor));
             }
             WindowDef::Compass { .. } => {
                 // Clear left column row for a clean right-column layout
@@ -6296,6 +6429,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CompassActiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CompassActiveColor));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::CompassInactiveColor.legacy_field_id(),
@@ -6308,6 +6442,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::CompassInactiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CompassInactiveColor));
             }
             WindowDef::InjuryDoll { .. } => {
                 self.render_color_field(
@@ -6321,6 +6456,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Injury1Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::Injury1Color));
                 self.render_color_field(
                     FieldRef::Scar1Color.legacy_field_id(),
                     "Scar1",
@@ -6332,6 +6468,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Scar1Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::Scar1Color));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::Injury2Color.legacy_field_id(),
@@ -6344,6 +6481,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Injury2Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::Injury2Color));
                 self.render_color_field(
                     FieldRef::Scar2Color.legacy_field_id(),
                     "Scar2",
@@ -6355,6 +6493,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Scar2Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::Scar2Color));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::Injury3Color.legacy_field_id(),
@@ -6367,6 +6506,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Injury3Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::Injury3Color));
                 self.render_color_field(
                     FieldRef::Scar3Color.legacy_field_id(),
                     "Scar3",
@@ -6378,6 +6518,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::Scar3Color, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::Scar3Color));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::InjuryDefaultColor.legacy_field_id(),
@@ -6390,6 +6531,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::InjuryDefaultColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::InjuryDefaultColor));
             }
             WindowDef::Indicator { .. } => {
                 self.render_textarea_compact(
@@ -6403,6 +6545,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::IndicatorId, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::IndicatorId));
                 special_row += 1;
                 self.render_textarea_compact(
                     FieldRef::IndicatorIcon.legacy_field_id(),
@@ -6415,6 +6558,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::IndicatorIcon, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::IndicatorIcon));
                 if let Some(icon_char) = Self::parse_icon_char(
                     self.indicator_icon_input
                         .lines()
@@ -6445,6 +6589,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::IndicatorActiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::IndicatorActiveColor));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::IndicatorInactiveColor.legacy_field_id(),
@@ -6457,6 +6602,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::IndicatorInactiveColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::IndicatorInactiveColor));
             }
             WindowDef::Hand { .. } => {
                 self.render_textarea_compact(
@@ -6470,6 +6616,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::HandIcon, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::HandIcon));
                 self.render_color_field(
                     FieldRef::HandIconColor.legacy_field_id(),
                     "Icon Color",
@@ -6481,6 +6628,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::HandIconColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::HandIconColor));
                 special_row += 1;
                 self.render_color_field(
                     FieldRef::HandTextColor.legacy_field_id(),
@@ -6493,6 +6641,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::HandTextColor, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::HandTextColor));
             }
             WindowDef::Dashboard { .. } => {
                 self.render_dropdown_compact(
@@ -6510,6 +6659,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::DashboardLayout, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::DashboardLayout));
                 self.render_textarea_compact(
                     FieldRef::DashboardSpacing.legacy_field_id(),
                     "Spacing:",
@@ -6521,6 +6671,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::DashboardSpacing, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::DashboardSpacing));
                 special_row += 1;
                 self.render_button(
                     FieldRef::EditIndicators.legacy_field_id(),
@@ -6531,6 +6682,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::EditIndicators, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::EditIndicators));
                 self.render_checkbox_compact(
                     FieldRef::DashboardHideInactive.legacy_field_id(),
                     "Hide Inactive",
@@ -6542,6 +6694,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::DashboardHideInactive, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, right_x, FieldRef::DashboardHideInactive));
             }
             WindowDef::ActiveEffects { .. } => {
                 self.render_textarea_compact(
@@ -6555,6 +6708,7 @@ impl WindowEditor {
                     theme,
                     is_focus(FieldRef::ActiveEffectsCategory, self.focused_field),
                 );
+                self.field_click_areas.push((special_row, left_x, FieldRef::ActiveEffectsCategory));
             }
             WindowDef::Performance { .. } => {
                 // Performance widget uses overlay-only system, no fields to render here

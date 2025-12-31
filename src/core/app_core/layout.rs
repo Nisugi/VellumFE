@@ -213,7 +213,7 @@ impl AppCore {
         for window_def in self.layout.windows.iter().filter(|w| w.base().visible) {
             let base = window_def.base();
             match window_def.widget_type() {
-                "compass" | "injury_doll" | "dashboard" | "indicator" => {
+                "dashboard" | "indicator" => {
                     static_both.insert(base.name.clone());
                 }
                 "progress"
@@ -1265,24 +1265,29 @@ impl AppCore {
             .collect();
         window_positions.sort_by_key(|(_, _, row, _, _)| *row);
 
-        // Track the bottom edge of the previous window for each column group
-        let mut col_groups: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
+        // Track both baseline bottoms and current bottoms per column
+        // This fixes the bug where size changes caused position cascade to fail
+        let mut col_baseline_bottom: std::collections::HashMap<u16, u16> =
+            std::collections::HashMap::new();
+        let mut col_current_bottom: std::collections::HashMap<u16, u16> =
+            std::collections::HashMap::new();
 
         // Recalculate Y positions for stacked windows
-        for (name, baseline_col, baseline_row, _baseline_cols, _baseline_rows) in window_positions {
+        for (name, baseline_col, baseline_row, _baseline_cols, baseline_rows) in window_positions {
             if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
                 let base = window_def.base_mut();
 
-                // Check if this window should be stacked under a previous window
-                if let Some(&prev_bottom) = col_groups.get(&baseline_col) {
-                    // If baseline Y matches the previous window's bottom, they're stacked
-                    if baseline_row == prev_bottom {
-                        base.row = col_groups[&baseline_col];
+                // Check if this window was stacked with the previous one in baseline
+                if let Some(&prev_baseline_bottom) = col_baseline_bottom.get(&baseline_col) {
+                    if baseline_row == prev_baseline_bottom {
+                        // Windows were adjacent in baseline - cascade position using current bottom
+                        base.row = *col_current_bottom.get(&baseline_col).unwrap_or(&0);
                     }
                 }
 
-                // Update the bottom edge for this column group
-                col_groups.insert(baseline_col, base.row + base.rows);
+                // Update tracking for both baseline and current bottoms
+                col_baseline_bottom.insert(baseline_col, baseline_row + baseline_rows);
+                col_current_bottom.insert(baseline_col, base.row + base.rows);
             }
         }
 
@@ -1487,7 +1492,7 @@ mod tests {
     fn is_static_both(widget_type: &str) -> bool {
         matches!(
             widget_type,
-            "compass" | "injury_doll" | "dashboard" | "indicator"
+            "dashboard" | "indicator"
         )
     }
 
@@ -1511,13 +1516,13 @@ mod tests {
     }
 
     #[test]
-    fn test_static_both_compass() {
-        assert!(is_static_both("compass"));
+    fn test_compass_is_scalable() {
+        assert!(!is_static_both("compass"));
     }
 
     #[test]
-    fn test_static_both_injury_doll() {
-        assert!(is_static_both("injury_doll"));
+    fn test_injury_doll_is_scalable() {
+        assert!(!is_static_both("injury_doll"));
     }
 
     #[test]

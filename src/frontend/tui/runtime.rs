@@ -245,9 +245,14 @@ async fn async_run(
 
                     // Container discovery: auto-create window for new containers
                     if app_core.ui_state.container_discovery_mode {
-                        if let Some((_, title)) =
+                        if let Some((id, title)) =
                             app_core.message_processor.newly_registered_container.take()
                         {
+                            tracing::info!(
+                                "Container discovery: creating window for '{}' (id={})",
+                                title,
+                                id
+                            );
                             let (term_width, term_height) = frontend.size();
                             app_core.create_ephemeral_container_window(
                                 &title,

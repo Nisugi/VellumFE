@@ -175,7 +175,7 @@ pub fn handle_menu_action(
                 let global_keybinds = crate::config::Config::load_common_keybinds()
                     .unwrap_or_default();
                 let character_keybinds = crate::config::Config::load_character_keybinds_only(
-                    app_core.config.connection.character.as_deref()
+                    app_core.config.character.as_deref()
                 ).unwrap_or_default();
 
                 frontend.keybind_browser = Some(
