@@ -1,264 +1,149 @@
-# config.toml Reference
+# config.toml
 
-The main configuration file controlling VellumFE's behavior, connection settings, and general preferences.
+General client settings including connection, UI behavior, and sound.
 
-## Location
-
-`~/.vellum-fe/config.toml`
-
----
-
-## Complete Reference
+## Connection
 
 ```toml
-#
-# VellumFE Configuration
-#
-
 [connection]
-# Default host for Lich proxy mode
 host = "127.0.0.1"
+port = 8001
+character = "YourName"
 
-# Default port for Lich proxy mode
-port = 8000
+# For direct connection (optional - can use CLI instead)
+account = "your_account"
+password = "your_password"  # Stored in plain text!
+game = "prime"              # prime, platinum, shattered, test
+```
 
-# Default character name (used for profile loading)
-character = ""
+> **Tip**: For security, pass credentials via CLI: `--account X --password Y`
 
-# Timeout for connection attempts (seconds)
-timeout = 30
+## User Interface
 
-[interface]
-# Enable clickable links in game text
-links = true
+```toml
+[ui]
+buffer_size = 1000              # Lines kept per window
+border_style = "single"         # single, double, rounded, thick, none
+color_mode = "direct"           # direct (24-bit), indexed (256-color)
 
-# Show window borders by default
-show_borders = true
+# Text selection
+selection_enabled = true
+selection_auto_copy = true      # Copy on mouse-up
 
-# Default border style: "plain", "rounded", "double", "thick"
-border_style = "rounded"
+# Commands
+command_echo = true             # Show sent commands in main window
+min_command_length = 3          # Min length to save in history
 
-# Mouse support
-mouse = true
+# Drag modifier for moving windows
+drag_modifier_key = "ctrl"      # ctrl, alt, or shift
+```
 
-# Scroll speed (lines per scroll event)
-scroll_speed = 3
+### Color Modes
 
-# Command history size
-history_size = 1000
+| Mode | Description |
+|------|-------------|
+| `direct` | 24-bit true color. Use with modern terminals (kitty, alacritty, Windows Terminal) |
+| `indexed` | 256-color with standard palette. Fallback for legacy terminals |
+| `slot` | 256-color with custom palette. For terminals supporting OSC4 |
 
+## Focus Navigation
+
+Control which windows are focusable with Tab:
+
+```toml
+[ui.focus]
+types = ["text", "tabbedtext"]  # Widget types that can receive focus
+exclude = ["bounty", "society"] # Specific windows to skip
+order = []                      # Custom focus order (empty = layout order)
+```
+
+## Target List
+
+Configure the targets widget display:
+
+```toml
+[target_list]
+status_position = "end"         # "end" or "start"
+truncation_mode = "noun"        # "full" or "noun"
+excluded_nouns = ["arm", "coal"]
+
+[target_list.status_abbrev]
+stunned = "stu"
+frozen = "frz"
+dead = "ded"
+```
+
+## Highlights
+
+Global toggles for the highlight system:
+
+```toml
+[highlights]
+sounds_enabled = true           # Play sounds on match
+replace_enabled = true          # Apply text replacements
+redirect_enabled = true         # Route lines to other windows
+coloring_enabled = true         # Apply color highlighting
+```
+
+## Sound
+
+```toml
 [sound]
-# Enable sound effects
 enabled = true
+volume = 0.7                    # 0.0 to 1.0
+cooldown_ms = 500               # Min time between sounds
+startup_music = true
+```
 
-# Master volume (0.0 - 1.0)
-volume = 0.8
+## Text-to-Speech
 
-# Sound file paths (relative to data dir or absolute)
-# alert_sound = "sounds/alert.wav"
-
+```toml
 [tts]
-# Enable text-to-speech
 enabled = false
-
-# TTS rate (words per minute, platform dependent)
-rate = 150
-
-# Which streams to speak
-streams = ["main"]
-
-# Speak room descriptions
-speak_rooms = true
-
-# Speak player speech
+rate = 1.0                      # 0.5 (slow) to 2.0 (fast)
+volume = 1.0
+speak_thoughts = true
 speak_speech = true
+speak_main = false              # Usually too noisy
+```
 
+## Stream Routing
+
+Control how unsubscribed text streams are handled:
+
+```toml
+[streams]
+# Streams to silently discard
+drop_unsubscribed = [
+  "speech", "whisper", "talk",
+  "targetcount", "playercount"
+]
+
+fallback = "main"               # Route unknown streams here
+room_in_main = true             # Show room text in main (DR only)
+```
+
+## Logging
+
+Capture raw XML for debugging:
+
+```toml
 [logging]
-# Log level: "error", "warn", "info", "debug", "trace"
-level = "warn"
-
-# Log file path (relative to data dir)
-file = "vellum-fe.log"
-
-# Log to console (for debugging)
-console = false
-
-[behavior]
-# Auto-scroll to bottom on new text
-auto_scroll = true
-
-# Flash window on important events
-flash_on_alert = false
-
-# Notification sound on important events
-sound_on_alert = false
-
-# Pause input during roundtime (experimental)
-pause_on_rt = false
-
-[performance]
-# Maximum lines to buffer per text window
-max_buffer_lines = 2000
-
-# Frame rate target
-target_fps = 60
-
-# Enable performance metrics collection
-collect_metrics = true
+enabled = false
+# dir = "logs"
+# timestamps = true
 ```
 
----
+## Event Patterns
 
-## Section Details
-
-### [connection]
-
-Controls how VellumFE connects to the game.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `host` | string | `"127.0.0.1"` | Host for Lich proxy mode |
-| `port` | integer | `8000` | Port for Lich proxy mode |
-| `character` | string | `""` | Default character name for profiles |
-| `timeout` | integer | `30` | Connection timeout in seconds |
-
-**Note**: Direct mode (`--direct`) ignores these settings and uses command-line credentials.
-
-### [interface]
-
-Visual and interaction settings.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `links` | boolean | `true` | Enable clickable game links |
-| `show_borders` | boolean | `true` | Show window borders by default |
-| `border_style` | string | `"rounded"` | Default border style |
-| `mouse` | boolean | `true` | Enable mouse support |
-| `scroll_speed` | integer | `3` | Lines scrolled per mouse wheel tick |
-| `history_size` | integer | `1000` | Command history entries to remember |
-
-**Border styles:**
-- `"plain"` - Single line: `─│─│┌┐└┘`
-- `"rounded"` - Rounded corners: `─│─│╭╮╰╯`
-- `"double"` - Double line: `═║═║╔╗╚╝`
-- `"thick"` - Thick line: `━┃━┃┏┓┗┛`
-
-### [sound]
-
-Audio settings.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | boolean | `true` | Master sound toggle |
-| `volume` | float | `0.8` | Master volume (0.0 to 1.0) |
-**Note**: Requires the `sound` feature to be compiled in.
-
-### [tts]
-
-Text-to-speech accessibility features.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable TTS |
-| `rate` | integer | `150` | Speech rate (WPM) |
-| `streams` | array | `["main"]` | Streams to speak |
-| `speak_rooms` | boolean | `true` | Speak room descriptions |
-| `speak_speech` | boolean | `true` | Speak player dialogue |
-
-**Supported streams:** `"main"`, `"speech"`, `"thoughts"`, `"combat"`
-
-### [logging]
-
-Diagnostic logging configuration.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `level` | string | `"warn"` | Minimum log level |
-| `file` | string | `"vellum-fe.log"` | Log file path |
-| `console` | boolean | `false` | Also log to console |
-
-**Log levels** (from least to most verbose):
-- `"error"` - Only errors
-- `"warn"` - Errors and warnings
-- `"info"` - Normal operation info
-- `"debug"` - Debugging details
-- `"trace"` - Very verbose tracing
-
-### [behavior]
-
-Client behavior tweaks.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `auto_scroll` | boolean | `true` | Auto-scroll on new text |
-| `flash_on_alert` | boolean | `false` | Flash window on alerts |
-| `sound_on_alert` | boolean | `false` | Play sound on alerts |
-| `pause_on_rt` | boolean | `false` | Pause input during RT |
-
-### [performance]
-
-Performance tuning.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `max_buffer_lines` | integer | `2000` | Max lines per text window |
-| `target_fps` | integer | `60` | Target frame rate |
-| `collect_metrics` | boolean | `true` | Enable performance stats |
-
----
-
-## Examples
-
-### Minimal Config
+Regex patterns for countdown timers:
 
 ```toml
-[connection]
-port = 8000
-character = "MyCharacter"
-```
-
-### High-Performance Config
-
-```toml
-[performance]
-max_buffer_lines = 1000
-target_fps = 120
-collect_metrics = false
-
-[interface]
-links = false  # Disable link parsing for speed
-```
-
-### Accessibility Config
-
-```toml
-[tts]
+[event_patterns.stun_rounds]
+pattern = '^\s*You are stunned for ([0-9]+) rounds?'
+event_type = "stun"
+action = "set"
+duration_capture = 1
+duration_multiplier = 5.0
 enabled = true
-rate = 175
-streams = ["main", "speech"]
-speak_rooms = true
-speak_speech = true
-
-[interface]
-scroll_speed = 5
 ```
-
----
-
-## Environment Variable Overrides
-
-Some settings can be overridden via environment variables:
-
-| Variable | Overrides |
-|----------|-----------|
-| `VELLUM_FE_DIR` | Data directory location |
-| `RUST_LOG` | Logging level |
-| `COLORTERM` | Terminal color support |
-
----
-
-## See Also
-
-- [layout.toml](./layout-toml.md) - Window layout configuration
-- [Character Profiles](./profiles.md) - Per-character settings
-- [Environment Variables](../reference/environment-vars.md) - All environment variables

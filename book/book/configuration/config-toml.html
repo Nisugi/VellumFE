@@ -3,12 +3,12 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>config.toml Reference - VellumFE Documentation</title>
+        <title>config.toml - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Comprehensive documentation for VellumFE, a modern multi-frontend client for GemStone IV">
+        <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-ad3aee19.js";
+            window.path_to_searchindex_js = "../searchindex-aafc8c79.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-25e7f624.js"></script>
+        <script src="../toc-621f15b5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,17 +137,14 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">VellumFE Documentation</h1>
+                    <h1 class="menu-title">VellumFE User Guide</h1>
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
-                        <a href="https://github.com/nisugi/vellum-fe" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/Nisugi/VellumFE" title="Git repository" aria-label="Git repository">
                             <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
-                        </a>
-                        <a href="https://github.com/nisugi/vellum-fe/edit/master/book/src/src/configuration/config-toml.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
-                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
                         </a>
 
                     </div>
@@ -180,284 +177,124 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="configtoml-reference"><a class="header" href="#configtoml-reference">config.toml Reference</a></h1>
-<p>The main configuration file controlling VellumFE’s behavior, connection settings, and general preferences.</p>
-<h2 id="location"><a class="header" href="#location">Location</a></h2>
-<p><code>~/.vellum-fe/config.toml</code></p>
-<hr>
-<h2 id="complete-reference"><a class="header" href="#complete-reference">Complete Reference</a></h2>
-<pre><code class="language-toml">#
-# VellumFE Configuration
-#
-
-[connection]
-# Default host for Lich proxy mode
-host = "127.0.0.1"
-
-# Default port for Lich proxy mode
-port = 8000
-
-# Default character name (used for profile loading)
-character = ""
-
-# Timeout for connection attempts (seconds)
-timeout = 30
-
-[interface]
-# Enable clickable links in game text
-links = true
-
-# Show window borders by default
-show_borders = true
-
-# Default border style: "plain", "rounded", "double", "thick"
-border_style = "rounded"
-
-# Mouse support
-mouse = true
-
-# Scroll speed (lines per scroll event)
-scroll_speed = 3
-
-# Command history size
-history_size = 1000
-
-[sound]
-# Enable sound effects
-enabled = true
-
-# Master volume (0.0 - 1.0)
-volume = 0.8
-
-# Play startup music
-startup_music = true
-
-# Sound file paths (relative to data dir or absolute)
-# alert_sound = "sounds/alert.wav"
-
-[tts]
-# Enable text-to-speech
-enabled = false
-
-# TTS rate (words per minute, platform dependent)
-rate = 150
-
-# Which streams to speak
-streams = ["main"]
-
-# Speak room descriptions
-speak_rooms = true
-
-# Speak player speech
-speak_speech = true
-
-[logging]
-# Log level: "error", "warn", "info", "debug", "trace"
-level = "warn"
-
-# Log file path (relative to data dir)
-file = "vellum-fe.log"
-
-# Log to console (for debugging)
-console = false
-
-[behavior]
-# Auto-scroll to bottom on new text
-auto_scroll = true
-
-# Flash window on important events
-flash_on_alert = false
-
-# Notification sound on important events
-sound_on_alert = false
-
-# Pause input during roundtime (experimental)
-pause_on_rt = false
-
-[performance]
-# Maximum lines to buffer per text window
-max_buffer_lines = 2000
-
-# Frame rate target
-target_fps = 60
-
-# Enable performance metrics collection
-collect_metrics = true
-</code></pre>
-<hr>
-<h2 id="section-details"><a class="header" href="#section-details">Section Details</a></h2>
-<h3 id="connection"><a class="header" href="#connection">[connection]</a></h3>
-<p>Controls how VellumFE connects to the game.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>host</code></td><td>string</td><td><code>"127.0.0.1"</code></td><td>Host for Lich proxy mode</td></tr>
-<tr><td><code>port</code></td><td>integer</td><td><code>8000</code></td><td>Port for Lich proxy mode</td></tr>
-<tr><td><code>character</code></td><td>string</td><td><code>""</code></td><td>Default character name for profiles</td></tr>
-<tr><td><code>timeout</code></td><td>integer</td><td><code>30</code></td><td>Connection timeout in seconds</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Note</strong>: Direct mode (<code>--direct</code>) ignores these settings and uses command-line credentials.</p>
-<h3 id="interface"><a class="header" href="#interface">[interface]</a></h3>
-<p>Visual and interaction settings.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>links</code></td><td>boolean</td><td><code>true</code></td><td>Enable clickable game links</td></tr>
-<tr><td><code>show_borders</code></td><td>boolean</td><td><code>true</code></td><td>Show window borders by default</td></tr>
-<tr><td><code>border_style</code></td><td>string</td><td><code>"rounded"</code></td><td>Default border style</td></tr>
-<tr><td><code>mouse</code></td><td>boolean</td><td><code>true</code></td><td>Enable mouse support</td></tr>
-<tr><td><code>scroll_speed</code></td><td>integer</td><td><code>3</code></td><td>Lines scrolled per mouse wheel tick</td></tr>
-<tr><td><code>history_size</code></td><td>integer</td><td><code>1000</code></td><td>Command history entries to remember</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Border styles:</strong></p>
-<ul>
-<li><code>"plain"</code> - Single line: <code>─│─│┌┐└┘</code></li>
-<li><code>"rounded"</code> - Rounded corners: <code>─│─│╭╮╰╯</code></li>
-<li><code>"double"</code> - Double line: <code>═║═║╔╗╚╝</code></li>
-<li><code>"thick"</code> - Thick line: <code>━┃━┃┏┓┗┛</code></li>
-</ul>
-<h3 id="sound"><a class="header" href="#sound">[sound]</a></h3>
-<p>Audio settings.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>enabled</code></td><td>boolean</td><td><code>true</code></td><td>Master sound toggle</td></tr>
-<tr><td><code>volume</code></td><td>float</td><td><code>0.8</code></td><td>Master volume (0.0 to 1.0)</td></tr>
-<tr><td><code>startup_music</code></td><td>boolean</td><td><code>true</code></td><td>Play music on launch</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Note</strong>: Requires the <code>sound</code> feature to be compiled in.</p>
-<h3 id="tts"><a class="header" href="#tts">[tts]</a></h3>
-<p>Text-to-speech accessibility features.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>enabled</code></td><td>boolean</td><td><code>false</code></td><td>Enable TTS</td></tr>
-<tr><td><code>rate</code></td><td>integer</td><td><code>150</code></td><td>Speech rate (WPM)</td></tr>
-<tr><td><code>streams</code></td><td>array</td><td><code>["main"]</code></td><td>Streams to speak</td></tr>
-<tr><td><code>speak_rooms</code></td><td>boolean</td><td><code>true</code></td><td>Speak room descriptions</td></tr>
-<tr><td><code>speak_speech</code></td><td>boolean</td><td><code>true</code></td><td>Speak player dialogue</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Supported streams:</strong> <code>"main"</code>, <code>"speech"</code>, <code>"thoughts"</code>, <code>"combat"</code></p>
-<h3 id="logging"><a class="header" href="#logging">[logging]</a></h3>
-<p>Diagnostic logging configuration.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>level</code></td><td>string</td><td><code>"warn"</code></td><td>Minimum log level</td></tr>
-<tr><td><code>file</code></td><td>string</td><td><code>"vellum-fe.log"</code></td><td>Log file path</td></tr>
-<tr><td><code>console</code></td><td>boolean</td><td><code>false</code></td><td>Also log to console</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Log levels</strong> (from least to most verbose):</p>
-<ul>
-<li><code>"error"</code> - Only errors</li>
-<li><code>"warn"</code> - Errors and warnings</li>
-<li><code>"info"</code> - Normal operation info</li>
-<li><code>"debug"</code> - Debugging details</li>
-<li><code>"trace"</code> - Very verbose tracing</li>
-</ul>
-<h3 id="behavior"><a class="header" href="#behavior">[behavior]</a></h3>
-<p>Client behavior tweaks.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>auto_scroll</code></td><td>boolean</td><td><code>true</code></td><td>Auto-scroll on new text</td></tr>
-<tr><td><code>flash_on_alert</code></td><td>boolean</td><td><code>false</code></td><td>Flash window on alerts</td></tr>
-<tr><td><code>sound_on_alert</code></td><td>boolean</td><td><code>false</code></td><td>Play sound on alerts</td></tr>
-<tr><td><code>pause_on_rt</code></td><td>boolean</td><td><code>false</code></td><td>Pause input during RT</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="performance"><a class="header" href="#performance">[performance]</a></h3>
-<p>Performance tuning.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>max_buffer_lines</code></td><td>integer</td><td><code>2000</code></td><td>Max lines per text window</td></tr>
-<tr><td><code>target_fps</code></td><td>integer</td><td><code>60</code></td><td>Target frame rate</td></tr>
-<tr><td><code>collect_metrics</code></td><td>boolean</td><td><code>true</code></td><td>Enable performance stats</td></tr>
-</tbody>
-</table>
-</div>
-<hr>
-<h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
-<h3 id="minimal-config"><a class="header" href="#minimal-config">Minimal Config</a></h3>
+                        <h1 id="configtoml"><a class="header" href="#configtoml">config.toml</a></h1>
+<p>General client settings including connection, UI behavior, and sound.</p>
+<h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
 <pre><code class="language-toml">[connection]
-port = 8000
-character = "MyCharacter"
-</code></pre>
-<h3 id="high-performance-config"><a class="header" href="#high-performance-config">High-Performance Config</a></h3>
-<pre><code class="language-toml">[performance]
-max_buffer_lines = 1000
-target_fps = 120
-collect_metrics = false
+host = "127.0.0.1"
+port = 8001
+character = "YourName"
 
-[interface]
-links = false  # Disable link parsing for speed
+# For direct connection (optional - can use CLI instead)
+account = "your_account"
+password = "your_password"  # Stored in plain text!
+game = "prime"              # prime, platinum, shattered, test
 </code></pre>
-<h3 id="accessibility-config"><a class="header" href="#accessibility-config">Accessibility Config</a></h3>
-<pre><code class="language-toml">[tts]
-enabled = true
-rate = 175
-streams = ["main", "speech"]
-speak_rooms = true
-speak_speech = true
+<blockquote>
+<p><strong>Tip</strong>: For security, pass credentials via CLI: <code>--account X --password Y</code></p>
+</blockquote>
+<h2 id="user-interface"><a class="header" href="#user-interface">User Interface</a></h2>
+<pre><code class="language-toml">[ui]
+buffer_size = 1000              # Lines kept per window
+border_style = "single"         # single, double, rounded, thick, none
+color_mode = "direct"           # direct (24-bit), indexed (256-color)
 
-[interface]
-scroll_speed = 5
+# Text selection
+selection_enabled = true
+selection_auto_copy = true      # Copy on mouse-up
+
+# Commands
+command_echo = true             # Show sent commands in main window
+min_command_length = 3          # Min length to save in history
+
+# Drag modifier for moving windows
+drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 </code></pre>
-<hr>
-<h2 id="environment-variable-overrides"><a class="header" href="#environment-variable-overrides">Environment Variable Overrides</a></h2>
-<p>Some settings can be overridden via environment variables:</p>
+<h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Variable</th><th>Overrides</th></tr>
+<tr><th>Mode</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>VELLUM_FE_DIR</code></td><td>Data directory location</td></tr>
-<tr><td><code>RUST_LOG</code></td><td>Logging level</td></tr>
-<tr><td><code>COLORTERM</code></td><td>Terminal color support</td></tr>
+<tr><td><code>direct</code></td><td>24-bit true color. Use with modern terminals (kitty, alacritty, Windows Terminal)</td></tr>
+<tr><td><code>indexed</code></td><td>256-color with standard palette. Fallback for legacy terminals</td></tr>
+<tr><td><code>slot</code></td><td>256-color with custom palette. For terminals supporting OSC4</td></tr>
 </tbody>
 </table>
 </div>
-<hr>
-<h2 id="see-also"><a class="header" href="#see-also">See Also</a></h2>
-<ul>
-<li><a href="./layout-toml.html">layout.toml</a> - Window layout configuration</li>
-<li><a href="./profiles.html">Character Profiles</a> - Per-character settings</li>
-<li><a href="../reference/environment-vars.html">Environment Variables</a> - All environment variables</li>
-</ul>
+<h2 id="focus-navigation"><a class="header" href="#focus-navigation">Focus Navigation</a></h2>
+<p>Control which windows are focusable with Tab:</p>
+<pre><code class="language-toml">[ui.focus]
+types = ["text", "tabbedtext"]  # Widget types that can receive focus
+exclude = ["bounty", "society"] # Specific windows to skip
+order = []                      # Custom focus order (empty = layout order)
+</code></pre>
+<h2 id="target-list"><a class="header" href="#target-list">Target List</a></h2>
+<p>Configure the targets widget display:</p>
+<pre><code class="language-toml">[target_list]
+status_position = "end"         # "end" or "start"
+truncation_mode = "noun"        # "full" or "noun"
+excluded_nouns = ["arm", "coal"]
+
+[target_list.status_abbrev]
+stunned = "stu"
+frozen = "frz"
+dead = "ded"
+</code></pre>
+<h2 id="highlights"><a class="header" href="#highlights">Highlights</a></h2>
+<p>Global toggles for the highlight system:</p>
+<pre><code class="language-toml">[highlights]
+sounds_enabled = true           # Play sounds on match
+replace_enabled = true          # Apply text replacements
+redirect_enabled = true         # Route lines to other windows
+coloring_enabled = true         # Apply color highlighting
+</code></pre>
+<h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
+<pre><code class="language-toml">[sound]
+enabled = true
+volume = 0.7                    # 0.0 to 1.0
+cooldown_ms = 500               # Min time between sounds
+startup_music = true
+</code></pre>
+<h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
+<pre><code class="language-toml">[tts]
+enabled = false
+rate = 1.0                      # 0.5 (slow) to 2.0 (fast)
+volume = 1.0
+speak_thoughts = true
+speak_speech = true
+speak_main = false              # Usually too noisy
+</code></pre>
+<h2 id="stream-routing"><a class="header" href="#stream-routing">Stream Routing</a></h2>
+<p>Control how unsubscribed text streams are handled:</p>
+<pre><code class="language-toml">[streams]
+# Streams to silently discard
+drop_unsubscribed = [
+  "speech", "whisper", "talk",
+  "targetcount", "playercount"
+]
+
+fallback = "main"               # Route unknown streams here
+room_in_main = true             # Show room text in main (DR only)
+</code></pre>
+<h2 id="logging"><a class="header" href="#logging">Logging</a></h2>
+<p>Capture raw XML for debugging:</p>
+<pre><code class="language-toml">[logging]
+enabled = false
+# dir = "logs"
+# timestamps = true
+</code></pre>
+<h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
+<p>Regex patterns for countdown timers:</p>
+<pre><code class="language-toml">[event_patterns.stun_rounds]
+pattern = '^\s*You are stunned for ([0-9]+) rounds?'
+event_type = "stun"
+action = "set"
+duration_capture = 1
+duration_multiplier = 5.0
+enabled = true
+</code></pre>
 
                     </main>
 
@@ -494,22 +331,6 @@ scroll_speed = 5
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
         <script>

@@ -1,36 +1,13 @@
 [book]
-title = "VellumFE Documentation"
-description = "Comprehensive documentation for VellumFE, a modern multi-frontend client for GemStone IV"
+title = "VellumFE User Guide"
 authors = ["Nisugi"]
 language = "en"
 src = "src"
 
 [build]
 build-dir = "book"
-create-missing = false
 
 [output.html]
 default-theme = "coal"
 preferred-dark-theme = "coal"
-git-repository-url = "https://github.com/nisugi/vellum-fe"
-edit-url-template = "https://github.com/nisugi/vellum-fe/edit/master/book/src/{path}"
-site-url = "/vellum-fe/"
-cname = ""
-no-section-label = false
-additional-css = []
-additional-js = []
-
-[output.html.fold]
-enable = true
-level = 1
-
-[output.html.playground]
-editable = false
-copy-js = true
-line-numbers = true
-
-[output.html.search]
-enable = true
-limit-results = 30
-teaser-word-count = 30
-copy-js = true
+git-repository-url = "https://github.com/Nisugi/VellumFE"

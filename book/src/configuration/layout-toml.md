@@ -1,491 +1,193 @@
-# layout.toml Reference
+# layout.toml
 
-The layout configuration file defines all windows, their positions, sizes, and visual properties.
+Defines window positions, sizes, and properties.
 
-## Location
-
-`~/.vellum-fe/layout.toml`
-
----
-
-## Structure Overview
+## Basic Structure
 
 ```toml
-# Global layout settings
-[layout]
-columns = 120
-rows = 40
+terminal_width = 120
+terminal_height = 40
 
-# Window definitions
 [[windows]]
 name = "main"
-type = "text"
-# ... window properties
-
-[[windows]]
-name = "room"
-type = "room"
-# ... window properties
-```
-
----
-
-## [layout] Section
-
-Global layout dimensions and defaults.
-
-```toml
-[layout]
-# Terminal grid size
-columns = 120        # Total columns
-rows = 40            # Total rows
-
-# Default window settings
-default_border = true
-default_border_style = "rounded"
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `columns` | integer | `120` | Layout width in columns |
-| `rows` | integer | `40` | Layout height in rows |
-| `default_border` | boolean | `true` | Default border visibility |
-| `default_border_style` | string | `"rounded"` | Default border style |
-
----
-
-## [[windows]] Array
-
-Each `[[windows]]` entry defines a single window.
-
-### Common Properties
-
-These properties apply to all window types:
-
-```toml
-[[windows]]
-# Identity
-name = "main"              # Unique identifier (required)
-type = "text"              # Widget type (required)
-
-# Position (choose one method)
-row = 0                    # Row position
-col = 0                    # Column position
-# OR
-x = 0                      # Pixel X position
-y = 0                      # Pixel Y position
-
-# Size
-width = 80                 # Width in columns
-height = 30                # Height in rows
-# OR percentage
-width = "60%"              # Percentage of parent width
-height = "80%"             # Percentage of parent height
-
-# Visual
-show_border = true         # Show window border
-border_style = "rounded"   # Border style
-border_sides = "all"       # Which sides have borders
-show_title = true          # Show title bar
-title = "Main Window"      # Custom title (default: name)
-transparent_background = false  # Transparent background
-
-# Colors (override theme)
-border_color = "#5588AA"   # Border color
-background_color = "#000000"  # Background color
-text_color = "#CCCCCC"     # Text color
-```
-
-### Position Properties
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `row` | integer | Row position (0 = top) |
-| `col` | integer | Column position (0 = left) |
-| `x` | integer | Pixel X position |
-| `y` | integer | Pixel Y position |
-
-**Note**: Use `row`/`col` for grid-based layouts, `x`/`y` for pixel-precise positioning.
-
-### Size Properties
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `width` | integer or string | Width in columns or percentage |
-| `height` | integer or string | Height in rows or percentage |
-
-**Percentage sizing:**
-```toml
-width = "50%"    # 50% of layout width
-height = "100%"  # Full layout height
-```
-
-### Border Properties
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `show_border` | boolean | `true` | Show border |
-| `border_style` | string | `"rounded"` | Border style |
-| `border_sides` | string | `"all"` | Which sides |
-| `border_color` | string | theme | Border color |
-
-**Border sides:**
-- `"all"` - All four sides
-- `"none"` - No borders
-- `"top"` - Top only
-- `"bottom"` - Bottom only
-- `"left"` - Left only
-- `"right"` - Right only
-- `"top,bottom"` - Specific sides (comma-separated)
-- `"horizontal"` - Top and bottom
-- `"vertical"` - Left and right
-
----
-
-## Window Types
-
-### Text Window
-
-Scrollable text display for game output.
-
-```toml
-[[windows]]
-name = "main"
-type = "text"
+widget_type = "text"
 row = 0
 col = 0
-width = 80
-height = 30
-
-# Text-specific options
-stream = "main"           # Game stream to display
-buffer_size = 2000        # Maximum lines to buffer
-word_wrap = true          # Enable word wrapping
+rows = 37
+cols = 120
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `stream` | string | same as name | Game stream to display |
-| `buffer_size` | integer | `2000` | Max buffered lines |
-| `word_wrap` | boolean | `true` | Enable word wrap |
+## Window Properties
 
-**Common streams:** `main`, `speech`, `thoughts`, `combat`, `death`, `logons`, `familiar`, `group`
+### Required
 
-### Tabbed Text Window
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Unique identifier |
+| `widget_type` | string | Widget type (see [Widgets](../widgets/README.md)) |
+| `row` | integer | Top row position (0 = top) |
+| `col` | integer | Left column position (0 = left) |
+| `rows` | integer | Height in rows |
+| `cols` | integer | Width in columns |
 
-Multiple streams in tabbed interface.
+### Optional
 
-```toml
-[[windows]]
-name = "channels"
-type = "tabbedtext"
-row = 0
-col = 80
-width = 40
-height = 30
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `visible` | bool | `true` | Show window |
+| `show_border` | bool | `true` | Draw border |
+| `border_style` | string | `"single"` | `single`, `double`, `rounded`, `thick` |
+| `border_color` | string | `"#808080"` | Border color |
+| `border_sides` | string | `"all"` | Which sides: `all`, `none`, `top`, `bottom`, `left`, `right`, or combinations |
+| `title` | string | - | Custom title |
+| `show_title` | bool | `true` | Show title in border |
+| `buffer_size` | integer | 1000 | Lines to keep (text windows) |
+| `background_color` | string | - | Background color |
+| `text_color` | string | - | Default text color |
+| `transparent_background` | bool | `false` | See-through background |
 
-# Tab configuration
-tabs = ["speech", "thoughts", "combat"]
-default_tab = "speech"
-show_tab_bar = true
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `tabs` | array | `[]` | List of stream names |
-| `default_tab` | string | first tab | Initially active tab |
-| `show_tab_bar` | boolean | `true` | Show tab headers |
-
-### Command Input
-
-Text input field for commands.
-
-```toml
-[[windows]]
-name = "input"
-type = "command_input"
-row = 38
-col = 0
-width = 120
-height = 2
-
-# Input-specific options
-prompt = "> "
-history = true
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `prompt` | string | `"> "` | Input prompt |
-| `history` | boolean | `true` | Enable command history |
-
-### Progress Bar
-
-Displays a value as a filled bar.
-
-```toml
-[[windows]]
-name = "health"
-type = "progress"
-row = 0
-col = 80
-width = 20
-height = 1
-
-# Progress-specific options
-stat = "health"           # Stat to track
-show_value = true         # Show "425/500"
-show_percentage = false   # Show "85%"
-bar_color = "#00FF00"     # Bar fill color
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `stat` | string | required | Stat ID (`health`, `mana`, etc.) |
-| `show_value` | boolean | `true` | Show numeric value |
-| `show_percentage` | boolean | `false` | Show percentage |
-| `bar_color` | string | theme | Bar fill color |
-
-**Stat IDs:** `health`, `mana`, `spirit`, `stamina`, `encumbrance`
-
-### Countdown
-
-Countdown timer display.
-
-```toml
-[[windows]]
-name = "roundtime"
-type = "countdown"
-row = 2
-col = 80
-width = 20
-height = 1
-
-# Countdown-specific options
-countdown_type = "roundtime"  # "roundtime" or "casttime"
-show_seconds = true
-icon = "⏱"
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `countdown_type` | string | required | `roundtime` or `casttime` |
-| `show_seconds` | boolean | `true` | Show remaining seconds |
-| `icon` | string | `""` | Icon to display |
-
-### Compass
-
-Directional compass display.
+### Size Constraints
 
 ```toml
 [[windows]]
 name = "compass"
-type = "compass"
-row = 5
-col = 100
-width = 10
-height = 5
-
-# Compass-specific options
-style = "graphical"       # "graphical" or "text"
-show_labels = true        # Show N/S/E/W labels
+widget_type = "compass"
+min_rows = 3
+max_rows = 5
+min_cols = 7
+max_cols = 15
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `style` | string | `"graphical"` | Display style |
-| `show_labels` | boolean | `true` | Show direction labels |
+## Widget-Specific Properties
 
-### Hand
-
-Left/right hand or spell display.
+### Text Windows
 
 ```toml
 [[windows]]
-name = "right_hand"
-type = "hand"
-row = 10
-col = 100
-width = 15
-height = 1
-
-# Hand-specific options
-hand_type = "right"       # "left", "right", or "spell"
-icon = "🤚"
+name = "main"
+widget_type = "text"
+streams = ["main"]              # Streams to display
+buffer_size = 10000
+compact = false                 # Remove blank lines
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `hand_type` | string | required | `left`, `right`, or `spell` |
-| `icon` | string | `""` | Icon to display |
-
-### Indicator
-
-Status indicator widget.
+### Tabbed Text
 
 ```toml
 [[windows]]
-name = "status"
-type = "indicator"
-row = 12
-col = 100
-width = 20
-height = 1
+name = "channels"
+widget_type = "tabbedtext"
+buffer_size = 5000
 
-# Indicator-specific options
-indicators = ["stunned", "hidden", "poisoned"]
-style = "icons"           # "icons" or "text"
+[[windows.tabs]]
+name = "Speech"
+streams = ["speech"]
+show_timestamps = true
+
+[[windows.tabs]]
+name = "Thoughts"
+streams = ["thoughts"]
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `indicators` | array | all | Which indicators to show |
-| `style` | string | `"icons"` | Display style |
+### Progress Bars
 
-**Indicator IDs:** `stunned`, `hidden`, `webbed`, `poisoned`, `diseased`, `bleeding`, `prone`, `kneeling`, `sitting`
+```toml
+[[windows]]
+name = "health"
+widget_type = "progress"
+stat = "health"                 # health, mana, stamina, spirit, encumbrance
+bar_color = "#00FF00"
+show_percentage = true
+```
+
+### Countdowns
+
+```toml
+[[windows]]
+name = "roundtime"
+widget_type = "countdown"
+id = "roundtime"                # roundtime, casttime, stuntime
+```
 
 ### Room Window
 
-Room description display.
-
 ```toml
 [[windows]]
 name = "room"
-type = "room"
-row = 0
-col = 80
-width = 40
-height = 10
-
-# Room-specific options
-show_title = true         # Show room name
-show_description = true   # Show room desc
-show_exits = true         # Show obvious exits
-show_objects = true       # Show items/creatures
-show_players = true       # Show other players
+widget_type = "room"
+show_desc = true
+show_objs = true
+show_players = true
+show_exits = true
+show_name = true
 ```
 
-### Injury Doll
-
-Body injury display.
+## Example Layout
 
 ```toml
+terminal_width = 160
+terminal_height = 50
+
+# Main game text - left side
 [[windows]]
-name = "injuries"
-type = "injury_doll"
-row = 15
+name = "main"
+widget_type = "text"
+streams = ["main"]
+row = 0
+col = 0
+rows = 45
+cols = 100
+buffer_size = 10000
+
+# Channels - right side
+[[windows]]
+name = "channels"
+widget_type = "tabbedtext"
+row = 0
 col = 100
-width = 15
-height = 10
+rows = 30
+cols = 60
+buffer_size = 2000
 
-# Injury-specific options
-show_labels = true
-compact = false
-```
+[[windows.tabs]]
+name = "Speech"
+streams = ["speech"]
 
-### Performance Monitor
+[[windows.tabs]]
+name = "Thoughts"
+streams = ["thoughts"]
 
-Performance metrics display.
-
-```toml
+# Status bars
 [[windows]]
-name = "performance"
-type = "performance"
-row = 0
-col = 0
-width = 30
-height = 15
-
-# Which metrics to show
-show_fps = true
-show_frame_times = true
-show_render_times = true
-show_net = true
-show_parse = true
-show_memory = true
-show_lines = true
-show_uptime = true
-```
-
----
-
-## Layout Examples
-
-### Basic Two-Column Layout
-
-```toml
-[layout]
-columns = 120
-rows = 40
-
-[[windows]]
-name = "main"
-type = "text"
-row = 0
-col = 0
-width = 80
-height = 38
-
-[[windows]]
-name = "room"
-type = "room"
-row = 0
-col = 80
-width = 40
-height = 15
-
-[[windows]]
-name = "vitals"
-type = "progress"
+name = "health"
+widget_type = "progress"
 stat = "health"
-row = 15
-col = 80
-width = 40
-height = 1
+row = 30
+col = 100
+rows = 1
+cols = 60
 
+# Command input - bottom
 [[windows]]
-name = "input"
-type = "command_input"
-row = 38
+name = "command_input"
+widget_type = "command_input"
+row = 47
 col = 0
-width = 120
-height = 2
+rows = 3
+cols = 160
 ```
 
-### Hunting Layout
+## Hidden Windows
 
-See [Hunting Setup Tutorial](../tutorials/hunting-setup.md) for a complete example.
-
-### Minimal Layout
+Set `visible = false` to define windows that can be shown later via the menu:
 
 ```toml
-[layout]
-columns = 80
-rows = 24
-
 [[windows]]
-name = "main"
-type = "text"
-row = 0
-col = 0
-width = 80
-height = 22
-show_border = false
-
-[[windows]]
-name = "input"
-type = "command_input"
-row = 22
-col = 0
-width = 80
-height = 2
-show_border = false
+name = "society"
+widget_type = "text"
+streams = ["society"]
+visible = false
+# ... position and size still required
 ```
 
----
-
-## See Also
-
-- [Creating Layouts](../customization/creating-layouts.md) - Layout design guide
-- [Widget Reference](../widgets/README.md) - Detailed widget documentation
-- [Tutorials](../tutorials/README.md) - Complete layout examples
+Show via: Menu → Windows → Add Window → Text Windows → Society

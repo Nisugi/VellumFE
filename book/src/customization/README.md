@@ -1,169 +1,53 @@
-# Customization Overview
+# Customization
 
-VellumFE is highly customizable, allowing you to tailor every aspect of your gameplay experience.
+Create your perfect interface with custom layouts, highlights, keybinds, and sounds.
 
-## Customization Areas
+## Topics
 
-VellumFE can be customized in these areas:
+- [Creating Layouts](./layouts.md) - Design custom window arrangements
+- [Highlight Patterns](./highlights.md) - Color and style game text
+- [Keybind Actions](./keybinds.md) - Custom keyboard shortcuts
+- [Sound Alerts](./sounds.md) - Audio notifications for game events
 
-| Area | Purpose | Configuration |
-|------|---------|---------------|
-| **Layouts** | Window arrangement | `layout.toml` |
-| **Themes** | Colors and styling | `colors.toml` |
-| **Highlights** | Text pattern matching | `highlights.toml` |
-| **Keybinds** | Keyboard shortcuts | `keybinds.toml` |
-| **Sounds** | Audio alerts | Per-highlight |
-| **TTS** | Text-to-speech | `config.toml` |
+## Quick Start
 
-## Quick Customization Commands
+### Custom Layout
 
-| Command | Opens |
-|---------|-------|
-| `.layout` | Layout editor |
-| `.highlights` | Highlight browser |
-| `.keybinds` | Keybind browser |
-| `.colors` | Color palette browser |
-| `.themes` | Theme browser |
-| `.window <name>` | Window editor |
+1. Press F1 → Windows → Add Window
+2. Position and resize windows
+3. Press Ctrl+S to save
 
-## Customization Guides
+### Add Highlights
 
-This section covers:
-
-- [Creating Layouts](./creating-layouts.md) - Design your window arrangement
-- [Creating Themes](./creating-themes.md) - Customize colors and styling
-- [Highlight Patterns](./highlight-patterns.md) - Advanced text matching
-- [Keybind Actions](./keybind-actions.md) - All available actions
-- [Sound Alerts](./sound-alerts.md) - Audio notifications
-- [TTS Setup](./tts-setup.md) - Text-to-speech configuration
-
-## Per-Character Customization
-
-Each character can have unique settings:
-
-```
-~/.vellum-fe/
-├── config.toml              # Global defaults
-├── layout.toml              # Default layout
-├── colors.toml              # Default colors
-├── highlights.toml          # Default highlights
-├── keybinds.toml            # Default keybinds
-└── characters/
-    └── MyCharacter/
-        ├── layout.toml      # Character-specific layout
-        ├── colors.toml      # Character-specific colors
-        ├── highlights.toml  # Character-specific highlights
-        └── keybinds.toml    # Character-specific keybinds
-```
-
-### Configuration Loading Order
-
-1. Character-specific file (if exists)
-2. Global file (fallback)
-3. Embedded defaults (final fallback)
-
-### Example: Profession-Based Layouts
-
-Create different layouts for different professions:
-
-```
-~/.vellum-fe/characters/
-├── Warrior/
-│   └── layout.toml    # Combat-focused layout
-├── Empath/
-│   └── layout.toml    # Healing-focused layout
-└── Wizard/
-    └── layout.toml    # Spell-focused layout
-```
-
-## Hot-Reloading
-
-Many settings can be reloaded without restarting:
-
-| Command | Reloads |
-|---------|---------|
-| `.reload colors` | Color configuration |
-| `.reload highlights` | Highlight patterns |
-| `.reload keybinds` | Keyboard shortcuts |
-| `.reload layout` | Window layout |
-| `.reload config` | All configuration |
-
-## Backup Your Customizations
-
-Before major changes:
-
-```bash
-# Backup all configuration
-cp -r ~/.vellum-fe ~/.vellum-fe-backup
-
-# Backup specific file
-cp ~/.vellum-fe/layout.toml ~/.vellum-fe/layout.toml.bak
-```
-
-## Sharing Customizations
-
-Share your configurations with others:
-
-1. Export relevant `.toml` files
-2. Share via GitHub Gist, Discord, etc.
-3. Others can copy to their `~/.vellum-fe/` directory
-
-### Popular Layout Packs
-
-The VellumFE community shares layout packs:
-- Hunting layouts
-- Merchant layouts
-- Roleplay layouts
-- Accessibility layouts
-
-## Customization Tips
-
-### Start Simple
-
-Begin with default settings and customize incrementally:
-
-1. Play with defaults for a few sessions
-2. Identify pain points
-3. Make one change at a time
-4. Test each change before moving on
-
-### Use the Editors
-
-The built-in editors are often easier than editing files:
-
-```
-.layout          # Visual layout editor
-.highlights      # Browse and edit highlights
-.keybinds        # Browse and edit keybinds
-.window main     # Edit main window properties
-```
-
-### Keep Notes
-
-Document your customizations:
+Edit `~/.vellum-fe/highlights.toml`:
 
 ```toml
-# In any .toml file, add comments:
-
-# Combat creature highlighting
-# Red for dangerous, orange for normal
-[creature_dangerous]
-pattern = "(?i)\\b(dragon|lich|demon)\\b"
-fg = "#FF0000"
+[[highlights]]
+name = "death"
+pattern = "appears dead"
+foreground = "#00FF00"
+bold = true
+sound = "kill.wav"
 ```
 
-### Test in Safe Areas
+### Custom Keybinds
 
-Test new configurations in safe game areas before combat:
+Edit `~/.vellum-fe/keybinds.toml`:
 
-1. Make changes
-2. Reload: `.reload highlights`
-3. Test with game output
-4. Adjust as needed
+```toml
+[keybinds]
+"f2" = { command = "stance offensive" }
+"f3" = { command = "stance defensive" }
+```
 
-## See Also
+### Sound Alerts
 
-- [Configuration Files](../configuration/README.md) - File reference
-- [Widgets Reference](../widgets/README.md) - Widget options
-- [Tutorials](../tutorials/README.md) - Step-by-step guides
+1. Place `.wav` files in `~/.vellum-fe/sounds/`
+2. Reference in highlights:
 
+```toml
+[[highlights]]
+name = "whisper"
+pattern = "whispers to you"
+sound = "whisper.wav"
+```
