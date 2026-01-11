@@ -50,6 +50,7 @@ mod spells_window;
 mod tabbed_text_window;
 mod title_position;
 mod targets;
+mod items;
 mod experience;
 mod gs4_experience;
 mod encumbrance;

@@ -691,6 +691,7 @@ impl AppCore {
             crate::data::WidgetType::Quickbar => "quickbar",
             crate::data::WidgetType::MiniVitals => "minivitals",
             crate::data::WidgetType::Betrayer => "betrayer",
+            crate::data::WidgetType::Items => "items",
         };
         focusable.contains(kind)
     }
@@ -971,6 +972,7 @@ impl AppCore {
                 }
                 WidgetType::Targets => WindowContent::Targets,
                 WidgetType::Players => WindowContent::Players,
+                WidgetType::Items => WindowContent::Items,
                 WidgetType::Container => {
                     // Get container_title from window def if available
                     let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
@@ -1264,6 +1266,7 @@ impl AppCore {
             }
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
+            WidgetType::Items => WindowContent::Items,
             WidgetType::Container => {
                 // Get container_title from window def if available
                 let container_title = if let crate::config::WindowDef::Container { data, .. } = window_def {
@@ -2396,6 +2399,7 @@ impl AppCore {
             }),
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
+            WidgetType::Items => WindowContent::Items,
             WidgetType::Container => WindowContent::Container {
                 container_title: String::new(),
             },

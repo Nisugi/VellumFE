@@ -95,6 +95,11 @@ pub struct TextWindow {
     // Stream name for current line being built (for stream-filtered highlights)
     current_line_stream: String,
     wordwrap: bool,
+    // Selection freeze: when true, new lines queue in pending_* instead of main buffer
+    // This prevents selection indices from drifting when new content arrives
+    frozen_for_selection: bool,
+    pending_logical_lines: VecDeque<LogicalLine>,
+    pending_wrapped_lines: VecDeque<WrappedLine>,
 }
 
 impl Clone for TextWindow {
@@ -129,6 +134,9 @@ impl Clone for TextWindow {
             timestamp_position: self.timestamp_position,
             current_line_stream: self.current_line_stream.clone(),
             wordwrap: self.wordwrap,
+            frozen_for_selection: self.frozen_for_selection,
+            pending_logical_lines: self.pending_logical_lines.clone(),
+            pending_wrapped_lines: self.pending_wrapped_lines.clone(),
         }
     }
 }
@@ -164,6 +172,9 @@ impl TextWindow {
             links_enabled: true,           // Links enabled by default
             current_line_stream: String::new(), // No stream set yet
             wordwrap: true,
+            frozen_for_selection: false,   // Not frozen by default
+            pending_logical_lines: VecDeque::new(),
+            pending_wrapped_lines: VecDeque::new(),
         }
     }
 
@@ -226,6 +237,80 @@ impl TextWindow {
 
     pub fn set_title_position(&mut self, position: TitlePosition) {
         self.title_position = position;
+    }
+
+    // ========== Selection Freeze API ==========
+    // When a user starts selecting text while scrolled back, freeze the buffer
+    // to prevent new lines from shifting the selection indices.
+
+    /// Freeze the buffer to prevent new lines from shifting selection indices.
+    /// New content will queue in pending buffers until unfreeze is called.
+    pub fn freeze_for_selection(&mut self) {
+        if !self.frozen_for_selection {
+            self.frozen_for_selection = true;
+            tracing::debug!("TextWindow frozen for selection");
+        }
+    }
+
+    /// Unfreeze the buffer and apply all pending lines.
+    /// Call this when selection is complete (copy finished or selection cancelled).
+    pub fn unfreeze_and_apply_pending(&mut self) {
+        if !self.frozen_for_selection {
+            return;
+        }
+
+        self.frozen_for_selection = false;
+
+        // Apply pending logical lines
+        let pending_logical_count = self.pending_logical_lines.len();
+        let pending_wrapped_count = self.pending_wrapped_lines.len();
+
+        for logical_line in self.pending_logical_lines.drain(..) {
+            self.logical_lines.push_back(logical_line);
+
+            // Handle buffer overflow for logical lines
+            if self.logical_lines.len() > self.max_lines {
+                if let Some(old_line) = self.logical_lines.pop_front() {
+                    let removed_count = old_line.wrapped_count;
+
+                    // Remove corresponding wrapped lines from front
+                    for _ in 0..removed_count {
+                        self.wrapped_lines.pop_front();
+                    }
+
+                    // Adjust scroll_position to maintain view on same content
+                    if let Some(pos) = self.scroll_position {
+                        if pos < removed_count {
+                            self.scroll_position = None;
+                            self.scroll_offset = 0;
+                        } else {
+                            self.scroll_position = Some(pos - removed_count);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply pending wrapped lines
+        for wrapped_line in self.pending_wrapped_lines.drain(..) {
+            self.wrapped_lines.push_back(wrapped_line);
+        }
+
+        tracing::debug!(
+            "TextWindow unfrozen: applied {} logical lines, {} wrapped lines",
+            pending_logical_count,
+            pending_wrapped_count
+        );
+    }
+
+    /// Check if the buffer is currently frozen for selection.
+    pub fn is_frozen_for_selection(&self) -> bool {
+        self.frozen_for_selection
+    }
+
+    /// Check if the window is scrolled back (not following live content).
+    pub fn is_scrolled_back(&self) -> bool {
+        self.scroll_position.is_some()
     }
 
     pub fn set_show_timestamps(&mut self, show: bool) {
@@ -368,6 +453,19 @@ impl TextWindow {
             spans: self.current_line_spans.clone(),
             wrapped_count,
         };
+
+        // If frozen for selection, queue lines in pending buffers instead of main buffers.
+        // This prevents selection indices from drifting when new content arrives.
+        if self.frozen_for_selection {
+            self.pending_logical_lines.push_back(logical_line);
+            for line in wrapped {
+                self.pending_wrapped_lines.push_back(line);
+            }
+            self.current_line_spans.clear();
+            return;
+        }
+
+        // Normal path: add to main buffers
         self.logical_lines.push_back(logical_line);
 
         // Remove oldest logical line AND its wrapped lines if we exceed buffer

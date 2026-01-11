@@ -35,6 +35,8 @@ pub struct WidgetManager {
     pub targets_widgets: HashMap<String, super::targets::Targets>,
     /// Cache of Players widgets per window name
     pub players_widgets: HashMap<String, super::players::Players>,
+    /// Cache of Items widgets per window name (room objects, non-creatures)
+    pub items_widgets: HashMap<String, super::items::Items>,
     /// Cache of ContainerWindow widgets per window name
     pub container_widgets: HashMap<String, super::container_window::ContainerWindow>,
     /// Cache of Dashboard widgets per window name
@@ -83,6 +85,7 @@ impl WidgetManager {
             indicator_widgets: HashMap::new(),
             targets_widgets: HashMap::new(),
             players_widgets: HashMap::new(),
+            items_widgets: HashMap::new(),
             container_widgets: HashMap::new(),
             dashboard_widgets: HashMap::new(),
             tabbed_text_windows: HashMap::new(),
@@ -115,6 +118,7 @@ impl WidgetManager {
         self.indicator_widgets.clear();
         self.targets_widgets.clear();
         self.players_widgets.clear();
+        self.items_widgets.clear();
         self.container_widgets.clear();
         self.dashboard_widgets.clear();
         self.tabbed_text_windows.clear();
@@ -129,6 +133,39 @@ impl WidgetManager {
         self.minivitals_widgets.clear();
         self.betrayer_widgets.clear();
         self.last_synced_generation.clear();
+    }
+
+    /// Remove a widget from ALL type-specific caches by name.
+    /// Call this when a widget's type changes to ensure old cached widget is cleaned up.
+    pub fn remove_widget_from_all_caches(&mut self, name: &str) {
+        self.text_windows.remove(name);
+        self.command_inputs.remove(name);
+        self.room_windows.remove(name);
+        self.inventory_windows.remove(name);
+        self.spells_windows.remove(name);
+        self.progress_bars.remove(name);
+        self.countdowns.remove(name);
+        self.active_effects_windows.remove(name);
+        self.hand_widgets.remove(name);
+        self.spacer_widgets.remove(name);
+        self.indicator_widgets.remove(name);
+        self.targets_widgets.remove(name);
+        self.players_widgets.remove(name);
+        self.items_widgets.remove(name);
+        self.container_widgets.remove(name);
+        self.dashboard_widgets.remove(name);
+        self.tabbed_text_windows.remove(name);
+        self.compass_widgets.remove(name);
+        self.injury_doll_widgets.remove(name);
+        self.performance_widgets.remove(name);
+        self.perception_windows.remove(name);
+        self.experience_widgets.remove(name);
+        self.gs4_experience_widgets.remove(name);
+        self.encumbrance_widgets.remove(name);
+        self.quickbar_widgets.remove(name);
+        self.minivitals_widgets.remove(name);
+        self.betrayer_widgets.remove(name);
+        self.last_synced_generation.remove(name);
     }
 }
 

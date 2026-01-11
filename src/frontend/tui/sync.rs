@@ -1125,6 +1125,12 @@ impl TuiFrontend {
                         .find_by_title(container_title)
                         .map(|c| c.title.clone())
                         .unwrap_or_else(|| container_title.clone());
+                    tracing::debug!(
+                        "Container sync: creating widget for window '{}' (title='{}', display='{}')",
+                        name,
+                        container_title,
+                        display_title
+                    );
                     let mut widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
@@ -1142,7 +1148,19 @@ impl TuiFrontend {
 
                     // Look up container by title (case-insensitive match)
                     if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
+                        tracing::debug!(
+                            "Container sync: found data for '{}' (id='{}'): {} items",
+                            container_title,
+                            container_data.id,
+                            container_data.items.len()
+                        );
                         widget.update_from_cache(container_data);
+                    } else {
+                        tracing::debug!(
+                            "Container sync: no cache data found for title '{}' (window='{}')",
+                            container_title,
+                            name
+                        );
                     }
 
                     // Apply configuration
@@ -1205,6 +1223,59 @@ impl TuiFrontend {
                         &app_core.game_state.room_players,
                         &app_core.config.target_list,
                     );
+
+                    // Apply configuration (borders, colors, title)
+                    if let Some(window_def) =
+                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                    {
+                        let colors = resolve_window_colors(window_def.base(), theme);
+                        widget.set_border_config(
+                            window_def.base().show_border,
+                            Some(window_def.base().border_style.clone()),
+                            colors.border.clone(),
+                        );
+                        widget.set_border_sides(window_def.base().border_sides.clone());
+                        widget.set_background_color(colors.background.clone());
+                        widget.set_text_color(colors.text.clone());
+                        widget.set_transparent_background(window_def.base().transparent_background);
+
+                        let base_title = window_def
+                            .base()
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| name.clone());
+                        if window_def.base().show_title {
+                            widget.set_title(&base_title);
+                        } else {
+                            widget.set_title("");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sync items widget data from GameState.room_objects
+    pub(crate) fn sync_items_widgets(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        for (name, window) in &app_core.ui_state.windows {
+            if matches!(window.content, crate::data::WindowContent::Items) {
+                // Ensure widget exists
+                if !self.widget_manager.items_widgets.contains_key(name) {
+                    let mut widget = items::Items::new(name);
+                    // Apply highlight patterns for text highlighting
+                    let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                    widget.set_highlights(highlights);
+                    widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
+                    self.widget_manager.items_widgets.insert(name.clone(), widget);
+                }
+
+                // Update widget from GameState.room_objects
+                if let Some(widget) = self.widget_manager.items_widgets.get_mut(name) {
+                    widget.update_from_state(&app_core.game_state.room_objects);
 
                     // Apply configuration (borders, colors, title)
                     if let Some(window_def) =

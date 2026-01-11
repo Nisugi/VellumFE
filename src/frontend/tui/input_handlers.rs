@@ -11,9 +11,37 @@ impl super::TuiFrontend {
     pub(super) fn handle_search_mode_keys(
         &mut self,
         code: crate::frontend::KeyCode,
+        modifiers: crate::frontend::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         use crate::frontend::KeyCode;
+
+        // Handle Ctrl+PageUp/PageDown for cycling through search results
+        if modifiers.ctrl {
+            match code {
+                KeyCode::PageUp => {
+                    let focused_name = app_core.get_focused_window_name();
+                    if self.prev_search_match(&focused_name) {
+                        tracing::debug!("Jumped to previous search match in '{}'", focused_name);
+                    } else {
+                        tracing::debug!("No more search matches in '{}'", focused_name);
+                    }
+                    app_core.needs_render = true;
+                    return Ok(None);
+                }
+                KeyCode::PageDown => {
+                    let focused_name = app_core.get_focused_window_name();
+                    if self.next_search_match(&focused_name) {
+                        tracing::debug!("Jumped to next search match in '{}'", focused_name);
+                    } else {
+                        tracing::debug!("No more search matches in '{}'", focused_name);
+                    }
+                    app_core.needs_render = true;
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        }
 
         match code {
             KeyCode::Enter => {

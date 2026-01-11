@@ -293,6 +293,7 @@ text_color = "-"
 transparent_background = false
 locked = false
 min_rows = 2
+max_rows = 5
 min_cols = 6
 visible = true
 content_align = "bottom-center"
@@ -388,9 +389,7 @@ title_position = "top-left"
 background_color = "-"
 text_color = "#FF0000"
 transparent_background = false
-locked = false
-visible = true
-id = "roundtime"
+locked = false\r\nmin_rows = 2\r\nmax_rows = 2\r\nvisible = true\r\nid = "roundtime"
 icon = ""
 color = "#FF0000"
 

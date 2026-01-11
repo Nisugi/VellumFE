@@ -153,6 +153,15 @@ impl TuiFrontend {
         let y = &mouse_event.row;
         let modifiers = &mouse_event.modifiers;
 
+        // Handle injuries popup (any click closes it)
+        if app_core.ui_state.injuries_popup.is_some() {
+            if let MouseEventKind::Down(_) = kind {
+                tracing::debug!("Closing injuries popup via mouse click");
+                app_core.ui_state.injuries_popup = None;
+                return Ok((true, None));
+            }
+        }
+
         // Create stable window index mapping (sorted by window name for consistency)
         let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
         window_names.sort();
@@ -1035,9 +1044,10 @@ impl TuiFrontend {
                 // If in menu mode, handle menu clicks first
                 if app_core.ui_state.input_mode == InputMode::Menu {
                     let mut clicked_item = None;
+                    let (screen_width, screen_height) = self.size();
 
-                    // Check popup menu first (top layer)
-                    if let Some(ref menu) = app_core.ui_state.popup_menu {
+                    // Helper to calculate menu area with screen bounds
+                    let calc_menu_area = |menu: &crate::data::ui_state::PopupMenu| -> (u16, u16, u16, u16) {
                         let pos = menu.get_position();
                         let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
                         let menu_width = menu
@@ -1048,16 +1058,57 @@ impl TuiFrontend {
                             .unwrap_or(10)
                             as u16
                             + 4; // +4 for borders and padding
-
-                        let (screen_width, screen_height) = self.size();
                         let max_x = screen_width.saturating_sub(menu_width);
                         let max_y = screen_height.saturating_sub(menu_height);
                         let menu_x = pos.0.min(max_x);
                         let menu_y = pos.1.min(max_y);
-                        let menu_area = (menu_x, menu_y, menu_width, menu_height);
+                        (menu_x, menu_y, menu_width, menu_height)
+                    };
 
-                        if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                            clicked_item = menu.get_items().get(index).cloned();
+                    // Check menus from DEEPEST to SHALLOWEST (deep_submenu first, popup_menu last)
+                    // This ensures clicks on submenus are handled before checking parent menus
+
+                    // Level 4: deep_submenu (deepest)
+                    if clicked_item.is_none() {
+                        if let Some(ref menu) = app_core.ui_state.deep_submenu {
+                            let menu_area = calc_menu_area(menu);
+                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
+                                clicked_item = menu.get_items().get(index).cloned();
+                                tracing::debug!("Click hit deep_submenu item at index {}", index);
+                            }
+                        }
+                    }
+
+                    // Level 3: nested_submenu
+                    if clicked_item.is_none() {
+                        if let Some(ref menu) = app_core.ui_state.nested_submenu {
+                            let menu_area = calc_menu_area(menu);
+                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
+                                clicked_item = menu.get_items().get(index).cloned();
+                                tracing::debug!("Click hit nested_submenu item at index {}", index);
+                            }
+                        }
+                    }
+
+                    // Level 2: submenu
+                    if clicked_item.is_none() {
+                        if let Some(ref menu) = app_core.ui_state.submenu {
+                            let menu_area = calc_menu_area(menu);
+                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
+                                clicked_item = menu.get_items().get(index).cloned();
+                                tracing::debug!("Click hit submenu item at index {}", index);
+                            }
+                        }
+                    }
+
+                    // Level 1: popup_menu (shallowest)
+                    if clicked_item.is_none() {
+                        if let Some(ref menu) = app_core.ui_state.popup_menu {
+                            let menu_area = calc_menu_area(menu);
+                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
+                                clicked_item = menu.get_items().get(index).cloned();
+                                tracing::debug!("Click hit popup_menu item at index {}", index);
+                            }
                         }
                     }
 
@@ -1071,10 +1122,39 @@ impl TuiFrontend {
 
                         // Handle command same way as Enter key
                         if let Some(submenu_name) = command.strip_prefix("menu:") {
-                            // Config menu submenu
+                            // Config menu submenu - build nested submenu
                             tracing::debug!("Clicked config submenu: {}", submenu_name);
-                            app_core.ui_state.popup_menu = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
+
+                            // Build the appropriate submenu items
+                            let items = match submenu_name {
+                                "addwindow" | "widgetpicker" => app_core.build_add_window_menu(),
+                                "editwindow" => app_core.build_edit_window_menu(),
+                                "hidewindow" => app_core.build_hide_window_menu(),
+                                "layouts" => app_core.build_layouts_submenu(),
+                                _ => Vec::new(),
+                            };
+
+                            if !items.is_empty() {
+                                // Get position from existing submenu (if any) or popup_menu
+                                let position = app_core
+                                    .ui_state
+                                    .submenu
+                                    .as_ref()
+                                    .map(|m| m.get_position())
+                                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
+                                    .unwrap_or((40, 12));
+                                let nested_pos = (position.0 + 2, position.1);
+
+                                // Create nested_submenu since we already have submenu
+                                app_core.ui_state.nested_submenu =
+                                    Some(crate::data::ui_state::PopupMenu::new(
+                                        items,
+                                        nested_pos,
+                                    ));
+                                tracing::info!("Opened nested submenu from menu: {}", submenu_name);
+                            } else {
+                                tracing::warn!("No items for menu submenu: {}", submenu_name);
+                            }
                         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
                             // Context menu or .menu submenu
                             // Try build_submenu first (for .menu categories)
@@ -1226,6 +1306,14 @@ impl TuiFrontend {
                 }
 
                 // Mouse down handling (find links, start drags)
+                // Unfreeze any frozen text window before clearing selection
+                if let Some(ref selection) = app_core.ui_state.selection_state {
+                    if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
+                        text_window.unfreeze_and_apply_pending();
+                    } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
+                        tabbed_window.unfreeze_and_apply_pending();
+                    }
+                }
                 app_core.ui_state.selection_state = None;
 
                 let topmost_window = find_topmost_window_at(app_core, *x, *y);
@@ -1493,6 +1581,18 @@ impl TuiFrontend {
                                         col,
                                         window_name.clone(),
                                     ));
+
+                                // Freeze the text window if it's scrolled back
+                                // This prevents new lines from shifting selection indices
+                                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
+                                    if text_window.is_scrolled_back() {
+                                        text_window.freeze_for_selection();
+                                    }
+                                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
+                                    if tabbed_window.is_scrolled_back() {
+                                        tabbed_window.freeze_for_selection();
+                                    }
+                                }
                             }
                         }
                     }
@@ -1687,6 +1787,15 @@ impl TuiFrontend {
                                     break;  // Container window handled
                                 }
 
+                                // Items window: check link first, fallback to drop
+                                if matches!(window.content, crate::data::WindowContent::Items) {
+                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
+                                        drop_target_id = Some(target_link.exist_id);
+                                    }
+                                    // No else - if no link clicked, fall through to "drop" at line ~1782
+                                    break;  // Items window handled
+                                }
+
                                 // Otherwise check if we dropped on a link (non-container windows)
                                 if let Some(target_link) =
                                     self.link_at_position(name, *x, *y, window_rect)
@@ -1876,8 +1985,15 @@ impl TuiFrontend {
                             }
                         }
                     }
-                    // Clear selection
+                    // Clear selection and unfreeze text window
                     if auto_copy {
+                        // Unfreeze the text window before clearing selection
+                        let window_to_unfreeze = selection.window_name.clone();
+                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
+                            text_window.unfreeze_and_apply_pending();
+                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
+                            tabbed_window.unfreeze_and_apply_pending();
+                        }
                         app_core.ui_state.selection_state = None;
                     }
                     app_core.needs_render = true;
@@ -1966,6 +2082,15 @@ impl TuiFrontend {
             modifiers,
             app_core.ui_state.input_mode
         );
+
+        // Handle injuries popup (overlay that closes on Escape or any click outside)
+        if app_core.ui_state.injuries_popup.is_some() {
+            if code == KeyCode::Esc && modifiers == KeyModifiers::NONE {
+                tracing::debug!("Closing injuries popup via Escape");
+                app_core.ui_state.injuries_popup = None;
+                return Ok(None);
+            }
+        }
 
         // LAYER 1 & 2: Priority windows (browsers, forms, editors) - handle ALL keys
         // These modes get first priority and consume most input
@@ -3420,7 +3545,7 @@ impl TuiFrontend {
 
         // Search mode keyboard handling
         if app_core.ui_state.input_mode == InputMode::Search {
-            return self.handle_search_mode_keys(code, app_core);
+            return self.handle_search_mode_keys(code, modifiers, app_core);
         }
 
         // Normal mode: user keybinds + CommandInput fallback
@@ -4495,13 +4620,16 @@ impl TuiFrontend {
                                 .iter_mut()
                                 .find(|w| w.name() == window_def.name())
                             {
+                                // Clear old cached widget before update (handles type changes)
+                                let window_name = window_def.name().to_string();
+                                app_core.ui_state.widgets_to_reset.push(window_name.clone());
+
                                 *existing = window_def.clone();
                                 tracing::info!("Updated window: {}", window_def.name());
                                 app_core.update_window_position(&window_def, width, height);
 
                                 // For TabbedText windows, sync tabs and reset widget cache if structure changed
                                 if matches!(window_def, crate::config::WindowDef::TabbedText { .. }) {
-                                    let window_name = window_def.name().to_string();
                                     if app_core.sync_tabbed_window_tabs(&window_name) {
                                         app_core.ui_state.needs_widget_reset = true;
                                     }

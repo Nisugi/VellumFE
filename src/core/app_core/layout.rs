@@ -213,7 +213,7 @@ impl AppCore {
         for window_def in self.layout.windows.iter().filter(|w| w.base().visible) {
             let base = window_def.base();
             match window_def.widget_type() {
-                "dashboard" | "indicator" => {
+                "indicator" => {
                     static_both.insert(base.name.clone());
                 }
                 "progress"
@@ -1490,10 +1490,7 @@ mod tests {
 
     /// Widget types that should not resize (both dimensions)
     fn is_static_both(widget_type: &str) -> bool {
-        matches!(
-            widget_type,
-            "dashboard" | "indicator"
-        )
+        matches!(widget_type, "indicator")
     }
 
     /// Widget types that should not resize height
@@ -1526,8 +1523,9 @@ mod tests {
     }
 
     #[test]
-    fn test_static_both_dashboard() {
-        assert!(is_static_both("dashboard"));
+    fn test_dashboard_is_scalable() {
+        // Dashboard should scale with terminal resize (not static)
+        assert!(!is_static_both("dashboard"));
     }
 
     #[test]

@@ -74,7 +74,7 @@ impl WidgetCategory {
             "indicator" | "dashboard" => Self::Status,
             "progress" => Self::ProgressBar,
             "text" | "tabbedtext" => Self::TextWindow,
-            "targets" | "players" => Self::Entity,
+            "targets" | "players" | "items" => Self::Entity,
             _ => Self::Other,
         }
     }
@@ -1048,6 +1048,7 @@ fn default_focus_exclude() -> Vec<String> {
         "quickbar".to_string(),
         "targets".to_string(),
         "players".to_string(),
+        "items".to_string(),
         "inventory".to_string(),
         "spells".to_string(),
         "progress".to_string(),
@@ -1440,6 +1441,17 @@ pub struct TargetsWidgetData {
 pub struct PlayersWidgetData {
     #[serde(default = "default_player_entity_id")]
     pub entity_id: String,
+}
+
+/// Items widget specific data (for room objects/items on ground)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemsWidgetData {
+    #[serde(default = "default_items_entity_id")]
+    pub entity_id: String,
+}
+
+fn default_items_entity_id() -> String {
+    "items".to_string()
 }
 
 /// Container widget specific data (for container windows like bags, backpacks)
@@ -1883,6 +1895,14 @@ pub enum WindowDef {
         data: PlayersWidgetData,
     },
 
+    #[serde(rename = "items")]
+    Items {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: ItemsWidgetData,
+    },
+
     /// Container window for displaying contents of bags, backpacks, etc.
     #[serde(rename = "container")]
     Container {
@@ -1990,6 +2010,7 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => &base.name,
             WindowDef::Targets { base, .. } => &base.name,
             WindowDef::Players { base, .. } => &base.name,
+            WindowDef::Items { base, .. } => &base.name,
             WindowDef::Container { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Quickbar { base, .. } => &base.name,
@@ -2022,6 +2043,7 @@ impl WindowDef {
             WindowDef::Performance { .. } => "performance",
             WindowDef::Targets { .. } => "targets",
             WindowDef::Players { .. } => "players",
+            WindowDef::Items { .. } => "items",
             WindowDef::Container { .. } => "container",
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Quickbar { .. } => "quickbar",
@@ -2054,6 +2076,7 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
+            WindowDef::Items { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Quickbar { base, .. } => base,
@@ -2086,6 +2109,7 @@ impl WindowDef {
             WindowDef::Performance { base, .. } => base,
             WindowDef::Targets { base, .. } => base,
             WindowDef::Players { base, .. } => base,
+            WindowDef::Items { base, .. } => base,
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Quickbar { base, .. } => base,
@@ -3636,6 +3660,22 @@ impl Config {
                     entity_id: default_player_entity_id(),
                 },
             }),
+            "items" => Some(WindowDef::Items {
+                base: WindowBase {
+                    name: "items".to_string(),
+                    title: Some("Items".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 10,
+                    cols: 40,
+                    min_rows: Some(4),
+                    min_cols: Some(20),
+                    ..base_defaults.clone()
+                },
+                data: ItemsWidgetData {
+                    entity_id: default_items_entity_id(),
+                },
+            }),
 
             "entity_custom" => Some(WindowDef::Targets {
                 base: WindowBase {
@@ -4690,6 +4730,7 @@ impl Config {
             // Entity
             "targets".to_string(),
             "players".to_string(),
+            "items".to_string(),
             "entity_custom".to_string(),
             // Countdowns
             "roundtime".to_string(),

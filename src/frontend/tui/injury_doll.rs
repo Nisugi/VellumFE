@@ -298,6 +298,124 @@ impl InjuryDoll {
     }
 }
 
+/// Render an injuries popup for viewing another player's injuries
+/// Returns the bounding rect of the popup for click detection
+pub fn render_injuries_popup(
+    popup: &crate::data::InjuriesPopupState,
+    screen: Rect,
+    buf: &mut Buffer,
+    theme: &crate::theme::AppTheme,
+) -> Rect {
+    // Popup dimensions: injury doll needs 8 cols, 6 rows content + border + title
+    // Layout: title bar (1 row) + injury doll (6 rows) + close hint (1 row)
+    let popup_width: u16 = 22; // 8 cols content + 2 border + padding
+    let popup_height: u16 = 10; // 1 title + 6 content + 1 hint + 2 border
+
+    // Center the popup on screen
+    let popup_x = screen.x + (screen.width.saturating_sub(popup_width)) / 2;
+    let popup_y = screen.y + (screen.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the popup area
+    Clear.render(popup_area, buf);
+
+    // Draw border and background - convert theme colors to ratatui colors
+    let bg_color = crossterm_bridge::to_ratatui_color(theme.window_background);
+    let border_color = crossterm_bridge::to_ratatui_color(theme.window_border);
+    let title_color = crossterm_bridge::to_ratatui_color(theme.window_title);
+
+    // Fill background
+    for row in popup_area.y..popup_area.y + popup_area.height {
+        for col in popup_area.x..popup_area.x + popup_area.width {
+            if col < buf.area().width && row < buf.area().height {
+                buf[(col, row)].set_bg(bg_color);
+            }
+        }
+    }
+
+    // Draw border
+    let block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .title(format!(" {}'s Injuries ", popup.player_name))
+        .title_style(Style::default().fg(title_color).add_modifier(ratatui::style::Modifier::BOLD))
+        .style(Style::default().bg(bg_color));
+
+    let inner_area = block.inner(popup_area);
+    block.render(popup_area, buf);
+
+    // Render the injury doll in the inner area
+    let mut doll = InjuryDoll::new("");
+    doll.set_background_color(Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        bg_color.to_string().as_bytes()[0],
+        0,
+        0
+    )));
+
+    // Copy injuries from popup state to doll
+    for (body_part, level) in &popup.injuries {
+        doll.set_injury(body_part.clone(), *level);
+    }
+
+    // Render doll in upper portion, leaving room for close hint
+    let doll_area = Rect::new(
+        inner_area.x,
+        inner_area.y,
+        inner_area.width,
+        inner_area.height.saturating_sub(1),
+    );
+
+    // Center the injury doll content
+    doll.set_content_align(Some("center".to_string()));
+    doll.set_transparent_background(false);
+    if let Some((r, g, b)) = color_to_rgb(bg_color) {
+        doll.set_background_color(Some(format!("#{:02x}{:02x}{:02x}", r, g, b)));
+    }
+    doll.render(doll_area, buf);
+
+    // Render close hint at bottom
+    let hint_y = inner_area.y + inner_area.height.saturating_sub(1);
+    let hint_text = "[Esc to close]";
+    let hint_x = inner_area.x + (inner_area.width.saturating_sub(hint_text.len() as u16)) / 2;
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    for (i, ch) in hint_text.chars().enumerate() {
+        let x = hint_x + i as u16;
+        if x < buf.area().width && hint_y < buf.area().height {
+            buf[(x, hint_y)].set_char(ch);
+            buf[(x, hint_y)].set_style(hint_style);
+        }
+    }
+
+    popup_area
+}
+
+/// Convert ratatui Color to RGB tuple if possible
+fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
+    match color {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Black => Some((0, 0, 0)),
+        Color::White => Some((255, 255, 255)),
+        Color::Red => Some((255, 0, 0)),
+        Color::Green => Some((0, 255, 0)),
+        Color::Blue => Some((0, 0, 255)),
+        Color::Yellow => Some((255, 255, 0)),
+        Color::Magenta => Some((255, 0, 255)),
+        Color::Cyan => Some((0, 255, 255)),
+        Color::Gray => Some((128, 128, 128)),
+        Color::DarkGray => Some((64, 64, 64)),
+        Color::LightRed => Some((255, 128, 128)),
+        Color::LightGreen => Some((128, 255, 128)),
+        Color::LightBlue => Some((128, 128, 255)),
+        Color::LightYellow => Some((255, 255, 128)),
+        Color::LightMagenta => Some((255, 128, 255)),
+        Color::LightCyan => Some((128, 255, 255)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

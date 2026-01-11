@@ -61,6 +61,10 @@ pub struct UiState {
     /// Set true after layout reload to signal frontend to reset widget caches
     pub needs_widget_reset: bool,
 
+    /// List of specific widget names to reset (used when widget type changes)
+    /// More targeted than needs_widget_reset which clears ALL caches
+    pub widgets_to_reset: Vec<String>,
+
     /// Container discovery mode - when ON, auto-creates windows for LOOK IN containers
     pub container_discovery_mode: bool,
 
@@ -78,6 +82,9 @@ pub struct UiState {
 
     /// Active dialog popup (dynamic openDialog payloads)
     pub active_dialog: Option<DialogState>,
+
+    /// Active injuries popup (viewing another player's injuries)
+    pub injuries_popup: Option<InjuriesPopupState>,
 
     /// Dialog drag state for move/resize operations
     pub dialog_drag: Option<DialogDragState>,
@@ -246,6 +253,47 @@ pub struct DialogProgressBar {
     pub text: String, // Display text (e.g., "defensive (100%)")
 }
 
+/// Injuries popup state for viewing another player's injuries
+#[derive(Clone, Debug)]
+pub struct InjuriesPopupState {
+    /// Dialog ID (e.g., "injuries-10154507")
+    pub dialog_id: String,
+    /// Player name from dialog title (e.g., "Zoleta")
+    pub player_name: String,
+    /// Map of body part to injury level (0=none, 1-3=injury, 4-6=scar)
+    pub injuries: std::collections::HashMap<String, u8>,
+}
+
+impl InjuriesPopupState {
+    pub fn new(dialog_id: String, player_name: String) -> Self {
+        Self {
+            dialog_id,
+            player_name,
+            injuries: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set injury level for a body part from image name
+    pub fn set_injury_from_name(&mut self, body_part: &str, name: &str) {
+        // Parse name like "Injury1", "Injury2", "Injury3", "Scar1", "Scar2", "Scar3"
+        let level = match name {
+            "Injury1" => 1,
+            "Injury2" => 2,
+            "Injury3" => 3,
+            "Scar1" => 4,
+            "Scar2" => 5,
+            "Scar3" => 6,
+            _ => 0, // Clear or unknown
+        };
+        self.injuries.insert(body_part.to_string(), level);
+    }
+
+    /// Get injury level for a body part (0 if not set)
+    pub fn get_injury(&self, body_part: &str) -> u8 {
+        self.injuries.get(body_part).copied().unwrap_or(0)
+    }
+}
+
 /// Popup menu state
 #[derive(Clone, Debug)]
 pub struct PopupMenu {
@@ -282,12 +330,14 @@ impl UiState {
             link_drag_state: None,
             pending_link_click: None,
             needs_widget_reset: false,
+            widgets_to_reset: Vec::new(),
             container_discovery_mode: false,
             ephemeral_windows: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
             active_dialog: None,
+            injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
         }

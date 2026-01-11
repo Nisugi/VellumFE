@@ -97,6 +97,10 @@ pub struct GameState {
     /// Primary source for targets widget
     pub room_creatures: Vec<Creature>,
 
+    /// Objects (non-creatures) in room (parsed from room objs component)
+    /// Primary source for items widget
+    pub room_objects: Vec<RoomObject>,
+
     /// Players currently in room (parsed from room players component)
     pub room_players: Vec<Player>,
 
@@ -308,6 +312,18 @@ pub struct Player {
     pub primary_status: Option<String>,
     /// Secondary status (appended, e.g., "prone" from "Player (prone)")
     pub secondary_status: Option<String>,
+}
+
+/// A room object (non-creature item) from room objs component
+/// These are items on the ground that can be picked up, examined, etc.
+#[derive(Clone, Debug)]
+pub struct RoomObject {
+    /// Object display name (e.g., "a silver ring")
+    pub name: String,
+    /// Object noun (e.g., "ring")
+    pub noun: Option<String>,
+    /// Object ID from exist attribute (e.g., "123456789")
+    pub id: String,
 }
 
 /// Container cache for inventory containers (bags, backpacks, etc.)
@@ -658,6 +674,7 @@ impl GameState {
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),
             room_creatures: Vec::new(),
+            room_objects: Vec::new(),
             room_players: Vec::new(),
             container_cache: ContainerCache::default(),
             dr_experience: DRExperienceState::default(),

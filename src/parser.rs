@@ -155,6 +155,12 @@ pub enum ParsedElement {
         id: String,   // Body part: "head", "leftArm", etc.
         name: String, // Injury level: "Injury1", "Injury2", "Injury3", "Scar1", "Scar2", "Scar3"
     },
+    /// Injury data for another player's injuries popup dialog
+    InjuryPopupData {
+        popup_id: String,                               // Dialog ID: "injuries-10154507"
+        injuries: Vec<(String, String)>,                // Vec of (body_part, injury_level)
+        clear: bool,                                    // true if clearing injuries
+    },
     StatusIndicator {
         id: String,   // Status type: "poisoned", "diseased", "bleeding", "stunned"
         active: bool, // true = active, false = clear
@@ -381,6 +387,19 @@ impl XmlParser {
     }
 
     pub fn parse_line(&mut self, line: &str) -> Vec<ParsedElement> {
+        // Filter out GSL (GemStone Language) protocol tags from Lich proxy
+        // GSL tags start with \x1C (File Separator, ASCII 28) followed by "GS" + letter + data
+        // Examples: \x1CGSB (char info), \x1CGSj (compass), \x1CGSg (stance), \x1CGSP (prompt)
+        // These are internal protocol messages not meant for display
+
+        // Check if line is purely a GSL tag - if so, skip it entirely (no blank line)
+        if Self::is_gsl_tag_line(line) {
+            tracing::debug!("[GSL] Skipping GSL tag line: '{}'", line);
+            return vec![];
+        }
+
+        let line = Self::strip_gsl_tags(line);
+
         // Preserve intentional blank lines from the server output.
         // Without this, empty lines would be dropped and formatting that relies on vertical spacing
         // would collapse.
@@ -390,7 +409,7 @@ impl XmlParser {
 
         let mut elements = Vec::new();
         let mut text_buffer = String::new();
-        let mut remaining = line;
+        let mut remaining = line.as_str();
 
         while !remaining.is_empty() {
             // Check for paired tags first (manually check for each type)
@@ -854,6 +873,9 @@ impl XmlParser {
 
     fn handle_compass(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <compass><dir value="n"/><dir value="e"/>...</compass>
+        // Debug: Log the full compass tag to check for unexpected content
+        tracing::debug!("[COMPASS] Processing compass tag: '{}'", tag);
+
         // Extract all direction values
         static DIR_REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r#"<dir value="([^"]+)""#).expect("valid dir regex"));
@@ -861,6 +883,8 @@ impl XmlParser {
             .captures_iter(tag)
             .map(|cap| cap[1].to_string())
             .collect();
+
+        tracing::debug!("[COMPASS] Extracted directions: {:?}", directions);
         elements.push(ParsedElement::Compass { directions });
     }
 
@@ -1039,6 +1063,56 @@ impl XmlParser {
                     }
                 }
                 // tracing::debug!("Parsed {} injury image(s)", count);
+                return;
+            }
+
+            // Handle injuries popup dialogData for OTHER players (id="injuries-PLAYERID")
+            // This shows another player's injuries when you examine them
+            if id.starts_with("injuries-") {
+                tracing::debug!("Parser found dialogData for injuries popup: {}", id);
+
+                // Check for clear='t' attribute
+                let clear = Self::extract_attribute(tag_head, "clear")
+                    .map(|v| v == "t")
+                    .unwrap_or(false);
+
+                if clear {
+                    // Emit clear for popup
+                    elements.push(ParsedElement::InjuryPopupData {
+                        popup_id: id.clone(),
+                        injuries: vec![],
+                        clear: true,
+                    });
+                    return;
+                }
+
+                // Extract all <image> tags for injuries
+                let mut injuries = Vec::new();
+                let mut remaining = tag;
+                while let Some(img_start) = remaining.find("<image ") {
+                    if let Some(img_end) = remaining[img_start..].find("/>") {
+                        let img_tag = &remaining[img_start..img_start + img_end + 2];
+
+                        // Extract id (body part) and name (injury level) attributes
+                        if let Some(body_id) = Self::extract_attribute(img_tag, "id") {
+                            if let Some(name) = Self::extract_attribute(img_tag, "name") {
+                                injuries.push((body_id, name));
+                            }
+                        }
+
+                        remaining = &remaining[img_start + img_end + 2..];
+                    } else {
+                        break;
+                    }
+                }
+
+                if !injuries.is_empty() || clear {
+                    elements.push(ParsedElement::InjuryPopupData {
+                        popup_id: id.clone(),
+                        injuries,
+                        clear: false,
+                    });
+                }
                 return;
             }
 
@@ -2210,6 +2284,73 @@ impl XmlParser {
         events
     }
 
+    /// Check if a line is purely a GSL protocol tag (should be skipped entirely)
+    ///
+    /// Returns true for lines like "GSjBCDFGH" (compass) that are GSL control messages
+    fn is_gsl_tag_line(line: &str) -> bool {
+        // Pattern: "GS" followed by a lowercase letter
+        if line.starts_with("GS") && line.len() >= 3 {
+            let third_char = line.chars().nth(2).unwrap_or(' ');
+            return third_char.is_ascii_lowercase();
+        }
+        // Also check for lines starting with \x1C (control char prefix)
+        if line.starts_with('\x1C') {
+            return true;
+        }
+        false
+    }
+
+    /// Strip GSL (GemStone Language) protocol tags sent by Lich proxy
+    ///
+    /// Lich sends GSL control sequences for compass, status indicators, etc.
+    /// These start with \x1C (File Separator) followed by "GS" + letter + data,
+    /// OR appear as bare "GSx..." lines (where x is a letter like 'j' for compass)
+    ///
+    /// Examples:
+    /// - "GSjBCDFGH" = compass directions (j=junctions, BCDFGH=encoded exits)
+    /// - "GSg0000000050" = stance value
+    /// - "GSP..." = prompt indicators
+    /// - "\x1CGSB..." = character info with control char prefix
+    fn strip_gsl_tags(line: &str) -> String {
+        // Handle lines that are purely GSL tags (no leading \x1C in logs)
+        // Pattern: "GS" followed by a lowercase letter, then optional data
+        if line.starts_with("GS") && line.len() >= 3 {
+            let third_char = line.chars().nth(2).unwrap_or(' ');
+            if third_char.is_ascii_lowercase() {
+                // This is a GSL tag line - filter it out entirely
+                tracing::debug!("[GSL] Filtering GSL tag: '{}'", line);
+                return String::new();
+            }
+        }
+
+        // Handle embedded GSL tags with \x1C prefix
+        // Strip anything from \x1C to end of line or next \x1C
+        let mut result = String::with_capacity(line.len());
+        let mut chars = line.chars().peekable();
+        let mut in_gsl_tag = false;
+
+        while let Some(ch) = chars.next() {
+            if ch == '\x1C' {
+                // Start of GSL sequence - skip until end of tag
+                in_gsl_tag = true;
+                // Skip the "GS" + letter + data until we hit another control char or normal text
+                // GSL tags typically end at newline, but we process line by line
+                continue;
+            }
+
+            if in_gsl_tag {
+                // We're in a GSL tag - check if this looks like normal text again
+                // GSL tags are typically fixed format or end at specific delimiters
+                // For safety, just skip the rest of the line after \x1C
+                continue;
+            }
+
+            result.push(ch);
+        }
+
+        result
+    }
+
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
         // Extract attribute value from tag using simple string parsing
         // Much faster than regex compilation on every call
@@ -2650,6 +2791,43 @@ mod tests {
         assert!(directions.contains(&"n".to_string()));
         assert!(directions.contains(&"e".to_string()));
         assert!(directions.contains(&"out".to_string()));
+    }
+
+    // ==================== GSL Tag Filtering ====================
+
+    #[test]
+    fn test_gsl_compass_tag_filtered() {
+        // GSL compass tags from Lich should be filtered out entirely (no blank line)
+        let mut parser = test_parser();
+        let elements = parser.parse_line("GSjBCDFGH");
+
+        // Should produce completely empty result - no elements at all
+        assert!(elements.is_empty(), "GSL tag should produce no elements (got {:?})", elements);
+    }
+
+    #[test]
+    fn test_gsl_stance_tag_filtered() {
+        // GSL stance tags should be filtered (no blank line)
+        let mut parser = test_parser();
+        let elements = parser.parse_line("GSg0000000050");
+
+        // Should produce completely empty result - no elements at all
+        assert!(elements.is_empty(), "GSL stance tag should produce no elements (got {:?})", elements);
+    }
+
+    #[test]
+    fn test_normal_text_not_filtered() {
+        // Normal text starting with "GS" but not a GSL tag should pass through
+        let mut parser = test_parser();
+        let elements = parser.parse_line("GSW is awesome");
+
+        let text_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::Text { .. })).collect();
+        assert_eq!(text_elements.len(), 1);
+
+        let ParsedElement::Text { content, .. } = text_elements[0] else {
+            panic!("Expected Text element");
+        };
+        assert_eq!(content, "GSW is awesome");
     }
 
     // ==================== Complex Scenarios ====================

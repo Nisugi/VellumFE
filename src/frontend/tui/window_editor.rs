@@ -1701,6 +1701,9 @@ impl WindowEditor {
             WindowDef::Players { .. } => {
                 fields.push(FieldRef::EntityId);
             }
+            WindowDef::Items { .. } => {
+                fields.push(FieldRef::EntityId);
+            }
             WindowDef::Container { .. } => {
                 // Could add container_id field in the future
             }

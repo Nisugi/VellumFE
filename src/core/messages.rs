@@ -660,6 +660,16 @@ impl MessageProcessor {
                     ParserSpanType::System => DataSpanType::Normal, // system echoes treated as normal for data layer
                 };
 
+                // Debug: Check for "GSj" artifact pattern in any text
+                if content.contains("GSj") {
+                    tracing::warn!(
+                        "[ARTIFACT] Found 'GSj' in text='{}' span_type={:?} stream='{}'",
+                        content,
+                        data_span_type,
+                        stream
+                    );
+                }
+
                 self.current_segments.push(TextSegment {
                     text: content.clone(),
                     fg: fg_color.clone(),
@@ -807,6 +817,33 @@ impl MessageProcessor {
                     if let WindowContent::InjuryDoll(ref mut injury_data) = injury_window.content {
                         injury_data.set_injury(id.clone(), level);
                         tracing::debug!("Updated injury: {} to level {} ({})", id, level, name);
+                    }
+                }
+            }
+            ParsedElement::InjuryPopupData {
+                popup_id,
+                injuries,
+                clear,
+            } => {
+                self.chunk_has_silent_updates = true;
+
+                // Update the injuries popup if it's active and matches the popup_id
+                if let Some(ref mut popup) = ui_state.injuries_popup {
+                    if popup.dialog_id == *popup_id {
+                        if *clear {
+                            popup.injuries.clear();
+                            tracing::debug!("Cleared injuries popup: {}", popup_id);
+                        } else {
+                            for (body_part, name) in injuries {
+                                popup.set_injury_from_name(body_part, name);
+                                tracing::debug!(
+                                    "Updated injuries popup {}: {} -> {}",
+                                    popup_id,
+                                    body_part,
+                                    name
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -996,6 +1033,25 @@ impl MessageProcessor {
                     .any(|blocked| blocked.eq_ignore_ascii_case(id))
                 {
                     tracing::debug!("DialogOpen blocked: id={}", id);
+                    return;
+                }
+
+                // Handle injuries popup for viewing another player's injuries
+                // Dialog ID format: "injuries-PLAYERID" (e.g., "injuries-10154507")
+                // Title format: "Zoleta's Injuries"
+                if id.starts_with("injuries-") {
+                    tracing::debug!("DialogOpen creating injuries popup: id={}", id);
+                    // Extract player name from title (e.g., "Zoleta's Injuries" -> "Zoleta")
+                    let player_name = title
+                        .as_ref()
+                        .and_then(|t| t.strip_suffix("'s Injuries"))
+                        .unwrap_or("Unknown")
+                        .to_string();
+
+                    ui_state.injuries_popup = Some(crate::data::InjuriesPopupState::new(
+                        id.clone(),
+                        player_name,
+                    ));
                     return;
                 }
 
@@ -1370,6 +1426,14 @@ impl MessageProcessor {
                     if ui_state.active_quickbar_id.as_ref() == Some(id) {
                         ui_state.active_quickbar_id = ui_state.quickbar_order.first().cloned();
                     }
+                } else if ui_state
+                    .injuries_popup
+                    .as_ref()
+                    .is_some_and(|popup| popup.dialog_id == *id)
+                {
+                    // Close injuries popup
+                    tracing::debug!("Closing injuries popup: {}", id);
+                    ui_state.injuries_popup = None;
                 } else if ui_state
                     .active_dialog
                     .as_ref()
@@ -1804,6 +1868,98 @@ impl MessageProcessor {
                 "Extracted {} creatures from room objs",
                 game_state.room_creatures.len()
             );
+
+            // Now extract room objects (non-bold links = items on ground)
+            // Strategy: remove all <b>...</b> sections, then parse remaining <a> links
+            game_state.room_objects.clear();
+
+            // Create a version of the value with bold sections removed
+            let mut no_bold = String::new();
+            let mut pos = 0usize;
+            while pos < value.len() {
+                if let Some(bold_start) = value[pos..].find("<b>") {
+                    // Add everything before <b>
+                    no_bold.push_str(&value[pos..pos + bold_start]);
+                    // Find matching </b>
+                    if let Some(bold_end) = value[pos + bold_start..].find("</b>") {
+                        pos = pos + bold_start + bold_end + 4; // Skip past </b>
+                    } else {
+                        break;
+                    }
+                } else {
+                    // No more bold sections, add the rest
+                    no_bold.push_str(&value[pos..]);
+                    break;
+                }
+            }
+
+            // Now parse <a> links from the non-bold content
+            let mut remaining = no_bold.as_str();
+            while let Some(link_start) = remaining.find("<a ") {
+                if let Some(link_end) = remaining[link_start..].find("</a>") {
+                    let link_section = &remaining[link_start..link_start + link_end + 4];
+
+                    // Extract the tag part and text part
+                    if let Some(tag_end) = link_section.find('>') {
+                        let link_tag = &link_section[..tag_end];
+                        let link_text = &link_section[tag_end + 1..link_section.len() - 4]; // Remove </a>
+
+                        // Extract exist ID
+                        if let Some(exist_pos) = link_tag.find("exist=") {
+                            let after_exist = &link_tag[exist_pos + 6..];
+                            if let Some(quote) = after_exist.chars().next() {
+                                if quote == '\'' || quote == '"' {
+                                    if let Some(end_quote) = after_exist[1..].find(quote) {
+                                        let exist_id = &after_exist[1..=end_quote];
+
+                                        // Extract noun
+                                        let noun = if let Some(noun_pos) = link_tag.find("noun=") {
+                                            let after_noun = &link_tag[noun_pos + 5..];
+                                            if let Some(noun_quote) = after_noun.chars().next() {
+                                                if noun_quote == '\'' || noun_quote == '"' {
+                                                    if let Some(noun_end) = after_noun[1..].find(noun_quote) {
+                                                        Some(after_noun[1..=noun_end].to_string())
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+
+                                        let room_object = crate::core::state::RoomObject {
+                                            id: exist_id.to_string(),
+                                            name: link_text.to_string(),
+                                            noun,
+                                        };
+
+                                        tracing::debug!(
+                                            "Parsed room object: name='{}', noun={:?}, id='{}'",
+                                            room_object.name, room_object.noun, room_object.id
+                                        );
+
+                                        game_state.room_objects.push(room_object);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    remaining = &remaining[link_start + link_end + 4..];
+                } else {
+                    break;
+                }
+            }
+
+            tracing::debug!(
+                "Extracted {} room objects from room objs",
+                game_state.room_objects.len()
+            );
         }
 
         // Extract players from room players component
@@ -2022,6 +2178,16 @@ impl MessageProcessor {
             .iter()
             .map(|seg| seg.text.as_str())
             .collect();
+
+        // Debug: Check for "GSj" artifact in flushed lines
+        if full_text.contains("GSj") {
+            tracing::warn!(
+                "[ARTIFACT_FLUSH] Found 'GSj' in line='{}' stream='{}' segments={}",
+                if full_text.len() > 100 { format!("{}...", &full_text[..100]) } else { full_text.clone() },
+                self.current_stream,
+                self.current_segments.len()
+            );
+        }
 
         // Skip leading blank lines - only keep interior blanks (after content starts)
         // This preserves formatting blank lines within output blocks like BOUNTY
@@ -3160,6 +3326,12 @@ impl MessageProcessor {
                 // Players widget uses component-based approach (GameState.room_players)
                 // No stream subscription needed
                 WindowContent::Players => {
+                    // No-op - component-based widget
+                }
+
+                // Items widget uses component-based approach (GameState.room_objects)
+                // No stream subscription needed
+                WindowContent::Items => {
                     // No-op - component-based widget
                 }
 

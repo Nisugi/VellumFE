@@ -154,14 +154,6 @@ impl Targets {
         self.creature_ids_cache = new_creature_ids;
         self.target_ids_cache = new_target_ids;
 
-        tracing::debug!(
-            "Targets[{}]::update_from_state - old_count={}, new_count={}, current='{}'",
-            self.base_title,
-            self.count,
-            new_count,
-            current_target
-        );
-
         self.widget.clear();
         self.count = 0;
         self.body_part_count = 0;

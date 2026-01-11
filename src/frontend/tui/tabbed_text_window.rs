@@ -579,6 +579,34 @@ impl TabbedTextWindow {
         }
     }
 
+    /// Check if the active tab is scrolled back (not at bottom)
+    pub fn is_scrolled_back(&self) -> bool {
+        self.tabs
+            .get(self.active_tab_index)
+            .is_some_and(|tab| tab.window.is_scrolled_back())
+    }
+
+    /// Check if the active tab is frozen for selection
+    pub fn is_frozen_for_selection(&self) -> bool {
+        self.tabs
+            .get(self.active_tab_index)
+            .is_some_and(|tab| tab.window.is_frozen_for_selection())
+    }
+
+    /// Freeze the active tab's buffer for selection (new lines go to pending queue)
+    pub fn freeze_for_selection(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.freeze_for_selection();
+        }
+    }
+
+    /// Unfreeze the active tab and apply any pending lines
+    pub fn unfreeze_and_apply_pending(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            tab.window.unfreeze_and_apply_pending();
+        }
+    }
+
     pub fn search_info(&self) -> Option<(usize, usize)> {
         self.tabs
             .get(self.active_tab_index)

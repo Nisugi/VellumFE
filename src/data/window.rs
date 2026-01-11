@@ -36,6 +36,7 @@ pub enum WidgetType {
     ActiveEffects,
     Targets,  // New component-based (default)
     Players,
+    Items,    // Room objects (non-creatures)
     Spells,
     Spacer,
     Performance,
@@ -77,6 +78,7 @@ impl WidgetType {
             "active_effects" => Some(WidgetType::ActiveEffects),
             "targets" => Some(WidgetType::Targets),  // Component-based (default)
             "players" => Some(WidgetType::Players),
+            "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),
             "performance" => Some(WidgetType::Performance),
@@ -131,6 +133,9 @@ pub enum WindowContent {
     /// Component-based players list (room players)
     /// Reads from GameState.room_players
     Players,
+    /// Component-based items list (room objs, non-creatures)
+    /// Reads from GameState.room_objects
+    Items,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },
@@ -297,6 +302,7 @@ mod tests {
             WidgetType::ActiveEffects,
             WidgetType::Targets,
             WidgetType::Players,
+            WidgetType::Items,
             WidgetType::Spells,
             WidgetType::Spacer,
             WidgetType::Performance,

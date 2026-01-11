@@ -98,6 +98,7 @@ impl Frontend for TuiFrontend {
         self.sync_indicator_widgets(app_core, &theme);
         self.sync_targets_widgets(app_core, &theme);  // New component-based
         self.sync_players_widgets(app_core, &theme);
+        self.sync_items_widgets(app_core, &theme);
         self.sync_container_widgets(app_core, &theme);
         self.sync_dashboard_widgets(app_core, &theme);
         self.sync_tabbed_text_windows(app_core, &theme);
@@ -126,6 +127,7 @@ impl Frontend for TuiFrontend {
         let mut indicator_widgets = std::mem::take(&mut self.widget_manager.indicator_widgets);
         let mut targets_widgets = std::mem::take(&mut self.widget_manager.targets_widgets);
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
+        let mut items_widgets = std::mem::take(&mut self.widget_manager.items_widgets);
         let mut container_widgets = std::mem::take(&mut self.widget_manager.container_widgets);
         let mut dashboard_widgets = std::mem::take(&mut self.widget_manager.dashboard_widgets);
         let mut tabbed_text_windows = std::mem::take(&mut self.widget_manager.tabbed_text_windows);
@@ -355,6 +357,12 @@ impl Frontend for TuiFrontend {
                             players_widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::Items => {
+                        // Use the Items widget (component-based, reads from GameState.room_objects)
+                        if let Some(items_widget) = items_widgets.get_mut(name) {
+                            items_widget.render(area, f.buffer_mut());
+                        }
+                    }
                     WindowContent::Dashboard { .. } => {
                         // Use the Dashboard widget
                         if let Some(dashboard_widget) = dashboard_widgets.get_mut(name) {
@@ -572,6 +580,11 @@ impl Frontend for TuiFrontend {
             if let Some(ref dialog_state) = app_core.ui_state.active_dialog {
                 dialog::render_dialog(dialog_state, screen_area, f.buffer_mut(), &theme);
             }
+
+            // Render injuries popup if active (viewing another player's injuries)
+            if let Some(ref injuries_popup) = app_core.ui_state.injuries_popup {
+                injury_doll::render_injuries_popup(injuries_popup, screen_area, f.buffer_mut(), &theme);
+            }
         })?;
 
         // Feed text wrapping timings into performance stats (drain samples from all text widgets)
@@ -622,6 +635,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.indicator_widgets = indicator_widgets;
         self.widget_manager.targets_widgets = targets_widgets;
         self.widget_manager.players_widgets = players_widgets;
+        self.widget_manager.items_widgets = items_widgets;
         self.widget_manager.container_widgets = container_widgets;
         self.widget_manager.dashboard_widgets = dashboard_widgets;
         self.widget_manager.tabbed_text_windows = tabbed_text_windows;

@@ -298,6 +298,14 @@ async fn async_run(
             tracing::debug!("Widget caches cleared after layout reload");
         }
 
+        // Reset specific widgets (e.g., when widget type changes)
+        if !app_core.ui_state.widgets_to_reset.is_empty() {
+            for name in app_core.ui_state.widgets_to_reset.drain(..) {
+                frontend.widget_manager.remove_widget_from_all_caches(&name);
+                tracing::debug!("Reset widget cache for '{}' (type change)", name);
+            }
+        }
+
         // Render if needed
         if app_core.needs_render {
             frontend.render(&mut app_core)?;
