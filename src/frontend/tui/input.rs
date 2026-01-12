@@ -4644,6 +4644,19 @@ impl TuiFrontend {
                 }
                 crate::core::menu_actions::MenuAction::Delete => {
                     if let Some(ref mut editor) = self.window_editor {
+                        // If a sub-editor is active, delegate Delete to it (e.g., delete tab in TabEditor)
+                        if editor.is_sub_editor_active() {
+                            let tf_key = crate::frontend::common::KeyEvent {
+                                code: crate::frontend::KeyCode::Delete,
+                                modifiers: crate::frontend::KeyModifiers::NONE,
+                            };
+                            if editor.handle_sub_editor_key(tf_key) {
+                                app_core.needs_render = true;
+                                return Ok(None);
+                            }
+                        }
+
+                        // Otherwise, delete the whole window
                         let window_name = editor.get_window_def().name().to_string();
                         let is_locked = editor.get_window_def().base().locked;
 

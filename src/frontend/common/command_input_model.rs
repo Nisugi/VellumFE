@@ -604,4 +604,25 @@ mod tests {
         model.try_complete(&commands, &windows);
         assert_eq!(model.text(), ".window main");
     }
+
+    #[test]
+    fn preserves_leading_spaces() {
+        let mut model = CommandInputModel::new(10);
+        model.insert_char(' ');
+        model.insert_text("search");
+        assert_eq!(model.text(), " search");
+
+        let submitted = model.submit();
+        assert_eq!(submitted, Some(" search".to_string()));
+    }
+
+    #[test]
+    fn preserves_multiple_leading_spaces() {
+        let mut model = CommandInputModel::new(10);
+        model.insert_text("   look");
+        assert_eq!(model.text(), "   look");
+
+        let submitted = model.submit();
+        assert_eq!(submitted, Some("   look".to_string()));
+    }
 }

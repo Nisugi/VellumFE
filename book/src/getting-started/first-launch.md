@@ -11,6 +11,22 @@ vellum-fe --port 8000 --character YourCharacter
 - `--port` - Lich's listening port (default: 8000)
 - `--character` - Your character name (used for per-character layouts)
 
+## Lich Launcher Integration
+
+Configure Lich launcher to spawn VellumFE automatically:
+
+1. In Lich launcher, add VellumFE as a custom frontend
+2. Set the command line to:
+
+```
+path\to\vellum-fe.exe --port %port% --key %key%
+```
+
+- `%port%` - Lich fills in the connection port
+- `%key%` - Lich provides the authentication key
+
+This method handles authentication automatically—no need to enter credentials in VellumFE.
+
 ## Direct Connection
 
 Connect without Lich using eAccess authentication:

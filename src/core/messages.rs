@@ -2008,11 +2008,6 @@ impl MessageProcessor {
                                             secondary_status,
                                         };
 
-                                        tracing::debug!(
-                                            "Parsed player from room players: name='{}', id='{}', primary={:?}, secondary={:?}",
-                                            player.name, player.id, player.primary_status, player.secondary_status
-                                        );
-
                                         game_state.room_players.push(player);
                                     }
                                 }

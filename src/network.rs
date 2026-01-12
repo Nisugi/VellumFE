@@ -397,13 +397,16 @@ async fn run_stream(
 
     let _ = async {
         while let Some(cmd) = command_rx.recv().await {
-            debug!("Sending command: {}", cmd);
-            if let Err(e) = writer.write_all(cmd.as_bytes()).await {
+            // Build the complete message: <c> prefix + command + newline
+            // The <c> prefix is required for Stormfront protocol - it prevents
+            // Lich's do_client() from stripping leading spaces via strip!
+            let mut message = String::with_capacity(cmd.len() + 4);
+            message.push_str("<c>");
+            message.push_str(&cmd);
+            message.push('\n');
+
+            if let Err(e) = writer.write_all(message.as_bytes()).await {
                 error!("Failed to write command: {}", e);
-                break;
-            }
-            if let Err(e) = writer.write_all(b"\n").await {
-                error!("Failed to write newline: {}", e);
                 break;
             }
             if let Err(e) = writer.flush().await {
@@ -446,6 +449,15 @@ async fn send_lich_handshake(stream: &mut TcpStream, login_key: Option<&str>) ->
         stream.write_all(fe_string.as_bytes()).await?;
         stream.flush().await?;
         debug!("Sent frontend version string");
+
+        // Send ready signals - game server expects two <c> signals with delay
+        // (matches wizard/avalon behavior in Lich main.rb lines 503-507)
+        for i in 0..2 {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            stream.write_all(b"<c>\n").await?;
+            stream.flush().await?;
+            debug!("Sent ready signal {}/2", i + 1);
+        }
     } else {
         // Detachable client mode: Send PID for Lich's window refocus feature
         let pid = std::process::id();

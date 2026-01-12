@@ -165,6 +165,12 @@ impl super::TuiFrontend {
         // Handle Enter key - always submit command
         if matches!(code, KeyCode::Enter) {
             if let Some(command) = self.command_input_submit("command_input") {
+                tracing::debug!(
+                    "Command submitted (len={}, bytes={:?}): '{}'",
+                    command.len(),
+                    command.as_bytes().iter().take(10).collect::<Vec<_>>(),
+                    command
+                );
                 return self.handle_command_submission(command, app_core);
             }
         } else {

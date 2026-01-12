@@ -107,8 +107,8 @@ impl AppCore {
 
         // Command history is now managed by the CommandInput widget
 
-        // Return formatted command for network layer to send
-        Ok(format!("{}\n", command))
+        // Return command for network layer to send (network layer adds newline)
+        Ok(command)
     }
 
     /// Handle dot commands (local client commands)
