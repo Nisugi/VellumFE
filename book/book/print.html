@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-aafc8c79.js";
+            window.path_to_searchindex_js = "searchindex-80a196ba.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-621f15b5.js"></script>
@@ -279,6 +279,19 @@ cargo build --release
 <li><code>--port</code> - Lich’s listening port (default: 8000)</li>
 <li><code>--character</code> - Your character name (used for per-character layouts)</li>
 </ul>
+<h2 id="lich-launcher-integration"><a class="header" href="#lich-launcher-integration">Lich Launcher Integration</a></h2>
+<p>Configure Lich launcher to spawn VellumFE automatically:</p>
+<ol>
+<li>In Lich launcher, add VellumFE as a custom frontend</li>
+<li>Set the command line to:</li>
+</ol>
+<pre><code>path\to\vellum-fe.exe --port %port% --key %key%
+</code></pre>
+<ul>
+<li><code>%port%</code> - Lich fills in the connection port</li>
+<li><code>%key%</code> - Lich provides the authentication key</li>
+</ul>
+<p>This method handles authentication automatically—no need to enter credentials in VellumFE.</p>
 <h2 id="direct-connection"><a class="header" href="#direct-connection">Direct Connection</a></h2>
 <p>Connect without Lich using eAccess authentication:</p>
 <pre><code class="language-bash">vellum-fe --direct \
