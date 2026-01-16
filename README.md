@@ -36,7 +36,7 @@ vellum-fe --direct \
   --character CHARACTER_NAME
 ```
 
-## Installation
+## Installation for Development. NOT NEEDED TO USE VellumFE
 
 ### Pre-built Binaries
 
