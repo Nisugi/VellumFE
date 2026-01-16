@@ -36,7 +36,7 @@ vellum-fe --direct \
   --character CHARACTER_NAME
 ```
 
-## Installation for Development. NOT NEEDED TO USE VellumFE
+## Installation 
 
 ### Pre-built Binaries
 
@@ -61,7 +61,7 @@ cargo build --release
 
 ## Documentation
 
-**[Full Documentation](https://nisugi.github.io/vellum-fe/)** - Comprehensive guides, tutorials, and reference
+**[Full Documentation](https://nisugi.github.io/VellumFE/)** - Comprehensive guides, tutorials, and reference
 
 Quick links:
 - [Getting Started](https://nisugi.github.io/vellum-fe/getting-started/)
