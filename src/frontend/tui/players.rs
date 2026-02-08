@@ -34,10 +34,17 @@ impl Players {
         room_players: &[crate::core::state::Player],
         config: &crate::config::TargetListConfig,
     ) -> bool {
-        // Build IDs string for change detection
+        // Build IDs string for change detection (include status for updates)
         let new_ids: String = room_players
             .iter()
-            .map(|p| p.id.as_str())
+            .map(|p| {
+                format!(
+                    "{}:{}:{}",
+                    p.id,
+                    p.primary_status.as_deref().unwrap_or(""),
+                    p.secondary_status.as_deref().unwrap_or("")
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
         let new_count = room_players.len() as u32;
@@ -269,7 +276,8 @@ mod tests {
         let changed = players.update_from_state(&room_players, &config);
         assert!(changed);
         assert_eq!(players.count, 2);
-        assert_eq!(players.player_ids_cache, "-1,-2");
+        // Cache now includes status: "id:primary:secondary"
+        assert_eq!(players.player_ids_cache, "-1::,-2:stunned:prone");
         assert_eq!(players.generation, 1);
     }
 
@@ -315,7 +323,8 @@ mod tests {
         let changed = players.update_from_state(&updated_players, &config);
         assert!(changed);
         assert_eq!(players.count, 1);
-        assert_eq!(players.player_ids_cache, "-2");
+        // Cache now includes status: "id:primary:secondary"
+        assert_eq!(players.player_ids_cache, "-2::");
     }
 
     #[test]

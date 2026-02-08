@@ -36,9 +36,13 @@ struct Cli {
     #[arg(short, long, default_value = "tui")]
     frontend: FrontendType,
 
-    /// Port number to connect to (default: 8000)
+    /// Port number to connect to (overrides config.toml, default: 8000)
     #[arg(short, long)]
     port: Option<u16>,
+
+    /// Host to connect to (overrides config.toml, default: 127.0.0.1)
+    #[arg(long)]
+    host: Option<String>,
 
     /// Character name (used for direct connection login)
     /// When using --direct, this is the character to log in as.
@@ -284,15 +288,20 @@ fn main() -> Result<()> {
 
     // Load configuration
     // Profile (for config directory) uses --profile if specified, otherwise falls back to --character
-    let port = cli.port.unwrap_or(8000);
     let profile = cli.profile.as_deref().or(cli.character.as_deref());
     let mut config = if let Some(config_path) = &cli.config {
-        config::Config::load_from_path(config_path, profile, port)?
+        config::Config::load_from_path(config_path, profile, cli.port)?
     } else {
-        config::Config::load_with_options(profile, port)?
+        config::Config::load_with_options(profile, cli.port)?
     };
 
-    // Apply CLI flag overrides
+    // Apply CLI flag overrides (CLI takes precedence over config.toml)
+    if let Some(port) = cli.port {
+        config.connection.port = port;
+    }
+    if let Some(ref host) = cli.host {
+        config.connection.host = host.clone();
+    }
     if cli.nosound {
         config.sound.enabled = false;
     }

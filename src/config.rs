@@ -5112,6 +5112,31 @@ impl Config {
                 .push(spacer.name().to_string());
         }
 
+        // Include custom windows (created via .addwindow) that aren't in templates
+        // These have names like "custom-text-1", "custom-tabbedtext-2", etc.
+        let all_templates: std::collections::HashSet<String> =
+            Self::list_window_templates().into_iter().collect();
+        for window in layout.windows.iter().filter(|w| w.base().visible) {
+            let name = window.name().to_string();
+            // Skip if already in templates or is essential window we're excluding
+            if all_templates.contains(&name) {
+                continue;
+            }
+            if exclude_essential && (name == "main" || name == "command_input") {
+                continue;
+            }
+            // Skip spacers (already handled above) and command_input (handled above)
+            if window.widget_type() == "spacer" || window.widget_type() == "command_input" {
+                continue;
+            }
+            // Add custom window to appropriate category
+            let category = WidgetCategory::from_widget_type(window.widget_type());
+            let entry = visible_by_category.entry(category).or_default();
+            if !entry.contains(&name) {
+                entry.push(name);
+            }
+        }
+
         visible_by_category
     }
 
@@ -5126,7 +5151,7 @@ impl Config {
     }
 
     pub fn load() -> Result<Self> {
-        Self::load_with_options(None, 8000)
+        Self::load_with_options(None, None)
     }
 
     /// Load config from a custom file path
@@ -5135,7 +5160,7 @@ impl Config {
     pub fn load_from_path(
         path: &std::path::Path,
         character: Option<&str>,
-        port_override: u16,
+        port_override: Option<u16>,
     ) -> Result<Self> {
         // Ensure defaults are extracted
         Self::extract_defaults(character)?;
@@ -5146,8 +5171,10 @@ impl Config {
         let mut config: Config = toml::from_str(&contents)
             .context(format!("Failed to parse config file: {:?}", path))?;
 
-        // Override port from command line
-        config.connection.port = port_override;
+        // Override port from command line (if specified)
+        if let Some(port) = port_override {
+            config.connection.port = port;
+        }
 
         // Store character name for later saves
         config.character = character.map(|s| s.to_string());
@@ -5428,7 +5455,7 @@ impl Config {
         self.quickbars = character_config.quickbars;
     }
 
-    pub fn load_with_options(character: Option<&str>, port_override: u16) -> Result<Self> {
+    pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
         // Extract defaults on first run (idempotent - only creates missing files)
         Self::extract_defaults(character)?;
 
@@ -5441,8 +5468,10 @@ impl Config {
         }
         // If no character config exists, we use global config with default connection
 
-        // Override port from command line
-        config.connection.port = port_override;
+        // Override port from command line (if specified)
+        if let Some(port) = port_override {
+            config.connection.port = port;
+        }
 
         // Store character name for later saves
         config.character = character.map(|s| s.to_string());

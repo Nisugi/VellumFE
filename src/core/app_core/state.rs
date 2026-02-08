@@ -1776,6 +1776,7 @@ impl AppCore {
         self.add_system_message("APPLICATION:");
         self.add_system_message("  .quit / .q              - Exit VellumFE");
         self.add_system_message("  .help / .h / .?         - Show this help");
+        self.add_system_message("  .version / .ver         - Show version info");
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|settings|colors)");
@@ -1867,6 +1868,12 @@ impl AppCore {
         self.add_system_message("");
 
         self.add_system_message("Type the command name for more details. Example: .help windows");
+    }
+
+    /// Show version information
+    pub(super) fn show_version(&mut self) {
+        let version = env!("CARGO_PKG_VERSION");
+        self.add_system_message(&format!("VellumFE v{}", version));
     }
 
     /// Save current layout
@@ -3269,8 +3276,9 @@ impl AppCore {
         }
     }
 
-    /// Quit the application
-    pub fn quit(&mut self) {
+    /// Save settings (layout, session cache) without exiting.
+    /// Called by quit() and when intercepting game "quit" command.
+    pub fn save_on_quit(&mut self) {
         // Show reminder if layout was modified
         if self.layout_modified_since_save {
             self.add_system_message(
@@ -3362,7 +3370,11 @@ impl AppCore {
         if let Err(err) = crate::session_cache::save(self.config.character.as_deref(), &cache) {
             tracing::warn!("Failed to save session cache: {}", err);
         }
+    }
 
+    /// Quit the application
+    pub fn quit(&mut self) {
+        self.save_on_quit();
         self.running = false;
     }
 

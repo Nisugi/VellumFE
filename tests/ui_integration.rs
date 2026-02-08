@@ -593,16 +593,22 @@ fn speech_stream_dropped_without_window() {
         })
         .unwrap_or_default();
 
-    // Should have exactly ONE line (the non-speech-stream copy)
-    // The speech stream line should be dropped since no speech window exists
+    // Should have TWO lines:
+    // 1. The speech content (shown in main window since speech duplicates to main)
+    // 2. The prompt (speech triggers prompt display since it's visible in main)
+    // The speech stream copy should be dropped since no speech window exists
     assert_eq!(
         main_lines.len(),
-        1,
-        "should have exactly one line (speech stream line should be dropped)"
+        2,
+        "should have speech line + prompt (speech stream line should be dropped)"
     );
     assert!(
         main_lines[0].contains("You politely say"),
         "main window should receive the regular copy"
+    );
+    assert!(
+        main_lines[1].contains(">"),
+        "prompt should appear after speech"
     );
 }
 

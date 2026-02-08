@@ -12,6 +12,14 @@ impl AppCore {
             return self.handle_dot_command(&command);
         }
 
+        // Intercept game "quit" command - save settings before disconnecting
+        // This handles the case where users close terminal after game disconnect
+        if command.trim().eq_ignore_ascii_case("quit") {
+            self.save_on_quit();
+            // Don't set self.running = false - let VellumFE stay open
+            // Fall through to send command to server
+        }
+
         // Echo command to windows subscribed to "main" stream
         if self.config.ui.command_echo && !command.is_empty() {
             // Get windows subscribed to "main" stream
@@ -124,6 +132,9 @@ impl AppCore {
             }
             "help" | "h" | "?" => {
                 self.show_help();
+            }
+            "version" | "ver" => {
+                self.show_version();
             }
 
             // Layout commands

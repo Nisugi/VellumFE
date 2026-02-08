@@ -2260,7 +2260,8 @@ impl MessageProcessor {
                 .iter()
                 .any(|seg| seg.span_type != SpanType::Speech && !seg.text.trim().is_empty());
 
-            if has_non_speech_text && !has_speech && !highlight_result.line_is_silent {
+            // Speech also goes to main window, so include it as displayable content
+            if (has_non_speech_text || has_speech) && !highlight_result.line_is_silent {
                 self.chunk_has_main_text = true;
             }
         }

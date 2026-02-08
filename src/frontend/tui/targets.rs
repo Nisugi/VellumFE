@@ -132,10 +132,10 @@ impl Targets {
         widget_width: u16,
         per_window_status_position: Option<&str>,
     ) -> bool {
-        // Build cache strings for comparison
+        // Build cache strings for comparison (include status for change detection)
         let new_creature_ids: String = room_creatures
             .iter()
-            .map(|c| c.id.as_str())
+            .map(|c| format!("{}:{}", c.id, c.status.as_deref().unwrap_or("")))
             .collect::<Vec<_>>()
             .join(",");
         let new_target_ids: String = target_ids.join(",");
