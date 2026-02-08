@@ -2248,6 +2248,10 @@ pub struct UiConfig {
     pub open_dialog_blocklist: Vec<String>,
     #[serde(default)]
     pub focus: FocusConfig, // Tab focus behavior and order
+    /// Terminal title template with variables: {character}, {room}, {health}, {mana}, {stamina}, {unread}
+    /// Empty string = don't modify terminal title
+    #[serde(default)]
+    pub terminal_title: String,
 }
 
 impl Default for UiConfig {
@@ -2288,6 +2292,7 @@ impl Default for UiConfig {
             betrayer_active_color: default_betrayer_active_color(),
             open_dialog_blocklist: default_open_dialog_blocklist(),
             focus: FocusConfig::default(),
+            terminal_title: String::new(),
         }
     }
 }
@@ -5954,6 +5959,7 @@ impl Default for Config {
                 betrayer_active_color: default_betrayer_active_color(),
                 open_dialog_blocklist: default_open_dialog_blocklist(),
                 focus: FocusConfig::default(),
+                terminal_title: String::new(),
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml

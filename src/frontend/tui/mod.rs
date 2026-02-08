@@ -56,6 +56,7 @@ mod gs4_experience;
 mod encumbrance;
 mod minivitals;
 mod betrayer;
+mod terminal_title;
 mod text_window;
 mod container_window;
 mod runtime;

@@ -163,6 +163,11 @@ async fn async_run(
     // Track time for periodic countdown updates
     let mut last_countdown_update = std::time::Instant::now();
 
+    // Create terminal title manager (if template is configured)
+    let mut title_manager = super::terminal_title::TerminalTitleManager::new(
+        app_core.config.ui.terminal_title.clone()
+    );
+
     // Main event loop
     while app_core.running {
         // Poll for frontend events (keyboard, mouse, resize)
@@ -279,6 +284,13 @@ async fn async_run(
                     app_core.game_state.connected = false;
                     app_core.needs_render = true;
                 }
+            }
+        }
+
+        // Update terminal title if configured and state changed
+        if let Some(ref mut manager) = title_manager {
+            if let Err(e) = manager.update(&app_core, &mut std::io::stdout()) {
+                tracing::debug!("Failed to update terminal title: {}", e);
             }
         }
 
