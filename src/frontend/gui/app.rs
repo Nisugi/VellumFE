@@ -1,11 +1,18 @@
+use super::persistence::{load_layout, save_layout, GuiLayoutFileV1};
+use super::{TabId, TabKey};
+use crate::config::Config;
 use crate::core::AppCore;
-use crate::data::{SpanType, StyledLine, TabbedTextContent, WindowContent};
+use crate::data::{
+    SpanType, StyledLine, TabbedTextContent, TextContent, WidgetType, WindowContent, WindowState,
+};
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{Color32, FontFamily, FontId, RichText, TextFormat, ViewportBuilder};
-use std::collections::VecDeque;
+use egui_dock::{DockArea, DockState, TabViewer};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -13,6 +20,17 @@ const INITIAL_LAYOUT_WIDTH: u16 = 160;
 const INITIAL_LAYOUT_HEIGHT: u16 = 50;
 const MAX_RENDERED_LINES: usize = 2000;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
+
+#[derive(Clone, Debug)]
+struct GuiTab {
+    id: TabId,
+    window_name: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct DockStateSnapshot {
+    visible_tabs: Vec<TabKey>,
+}
 
 pub struct VellumGuiApp {
     app_core: AppCore,
@@ -22,6 +40,12 @@ pub struct VellumGuiApp {
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
     close_requested: bool,
+    dock_state: Option<DockState<GuiTab>>,
+    available_tabs: HashMap<TabKey, GuiTab>,
+    hidden_tabs: HashSet<TabKey>,
+    layout_profile: String,
+    layout_character: String,
+    layout_dirty: bool,
 }
 
 impl VellumGuiApp {
@@ -60,6 +84,28 @@ impl VellumGuiApp {
             }
         });
 
+        let (layout_profile, layout_character) = Self::resolve_layout_ids(&app_core.config);
+        let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
+
+        let available_tabs = Self::collect_available_tabs(&app_core);
+        let mut hidden_tabs: HashSet<TabKey> = persisted_layout
+            .as_ref()
+            .map(|layout| layout.hidden_tabs.iter().cloned().collect())
+            .unwrap_or_default();
+        hidden_tabs.retain(|key| available_tabs.contains_key(key));
+
+        let snapshot = persisted_layout
+            .as_ref()
+            .and_then(|layout| Self::dock_snapshot_from_layout(layout));
+
+        let visible_tabs =
+            Self::build_visible_tabs(&available_tabs, &hidden_tabs, snapshot.as_ref());
+        let dock_state = if visible_tabs.is_empty() {
+            None
+        } else {
+            Some(DockState::new(visible_tabs))
+        };
+
         Ok(Self {
             app_core,
             _runtime: runtime,
@@ -68,7 +114,257 @@ impl VellumGuiApp {
             network_handle: Some(network_handle),
             command_input: String::new(),
             close_requested: false,
+            dock_state,
+            available_tabs,
+            hidden_tabs,
+            layout_profile,
+            layout_character,
+            layout_dirty: false,
         })
+    }
+
+    fn resolve_layout_ids(config: &Config) -> (String, String) {
+        let profile_id = config
+            .character
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let character_id = config
+            .connection
+            .character
+            .clone()
+            .or_else(|| config.character.clone())
+            .unwrap_or_else(|| "default".to_string());
+        (profile_id, character_id)
+    }
+
+    fn collect_available_tabs(app_core: &AppCore) -> HashMap<TabKey, GuiTab> {
+        let mut keys: Vec<String> = app_core.ui_state.windows.keys().cloned().collect();
+        keys.sort();
+
+        let mut tabs = HashMap::new();
+        for name in keys {
+            let Some(window) = app_core.ui_state.windows.get(&name) else {
+                continue;
+            };
+
+            let Some(tab_key) = Self::tab_key_for_window(&name, window) else {
+                continue;
+            };
+
+            tabs.entry(tab_key.clone()).or_insert_with(|| GuiTab {
+                id: TabId::with_title(tab_key, window.name.clone()),
+                window_name: name.clone(),
+            });
+        }
+
+        tabs
+    }
+
+    fn tab_key_for_window(name: &str, window: &WindowState) -> Option<TabKey> {
+        let key = match window.widget_type {
+            WidgetType::CommandInput | WidgetType::Spacer => return None,
+            WidgetType::Text | WidgetType::TabbedText => {
+                if Self::is_main_stream_window(name, window) {
+                    TabKey::TextMain
+                } else {
+                    TabKey::TextByName {
+                        id: name.to_string(),
+                    }
+                }
+            }
+            WidgetType::Inventory => TabKey::Inventory {
+                id: name.to_string(),
+            },
+            WidgetType::ActiveEffects => TabKey::ActiveEffects {
+                id: name.to_string(),
+            },
+            WidgetType::Quickbar => TabKey::Quickbar {
+                id: name.to_string(),
+            },
+            WidgetType::MiniVitals | WidgetType::Progress => TabKey::Vitals,
+            WidgetType::Countdown => TabKey::Countdown,
+            WidgetType::Compass => TabKey::Compass,
+            WidgetType::Indicator => TabKey::Indicators,
+            WidgetType::Targets => TabKey::Targets,
+            WidgetType::Players => TabKey::Players,
+            WidgetType::Room => TabKey::Room,
+            WidgetType::Experience | WidgetType::GS4Experience => TabKey::Experience,
+            WidgetType::InjuryDoll => TabKey::InjuryDoll,
+            WidgetType::Dashboard => TabKey::Dashboard,
+            WidgetType::Encumbrance => TabKey::Encumbrance,
+            WidgetType::Perception => TabKey::Perception,
+            WidgetType::Hand => {
+                let lower = name.to_ascii_lowercase();
+                if lower.contains("left") {
+                    TabKey::LeftHand
+                } else if lower.contains("right") {
+                    TabKey::RightHand
+                } else {
+                    TabKey::SpellHand
+                }
+            }
+            _ => TabKey::TextByName {
+                id: name.to_string(),
+            },
+        };
+
+        Some(key)
+    }
+
+    fn is_main_stream_window(name: &str, window: &WindowState) -> bool {
+        if name.eq_ignore_ascii_case("main") {
+            return true;
+        }
+
+        match &window.content {
+            WindowContent::Text(content)
+            | WindowContent::Inventory(content)
+            | WindowContent::Spells(content) => content
+                .streams
+                .iter()
+                .any(|stream| stream.eq_ignore_ascii_case("main")),
+            WindowContent::TabbedText(tabbed) => Self::find_main_tab(tabbed).is_some(),
+            _ => false,
+        }
+    }
+
+    fn find_main_tab(tabbed: &TabbedTextContent) -> Option<&crate::data::TabState> {
+        tabbed.tabs.iter().find(|tab| {
+            tab.definition
+                .streams
+                .iter()
+                .any(|stream| stream.eq_ignore_ascii_case("main"))
+        })
+    }
+
+    fn dock_snapshot_from_layout(layout: &GuiLayoutFileV1) -> Option<DockStateSnapshot> {
+        if layout.dock_state_json.is_null() {
+            return None;
+        }
+        serde_json::from_value(layout.dock_state_json.clone()).ok()
+    }
+
+    fn build_visible_tabs(
+        available_tabs: &HashMap<TabKey, GuiTab>,
+        hidden_tabs: &HashSet<TabKey>,
+        snapshot: Option<&DockStateSnapshot>,
+    ) -> Vec<GuiTab> {
+        let mut visible = Vec::new();
+        let mut seen = HashSet::new();
+
+        if let Some(snapshot) = snapshot {
+            for key in &snapshot.visible_tabs {
+                if hidden_tabs.contains(key) {
+                    continue;
+                }
+                if let Some(tab) = available_tabs.get(key) {
+                    visible.push(tab.clone());
+                    seen.insert(key.clone());
+                }
+            }
+        }
+
+        let mut fallback_tabs: Vec<GuiTab> = available_tabs
+            .iter()
+            .filter_map(|(key, tab)| {
+                if hidden_tabs.contains(key) || seen.contains(key) {
+                    None
+                } else {
+                    Some(tab.clone())
+                }
+            })
+            .collect();
+        fallback_tabs.sort_by_key(|tab| tab.id.title.to_ascii_lowercase());
+
+        visible.extend(fallback_tabs);
+        visible
+    }
+
+    fn default_visible_tab_keys(&self) -> Vec<TabKey> {
+        let mut visible: Vec<(String, TabKey)> = self
+            .available_tabs
+            .iter()
+            .filter_map(|(key, tab)| {
+                if self.hidden_tabs.contains(key) {
+                    None
+                } else {
+                    Some((tab.id.title.clone(), key.clone()))
+                }
+            })
+            .collect();
+        visible.sort_by_key(|(title, _)| title.to_ascii_lowercase());
+        visible.into_iter().map(|(_, key)| key).collect()
+    }
+
+    fn rebuild_dock_state(&mut self) {
+        let visible_tabs = Self::build_visible_tabs(&self.available_tabs, &self.hidden_tabs, None);
+        self.dock_state = if visible_tabs.is_empty() {
+            None
+        } else {
+            Some(DockState::new(visible_tabs))
+        };
+    }
+
+    fn refresh_available_tabs_if_needed(&mut self) {
+        let refreshed = Self::collect_available_tabs(&self.app_core);
+        if refreshed.len() == self.available_tabs.len()
+            && refreshed
+                .keys()
+                .all(|key| self.available_tabs.contains_key(key))
+        {
+            return;
+        }
+
+        self.available_tabs = refreshed;
+        self.hidden_tabs
+            .retain(|key| self.available_tabs.contains_key(key));
+        self.rebuild_dock_state();
+        self.layout_dirty = true;
+    }
+
+    fn hide_tab(&mut self, key: TabKey) {
+        if self.hidden_tabs.insert(key) {
+            self.rebuild_dock_state();
+            self.layout_dirty = true;
+        }
+    }
+
+    fn restore_tab(&mut self, key: TabKey) {
+        if self.hidden_tabs.remove(&key) {
+            self.rebuild_dock_state();
+            self.layout_dirty = true;
+        }
+    }
+
+    fn hidden_tabs_for_menu(&self) -> Vec<(TabKey, String)> {
+        let mut entries: Vec<(TabKey, String)> = self
+            .hidden_tabs
+            .iter()
+            .filter_map(|key| {
+                self.available_tabs
+                    .get(key)
+                    .map(|tab| (key.clone(), tab.id.title.clone()))
+            })
+            .collect();
+        entries.sort_by_key(|(_, title)| title.to_ascii_lowercase());
+        entries
+    }
+
+    fn save_layout_state(&mut self) {
+        let mut layout = GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character);
+
+        let mut hidden_tabs: Vec<TabKey> = self.hidden_tabs.iter().cloned().collect();
+        hidden_tabs.sort_by_key(|key| key.short_id());
+        layout.hidden_tabs = hidden_tabs;
+
+        let snapshot = DockStateSnapshot {
+            visible_tabs: self.default_visible_tab_keys(),
+        };
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null);
+
+        if let Err(err) = save_layout(&layout, &self.layout_profile, &self.layout_character) {
+            tracing::warn!("Failed to save GUI layout: {}", err);
+        }
     }
 
     fn pump_server_messages(&mut self) {
@@ -130,60 +426,6 @@ impl VellumGuiApp {
             && !command.starts_with("menu:")
     }
 
-    fn primary_text_lines(&self) -> Option<&VecDeque<StyledLine>> {
-        if let Some(main_window) = self.app_core.ui_state.windows.get("main") {
-            match &main_window.content {
-                WindowContent::Text(content) => return Some(&content.lines),
-                WindowContent::TabbedText(tabbed) => {
-                    return Self::find_main_tab(tabbed).map(|tab| &tab.content.lines);
-                }
-                _ => {}
-            }
-        }
-
-        for window in self.app_core.ui_state.windows.values() {
-            match &window.content {
-                WindowContent::Text(content) => {
-                    let has_main_stream = content
-                        .streams
-                        .iter()
-                        .any(|stream| stream.eq_ignore_ascii_case("main"));
-                    if has_main_stream || content.streams.is_empty() {
-                        return Some(&content.lines);
-                    }
-                }
-                WindowContent::TabbedText(tabbed) => {
-                    if let Some(tab) = Self::find_main_tab(tabbed) {
-                        return Some(&tab.content.lines);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        self.app_core
-            .ui_state
-            .windows
-            .values()
-            .find_map(|window| match &window.content {
-                WindowContent::Text(content) => Some(&content.lines),
-                WindowContent::TabbedText(tabbed) => tabbed
-                    .tabs
-                    .get(tabbed.active_tab_index)
-                    .map(|tab| &tab.content.lines),
-                _ => None,
-            })
-    }
-
-    fn find_main_tab(tabbed: &TabbedTextContent) -> Option<&crate::data::TabState> {
-        tabbed.tabs.iter().find(|tab| {
-            tab.definition
-                .streams
-                .iter()
-                .any(|stream| stream.eq_ignore_ascii_case("main"))
-        })
-    }
-
     fn line_to_layout_job(line: &StyledLine, visuals: &egui::Visuals) -> LayoutJob {
         let mut job = LayoutJob::default();
         for segment in &line.segments {
@@ -221,31 +463,126 @@ impl VellumGuiApp {
         job
     }
 
-    fn render_main_text(&self, ui: &mut egui::Ui) {
+    fn render_styled_lines(ui: &mut egui::Ui, lines: &std::collections::VecDeque<StyledLine>) {
         let visuals = ui.visuals().clone();
-        match self.primary_text_lines() {
-            Some(lines) => {
-                let start = lines.len().saturating_sub(MAX_RENDERED_LINES);
-                for line in lines.iter().skip(start) {
-                    let job = Self::line_to_layout_job(line, &visuals);
-                    ui.label(job);
+        let start = lines.len().saturating_sub(MAX_RENDERED_LINES);
+        for line in lines.iter().skip(start) {
+            let job = Self::line_to_layout_job(line, &visuals);
+            ui.label(job);
+        }
+    }
+
+    fn render_text_content(ui: &mut egui::Ui, content: &TextContent, scroll_id: &str) {
+        egui::ScrollArea::vertical()
+            .id_salt(format!("text_scroll_{}", scroll_id))
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                Self::render_styled_lines(ui, &content.lines);
+            });
+    }
+
+    fn render_window_content(app_core: &AppCore, ui: &mut egui::Ui, tab: &GuiTab) {
+        let Some(window) = app_core.ui_state.windows.get(&tab.window_name) else {
+            ui.label("This tab's source window is no longer available.");
+            return;
+        };
+
+        match &window.content {
+            WindowContent::Text(content)
+            | WindowContent::Inventory(content)
+            | WindowContent::Spells(content) => {
+                Self::render_text_content(ui, content, &tab.window_name)
+            }
+            WindowContent::TabbedText(tabbed) => {
+                if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
+                    ui.label(
+                        RichText::new(format!("Active tab: {}", active.definition.name)).italics(),
+                    );
+                    ui.separator();
+                    Self::render_text_content(ui, &active.content, &tab.window_name);
+                } else {
+                    ui.label("No active tab content.");
                 }
             }
-            None => {
-                ui.label("No text window is configured for the main stream.");
+            WindowContent::Room(room) => {
+                ui.heading(&room.name);
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt(format!("room_scroll_{}", tab.window_name))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        Self::render_styled_lines(
+                            ui,
+                            &std::collections::VecDeque::from(room.description.clone()),
+                        );
+                        if !room.exits.is_empty() {
+                            ui.separator();
+                            ui.label(format!("Exits: {}", room.exits.join(", ")));
+                        }
+                    });
+            }
+            _ => {
+                ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
+                ui.label(format!(
+                    "Window: {} ({:?})",
+                    window.name, window.widget_type
+                ));
             }
         }
+    }
+}
+
+struct GuiDockTabViewer<'a> {
+    app_core: &'a AppCore,
+    closed_tabs: Vec<TabKey>,
+}
+
+impl<'a> GuiDockTabViewer<'a> {
+    fn new(app_core: &'a AppCore) -> Self {
+        Self {
+            app_core,
+            closed_tabs: Vec::new(),
+        }
+    }
+
+    fn take_closed_tabs(self) -> Vec<TabKey> {
+        self.closed_tabs
+    }
+}
+
+impl TabViewer for GuiDockTabViewer<'_> {
+    type Tab = GuiTab;
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        VellumGuiApp::render_window_content(self.app_core, ui, tab);
+    }
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        tab.id.title.clone().into()
+    }
+
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.closed_tabs.push(tab.id.key.clone());
+        true
     }
 }
 
 impl eframe::App for VellumGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_server_messages();
+        self.refresh_available_tabs_if_needed();
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+
+        let mut restore_key: Option<TabKey> = None;
 
         egui::TopBottomPanel::top("gui_header").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -257,23 +594,43 @@ impl eframe::App for VellumGuiApp {
                 };
                 ui.separator();
                 ui.label(connection_text);
-            });
-        });
+                ui.separator();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_label(true, "Main");
-            });
-            ui.separator();
-
-            egui::ScrollArea::vertical()
-                .id_salt("main_text_scroll")
-                .stick_to_bottom(true)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    self.render_main_text(ui);
+                ui.menu_button("Hidden Tabs", |ui| {
+                    let hidden = self.hidden_tabs_for_menu();
+                    if hidden.is_empty() {
+                        ui.label("No hidden tabs");
+                    } else {
+                        for (key, title) in hidden {
+                            if ui.button(title).clicked() {
+                                restore_key = Some(key);
+                                ui.close_menu();
+                            }
+                        }
+                    }
                 });
+            });
         });
+
+        if let Some(key) = restore_key {
+            self.restore_tab(key);
+        }
+
+        let mut closed_tabs = Vec::new();
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(dock_state) = &mut self.dock_state {
+                let mut viewer = GuiDockTabViewer::new(&self.app_core);
+                DockArea::new(dock_state).show_inside(ui, &mut viewer);
+                closed_tabs = viewer.take_closed_tabs();
+            } else {
+                ui.heading("No visible tabs");
+                ui.label("Use Hidden Tabs to restore one or more tabs.");
+            }
+        });
+
+        for key in closed_tabs {
+            self.hide_tab(key);
+        }
 
         egui::TopBottomPanel::bottom("gui_command_input").show(ctx, |ui| {
             let response = ui.add(
@@ -289,6 +646,11 @@ impl eframe::App for VellumGuiApp {
             }
         });
 
+        if self.layout_dirty {
+            self.save_layout_state();
+            self.layout_dirty = false;
+        }
+
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 }
@@ -297,6 +659,10 @@ impl Drop for VellumGuiApp {
     fn drop(&mut self) {
         if let Some(handle) = self.network_handle.take() {
             handle.abort();
+        }
+
+        if self.layout_dirty {
+            self.save_layout_state();
         }
     }
 }
@@ -337,7 +703,9 @@ fn parse_hex_color(input: &str) -> Option<Color32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_hex_color;
+    use super::{parse_hex_color, DockStateSnapshot, VellumGuiApp};
+    use crate::config::Config;
+    use crate::frontend::gui::TabKey;
     use eframe::egui::Color32;
 
     #[test]
@@ -360,5 +728,29 @@ mod tests {
     fn test_parse_hex_color_invalid_input() {
         assert_eq!(parse_hex_color("#XYZ"), None);
         assert_eq!(parse_hex_color(""), None);
+    }
+
+    #[test]
+    fn test_resolve_layout_ids_prefers_connection_character() {
+        let mut config = Config::default();
+        config.character = Some("profile_a".to_string());
+        config.connection.character = Some("Nisugi".to_string());
+
+        let (profile, character) = VellumGuiApp::resolve_layout_ids(&config);
+        assert_eq!(profile, "profile_a");
+        assert_eq!(character, "Nisugi");
+    }
+
+    #[test]
+    fn test_dock_state_snapshot_round_trip() {
+        let snapshot = DockStateSnapshot {
+            visible_tabs: vec![TabKey::TextMain, TabKey::Vitals],
+        };
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let parsed: DockStateSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.visible_tabs.len(), 2);
+        assert_eq!(parsed.visible_tabs[0], TabKey::TextMain);
+        assert_eq!(parsed.visible_tabs[1], TabKey::Vitals);
     }
 }
