@@ -1,18 +1,16 @@
 use super::persistence::{load_layout, save_layout, GuiLayoutFileV1, ViewportState};
 use super::{TabId, TabKey};
+use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction};
 use crate::core::AppCore;
 use crate::data::{
-    InputMode, SpanType, StyledLine, TabbedTextContent, TextContent, WidgetType, WindowContent,
-    WindowState,
+    InputMode, LinkData, SpanType, StyledLine, TabbedTextContent, TextContent, TextSegment,
+    WidgetType, WindowContent, WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
-use eframe::egui::text::LayoutJob;
-use eframe::egui::{
-    Color32, FontFamily, FontId, Pos2, Rect, RichText, TextFormat, Vec2, ViewportBuilder,
-};
+use eframe::egui::{Color32, Pos2, Rect, RichText, Vec2, ViewportBuilder};
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, DockState, Surface, SurfaceIndex, TabViewer};
 use serde::{Deserialize, Serialize};
@@ -22,8 +20,8 @@ use tokio::sync::mpsc;
 
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
 const INITIAL_LAYOUT_HEIGHT: u16 = 50;
-const MAX_RENDERED_LINES: usize = 2000;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
+const MAX_RENDERED_LINES: usize = 2000;
 const MIN_VISIBLE_VIEWPORT_PX: f32 = 48.0;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
@@ -58,6 +56,18 @@ struct GuiKeyPress {
     logical_key: egui::Key,
     physical_key: Option<egui::Key>,
     modifiers: egui::Modifiers,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum GuiLinkDispatch {
+    NetworkCommand(String),
+    MenuRequest { exist_id: String, noun: String },
+}
+
+#[derive(Clone, Debug)]
+struct GuiLinkClick {
+    link_data: LinkData,
+    click_pos: (u16, u16),
 }
 
 pub struct VellumGuiApp {
@@ -1022,66 +1032,212 @@ impl VellumGuiApp {
             && !command.starts_with("menu:")
     }
 
-    fn line_to_layout_job(line: &StyledLine, visuals: &egui::Visuals) -> LayoutJob {
-        let mut job = LayoutJob::default();
-        for segment in &line.segments {
-            let foreground = segment
-                .fg
-                .as_deref()
-                .and_then(parse_hex_color)
-                .unwrap_or(visuals.text_color());
-            let background = segment
-                .bg
-                .as_deref()
-                .and_then(parse_hex_color)
-                .unwrap_or(Color32::TRANSPARENT);
+    fn dispatch_raw_command(&mut self, command: String) {
+        let outbound = command.trim_end_matches(['\r', '\n']).to_string();
+        if outbound.trim().is_empty() {
+            return;
+        }
 
-            let mut format = TextFormat {
-                font_id: FontId::new(
-                    DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 },
-                    if segment.mono {
-                        FontFamily::Monospace
-                    } else {
-                        FontFamily::Proportional
-                    },
-                ),
-                color: foreground,
-                background,
-                ..Default::default()
+        self.app_core
+            .perf_stats
+            .record_bytes_sent((outbound.len() + 1) as u64);
+        let _ = self.command_tx.send(outbound);
+    }
+
+    fn resolve_link_dispatch(
+        link_data: &LinkData,
+        cmdlist: Option<&CmdList>,
+    ) -> Option<GuiLinkDispatch> {
+        if link_data.exist_id == "_direct_" {
+            let command = if !link_data.noun.trim().is_empty() {
+                link_data.noun.trim().to_string()
+            } else {
+                link_data.text.trim().to_string()
             };
-
-            if matches!(segment.span_type, SpanType::Link) {
-                format.underline = egui::Stroke::new(1.0, foreground);
+            if command.is_empty() {
+                None
+            } else {
+                Some(GuiLinkDispatch::NetworkCommand(command))
             }
-
-            job.append(&segment.text, 0.0, format);
+        } else if let Some(coord) = link_data.coord.as_deref() {
+            let cmdlist = cmdlist?;
+            let entry = cmdlist.get(coord)?;
+            Some(GuiLinkDispatch::NetworkCommand(
+                CmdList::substitute_command(
+                    &entry.command,
+                    &link_data.noun,
+                    &link_data.exist_id,
+                    None,
+                ),
+            ))
+        } else {
+            Some(GuiLinkDispatch::MenuRequest {
+                exist_id: link_data.exist_id.clone(),
+                noun: link_data.noun.clone(),
+            })
         }
-        job
     }
 
-    fn render_styled_lines(ui: &mut egui::Ui, lines: &std::collections::VecDeque<StyledLine>) {
+    fn click_pos_to_grid(pos: Pos2) -> (u16, u16) {
+        let x = pos.x.clamp(0.0, u16::MAX as f32) as u16;
+        let y = pos.y.clamp(0.0, u16::MAX as f32) as u16;
+        (x, y)
+    }
+
+    fn handle_link_click(&mut self, click: GuiLinkClick) {
+        let dispatch =
+            Self::resolve_link_dispatch(&click.link_data, self.app_core.cmdlist.as_ref());
+        let Some(dispatch) = dispatch else {
+            tracing::warn!(
+                "Unable to resolve GUI link click for exist_id='{}' noun='{}' coord={:?}",
+                click.link_data.exist_id,
+                click.link_data.noun,
+                click.link_data.coord
+            );
+            return;
+        };
+
+        let outbound = match dispatch {
+            GuiLinkDispatch::NetworkCommand(command) => command,
+            GuiLinkDispatch::MenuRequest { exist_id, noun } => {
+                self.app_core.request_menu(exist_id, noun, click.click_pos)
+            }
+        };
+        self.dispatch_raw_command(outbound);
+    }
+
+    fn segment_to_rich_text(
+        segment: &TextSegment,
+        visuals: &egui::Visuals,
+        is_link: bool,
+    ) -> RichText {
+        let foreground = segment
+            .fg
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| {
+                if is_link {
+                    visuals.hyperlink_color
+                } else {
+                    visuals.text_color()
+                }
+            });
+        let background = segment
+            .bg
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or(Color32::TRANSPARENT);
+
+        let mut rich = RichText::new(segment.text.as_str())
+            .size(DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 })
+            .color(foreground)
+            .background_color(background);
+
+        if segment.bold {
+            rich = rich.strong();
+        }
+        if segment.mono {
+            rich = rich.monospace();
+        }
+        if is_link {
+            rich = rich.underline();
+        }
+        rich
+    }
+
+    fn render_styled_line(
+        ui: &mut egui::Ui,
+        line: &StyledLine,
+        visuals: &egui::Visuals,
+    ) -> Option<GuiLinkClick> {
+        let mut clicked_link = None;
+
+        ui.horizontal_wrapped(|ui| {
+            for segment in &line.segments {
+                if segment.text.is_empty() {
+                    continue;
+                }
+
+                let is_link =
+                    matches!(segment.span_type, SpanType::Link) && segment.link_data.is_some();
+                let rich = Self::segment_to_rich_text(segment, visuals, is_link);
+
+                if is_link {
+                    let response = ui.add(egui::Label::new(rich).sense(egui::Sense::click()));
+                    if response.clicked() && clicked_link.is_none() {
+                        if let Some(link_data) = segment.link_data.clone() {
+                            let pointer_pos = response
+                                .interact_pointer_pos()
+                                .or_else(|| ui.ctx().pointer_latest_pos())
+                                .unwrap_or(Pos2::ZERO);
+                            clicked_link = Some(GuiLinkClick {
+                                link_data,
+                                click_pos: Self::click_pos_to_grid(pointer_pos),
+                            });
+                        }
+                    }
+                } else {
+                    ui.label(rich);
+                }
+            }
+        });
+
+        clicked_link
+    }
+
+    fn render_text_content(
+        ui: &mut egui::Ui,
+        content: &TextContent,
+        scroll_id: &str,
+    ) -> Option<GuiLinkClick> {
         let visuals = ui.visuals().clone();
-        let start = lines.len().saturating_sub(MAX_RENDERED_LINES);
-        for line in lines.iter().skip(start) {
-            let job = Self::line_to_layout_job(line, &visuals);
-            ui.label(job);
-        }
-    }
+        let mut clicked_link = None;
+        let start = content.lines.len().saturating_sub(MAX_RENDERED_LINES);
 
-    fn render_text_content(ui: &mut egui::Ui, content: &TextContent, scroll_id: &str) {
         egui::ScrollArea::vertical()
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                Self::render_styled_lines(ui, &content.lines);
+                for line in content.lines.iter().skip(start) {
+                    if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
+                        clicked_link = Some(link);
+                    }
+                }
             });
+        clicked_link
     }
 
-    fn render_window_content(app_core: &AppCore, ui: &mut egui::Ui, tab: &GuiTab) {
+    fn render_room_description(
+        ui: &mut egui::Ui,
+        lines: &[StyledLine],
+        scroll_id: &str,
+    ) -> Option<GuiLinkClick> {
+        let visuals = ui.visuals().clone();
+        let mut clicked_link = None;
+
+        egui::ScrollArea::vertical()
+            .id_salt(format!("room_scroll_{}", scroll_id))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for line in lines {
+                    if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
+                        clicked_link = Some(link);
+                    }
+                }
+            });
+
+        clicked_link
+    }
+
+    fn render_window_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        tab: &GuiTab,
+    ) -> Option<GuiLinkClick> {
         let Some(window) = app_core.ui_state.windows.get(&tab.window_name) else {
             ui.label("This tab's source window is no longer available.");
-            return;
+            return None;
         };
 
         match &window.content {
@@ -1096,27 +1252,22 @@ impl VellumGuiApp {
                         RichText::new(format!("Active tab: {}", active.definition.name)).italics(),
                     );
                     ui.separator();
-                    Self::render_text_content(ui, &active.content, &tab.window_name);
+                    Self::render_text_content(ui, &active.content, &tab.window_name)
                 } else {
                     ui.label("No active tab content.");
+                    None
                 }
             }
             WindowContent::Room(room) => {
                 ui.heading(&room.name);
                 ui.separator();
-                egui::ScrollArea::vertical()
-                    .id_salt(format!("room_scroll_{}", tab.window_name))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        Self::render_styled_lines(
-                            ui,
-                            &std::collections::VecDeque::from(room.description.clone()),
-                        );
-                        if !room.exits.is_empty() {
-                            ui.separator();
-                            ui.label(format!("Exits: {}", room.exits.join(", ")));
-                        }
-                    });
+                let clicked_link =
+                    Self::render_room_description(ui, &room.description, &tab.window_name);
+                if !room.exits.is_empty() {
+                    ui.separator();
+                    ui.label(format!("Exits: {}", room.exits.join(", ")));
+                }
+                clicked_link
             }
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
@@ -1124,6 +1275,7 @@ impl VellumGuiApp {
                     "Window: {} ({:?})",
                     window.name, window.widget_type
                 ));
+                None
             }
         }
     }
@@ -1132,6 +1284,7 @@ impl VellumGuiApp {
 struct GuiDockTabViewer<'a> {
     app_core: &'a AppCore,
     closed_tabs: Vec<TabKey>,
+    link_clicks: Vec<GuiLinkClick>,
 }
 
 impl<'a> GuiDockTabViewer<'a> {
@@ -1139,11 +1292,16 @@ impl<'a> GuiDockTabViewer<'a> {
         Self {
             app_core,
             closed_tabs: Vec::new(),
+            link_clicks: Vec::new(),
         }
     }
 
-    fn take_closed_tabs(self) -> Vec<TabKey> {
-        self.closed_tabs
+    fn take_closed_tabs(&mut self) -> Vec<TabKey> {
+        std::mem::take(&mut self.closed_tabs)
+    }
+
+    fn take_link_clicks(&mut self) -> Vec<GuiLinkClick> {
+        std::mem::take(&mut self.link_clicks)
     }
 }
 
@@ -1151,7 +1309,9 @@ impl TabViewer for GuiDockTabViewer<'_> {
     type Tab = GuiTab;
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        VellumGuiApp::render_window_content(self.app_core, ui, tab);
+        if let Some(click) = VellumGuiApp::render_window_content(self.app_core, ui, tab) {
+            self.link_clicks.push(click);
+        }
     }
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
@@ -1229,10 +1389,12 @@ impl eframe::App for VellumGuiApp {
             .map(Self::collect_detached_tab_keys)
             .unwrap_or_default();
         let mut closed_tabs = Vec::new();
+        let mut link_clicks = Vec::new();
         egui::CentralPanel::default().show(&ctx, |ui| {
             if let Some(dock_state) = &mut self.dock_state {
                 let mut viewer = GuiDockTabViewer::new(&self.app_core);
                 DockArea::new(dock_state).show_inside(ui, &mut viewer);
+                link_clicks = viewer.take_link_clicks();
                 closed_tabs = viewer.take_closed_tabs();
             } else {
                 ui.heading("No visible tabs");
@@ -1244,6 +1406,9 @@ impl eframe::App for VellumGuiApp {
             self.hide_tab(key);
         }
         self.hide_removed_detached_tabs(&detached_before_frame);
+        for click in link_clicks {
+            self.handle_link_click(click);
+        }
 
         egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
             let response = ui.add(
@@ -1318,9 +1483,11 @@ fn parse_hex_color(input: &str) -> Option<Color32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_hex_color, AppShortcut, DockStateSnapshot, GlobalDispatchTarget, GuiTab, VellumGuiApp,
+        parse_hex_color, AppShortcut, DockStateSnapshot, GlobalDispatchTarget, GuiLinkDispatch,
+        GuiTab, VellumGuiApp,
     };
     use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction};
+    use crate::data::LinkData;
     use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
     use crate::frontend::gui::{GuiLayoutFileV1, TabId, TabKey, ViewportState};
     use eframe::egui::{Color32, Pos2, Vec2};
@@ -1535,5 +1702,64 @@ mod tests {
         .expect("Num1 should map to a frontend key event");
         assert_eq!(event.code, KeyCode::Keypad1);
         assert_eq!(event.modifiers, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_direct_cmd_prefers_noun() {
+        let link = LinkData {
+            exist_id: "_direct_".to_string(),
+            noun: "get coin".to_string(),
+            text: "GET COIN".to_string(),
+            coord: None,
+        };
+
+        let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
+        assert_eq!(
+            dispatch,
+            Some(GuiLinkDispatch::NetworkCommand("get coin".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_direct_cmd_falls_back_to_text() {
+        let link = LinkData {
+            exist_id: "_direct_".to_string(),
+            noun: String::new(),
+            text: "SKILLS BASE".to_string(),
+            coord: None,
+        };
+
+        let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
+        assert_eq!(
+            dispatch,
+            Some(GuiLinkDispatch::NetworkCommand("SKILLS BASE".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_menu_request_for_regular_link() {
+        let link = LinkData {
+            exist_id: "12345".to_string(),
+            noun: "sword".to_string(),
+            text: "a rusty sword".to_string(),
+            coord: None,
+        };
+
+        let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
+        assert_eq!(
+            dispatch,
+            Some(GuiLinkDispatch::MenuRequest {
+                exist_id: "12345".to_string(),
+                noun: "sword".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_click_pos_to_grid_clamps_values() {
+        let pos = Pos2::new(-10.0, 999999.0);
+        let (x, y) = VellumGuiApp::click_pos_to_grid(pos);
+        assert_eq!(x, 0);
+        assert_eq!(y, u16::MAX);
     }
 }
