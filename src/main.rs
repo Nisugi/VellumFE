@@ -237,7 +237,12 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            Commands::MigrateLayout { src, out, dry_run, verbose } => {
+            Commands::MigrateLayout {
+                src,
+                out,
+                dry_run,
+                verbose,
+            } => {
                 // Default output to <src>/migrated if not specified
                 let out_dir = out.unwrap_or_else(|| src.join("migrated"));
 
@@ -404,15 +409,17 @@ fn main() -> Result<()> {
     let character = cli.character.clone();
     let login_key = cli.key.clone();
     match cli.frontend {
-        FrontendType::Tui => frontend::tui::run(config, character, direct_config, setup_palette, login_key)?,
-        FrontendType::Gui => run_gui(config)?,
+        FrontendType::Tui => {
+            frontend::tui::run(config, character, direct_config, setup_palette, login_key)?
+        }
+        FrontendType::Gui => run_gui(config, login_key)?,
     }
 
     Ok(())
 }
 
 /// Run GUI frontend
-fn run_gui(config: config::Config) -> Result<()> {
+fn run_gui(config: config::Config, login_key: Option<String>) -> Result<()> {
     use core::AppCore;
     use frontend::EguiApp;
 
@@ -420,7 +427,7 @@ fn run_gui(config: config::Config) -> Result<()> {
     let app_core = AppCore::new(config)?;
 
     // Create and run GUI
-    let app = EguiApp::new(app_core);
+    let app = EguiApp::new(app_core, login_key);
     app.run()?;
 
     Ok(())

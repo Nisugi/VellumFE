@@ -20,8 +20,8 @@ crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev
 tui-textarea = "0.7"
 
 # GUI (future)
-# egui = "0.29"
-# eframe = "0.29"
+egui = "0.29"
+eframe = "0.29"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
