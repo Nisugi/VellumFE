@@ -55,6 +55,7 @@ impl AppCore {
                     fg: Some(color),
                     bg: None,
                     bold: false,
+                    mono: false,
                     span_type: SpanType::Normal,
                     link_data: None,
                 });
@@ -66,6 +67,7 @@ impl AppCore {
                 fg: Some("#ffffff".to_string()), // White text for command
                 bg: None,
                 bold: false,
+                mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             });

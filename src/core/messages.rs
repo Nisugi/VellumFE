@@ -536,6 +536,7 @@ impl MessageProcessor {
                             fg: Some(color),
                             bg: None,
                             bold: false,
+                            mono: false,
                             span_type: SpanType::Normal,
                             link_data: None,
                         });
@@ -613,6 +614,7 @@ impl MessageProcessor {
                         fg: fg_color.clone(),
                         bg: bg_color.clone(),
                         bold: *bold,
+                        mono: false,
                         span_type: data_span_type,
                         link_data: link_data.clone(),
                     };
@@ -683,6 +685,7 @@ impl MessageProcessor {
                     fg: fg_color.clone(),
                     bg: bg_color.clone(),
                     bold: *bold,
+                    mono: false,
                     span_type: data_span_type,
                     link_data: link_data.clone(),
                 });
@@ -1398,6 +1401,7 @@ impl MessageProcessor {
                                         fg: active_color.clone(),
                                         bg: None,
                                         bold: false,
+                                        mono: false,
                                         span_type: SpanType::Normal,
                                         link_data: None,
                                     });
@@ -1408,6 +1412,7 @@ impl MessageProcessor {
                                             fg: None,
                                             bg: None,
                                             bold: false,
+                                            mono: false,
                                             span_type: SpanType::Normal,
                                             link_data: None,
                                         });
@@ -2121,6 +2126,7 @@ impl MessageProcessor {
                             fg: fg_color.clone(),
                             bg: bg_color.clone(),
                             bold,
+                            mono: false,
                             span_type: data_span_type,
                             link_data: link.clone(),
                         };
@@ -2395,6 +2401,7 @@ impl MessageProcessor {
                     fg: line.segments.first().and_then(|s| s.fg.clone()),
                     bg: line.segments.first().and_then(|s| s.bg.clone()),
                     bold: line.segments.first().map(|s| s.bold).unwrap_or(false),
+                    mono: false,
                     span_type: crate::data::SpanType::Normal,
                     link_data,
                 };
@@ -4020,6 +4027,7 @@ mod tests {
             fg: None,
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::Normal,
             link_data: None,
         }]];

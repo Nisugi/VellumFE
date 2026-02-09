@@ -110,6 +110,7 @@ impl ContainerWindow {
                             fg: None,
                             bg: None,
                             bold: false,
+                            mono: false,
                             span_type: crate::data::SpanType::Normal,
                             link_data: None,
                         });
@@ -146,6 +147,7 @@ impl ContainerWindow {
                             fg: self.link_color.clone().or_else(|| Some("#00FFFF".to_string())),
                             bg: None,
                             bold: false,
+                            mono: false,
                             span_type: crate::data::SpanType::Link,
                             link_data: Some(link_data),
                         });
@@ -166,6 +168,7 @@ impl ContainerWindow {
                         fg: None,
                         bg: None,
                         bold: false,
+                        mono: false,
                         span_type: crate::data::SpanType::Normal,
                         link_data: None,
                     });

@@ -577,6 +577,7 @@ impl CoreHighlightEngine {
                 fg: current_style.fg.clone(),
                 bg: current_style.bg.clone(),
                 bold: current_style.bold,
+                mono: false,
                 span_type: current_style.span_type,
                 link_data: current_link,
             });
@@ -711,6 +712,7 @@ pub fn apply_deferred_for_window(
         fg: None,
         bg: None,
         bold: false,
+        mono: false,
         span_type: SpanType::Normal,
         link_data: None,
     });
@@ -720,6 +722,7 @@ pub fn apply_deferred_for_window(
         fg: first_style.fg,
         bg: first_style.bg,
         bold: first_style.bold,
+        mono: false,
         span_type: first_style.span_type,
         link_data: None,
     }]
@@ -760,6 +763,7 @@ mod tests {
             fg: None,
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::Normal,
             link_data: None,
         }
@@ -1349,6 +1353,7 @@ mod tests {
             fg: Some("#0000FF".to_string()), // Blue link
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::Link,
             link_data: None,
         }];
@@ -1388,6 +1393,7 @@ mod tests {
             fg: None,
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::System,
             link_data: None,
         }];
@@ -1604,6 +1610,7 @@ mod tests {
                 fg: None,
                 bg: None,
                 bold: false,
+                mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             },
@@ -1612,6 +1619,7 @@ mod tests {
                 fg: None,
                 bg: None,
                 bold: false,
+                mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             },
@@ -1641,6 +1649,7 @@ mod tests {
             fg: Some("#0000FF".to_string()), // Pre-existing blue
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::Normal,
             link_data: None,
         }];

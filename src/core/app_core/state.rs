@@ -1714,6 +1714,7 @@ impl AppCore {
                 fg: Some("#00ff00".to_string()),
                 bg: None,
                 bold: true,
+                mono: false,
                 span_type: SpanType::System, // system echo; skip highlight transforms
                 link_data: None,
             }],

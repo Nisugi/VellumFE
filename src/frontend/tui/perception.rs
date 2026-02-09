@@ -172,6 +172,7 @@ impl PerceptionWindow {
                     fg: None,
                     bg: None,
                     bold: false,
+                    mono: false,
                     span_type: SpanType::Normal,
                     link_data: entry.link_data.clone(),
                 };

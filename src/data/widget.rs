@@ -39,19 +39,67 @@ pub struct StyledLine {
 }
 
 /// A segment of text with styling
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct TextSegment {
+    #[serde(default)]
     pub text: String,
     pub fg: Option<String>, // Hex color "#RRGGBB"
     pub bg: Option<String>, // Hex color "#RRGGBB"
+    #[serde(default)]
     pub bold: bool,
+    /// Render in monospace font (for GUI dual-font rendering)
+    /// TUI ignores this field since terminal uses monospace by default.
+    #[serde(default)]
+    pub mono: bool,
+    #[serde(default)]
     pub span_type: SpanType, // Semantic type for priority layering
     pub link_data: Option<LinkData>,
 }
 
+impl TextSegment {
+    /// Create a plain text segment with no styling.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Create a styled text segment.
+    pub fn styled(text: impl Into<String>, fg: Option<String>, bold: bool) -> Self {
+        Self {
+            text: text.into(),
+            fg,
+            bold,
+            ..Default::default()
+        }
+    }
+
+    /// Create a text segment with full styling options.
+    pub fn with_style(
+        text: impl Into<String>,
+        fg: Option<String>,
+        bg: Option<String>,
+        bold: bool,
+        mono: bool,
+        span_type: SpanType,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            fg,
+            bg,
+            bold,
+            mono,
+            span_type,
+            link_data: None,
+        }
+    }
+}
+
 /// Semantic type of text span (for highlight priority)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SpanType {
+    #[default]
     Normal,      // Regular text
     Link,        // <a> tag from parser (clickable game objects)
     Monsterbold, // <preset id="monsterbold"> from parser (monsters)
@@ -403,6 +451,7 @@ impl StyledLine {
                 fg: None,
                 bg: None,
                 bold: false,
+                mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             }],
@@ -418,6 +467,7 @@ impl StyledLine {
                 fg: None,
                 bg: None,
                 bold: false,
+                mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             }],
@@ -601,6 +651,7 @@ mod tests {
             fg: Some("#477ab3".to_string()),
             bg: None,
             bold: false,
+            mono: false,
             span_type: SpanType::Link,
             link_data: Some(LinkData {
                 exist_id: "12345".to_string(),
@@ -623,6 +674,7 @@ mod tests {
             fg: Some("#FF0000".to_string()),
             bg: None,
             bold: true,
+            mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
         };
@@ -632,6 +684,7 @@ mod tests {
             fg: Some("#FF0000".to_string()),
             bg: None,
             bold: true,
+            mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
         };
@@ -641,6 +694,7 @@ mod tests {
             fg: Some("#FF0000".to_string()),
             bg: None,
             bold: true,
+            mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
         };

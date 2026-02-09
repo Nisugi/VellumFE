@@ -615,6 +615,7 @@ fn span_tuple_to_segment(
         fg,
         bg,
         bold,
+        mono: false,
         span_type: *span_type,
         link_data: link_data.clone(),
     }
