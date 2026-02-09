@@ -73,6 +73,12 @@ enum GuiMenuLayer {
 }
 
 #[derive(Clone, Debug)]
+struct GuiMenuCommand {
+    layer: GuiMenuLayer,
+    command: String,
+}
+
+#[derive(Clone, Debug)]
 struct GuiLinkClick {
     link_data: LinkData,
     click_pos: (u16, u16),
@@ -1191,7 +1197,7 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         layer: GuiMenuLayer,
         menu: &PopupMenu,
-    ) -> Option<String> {
+    ) -> Option<GuiMenuCommand> {
         let layer_id = match layer {
             GuiMenuLayer::Main => "gui_popup_menu_main",
             GuiMenuLayer::Submenu => "gui_popup_menu_submenu",
@@ -1219,27 +1225,103 @@ impl VellumGuiApp {
                 });
             });
 
-        clicked_command
+        clicked_command.map(|command| GuiMenuCommand { layer, command })
     }
 
-    fn handle_popup_menu_command(&mut self, command: String) {
+    fn open_child_menu_for_layer(
+        &mut self,
+        layer: GuiMenuLayer,
+        items: Vec<crate::data::ui_state::PopupMenuItem>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+
+        let parent_pos = match layer {
+            GuiMenuLayer::Main => self
+                .app_core
+                .ui_state
+                .popup_menu
+                .as_ref()
+                .map(|menu| menu.get_position()),
+            GuiMenuLayer::Submenu => self
+                .app_core
+                .ui_state
+                .submenu
+                .as_ref()
+                .map(|menu| menu.get_position()),
+            GuiMenuLayer::Nested => self
+                .app_core
+                .ui_state
+                .nested_submenu
+                .as_ref()
+                .map(|menu| menu.get_position()),
+            GuiMenuLayer::Deep => self
+                .app_core
+                .ui_state
+                .deep_submenu
+                .as_ref()
+                .map(|menu| menu.get_position()),
+        }
+        .unwrap_or((40, 12));
+
+        let child = PopupMenu::new(items, (parent_pos.0.saturating_add(24), parent_pos.1));
+        match layer {
+            GuiMenuLayer::Main => {
+                self.app_core.ui_state.submenu = Some(child);
+                self.app_core.ui_state.nested_submenu = None;
+                self.app_core.ui_state.deep_submenu = None;
+            }
+            GuiMenuLayer::Submenu => {
+                self.app_core.ui_state.nested_submenu = Some(child);
+                self.app_core.ui_state.deep_submenu = None;
+            }
+            GuiMenuLayer::Nested | GuiMenuLayer::Deep => {
+                self.app_core.ui_state.deep_submenu = Some(child)
+            }
+        }
+        self.app_core.ui_state.input_mode = InputMode::Menu;
+    }
+
+    fn handle_popup_menu_command(&mut self, menu_command: GuiMenuCommand) {
+        let command = menu_command.command;
+
         if let Some(category) = command.strip_prefix("__SUBMENU__") {
             if let Some(items) = self.app_core.menu_categories.get(category).cloned() {
-                let parent_pos = self
-                    .app_core
-                    .ui_state
-                    .popup_menu
-                    .as_ref()
-                    .map(|menu| menu.get_position())
-                    .unwrap_or((40, 12));
-                self.app_core.ui_state.submenu = Some(PopupMenu::new(
-                    items,
-                    (parent_pos.0.saturating_add(24), parent_pos.1),
-                ));
-                self.app_core.ui_state.input_mode = InputMode::Menu;
+                self.open_child_menu_for_layer(menu_command.layer, items);
             } else {
                 tracing::warn!("Missing GUI menu category: {}", category);
             }
+            return;
+        }
+
+        if let Some(submenu) = command.strip_prefix("menu:") {
+            let items = self.app_core.build_submenu(submenu);
+            if items.is_empty() {
+                self.app_core.add_system_message(&format!(
+                    "Menu '{}' is not available in GUI yet.",
+                    submenu
+                ));
+                self.close_all_popup_menus();
+                self.app_core.ui_state.input_mode = InputMode::Normal;
+            } else {
+                self.open_child_menu_for_layer(menu_command.layer, items);
+            }
+            return;
+        }
+
+        if command == "action:windows" || command == "action:listwindows" {
+            let _ = self.app_core.send_command(".windows".to_string());
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            return;
+        }
+
+        if command.starts_with("action:") {
+            self.app_core
+                .add_system_message(&format!("GUI action not implemented yet: {}", command));
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
             return;
         }
 
@@ -1254,7 +1336,7 @@ impl VellumGuiApp {
         let nested = self.app_core.ui_state.nested_submenu.clone();
         let deep = self.app_core.ui_state.deep_submenu.clone();
 
-        let mut clicked_command = None;
+        let mut clicked_command: Option<GuiMenuCommand> = None;
 
         if let Some(menu) = &main {
             clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
@@ -1313,10 +1395,13 @@ impl VellumGuiApp {
         if segment.mono {
             rich = rich.monospace();
         }
-        if is_link {
-            rich = rich.underline();
-        }
         rich
+    }
+
+    fn segment_has_clickable_link(segment: &TextSegment) -> bool {
+        // Parser may mark creature links as Monsterbold when links are wrapped in pushBold/popBold.
+        // `link_data` is the reliable indicator of actual clickability.
+        segment.link_data.is_some()
     }
 
     fn render_styled_line(
@@ -1337,8 +1422,7 @@ impl VellumGuiApp {
                         continue;
                     }
 
-                    let is_link =
-                        matches!(segment.span_type, SpanType::Link) && segment.link_data.is_some();
+                    let is_link = Self::segment_has_clickable_link(segment);
                     let rich = Self::segment_to_rich_text(segment, visuals, is_link);
 
                     if is_link {
@@ -1670,7 +1754,7 @@ mod tests {
         GuiTab, VellumGuiApp,
     };
     use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction};
-    use crate::data::LinkData;
+    use crate::data::{LinkData, SpanType, TextSegment};
     use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
     use crate::frontend::gui::{GuiLayoutFileV1, TabId, TabKey, ViewportState};
     use eframe::egui::{Color32, Pos2, Vec2};
@@ -1975,6 +2059,41 @@ mod tests {
                 noun: "sword".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn test_segment_has_clickable_link_for_monsterbold_link_segment() {
+        let segment = TextSegment {
+            text: "goblin".to_string(),
+            fg: Some("#00ff00".to_string()),
+            bg: None,
+            bold: true,
+            mono: false,
+            span_type: SpanType::Monsterbold,
+            link_data: Some(LinkData {
+                exist_id: "12345".to_string(),
+                noun: "goblin".to_string(),
+                text: "goblin".to_string(),
+                coord: None,
+            }),
+        };
+
+        assert!(VellumGuiApp::segment_has_clickable_link(&segment));
+    }
+
+    #[test]
+    fn test_segment_has_clickable_link_false_without_link_data() {
+        let segment = TextSegment {
+            text: "plain text".to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            mono: false,
+            span_type: SpanType::Link,
+            link_data: None,
+        };
+
+        assert!(!VellumGuiApp::segment_has_clickable_link(&segment));
     }
 
     #[test]
