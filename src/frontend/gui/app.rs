@@ -4,8 +4,8 @@ use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction};
 use crate::core::AppCore;
 use crate::data::{
-    InputMode, LinkData, SpanType, StyledLine, TabbedTextContent, TextContent, TextSegment,
-    WidgetType, WindowContent, WindowState,
+    InputMode, LinkData, PopupMenu, SpanType, StyledLine, TabbedTextContent, TextContent,
+    TextSegment, WidgetType, WindowContent, WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
@@ -62,6 +62,14 @@ struct GuiKeyPress {
 enum GuiLinkDispatch {
     NetworkCommand(String),
     MenuRequest { exist_id: String, noun: String },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GuiMenuLayer {
+    Main,
+    Submenu,
+    Nested,
+    Deep,
 }
 
 #[derive(Clone, Debug)]
@@ -1119,16 +1127,23 @@ impl VellumGuiApp {
                 Some(GuiLinkDispatch::NetworkCommand(command))
             }
         } else if let Some(coord) = link_data.coord.as_deref() {
-            let cmdlist = cmdlist?;
-            let entry = cmdlist.get(coord)?;
-            Some(GuiLinkDispatch::NetworkCommand(
-                CmdList::substitute_command(
-                    &entry.command,
-                    &link_data.noun,
-                    &link_data.exist_id,
-                    None,
-                ),
-            ))
+            if let Some(entry) = cmdlist.and_then(|list| list.get(coord)) {
+                Some(GuiLinkDispatch::NetworkCommand(
+                    CmdList::substitute_command(
+                        &entry.command,
+                        &link_data.noun,
+                        &link_data.exist_id,
+                        None,
+                    ),
+                ))
+            } else if !link_data.exist_id.trim().is_empty() {
+                Some(GuiLinkDispatch::MenuRequest {
+                    exist_id: link_data.exist_id.clone(),
+                    noun: link_data.noun.clone(),
+                })
+            } else {
+                None
+            }
         } else {
             Some(GuiLinkDispatch::MenuRequest {
                 exist_id: link_data.exist_id.clone(),
@@ -1163,6 +1178,106 @@ impl VellumGuiApp {
             }
         };
         self.dispatch_raw_command(outbound);
+    }
+
+    fn close_all_popup_menus(&mut self) {
+        self.app_core.ui_state.popup_menu = None;
+        self.app_core.ui_state.submenu = None;
+        self.app_core.ui_state.nested_submenu = None;
+        self.app_core.ui_state.deep_submenu = None;
+    }
+
+    fn render_menu_layer(
+        ctx: &egui::Context,
+        layer: GuiMenuLayer,
+        menu: &PopupMenu,
+    ) -> Option<String> {
+        let layer_id = match layer {
+            GuiMenuLayer::Main => "gui_popup_menu_main",
+            GuiMenuLayer::Submenu => "gui_popup_menu_submenu",
+            GuiMenuLayer::Nested => "gui_popup_menu_nested",
+            GuiMenuLayer::Deep => "gui_popup_menu_deep",
+        };
+
+        let mut clicked_command: Option<String> = None;
+        let pos = Pos2::new(menu.position.0 as f32, menu.position.1 as f32);
+        egui::Area::new(egui::Id::new(layer_id))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .interactable(true)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    for item in menu.get_items() {
+                        let button = egui::Button::new(item.text.as_str());
+                        let response = ui.add_enabled(!item.disabled, button);
+                        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() {
+                            clicked_command = Some(item.command.clone());
+                        }
+                    }
+                });
+            });
+
+        clicked_command
+    }
+
+    fn handle_popup_menu_command(&mut self, command: String) {
+        if let Some(category) = command.strip_prefix("__SUBMENU__") {
+            if let Some(items) = self.app_core.menu_categories.get(category).cloned() {
+                let parent_pos = self
+                    .app_core
+                    .ui_state
+                    .popup_menu
+                    .as_ref()
+                    .map(|menu| menu.get_position())
+                    .unwrap_or((40, 12));
+                self.app_core.ui_state.submenu = Some(PopupMenu::new(
+                    items,
+                    (parent_pos.0.saturating_add(24), parent_pos.1),
+                ));
+                self.app_core.ui_state.input_mode = InputMode::Menu;
+            } else {
+                tracing::warn!("Missing GUI menu category: {}", category);
+            }
+            return;
+        }
+
+        self.dispatch_raw_command(command);
+        self.close_all_popup_menus();
+        self.app_core.ui_state.input_mode = InputMode::Normal;
+    }
+
+    fn render_popup_menus(&mut self, ctx: &egui::Context) {
+        let main = self.app_core.ui_state.popup_menu.clone();
+        let submenu = self.app_core.ui_state.submenu.clone();
+        let nested = self.app_core.ui_state.nested_submenu.clone();
+        let deep = self.app_core.ui_state.deep_submenu.clone();
+
+        let mut clicked_command = None;
+
+        if let Some(menu) = &main {
+            clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
+        }
+        if clicked_command.is_none() {
+            if let Some(menu) = &submenu {
+                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu);
+            }
+        }
+        if clicked_command.is_none() {
+            if let Some(menu) = &nested {
+                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu);
+            }
+        }
+        if clicked_command.is_none() {
+            if let Some(menu) = &deep {
+                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu);
+            }
+        }
+
+        if let Some(command) = clicked_command {
+            self.handle_popup_menu_command(command);
+        }
     }
 
     fn segment_to_rich_text(
@@ -1211,34 +1326,42 @@ impl VellumGuiApp {
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
 
-        ui.horizontal_wrapped(|ui| {
-            for segment in &line.segments {
-                if segment.text.is_empty() {
-                    continue;
-                }
+        ui.scope(|ui| {
+            // Each styled segment is rendered as a separate widget. Keep inter-widget spacing at
+            // zero so highlights/links don't introduce artificial spaces around punctuation.
+            ui.spacing_mut().item_spacing.x = 0.0;
 
-                let is_link =
-                    matches!(segment.span_type, SpanType::Link) && segment.link_data.is_some();
-                let rich = Self::segment_to_rich_text(segment, visuals, is_link);
-
-                if is_link {
-                    let response = ui.add(egui::Label::new(rich).sense(egui::Sense::click()));
-                    if response.clicked() && clicked_link.is_none() {
-                        if let Some(link_data) = segment.link_data.clone() {
-                            let pointer_pos = response
-                                .interact_pointer_pos()
-                                .or_else(|| ui.ctx().pointer_latest_pos())
-                                .unwrap_or(Pos2::ZERO);
-                            clicked_link = Some(GuiLinkClick {
-                                link_data,
-                                click_pos: Self::click_pos_to_grid(pointer_pos),
-                            });
-                        }
+            ui.horizontal_wrapped(|ui| {
+                for segment in &line.segments {
+                    if segment.text.is_empty() {
+                        continue;
                     }
-                } else {
-                    ui.label(rich);
+
+                    let is_link =
+                        matches!(segment.span_type, SpanType::Link) && segment.link_data.is_some();
+                    let rich = Self::segment_to_rich_text(segment, visuals, is_link);
+
+                    if is_link {
+                        let response = ui
+                            .add(egui::Label::new(rich).sense(egui::Sense::click()))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() && clicked_link.is_none() {
+                            if let Some(link_data) = segment.link_data.clone() {
+                                let pointer_pos = response
+                                    .interact_pointer_pos()
+                                    .or_else(|| ui.ctx().pointer_latest_pos())
+                                    .unwrap_or(Pos2::ZERO);
+                                clicked_link = Some(GuiLinkClick {
+                                    link_data,
+                                    click_pos: Self::click_pos_to_grid(pointer_pos),
+                                });
+                            }
+                        }
+                    } else {
+                        ui.label(rich);
+                    }
                 }
-            }
+            });
         });
 
         clicked_link
@@ -1468,6 +1591,7 @@ impl eframe::App for VellumGuiApp {
         for click in link_clicks {
             self.handle_link_click(click);
         }
+        self.render_popup_menus(&ctx);
 
         egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
             let response = ui.add(
@@ -1822,6 +1946,25 @@ mod tests {
             noun: "sword".to_string(),
             text: "a rusty sword".to_string(),
             coord: None,
+        };
+
+        let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
+        assert_eq!(
+            dispatch,
+            Some(GuiLinkDispatch::MenuRequest {
+                exist_id: "12345".to_string(),
+                noun: "sword".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_coord_without_cmdlist_falls_back_to_menu() {
+        let link = LinkData {
+            exist_id: "12345".to_string(),
+            noun: "sword".to_string(),
+            text: "a rusty sword".to_string(),
+            coord: Some("2524,2061".to_string()),
         };
 
         let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
