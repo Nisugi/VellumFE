@@ -53,7 +53,7 @@ enum GlobalDispatchTarget {
 #[derive(Clone, Copy, Debug)]
 struct GuiKeyPress {
     key_event: crate::frontend::common::KeyEvent,
-    logical_key: egui::Key,
+    logical_key: Option<egui::Key>,
     physical_key: Option<egui::Key>,
     modifiers: egui::Modifiers,
 }
@@ -710,8 +710,9 @@ impl VellumGuiApp {
         }
     }
 
-    fn handle_global_input(&mut self, ctx: &egui::Context) {
-        let key_presses = Self::collect_pressed_key_events(ctx);
+    fn handle_global_input(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let mut key_presses = Self::collect_numpad_key_events(frame);
+        key_presses.extend(Self::collect_pressed_key_events(ctx));
         if key_presses.is_empty() {
             return;
         }
@@ -734,7 +735,9 @@ impl VellumGuiApp {
             self.execute_global_dispatch_target(target);
 
             ctx.input_mut(|input| {
-                input.consume_key(key_press.modifiers, key_press.logical_key);
+                if let Some(logical_key) = key_press.logical_key {
+                    input.consume_key(key_press.modifiers, logical_key);
+                }
                 if let Some(physical_key) = key_press.physical_key {
                     input.consume_key(key_press.modifiers, physical_key);
                 }
@@ -780,17 +783,73 @@ impl VellumGuiApp {
                         return None;
                     }
 
-                    let source_key = physical_key.unwrap_or(*key);
-                    let key_event = Self::egui_key_to_frontend_event(source_key, *modifiers)?;
+                    let key_event = Self::egui_key_to_frontend_event(*key, *modifiers)?;
                     Some(GuiKeyPress {
                         key_event,
-                        logical_key: *key,
+                        logical_key: Some(*key),
                         physical_key: *physical_key,
                         modifiers: *modifiers,
                     })
                 })
                 .collect()
         })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn collect_numpad_key_events(frame: &eframe::Frame) -> Vec<GuiKeyPress> {
+        frame
+            .numpad_keys()
+            .iter()
+            .filter_map(|numpad_key| {
+                if !numpad_key.pressed || numpad_key.numlock_on {
+                    return None;
+                }
+
+                let code = Self::numpad_binding_name_to_frontend_code(numpad_key.keybind_name()?)?;
+                let modifiers = numpad_key.modifiers;
+                let key_event = crate::frontend::common::KeyEvent::new(
+                    code,
+                    Self::egui_modifiers_to_frontend(modifiers),
+                );
+
+                Some(GuiKeyPress {
+                    key_event,
+                    logical_key: None,
+                    physical_key: None,
+                    modifiers,
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn collect_numpad_key_events(_frame: &eframe::Frame) -> Vec<GuiKeyPress> {
+        Vec::new()
+    }
+
+    fn numpad_binding_name_to_frontend_code(
+        binding: &str,
+    ) -> Option<crate::frontend::common::KeyCode> {
+        let code = match binding {
+            "num_0" => crate::frontend::common::KeyCode::Keypad0,
+            "num_1" => crate::frontend::common::KeyCode::Keypad1,
+            "num_2" => crate::frontend::common::KeyCode::Keypad2,
+            "num_3" => crate::frontend::common::KeyCode::Keypad3,
+            "num_4" => crate::frontend::common::KeyCode::Keypad4,
+            "num_5" => crate::frontend::common::KeyCode::Keypad5,
+            "num_6" => crate::frontend::common::KeyCode::Keypad6,
+            "num_7" => crate::frontend::common::KeyCode::Keypad7,
+            "num_8" => crate::frontend::common::KeyCode::Keypad8,
+            "num_9" => crate::frontend::common::KeyCode::Keypad9,
+            "num_plus" => crate::frontend::common::KeyCode::KeypadPlus,
+            "num_minus" => crate::frontend::common::KeyCode::KeypadMinus,
+            "num_multiply" => crate::frontend::common::KeyCode::KeypadMultiply,
+            "num_divide" => crate::frontend::common::KeyCode::KeypadDivide,
+            "num_enter" => crate::frontend::common::KeyCode::KeypadEnter,
+            "num_decimal" => crate::frontend::common::KeyCode::KeypadPeriod,
+            _ => return None,
+        };
+        Some(code)
     }
 
     fn resolve_global_dispatch_target(
@@ -945,16 +1004,16 @@ impl VellumGuiApp {
             egui::Key::End => crate::frontend::common::KeyCode::End,
             egui::Key::PageUp => crate::frontend::common::KeyCode::PageUp,
             egui::Key::PageDown => crate::frontend::common::KeyCode::PageDown,
-            egui::Key::Num0 => crate::frontend::common::KeyCode::Keypad0,
-            egui::Key::Num1 => crate::frontend::common::KeyCode::Keypad1,
-            egui::Key::Num2 => crate::frontend::common::KeyCode::Keypad2,
-            egui::Key::Num3 => crate::frontend::common::KeyCode::Keypad3,
-            egui::Key::Num4 => crate::frontend::common::KeyCode::Keypad4,
-            egui::Key::Num5 => crate::frontend::common::KeyCode::Keypad5,
-            egui::Key::Num6 => crate::frontend::common::KeyCode::Keypad6,
-            egui::Key::Num7 => crate::frontend::common::KeyCode::Keypad7,
-            egui::Key::Num8 => crate::frontend::common::KeyCode::Keypad8,
-            egui::Key::Num9 => crate::frontend::common::KeyCode::Keypad9,
+            egui::Key::Num0 => crate::frontend::common::KeyCode::Char('0'),
+            egui::Key::Num1 => crate::frontend::common::KeyCode::Char('1'),
+            egui::Key::Num2 => crate::frontend::common::KeyCode::Char('2'),
+            egui::Key::Num3 => crate::frontend::common::KeyCode::Char('3'),
+            egui::Key::Num4 => crate::frontend::common::KeyCode::Char('4'),
+            egui::Key::Num5 => crate::frontend::common::KeyCode::Char('5'),
+            egui::Key::Num6 => crate::frontend::common::KeyCode::Char('6'),
+            egui::Key::Num7 => crate::frontend::common::KeyCode::Char('7'),
+            egui::Key::Num8 => crate::frontend::common::KeyCode::Char('8'),
+            egui::Key::Num9 => crate::frontend::common::KeyCode::Char('9'),
             egui::Key::A => crate::frontend::common::KeyCode::Char('a'),
             egui::Key::B => crate::frontend::common::KeyCode::Char('b'),
             egui::Key::C => crate::frontend::common::KeyCode::Char('c'),
@@ -1329,7 +1388,7 @@ impl TabViewer for GuiDockTabViewer<'_> {
 }
 
 impl eframe::App for VellumGuiApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.pump_server_messages();
         self.refresh_available_tabs_if_needed();
@@ -1342,7 +1401,7 @@ impl eframe::App for VellumGuiApp {
             return;
         }
 
-        self.handle_global_input(&ctx);
+        self.handle_global_input(&ctx, frame);
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1700,8 +1759,28 @@ mod tests {
             eframe::egui::Modifiers::default(),
         )
         .expect("Num1 should map to a frontend key event");
-        assert_eq!(event.code, KeyCode::Keypad1);
+        assert_eq!(event.code, KeyCode::Char('1'));
         assert_eq!(event.modifiers, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn test_numpad_binding_name_maps_to_keypad_codes() {
+        assert_eq!(
+            VellumGuiApp::numpad_binding_name_to_frontend_code("num_1"),
+            Some(KeyCode::Keypad1)
+        );
+        assert_eq!(
+            VellumGuiApp::numpad_binding_name_to_frontend_code("num_plus"),
+            Some(KeyCode::KeypadPlus)
+        );
+        assert_eq!(
+            VellumGuiApp::numpad_binding_name_to_frontend_code("num_decimal"),
+            Some(KeyCode::KeypadPeriod)
+        );
+        assert_eq!(
+            VellumGuiApp::numpad_binding_name_to_frontend_code("unknown"),
+            None
+        );
     }
 
     #[test]
