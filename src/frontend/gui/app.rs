@@ -1,11 +1,11 @@
 use super::persistence::{load_layout, save_layout, GuiLayoutFileV1, ViewportState};
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
-use crate::config::{AppKeybinds, Config, KeyBindAction};
+use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
 use crate::core::AppCore;
 use crate::data::{
-    InputMode, LinkData, PopupMenu, SpanType, StyledLine, TabbedTextContent, TextContent,
-    TextSegment, WidgetType, WindowContent, WindowState,
+    InputMode, LinkData, PopupMenu, StyledLine, TabbedTextContent, TextContent, TextSegment,
+    WidgetType, WindowContent, WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
@@ -35,6 +35,144 @@ struct GuiTab {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct DockStateSnapshot {
     visible_tabs: Vec<TabKey>,
+    #[serde(default)]
+    main_window_rects: Vec<MainWindowRectSnapshot>,
+    #[serde(default)]
+    tab_zones: Vec<TabZoneSnapshot>,
+    #[serde(default)]
+    no_title_tabs: Vec<TabKey>,
+    #[serde(default)]
+    shell_layout: ShellLayoutSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MainWindowRectSnapshot {
+    key: TabKey,
+    /// [x, y, width, height] in points
+    rect: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GuiShellZone {
+    Header,
+    Footer,
+    LeftSidebar,
+    Center,
+    RightSidebar,
+}
+
+impl GuiShellZone {
+    fn label(self) -> &'static str {
+        match self {
+            GuiShellZone::Header => "Header",
+            GuiShellZone::Footer => "Footer",
+            GuiShellZone::LeftSidebar => "Left Bar",
+            GuiShellZone::Center => "Center",
+            GuiShellZone::RightSidebar => "Right Bar",
+        }
+    }
+
+    fn id_fragment(self) -> &'static str {
+        match self {
+            GuiShellZone::Header => "header",
+            GuiShellZone::Footer => "footer",
+            GuiShellZone::LeftSidebar => "left",
+            GuiShellZone::Center => "center",
+            GuiShellZone::RightSidebar => "right",
+        }
+    }
+
+    fn all() -> [GuiShellZone; 5] {
+        [
+            GuiShellZone::Header,
+            GuiShellZone::Footer,
+            GuiShellZone::LeftSidebar,
+            GuiShellZone::Center,
+            GuiShellZone::RightSidebar,
+        ]
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TabZoneSnapshot {
+    key: TabKey,
+    zone: GuiShellZone,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+struct ShellLayoutSnapshot {
+    header_height: f32,
+    footer_height: f32,
+    left_sidebar_width: f32,
+    right_sidebar_width: f32,
+    #[serde(default = "serde_default_true")]
+    header_visible: bool,
+    #[serde(default = "serde_default_true")]
+    footer_visible: bool,
+    left_sidebar_collapsed: bool,
+    right_sidebar_collapsed: bool,
+}
+
+const fn serde_default_true() -> bool {
+    true
+}
+
+impl Default for ShellLayoutSnapshot {
+    fn default() -> Self {
+        Self {
+            header_height: 140.0,
+            footer_height: 180.0,
+            left_sidebar_width: 300.0,
+            right_sidebar_width: 300.0,
+            // Default to a center-only shell; users can enable regions from the toolbar.
+            header_visible: false,
+            footer_visible: false,
+            left_sidebar_collapsed: true,
+            right_sidebar_collapsed: true,
+        }
+    }
+}
+
+impl ShellLayoutSnapshot {
+    fn sanitize(&mut self, center_width: f32) {
+        self.header_height = self.header_height.clamp(96.0, 360.0);
+        self.footer_height = self.footer_height.clamp(96.0, 420.0);
+        self.left_sidebar_width = self.left_sidebar_width.clamp(220.0, 700.0);
+        self.right_sidebar_width = self.right_sidebar_width.clamp(220.0, 700.0);
+
+        let max_sidebar_width = ((center_width - 220.0).max(220.0) * 0.45).max(220.0);
+        self.left_sidebar_width = self.left_sidebar_width.min(max_sidebar_width);
+        self.right_sidebar_width = self.right_sidebar_width.min(max_sidebar_width);
+    }
+}
+
+#[derive(Default)]
+struct GuiWindowActions {
+    hidden_tabs: Vec<TabKey>,
+    detached_tabs: Vec<TabKey>,
+    moved_tabs: Vec<(TabKey, GuiShellZone)>,
+    move_up_in_zone: Vec<(TabKey, GuiShellZone)>,
+    move_down_in_zone: Vec<(TabKey, GuiShellZone)>,
+    toggle_title_tabs: Vec<TabKey>,
+    link_clicks: Vec<GuiLinkClick>,
+    window_menu_request: Option<GuiWindowMenuRequest>,
+}
+
+impl GuiWindowActions {
+    fn merge(&mut self, other: GuiWindowActions) {
+        self.hidden_tabs.extend(other.hidden_tabs);
+        self.detached_tabs.extend(other.detached_tabs);
+        self.moved_tabs.extend(other.moved_tabs);
+        self.move_up_in_zone.extend(other.move_up_in_zone);
+        self.move_down_in_zone.extend(other.move_down_in_zone);
+        self.toggle_title_tabs.extend(other.toggle_title_tabs);
+        self.link_clicks.extend(other.link_clicks);
+        if let Some(request) = other.window_menu_request {
+            self.window_menu_request = Some(request);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +222,25 @@ struct GuiLinkClick {
     click_pos: (u16, u16),
 }
 
+#[derive(Clone, Debug)]
+struct GuiWindowMenuRequest {
+    tab_key: TabKey,
+    zone: GuiShellZone,
+    allow_reorder: bool,
+    title_bar_hidden: bool,
+    position: Pos2,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GuiWindowMenuCommand {
+    Hide,
+    Eject,
+    ToggleTitleBar,
+    MoveUp,
+    MoveDown,
+    MoveTo(GuiShellZone),
+}
+
 pub struct VellumGuiApp {
     app_core: AppCore,
     _runtime: tokio::runtime::Runtime,
@@ -95,9 +252,14 @@ pub struct VellumGuiApp {
     dock_state: Option<DockState<GuiTab>>,
     available_tabs: HashMap<TabKey, GuiTab>,
     hidden_tabs: HashSet<TabKey>,
+    main_window_rects: HashMap<TabKey, [f32; 4]>,
+    tab_zones: HashMap<TabKey, GuiShellZone>,
+    no_title_tabs: HashSet<TabKey>,
+    shell_layout: ShellLayoutSnapshot,
     layout_profile: String,
     layout_character: String,
     layout_dirty: bool,
+    window_context_menu: Option<GuiWindowMenuRequest>,
     pending_detached_viewports: Vec<ViewportState>,
     last_monitor_bounds: Option<[f32; 4]>,
 }
@@ -147,10 +309,55 @@ impl VellumGuiApp {
             .map(|layout| layout.hidden_tabs.iter().cloned().collect())
             .unwrap_or_default();
         hidden_tabs.retain(|key| available_tabs.contains_key(key));
-
         let snapshot = persisted_layout
             .as_ref()
             .and_then(|layout| Self::dock_snapshot_from_layout(layout));
+        let mut main_window_rects = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .main_window_rects
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .map(|entry| (entry.key.clone(), entry.rect))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        main_window_rects.retain(|key, _| available_tabs.contains_key(key));
+        let mut tab_zones = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .tab_zones
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .map(|entry| (entry.key.clone(), entry.zone))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        tab_zones.retain(|key, _| available_tabs.contains_key(key));
+        let mut no_title_tabs: HashSet<TabKey> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .no_title_tabs
+                    .iter()
+                    .filter(|key| available_tabs.contains_key(*key))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        no_title_tabs.retain(|key| available_tabs.contains_key(key));
+        for key in available_tabs.keys() {
+            tab_zones
+                .entry(key.clone())
+                .or_insert_with(|| Self::default_zone_for_tab_key(key));
+        }
+        let mut shell_layout = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.shell_layout.clone())
+            .unwrap_or_default();
+        shell_layout.sanitize(initial_width.max(1.0));
 
         let detached_viewports = persisted_layout
             .as_ref()
@@ -158,21 +365,10 @@ impl VellumGuiApp {
                 Self::detached_viewports_from_layout(layout, &available_tabs, &hidden_tabs)
             })
             .unwrap_or_default();
-        let detached_tab_keys: HashSet<TabKey> = detached_viewports
-            .iter()
-            .map(|viewport| viewport.tab.clone())
-            .collect();
-
-        let visible_tabs = Self::build_visible_tabs(
-            &available_tabs,
-            &hidden_tabs,
-            &detached_tab_keys,
-            snapshot.as_ref(),
-        );
-        let mut dock_state = if visible_tabs.is_empty() && detached_viewports.is_empty() {
+        let mut dock_state = if detached_viewports.is_empty() {
             None
         } else {
-            Some(DockState::new(visible_tabs))
+            Some(DockState::new(Vec::new()))
         };
         if let Some(dock_state) = &mut dock_state {
             let initial_bounds = [0.0, 0.0, initial_width.max(1.0), initial_height.max(1.0)];
@@ -195,9 +391,14 @@ impl VellumGuiApp {
             dock_state,
             available_tabs,
             hidden_tabs,
+            main_window_rects,
+            tab_zones,
+            no_title_tabs,
+            shell_layout,
             layout_profile,
             layout_character,
             layout_dirty: false,
+            window_context_menu: None,
             pending_detached_viewports: detached_viewports,
             last_monitor_bounds: None,
         })
@@ -291,6 +492,98 @@ impl VellumGuiApp {
         Some(key)
     }
 
+    fn default_zone_for_tab_key(tab_key: &TabKey) -> GuiShellZone {
+        match tab_key {
+            TabKey::LeftHand | TabKey::RightHand | TabKey::SpellHand => GuiShellZone::Header,
+            TabKey::Compass
+            | TabKey::Quickbar { .. }
+            | TabKey::Indicators
+            | TabKey::Vitals
+            | TabKey::Countdown
+            | TabKey::Dashboard
+            | TabKey::Encumbrance
+            | TabKey::Experience
+            | TabKey::Perception
+            | TabKey::InjuryDoll => GuiShellZone::Footer,
+            _ => GuiShellZone::Center,
+        }
+    }
+
+    fn zone_for_tab(&self, key: &TabKey) -> GuiShellZone {
+        self.tab_zones
+            .get(key)
+            .copied()
+            .unwrap_or_else(|| Self::default_zone_for_tab_key(key))
+    }
+
+    fn set_tab_zone(&mut self, key: TabKey, zone: GuiShellZone) {
+        let current = self.zone_for_tab(&key);
+        if current != zone {
+            self.tab_zones.insert(key.clone(), zone);
+            if matches!(zone, GuiShellZone::LeftSidebar | GuiShellZone::RightSidebar) {
+                let entry = self
+                    .main_window_rects
+                    .entry(key.clone())
+                    .or_insert([16.0, 16.0, 240.0, 240.0]);
+                entry[3] = entry[3].clamp(120.0, 420.0);
+            }
+            self.layout_dirty = true;
+        }
+    }
+
+    fn title_bar_hidden(&self, key: &TabKey) -> bool {
+        self.no_title_tabs.contains(key)
+    }
+
+    fn toggle_title_bar(&mut self, key: TabKey) {
+        if self.no_title_tabs.contains(&key) {
+            self.no_title_tabs.remove(&key);
+        } else {
+            self.no_title_tabs.insert(key);
+        }
+        self.layout_dirty = true;
+    }
+
+    fn persist_zone_order(&mut self, ordered: &[TabKey]) {
+        let mut y = 16.0f32;
+        for key in ordered {
+            let rect = self
+                .main_window_rects
+                .entry(key.clone())
+                .or_insert([16.0, y, 220.0, 140.0]);
+            rect[1] = y;
+            y += 10.0;
+        }
+        self.layout_dirty = true;
+    }
+
+    fn move_tab_within_zone(&mut self, key: &TabKey, zone: GuiShellZone, move_up: bool) {
+        let detached_tabs = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .unwrap_or_default();
+        let mut ordered: Vec<TabKey> = self
+            .zone_surface_tabs(&detached_tabs, zone)
+            .into_iter()
+            .map(|tab| tab.id.key)
+            .collect();
+        let Some(current_idx) = ordered.iter().position(|candidate| candidate == key) else {
+            return;
+        };
+        let target_idx = if move_up {
+            current_idx.checked_sub(1)
+        } else if current_idx + 1 < ordered.len() {
+            Some(current_idx + 1)
+        } else {
+            None
+        };
+        if let Some(target_idx) = target_idx {
+            ordered.swap(current_idx, target_idx);
+            self.persist_zone_order(&ordered);
+        }
+    }
+
     fn is_main_stream_window(name: &str, window: &WindowState) -> bool {
         if name.eq_ignore_ascii_case("main") {
             return true;
@@ -324,41 +617,66 @@ impl VellumGuiApp {
         serde_json::from_value(layout.dock_state_json.clone()).ok()
     }
 
-    fn build_visible_tabs(
-        available_tabs: &HashMap<TabKey, GuiTab>,
-        hidden_tabs: &HashSet<TabKey>,
-        detached_tabs: &HashSet<TabKey>,
-        snapshot: Option<&DockStateSnapshot>,
-    ) -> Vec<GuiTab> {
-        let mut visible = Vec::new();
-        let mut seen = HashSet::new();
+    fn rect_to_snapshot(rect: Rect) -> [f32; 4] {
+        [rect.min.x, rect.min.y, rect.width(), rect.height()]
+    }
 
-        if let Some(snapshot) = snapshot {
-            for key in &snapshot.visible_tabs {
-                if hidden_tabs.contains(key) || detached_tabs.contains(key) {
-                    continue;
-                }
-                if let Some(tab) = available_tabs.get(key) {
-                    visible.push(tab.clone());
-                    seen.insert(key.clone());
-                }
-            }
+    fn rect_from_snapshot(raw: [f32; 4]) -> Option<Rect> {
+        if !raw.iter().all(|value| value.is_finite()) {
+            return None;
+        }
+        let width = raw[2].max(120.0);
+        let height = raw[3].max(90.0);
+        Some(Rect::from_min_size(
+            Pos2::new(raw[0], raw[1]),
+            Vec2::new(width, height),
+        ))
+    }
+
+    fn clamp_main_window_rect(rect: Rect, bounds: Rect) -> Rect {
+        if !rect.is_finite() || !bounds.is_finite() {
+            return rect;
         }
 
-        let mut fallback_tabs: Vec<GuiTab> = available_tabs
-            .iter()
-            .filter_map(|(key, tab)| {
-                if hidden_tabs.contains(key) || detached_tabs.contains(key) || seen.contains(key) {
-                    None
-                } else {
-                    Some(tab.clone())
-                }
-            })
-            .collect();
-        fallback_tabs.sort_by_key(|tab| tab.id.title.to_ascii_lowercase());
+        let bounds_w = bounds.width().max(1.0);
+        let bounds_h = bounds.height().max(1.0);
+        let min_w = 120.0_f32.min(bounds_w);
+        let min_h = 90.0_f32.min(bounds_h);
+        let width = rect.width().clamp(min_w, bounds_w);
+        let height = rect.height().clamp(min_h, bounds_h);
+        let min_x = bounds.left();
+        let max_x = bounds.right() - width;
+        let min_y = bounds.top();
+        let max_y = bounds.bottom() - height;
+        let x = rect.min.x.clamp(min_x, max_x);
+        let y = rect.min.y.clamp(min_y, max_y);
+        Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, height))
+    }
 
-        visible.extend(fallback_tabs);
-        visible
+    fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
+        if !rect.is_finite() || !bounds.is_finite() {
+            return;
+        }
+        let clamped = Self::clamp_main_window_rect(rect, bounds);
+        if !clamped.is_finite() {
+            return;
+        }
+        let snapshot = Self::rect_to_snapshot(clamped);
+        let changed = self
+            .main_window_rects
+            .get(key)
+            .map(|existing| {
+                let dx = (existing[0] - snapshot[0]).abs();
+                let dy = (existing[1] - snapshot[1]).abs();
+                let dw = (existing[2] - snapshot[2]).abs();
+                let dh = (existing[3] - snapshot[3]).abs();
+                dx > 0.5 || dy > 0.5 || dw > 0.5 || dh > 0.5
+            })
+            .unwrap_or(true);
+        if changed {
+            self.main_window_rects.insert(key.clone(), snapshot);
+            self.layout_dirty = true;
+        }
     }
 
     fn detached_viewports_from_layout(
@@ -384,11 +702,20 @@ impl VellumGuiApp {
     }
 
     fn current_main_surface_tab_keys(&self) -> Vec<TabKey> {
+        let detached_tabs = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .unwrap_or_default();
+
         if let Some(dock_state) = &self.dock_state {
             let mut visible = Vec::new();
             let mut seen = HashSet::new();
             for ((surface, _), tab) in dock_state.iter_all_tabs() {
-                if surface.is_main() && seen.insert(tab.id.key.clone()) {
+                if surface.is_main()
+                    && !detached_tabs.contains(&tab.id.key)
+                    && seen.insert(tab.id.key.clone())
+                {
                     visible.push(tab.id.key.clone());
                 }
             }
@@ -401,7 +728,7 @@ impl VellumGuiApp {
             .available_tabs
             .iter()
             .filter_map(|(key, tab)| {
-                if self.hidden_tabs.contains(key) {
+                if self.hidden_tabs.contains(key) || detached_tabs.contains(key) {
                     None
                 } else {
                     Some((tab.id.title.clone(), key.clone()))
@@ -427,9 +754,22 @@ impl VellumGuiApp {
         monitor_bounds: Option<[f32; 4]>,
     ) -> ViewportState {
         let mut viewport = state.clone();
+        if !viewport.outer_pos_px[0].is_finite() {
+            viewport.outer_pos_px[0] = 120.0;
+        }
+        if !viewport.outer_pos_px[1].is_finite() {
+            viewport.outer_pos_px[1] = 120.0;
+        }
+        if !viewport.outer_size_px[0].is_finite() {
+            viewport.outer_size_px[0] = 640.0;
+        }
+        if !viewport.outer_size_px[1].is_finite() {
+            viewport.outer_size_px[1] = 480.0;
+        }
+
         viewport.outer_size_px[0] = viewport.outer_size_px[0].max(MIN_VIEWPORT_WIDTH);
         viewport.outer_size_px[1] = viewport.outer_size_px[1].max(MIN_VIEWPORT_HEIGHT);
-        if let Some(bounds) = monitor_bounds {
+        if let Some(bounds) = monitor_bounds.filter(|bounds| bounds.iter().all(|v| v.is_finite())) {
             viewport.clamp_to_bounds(bounds, MIN_VISIBLE_VIEWPORT_PX);
         }
         viewport
@@ -442,6 +782,11 @@ impl VellumGuiApp {
         monitor_bounds: Option<[f32; 4]>,
     ) {
         let viewport = Self::sanitize_viewport_state(viewport, monitor_bounds);
+        if !viewport.outer_pos_px.iter().all(|value| value.is_finite())
+            || !viewport.outer_size_px.iter().all(|value| value.is_finite())
+        {
+            return;
+        }
         if let Some(window_state) = dock_state.get_window_state_mut(surface) {
             window_state
                 .set_position(Pos2::new(
@@ -532,22 +877,17 @@ impl VellumGuiApp {
                 Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds)
             })
             .unwrap_or_default();
-        let detached_viewports: Vec<ViewportState> = detached_viewports.into_values().collect();
-        let detached_keys: HashSet<TabKey> = detached_viewports
-            .iter()
-            .map(|viewport| viewport.tab.clone())
+        let detached_viewports: Vec<ViewportState> = detached_viewports
+            .into_values()
+            .filter(|viewport| {
+                !self.hidden_tabs.contains(&viewport.tab)
+                    && self.available_tabs.contains_key(&viewport.tab)
+            })
             .collect();
-
-        let visible_tabs = Self::build_visible_tabs(
-            &self.available_tabs,
-            &self.hidden_tabs,
-            &detached_keys,
-            None,
-        );
-        self.dock_state = if visible_tabs.is_empty() && detached_viewports.is_empty() {
+        self.dock_state = if detached_viewports.is_empty() {
             None
         } else {
-            let mut dock_state = DockState::new(visible_tabs);
+            let mut dock_state = DockState::new(Vec::new());
             Self::attach_detached_windows(
                 &mut dock_state,
                 &self.available_tabs,
@@ -561,9 +901,15 @@ impl VellumGuiApp {
     fn refresh_available_tabs_if_needed(&mut self) {
         let refreshed = Self::collect_available_tabs(&self.app_core);
         if refreshed.len() == self.available_tabs.len()
-            && refreshed
-                .keys()
-                .all(|key| self.available_tabs.contains_key(key))
+            && refreshed.iter().all(|(key, refreshed_tab)| {
+                self.available_tabs
+                    .get(key)
+                    .map(|tab| {
+                        tab.window_name == refreshed_tab.window_name
+                            && tab.id.title == refreshed_tab.id.title
+                    })
+                    .unwrap_or(false)
+            })
         {
             return;
         }
@@ -571,8 +917,108 @@ impl VellumGuiApp {
         self.available_tabs = refreshed;
         self.hidden_tabs
             .retain(|key| self.available_tabs.contains_key(key));
+        self.main_window_rects
+            .retain(|key, _| self.available_tabs.contains_key(key));
+        self.tab_zones
+            .retain(|key, _| self.available_tabs.contains_key(key));
+        self.no_title_tabs
+            .retain(|key| self.available_tabs.contains_key(key));
+        for key in self.available_tabs.keys() {
+            self.tab_zones
+                .entry(key.clone())
+                .or_insert_with(|| Self::default_zone_for_tab_key(key));
+        }
         self.rebuild_dock_state();
         self.layout_dirty = true;
+    }
+
+    fn room_component_lines(component: Option<&Vec<Vec<TextSegment>>>) -> Vec<StyledLine> {
+        component
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| StyledLine {
+                        segments: segments.clone(),
+                        stream: "room".to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn room_component_entries(component: Option<&Vec<Vec<TextSegment>>>) -> Vec<String> {
+        component
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| {
+                        segments
+                            .iter()
+                            .map(|segment| segment.text.as_str())
+                            .collect::<String>()
+                            .trim()
+                            .to_string()
+                    })
+                    .filter(|value| !value.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn sync_room_windows_from_components(&mut self) {
+        if !self.app_core.room_window_dirty {
+            return;
+        }
+
+        let room_name = self
+            .app_core
+            .game_state
+            .room_name
+            .as_ref()
+            .filter(|name| !name.trim().is_empty())
+            .cloned()
+            .or_else(|| self.app_core.room_subtitle.clone())
+            .unwrap_or_default();
+        let description =
+            Self::room_component_lines(self.app_core.room_components.get("room desc"));
+        let exits = if self.app_core.game_state.exits.is_empty() {
+            Self::room_component_entries(self.app_core.room_components.get("room exits"))
+        } else {
+            self.app_core.game_state.exits.clone()
+        };
+        let players = if self.app_core.game_state.room_players.is_empty() {
+            Self::room_component_entries(self.app_core.room_components.get("room players"))
+        } else {
+            self.app_core
+                .game_state
+                .room_players
+                .iter()
+                .map(|player| player.name.clone())
+                .collect()
+        };
+        let objects = if self.app_core.game_state.room_objects.is_empty() {
+            Self::room_component_entries(self.app_core.room_components.get("room objs"))
+        } else {
+            self.app_core
+                .game_state
+                .room_objects
+                .iter()
+                .map(|object| object.name.clone())
+                .collect()
+        };
+
+        for window in self.app_core.ui_state.windows.values_mut() {
+            let WindowContent::Room(room) = &mut window.content else {
+                continue;
+            };
+            room.name = room_name.clone();
+            room.description = description.clone();
+            room.exits = exits.clone();
+            room.players = players.clone();
+            room.objects = objects.clone();
+        }
+
+        self.app_core.room_window_dirty = false;
     }
 
     fn hide_tab(&mut self, key: TabKey) {
@@ -589,18 +1035,163 @@ impl VellumGuiApp {
         }
     }
 
-    fn hidden_tabs_for_menu(&self) -> Vec<(TabKey, String)> {
-        let mut entries: Vec<(TabKey, String)> = self
-            .hidden_tabs
+    fn windows_for_menu(&self) -> Vec<(TabKey, String, bool, bool, GuiShellZone)> {
+        let detached_tabs = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .unwrap_or_default();
+        let mut entries: Vec<(TabKey, String, bool, bool, GuiShellZone)> = self
+            .available_tabs
             .iter()
-            .filter_map(|key| {
-                self.available_tabs
-                    .get(key)
-                    .map(|tab| (key.clone(), tab.id.title.clone()))
+            .map(|(key, tab)| {
+                let hidden = self.hidden_tabs.contains(key);
+                let detached = detached_tabs.contains(key);
+                let zone = self.zone_for_tab(key);
+                (key.clone(), tab.id.title.clone(), hidden, detached, zone)
             })
             .collect();
-        entries.sort_by_key(|(_, title)| title.to_ascii_lowercase());
+        entries.sort_by_key(|(_, title, _, _, _)| title.to_ascii_lowercase());
         entries
+    }
+
+    fn zone_surface_tabs(&self, detached_tabs: &HashSet<TabKey>, zone: GuiShellZone) -> Vec<GuiTab> {
+        let mut tabs: Vec<(i32, i32, String, GuiTab)> = self
+            .available_tabs
+            .iter()
+            .filter_map(|(key, tab)| {
+                if self.hidden_tabs.contains(key)
+                    || detached_tabs.contains(key)
+                    || self.zone_for_tab(key) != zone
+                {
+                    return None;
+                }
+                let window = self.app_core.ui_state.windows.get(&tab.window_name)?;
+                let saved_y = self
+                    .main_window_rects
+                    .get(key)
+                    .and_then(|rect| rect.get(1).copied())
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(window.position.y as f32);
+                let saved_x = self
+                    .main_window_rects
+                    .get(key)
+                    .and_then(|rect| rect.get(0).copied())
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(window.position.x as f32);
+                Some((
+                    saved_y.round() as i32,
+                    saved_x.round() as i32,
+                    tab.id.title.to_ascii_lowercase(),
+                    tab.clone(),
+                ))
+            })
+            .collect();
+        tabs.sort_by_key(|(y, x, title, _)| (*y, *x, title.clone()));
+        tabs.into_iter().map(|(_, _, _, tab)| tab).collect()
+    }
+
+    fn main_surface_bounds(&self, tabs: &[GuiTab]) -> (f32, f32) {
+        let mut max_col = 0f32;
+        let mut max_row = 0f32;
+        for tab in tabs {
+            let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
+                continue;
+            };
+            max_col = max_col.max((window.position.x + window.position.width).max(1) as f32);
+            max_row = max_row.max((window.position.y + window.position.height).max(1) as f32);
+        }
+        (max_col.max(1.0), max_row.max(1.0))
+    }
+
+    fn docked_inner_size_for_outer(
+        ctx: &egui::Context,
+        outer_size: Vec2,
+        include_title_bar: bool,
+    ) -> Vec2 {
+        let style = ctx.global_style();
+        let window_frame = egui::Frame::window(&style).shadow(egui::epaint::Shadow::NONE);
+        let mut margins = window_frame.total_margin().sum();
+        if include_title_bar {
+            let title_font = egui::TextStyle::Heading.resolve(&style);
+            let title_bar_inner_height = ctx
+                .fonts_mut(|fonts| fonts.row_height(&title_font))
+                .max(style.spacing.interact_size.y);
+            let title_bar_height_with_margin =
+                title_bar_inner_height + window_frame.inner_margin.sum().y;
+            let title_content_spacing = window_frame.stroke.width;
+            margins += Vec2::new(0.0, title_bar_height_with_margin + title_content_spacing);
+        }
+        Vec2::new(
+            (outer_size.x - margins.x).max(1.0),
+            (outer_size.y - margins.y).max(1.0),
+        )
+    }
+
+    fn tab_window_rect(
+        root_rect: Rect,
+        layout_bounds: (f32, f32),
+        window: &WindowState,
+    ) -> Option<Rect> {
+        if !root_rect.is_finite() {
+            return None;
+        }
+        let (max_col, max_row) = layout_bounds;
+        if max_col <= 0.0 || max_row <= 0.0 {
+            return None;
+        }
+
+        let left = root_rect.left() + (window.position.x as f32 / max_col) * root_rect.width();
+        let top = root_rect.top() + (window.position.y as f32 / max_row) * root_rect.height();
+        let width = ((window.position.width as f32 / max_col) * root_rect.width()).max(120.0);
+        let height = ((window.position.height as f32 / max_row) * root_rect.height()).max(90.0);
+        if !left.is_finite() || !top.is_finite() || !width.is_finite() || !height.is_finite() {
+            return None;
+        }
+        let rect = Rect::from_min_size(Pos2::new(left, top), Vec2::new(width, height));
+        let clipped = rect.intersect(root_rect);
+        if !clipped.is_finite() {
+            return None;
+        }
+        if clipped.width() < 60.0 || clipped.height() < 50.0 {
+            None
+        } else {
+            Some(clipped)
+        }
+    }
+
+    fn detach_tab(&mut self, key: TabKey) {
+        let Some(tab) = self.available_tabs.get(&key).cloned() else {
+            return;
+        };
+        let already_detached = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .is_some_and(|detached| detached.contains(&key));
+        if already_detached {
+            return;
+        }
+
+        let mut dock_state = self
+            .dock_state
+            .take()
+            .unwrap_or_else(|| DockState::new(Vec::new()));
+        let surface = dock_state.add_window(vec![tab]);
+        let bounds = self
+            .last_monitor_bounds
+            .unwrap_or([0.0, 0.0, 1200.0, 800.0]);
+        let viewport = ViewportState::new(
+            key,
+            [bounds[0] + 120.0, bounds[1] + 120.0],
+            [
+                bounds[2].min(640.0).max(320.0),
+                bounds[3].min(480.0).max(240.0),
+            ],
+        );
+        Self::apply_viewport_to_surface(&mut dock_state, surface, &viewport, Some(bounds));
+        self.dock_state = Some(dock_state);
+        self.layout_dirty = true;
     }
 
     fn monitor_bounds_from_ctx(ctx: &egui::Context) -> [f32; 4] {
@@ -608,15 +1199,28 @@ impl VellumGuiApp {
             if let (Some(outer_rect), Some(monitor_size)) =
                 (input.viewport().outer_rect, input.viewport().monitor_size)
             {
-                [
+                let bounds = [
                     outer_rect.min.x,
                     outer_rect.min.y,
                     monitor_size.x.max(1.0),
                     monitor_size.y.max(1.0),
-                ]
+                ];
+                if bounds.iter().all(|value| value.is_finite()) {
+                    return bounds;
+                }
+            }
+
+            let content = input.content_rect();
+            let content_bounds = [
+                content.min.x,
+                content.min.y,
+                content.width().max(1.0),
+                content.height().max(1.0),
+            ];
+            if content_bounds.iter().all(|value| value.is_finite()) {
+                content_bounds
             } else {
-                let screen = input.screen_rect();
-                [screen.min.x, screen.min.y, screen.width(), screen.height()]
+                [0.0, 0.0, 1920.0, 1080.0]
             }
         })
     }
@@ -686,6 +1290,43 @@ impl VellumGuiApp {
 
         let snapshot = DockStateSnapshot {
             visible_tabs: self.current_main_surface_tab_keys(),
+            main_window_rects: {
+                let mut rects: Vec<MainWindowRectSnapshot> = self
+                    .main_window_rects
+                    .iter()
+                    .filter(|(key, _)| self.available_tabs.contains_key(*key))
+                    .map(|(key, rect)| MainWindowRectSnapshot {
+                        key: key.clone(),
+                        rect: *rect,
+                    })
+                    .collect();
+                rects.sort_by_key(|entry| entry.key.short_id());
+                rects
+            },
+            tab_zones: {
+                let mut zones: Vec<TabZoneSnapshot> = self
+                    .tab_zones
+                    .iter()
+                    .filter(|(key, _)| self.available_tabs.contains_key(*key))
+                    .map(|(key, zone)| TabZoneSnapshot {
+                        key: key.clone(),
+                        zone: *zone,
+                    })
+                    .collect();
+                zones.sort_by_key(|entry| entry.key.short_id());
+                zones
+            },
+            no_title_tabs: {
+                let mut keys: Vec<TabKey> = self
+                    .no_title_tabs
+                    .iter()
+                    .filter(|key| self.available_tabs.contains_key(*key))
+                    .cloned()
+                    .collect();
+                keys.sort_by_key(|key| key.short_id());
+                keys
+            },
+            shell_layout: self.shell_layout.clone(),
         };
         layout.dock_state_json = serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null);
         if let Some(dock_state) = &mut self.dock_state {
@@ -957,6 +1598,10 @@ impl VellumGuiApp {
     }
 
     fn handle_close_window_shortcut(&mut self) {
+        if self.window_context_menu.is_some() {
+            self.window_context_menu = None;
+            return;
+        }
         if self.app_core.ui_state.input_mode == InputMode::Search {
             self.app_core.clear_search_mode();
             return;
@@ -1193,11 +1838,80 @@ impl VellumGuiApp {
         self.app_core.ui_state.deep_submenu = None;
     }
 
+    fn apply_window_menu_command(
+        &mut self,
+        request: &GuiWindowMenuRequest,
+        command: GuiWindowMenuCommand,
+    ) {
+        match command {
+            GuiWindowMenuCommand::Hide => self.hide_tab(request.tab_key.clone()),
+            GuiWindowMenuCommand::Eject => self.detach_tab(request.tab_key.clone()),
+            GuiWindowMenuCommand::ToggleTitleBar => self.toggle_title_bar(request.tab_key.clone()),
+            GuiWindowMenuCommand::MoveUp => {
+                if request.allow_reorder {
+                    self.move_tab_within_zone(&request.tab_key, request.zone, true);
+                }
+            }
+            GuiWindowMenuCommand::MoveDown => {
+                if request.allow_reorder {
+                    self.move_tab_within_zone(&request.tab_key, request.zone, false);
+                }
+            }
+            GuiWindowMenuCommand::MoveTo(target) => {
+                if target != request.zone {
+                    self.set_tab_zone(request.tab_key.clone(), target);
+                }
+            }
+        }
+    }
+
+    fn render_window_context_popup(&mut self, ctx: &egui::Context) {
+        let Some(request) = self.window_context_menu.clone() else {
+            return;
+        };
+
+        let mut selected_command: Option<GuiWindowMenuCommand> = None;
+        let area_response = egui::Area::new(egui::Id::new("gui_window_context_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(request.position)
+            .interactable(true)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    selected_command = Self::render_window_context_menu(
+                        ui,
+                        request.zone,
+                        request.allow_reorder,
+                        request.title_bar_hidden,
+                    );
+                });
+            });
+
+        if let Some(command) = selected_command {
+            self.apply_window_menu_command(&request, command);
+            self.window_context_menu = None;
+            return;
+        }
+
+        let menu_rect = area_response.response.rect;
+        let should_close = ctx.input(|input| {
+            input.pointer.any_click()
+                && input
+                    .pointer
+                    .latest_pos()
+                    .map(|pos| !menu_rect.contains(pos))
+                    .unwrap_or(false)
+        });
+        if should_close {
+            self.window_context_menu = None;
+        }
+    }
+
     fn render_menu_layer(
         ctx: &egui::Context,
         layer: GuiMenuLayer,
         menu: &PopupMenu,
-    ) -> Option<GuiMenuCommand> {
+    ) -> (Option<GuiMenuCommand>, Option<Rect>) {
         let layer_id = match layer {
             GuiMenuLayer::Main => "gui_popup_menu_main",
             GuiMenuLayer::Submenu => "gui_popup_menu_submenu",
@@ -1207,7 +1921,7 @@ impl VellumGuiApp {
 
         let mut clicked_command: Option<String> = None;
         let pos = Pos2::new(menu.position.0 as f32, menu.position.1 as f32);
-        egui::Area::new(egui::Id::new(layer_id))
+        let area_response = egui::Area::new(egui::Id::new(layer_id))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .interactable(true)
@@ -1224,8 +1938,31 @@ impl VellumGuiApp {
                     }
                 });
             });
+        let layer_rect = area_response.response.rect;
 
-        clicked_command.map(|command| GuiMenuCommand { layer, command })
+        (
+            clicked_command.map(|command| GuiMenuCommand { layer, command }),
+            if layer_rect.is_finite() {
+                Some(layer_rect)
+            } else {
+                None
+            },
+        )
+    }
+
+    fn should_close_popup_menus_on_outside_click(
+        any_click: bool,
+        pointer_pos: Option<Pos2>,
+        menu_rects: &[Rect],
+    ) -> bool {
+        if !any_click || menu_rects.is_empty() {
+            return false;
+        }
+        let Some(pointer_pos) = pointer_pos else {
+            return false;
+        };
+
+        menu_rects.iter().all(|rect| !rect.contains(pointer_pos))
     }
 
     fn open_child_menu_for_layer(
@@ -1337,28 +2074,58 @@ impl VellumGuiApp {
         let deep = self.app_core.ui_state.deep_submenu.clone();
 
         let mut clicked_command: Option<GuiMenuCommand> = None;
+        let mut menu_rects: Vec<Rect> = Vec::new();
 
         if let Some(menu) = &main {
-            clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
+            let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
+            clicked_command = command;
+            if let Some(rect) = rect {
+                menu_rects.push(rect);
+            }
         }
         if clicked_command.is_none() {
             if let Some(menu) = &submenu {
-                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu);
+                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu);
+                clicked_command = command;
+                if let Some(rect) = rect {
+                    menu_rects.push(rect);
+                }
             }
         }
         if clicked_command.is_none() {
             if let Some(menu) = &nested {
-                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu);
+                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu);
+                clicked_command = command;
+                if let Some(rect) = rect {
+                    menu_rects.push(rect);
+                }
             }
         }
         if clicked_command.is_none() {
             if let Some(menu) = &deep {
-                clicked_command = Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu);
+                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu);
+                clicked_command = command;
+                if let Some(rect) = rect {
+                    menu_rects.push(rect);
+                }
             }
         }
 
         if let Some(command) = clicked_command {
             self.handle_popup_menu_command(command);
+            return;
+        }
+
+        let should_close = ctx.input(|input| {
+            Self::should_close_popup_menus_on_outside_click(
+                input.pointer.any_click(),
+                input.pointer.latest_pos(),
+                &menu_rects,
+            )
+        });
+        if should_close {
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
         }
     }
 
@@ -1451,6 +2218,458 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    fn progress_fraction(value: u32, max: u32) -> f32 {
+        if max == 0 {
+            0.0
+        } else {
+            (value as f32 / max as f32).clamp(0.0, 1.0)
+        }
+    }
+
+    fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
+        let status_lower = status.to_ascii_lowercase();
+        target_cfg
+            .status_abbrev
+            .get(&status_lower)
+            .cloned()
+            .unwrap_or_else(|| {
+                if status.chars().count() <= 3 {
+                    status.to_string()
+                } else {
+                    status.chars().take(3).collect()
+                }
+            })
+    }
+
+    fn normalize_entity_id(id: &str) -> String {
+        id.trim().trim_start_matches('#').to_string()
+    }
+
+    fn direct_command_link(command: String) -> LinkData {
+        LinkData {
+            exist_id: "_direct_".to_string(),
+            noun: command,
+            text: String::new(),
+            coord: None,
+        }
+    }
+
+    fn gui_link_click_from_response(
+        response: &egui::Response,
+        ui: &egui::Ui,
+        link_data: LinkData,
+    ) -> GuiLinkClick {
+        let pointer_pos = response
+            .interact_pointer_pos()
+            .or_else(|| ui.ctx().pointer_latest_pos())
+            .unwrap_or(Pos2::ZERO);
+        GuiLinkClick {
+            link_data,
+            click_pos: Self::click_pos_to_grid(pointer_pos),
+        }
+    }
+
+    fn render_vitals_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let minivitals = &app_core.game_state.minivitals;
+        let fallback_vitals = &app_core.game_state.vitals;
+        let has_full_vital_values = minivitals.health.max > 0
+            || minivitals.mana.max > 0
+            || minivitals.stamina.max > 0
+            || minivitals.spirit.max > 0;
+
+        let bars = [
+            (
+                "Health",
+                minivitals.health.value,
+                minivitals.health.max,
+                fallback_vitals.health as u32,
+                Color32::from_rgb(0xcd, 0x4d, 0x4d),
+            ),
+            (
+                "Mana",
+                minivitals.mana.value,
+                minivitals.mana.max,
+                fallback_vitals.mana as u32,
+                Color32::from_rgb(0x47, 0x84, 0xd9),
+            ),
+            (
+                "Stamina",
+                minivitals.stamina.value,
+                minivitals.stamina.max,
+                fallback_vitals.stamina as u32,
+                Color32::from_rgb(0x55, 0xb8, 0x6c),
+            ),
+            (
+                "Spirit",
+                minivitals.spirit.value,
+                minivitals.spirit.max,
+                fallback_vitals.spirit as u32,
+                Color32::from_rgb(0xcb, 0xa9, 0x42),
+            ),
+        ];
+
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+
+        ui.columns(4, |columns| {
+            for (column, (label, value, max, fallback_pct, fill_color)) in
+                columns.iter_mut().zip(bars.into_iter())
+            {
+                let (fraction, text) = if has_full_vital_values && max > 0 {
+                    (
+                        Self::progress_fraction(value, max),
+                        format!("{}: {}/{}", label, value, max),
+                    )
+                } else {
+                    let clamped_pct = fallback_pct.min(100);
+                    (
+                        clamped_pct as f32 / 100.0,
+                        format!("{}: {}%", label, clamped_pct),
+                    )
+                };
+                column.add_sized(
+                    [column.available_width().max(40.0), bar_height],
+                    egui::ProgressBar::new(fraction)
+                        .text(text)
+                        .fill(fill_color),
+                );
+            }
+        });
+    }
+
+    fn render_compass_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        compass_data: &crate::data::CompassData,
+    ) -> Option<GuiLinkClick> {
+        let mut clicked_link = None;
+        let source_directions: &[String] = if compass_data.directions.is_empty() {
+            &app_core.game_state.compass_dirs
+        } else {
+            &compass_data.directions
+        };
+        let available: HashSet<String> = source_directions
+            .iter()
+            .map(|direction| direction.to_ascii_lowercase())
+            .collect();
+
+        let grid_rows: [[&str; 3]; 3] = [["nw", "n", "ne"], ["w", "", "e"], ["sw", "s", "se"]];
+        egui::Grid::new("gui_compass_grid")
+            .num_columns(3)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for row in grid_rows {
+                    for direction in row {
+                        if direction.is_empty() {
+                            ui.label("");
+                            continue;
+                        }
+                        let is_available = available.contains(direction);
+                        let label = direction.to_ascii_uppercase();
+                        let response = ui.add_enabled(
+                            is_available,
+                            egui::Button::new(label).min_size(Vec2::splat(26.0)),
+                        );
+                        if is_available && response.clicked() && clicked_link.is_none() {
+                            clicked_link = Some(Self::gui_link_click_from_response(
+                                &response,
+                                ui,
+                                Self::direct_command_link(direction.to_string()),
+                            ));
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            for direction in ["up", "down", "out", "in"] {
+                let is_available = available.contains(direction);
+                let label = direction.to_ascii_uppercase();
+                let response = ui.add_enabled(is_available, egui::Button::new(label));
+                if is_available && response.clicked() && clicked_link.is_none() {
+                    clicked_link = Some(Self::gui_link_click_from_response(
+                        &response,
+                        ui,
+                        Self::direct_command_link(direction.to_string()),
+                    ));
+                }
+            }
+        });
+
+        clicked_link
+    }
+
+    fn render_hand_content(
+        ui: &mut egui::Ui,
+        hand_title: &str,
+        item: &Option<String>,
+        link: &Option<LinkData>,
+    ) -> Option<GuiLinkClick> {
+        ui.label(RichText::new(hand_title).strong());
+        ui.separator();
+
+        if let Some(item_text) = item.as_deref() {
+            if let Some(link_data) = link.clone() {
+                let response = ui
+                    .add(egui::Label::new(item_text).sense(egui::Sense::click()))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() {
+                    return Some(Self::gui_link_click_from_response(&response, ui, link_data));
+                }
+            } else {
+                ui.label(item_text);
+            }
+        } else {
+            ui.label(RichText::new("Empty").weak());
+        }
+
+        None
+    }
+
+    fn render_room_entities(ui: &mut egui::Ui, label: &str, values: &[String]) {
+        if values.is_empty() {
+            return;
+        }
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("{}:", label)).strong());
+            ui.label(values.join(", "));
+        });
+    }
+
+    fn render_room_exits(ui: &mut egui::Ui, exits: &[String]) -> Option<GuiLinkClick> {
+        if exits.is_empty() {
+            return None;
+        }
+
+        let mut clicked_link = None;
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Exits:").strong());
+            for (index, exit) in exits.iter().enumerate() {
+                let response = ui
+                    .add(egui::Label::new(exit.as_str()).sense(egui::Sense::click()))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() && clicked_link.is_none() {
+                    clicked_link = Some(Self::gui_link_click_from_response(
+                        &response,
+                        ui,
+                        Self::direct_command_link(exit.to_string()),
+                    ));
+                }
+                if index + 1 < exits.len() {
+                    ui.label(",");
+                }
+            }
+        });
+        clicked_link
+    }
+
+    fn render_active_effects_content(
+        ui: &mut egui::Ui,
+        effects_content: &crate::data::ActiveEffectsContent,
+    ) {
+        if effects_content.effects.is_empty() {
+            ui.label(format!("No active {}.", effects_content.category));
+            return;
+        }
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt(format!("active_effects_{}", effects_content.category))
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for effect in &effects_content.effects {
+                    ui.horizontal(|ui| {
+                        let mut text = RichText::new(effect.text.as_str());
+                        if let Some(color) = effect.text_color.as_deref().and_then(parse_hex_color)
+                        {
+                            text = text.color(color);
+                        }
+                        ui.label(text);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if !effect.time.trim().is_empty() {
+                                ui.label(RichText::new(effect.time.as_str()).small().weak());
+                            }
+                        });
+                    });
+
+                    let mut bar = egui::ProgressBar::new((effect.value.min(100) as f32) / 100.0)
+                        .text(format!("{}%", effect.value.min(100)));
+                    if let Some(fill) = effect.bar_color.as_deref().and_then(parse_hex_color) {
+                        bar = bar.fill(fill);
+                    }
+                    ui.add(bar);
+                    ui.add_space(4.0);
+                }
+            });
+    }
+
+    fn format_target_line(
+        creature: &crate::core::state::Creature,
+        target_cfg: &TargetListConfig,
+    ) -> String {
+        let status_tag = creature
+            .status
+            .as_deref()
+            .map(|status| format!("[{}]", Self::status_abbreviation(status, target_cfg)));
+        if let Some(status) = status_tag {
+            if target_cfg.status_position.eq_ignore_ascii_case("start") {
+                format!("{} {}", status, creature.name)
+            } else {
+                format!("{} {}", creature.name, status)
+            }
+        } else {
+            creature.name.clone()
+        }
+    }
+
+    fn format_player_line(
+        player: &crate::core::state::Player,
+        target_cfg: &TargetListConfig,
+    ) -> String {
+        let mut statuses = Vec::new();
+        if let Some(primary) = player.primary_status.as_deref() {
+            statuses.push(format!(
+                "[{}]",
+                Self::status_abbreviation(primary, target_cfg)
+            ));
+        }
+        if let Some(secondary) = player.secondary_status.as_deref() {
+            statuses.push(format!(
+                "[{}]",
+                Self::status_abbreviation(secondary, target_cfg)
+            ));
+        }
+
+        if statuses.is_empty() {
+            return player.name.clone();
+        }
+
+        if target_cfg.status_position.eq_ignore_ascii_case("start") {
+            format!("{} {}", statuses.join(" "), player.name)
+        } else {
+            format!("{} {}", player.name, statuses.join(" "))
+        }
+    }
+
+    fn render_targets_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+        let mut clicked_link = None;
+        let target_cfg = &app_core.config.target_list;
+        let current_target =
+            Self::normalize_entity_id(&app_core.game_state.target_list.current_target);
+        let targetable_ids: HashSet<String> = app_core
+            .game_state
+            .target_list
+            .target_ids
+            .iter()
+            .map(|id| Self::normalize_entity_id(id))
+            .collect();
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("targets_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for creature in &app_core.game_state.room_creatures {
+                    let creature_id = Self::normalize_entity_id(&creature.id);
+                    if !targetable_ids.is_empty() && !targetable_ids.contains(&creature_id) {
+                        continue;
+                    }
+                    if Self::should_filter_target_creature(creature, target_cfg) {
+                        continue;
+                    }
+
+                    let display_text = Self::format_target_line(creature, target_cfg);
+                    let is_current = !current_target.is_empty() && creature_id == current_target;
+                    let styled = if is_current {
+                        RichText::new(format!("> {}", display_text))
+                            .color(Color32::from_rgb(0x62, 0xcf, 0x79))
+                    } else {
+                        RichText::new(display_text)
+                    };
+                    let response = ui
+                        .add(egui::Label::new(styled).sense(egui::Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if response.clicked() && clicked_link.is_none() {
+                        clicked_link = Some(Self::gui_link_click_from_response(
+                            &response,
+                            ui,
+                            Self::direct_command_link(format!("target #{}", creature_id)),
+                        ));
+                    }
+                }
+            });
+
+        clicked_link
+    }
+
+    fn should_filter_target_creature(
+        creature: &crate::core::state::Creature,
+        target_cfg: &TargetListConfig,
+    ) -> bool {
+        if let Some(status) = creature.status.as_deref() {
+            let status_lower = status.to_ascii_lowercase();
+            if status_lower.contains("dead") || status_lower.contains("gone") {
+                return true;
+            }
+        }
+
+        let name_lower = creature.name.to_ascii_lowercase();
+        if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
+            return true;
+        }
+
+        creature
+            .noun
+            .as_ref()
+            .map(|noun| noun.to_ascii_lowercase())
+            .is_some_and(|noun| {
+                target_cfg
+                    .excluded_nouns
+                    .iter()
+                    .any(|excluded| excluded == &noun)
+            })
+    }
+
+    fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+        let mut clicked_link = None;
+        let target_cfg = &app_core.config.target_list;
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("players_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for player in &app_core.game_state.room_players {
+                    let display_text = Self::format_player_line(player, target_cfg);
+                    let response = ui
+                        .add(egui::Label::new(display_text).sense(egui::Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                    if response.clicked() && clicked_link.is_none() {
+                        let link_data = LinkData {
+                            exist_id: player.id.clone(),
+                            noun: player.name.clone(),
+                            text: player.name.clone(),
+                            coord: None,
+                        };
+                        clicked_link =
+                            Some(Self::gui_link_click_from_response(&response, ui, link_data));
+                    }
+                }
+            });
+
+        clicked_link
+    }
+
     fn render_text_content(
         ui: &mut egui::Ui,
         content: &TextContent,
@@ -1459,11 +2678,14 @@ impl VellumGuiApp {
         let visuals = ui.visuals().clone();
         let mut clicked_link = None;
         let start = content.lines.len().saturating_sub(MAX_RENDERED_LINES);
+        let max_height = ui.available_height().max(1.0);
 
         egui::ScrollArea::vertical()
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
             .show(ui, |ui| {
                 for line in content.lines.iter().skip(start) {
                     if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
@@ -1481,10 +2703,13 @@ impl VellumGuiApp {
     ) -> Option<GuiLinkClick> {
         let visuals = ui.visuals().clone();
         let mut clicked_link = None;
+        let max_height = ui.available_height().max(1.0);
 
         egui::ScrollArea::vertical()
             .id_salt(format!("room_scroll_{}", scroll_id))
             .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
             .show(ui, |ui| {
                 for line in lines {
                     if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
@@ -1512,12 +2737,30 @@ impl VellumGuiApp {
             | WindowContent::Spells(content) => {
                 Self::render_text_content(ui, content, &tab.window_name)
             }
+            WindowContent::Progress(_) | WindowContent::MiniVitals => {
+                Self::render_vitals_content(app_core, ui);
+                None
+            }
+            WindowContent::Compass(compass) => Self::render_compass_content(app_core, ui, compass),
+            WindowContent::Hand { item, link } => {
+                let hand_title = if window.name.to_ascii_lowercase().contains("left") {
+                    "Left Hand"
+                } else if window.name.to_ascii_lowercase().contains("right") {
+                    "Right Hand"
+                } else {
+                    "Spell Hand"
+                };
+                Self::render_hand_content(ui, hand_title, item, link)
+            }
             WindowContent::TabbedText(tabbed) => {
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
-                    ui.label(
-                        RichText::new(format!("Active tab: {}", active.definition.name)).italics(),
-                    );
-                    ui.separator();
+                    if tabbed.tabs.len() > 1 {
+                        ui.label(
+                            RichText::new(format!("Active tab: {}", active.definition.name))
+                                .italics(),
+                        );
+                        ui.separator();
+                    }
                     Self::render_text_content(ui, &active.content, &tab.window_name)
                 } else {
                     ui.label("No active tab content.");
@@ -1527,14 +2770,23 @@ impl VellumGuiApp {
             WindowContent::Room(room) => {
                 ui.heading(&room.name);
                 ui.separator();
-                let clicked_link =
+                let mut clicked_link =
                     Self::render_room_description(ui, &room.description, &tab.window_name);
-                if !room.exits.is_empty() {
-                    ui.separator();
-                    ui.label(format!("Exits: {}", room.exits.join(", ")));
+                if let Some(exit_click) = Self::render_room_exits(ui, &room.exits) {
+                    if clicked_link.is_none() {
+                        clicked_link = Some(exit_click);
+                    }
                 }
+                Self::render_room_entities(ui, "Players", &room.players);
+                Self::render_room_entities(ui, "Objects", &room.objects);
                 clicked_link
             }
+            WindowContent::ActiveEffects(content) => {
+                Self::render_active_effects_content(ui, content);
+                None
+            }
+            WindowContent::Targets => Self::render_targets_content(app_core, ui),
+            WindowContent::Players => Self::render_players_content(app_core, ui),
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
                 ui.label(format!(
@@ -1544,6 +2796,336 @@ impl VellumGuiApp {
                 None
             }
         }
+    }
+
+    fn render_window_context_menu(
+        ui: &mut egui::Ui,
+        zone: GuiShellZone,
+        allow_reorder: bool,
+        title_bar_hidden: bool,
+    ) -> Option<GuiWindowMenuCommand> {
+        if ui.button("Hide").clicked() {
+            return Some(GuiWindowMenuCommand::Hide);
+        }
+        if ui.button("Eject").clicked() {
+            return Some(GuiWindowMenuCommand::Eject);
+        }
+        if ui
+            .button(if title_bar_hidden {
+                "Show Title Bar"
+            } else {
+                "Hide Title Bar"
+            })
+            .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ToggleTitleBar);
+        }
+        if allow_reorder {
+            ui.separator();
+            if ui.button("Move Up").clicked() {
+                return Some(GuiWindowMenuCommand::MoveUp);
+            }
+            if ui.button("Move Down").clicked() {
+                return Some(GuiWindowMenuCommand::MoveDown);
+            }
+        }
+        ui.separator();
+        ui.label("Move to");
+        for target in GuiShellZone::all() {
+            let is_current = target == zone;
+            let label = if is_current {
+                format!("{} (current)", target.label())
+            } else {
+                target.label().to_string()
+            };
+            if ui.selectable_label(is_current, label).clicked() {
+                return Some(GuiWindowMenuCommand::MoveTo(target));
+            }
+        }
+        None
+    }
+
+    fn render_zone_surface(
+        &mut self,
+        ctx: &egui::Context,
+        detached_tabs: &HashSet<TabKey>,
+        zone: GuiShellZone,
+        root_rect: Rect,
+    ) -> GuiWindowActions {
+        let mut actions = GuiWindowActions::default();
+        if !root_rect.is_finite() || root_rect.width() <= 24.0 || root_rect.height() <= 24.0 {
+            return actions;
+        }
+
+        let tabs = self.zone_surface_tabs(detached_tabs, zone);
+        if tabs.is_empty() {
+            return actions;
+        }
+        let layout_bounds = self.main_surface_bounds(&tabs);
+        let is_sidebar = matches!(zone, GuiShellZone::LeftSidebar | GuiShellZone::RightSidebar);
+        let secondary_click_pos = ctx.input(|input| {
+            if input.pointer.secondary_clicked() {
+                input.pointer.interact_pos()
+            } else {
+                None
+            }
+        });
+
+        if is_sidebar {
+            let margin = 0.0;
+            let gap = 4.0;
+            let min_slot_height = 120.0;
+            let default_slot_height = 240.0;
+            let slot_width = (root_rect.width() - margin * 2.0).max(120.0);
+            let mut y = root_rect.min.y + margin;
+            let tab_count = tabs.len();
+
+            for (idx, tab) in tabs.into_iter().enumerate() {
+                if y >= root_rect.max.y - margin {
+                    break;
+                }
+                let remaining_tabs = tab_count.saturating_sub(idx + 1);
+                let min_remaining_height = remaining_tabs as f32 * (min_slot_height + gap);
+                let max_height_here = (root_rect.max.y - margin - y - min_remaining_height).max(min_slot_height);
+                let desired_height = self
+                    .main_window_rects
+                    .get(&tab.id.key)
+                    .map(|rect| rect[3])
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(default_slot_height);
+                let slot_height = desired_height.clamp(min_slot_height, max_height_here);
+                let slot_bottom = (y + slot_height).min(root_rect.max.y - margin - min_remaining_height);
+                let slot_rect = Rect::from_min_max(
+                    Pos2::new(root_rect.min.x + margin, y),
+                    Pos2::new(root_rect.min.x + margin + slot_width, slot_bottom),
+                );
+                y = slot_bottom + gap;
+                if slot_rect.height() < 44.0 {
+                    continue;
+                }
+
+                let mut clicked_link = None;
+                let mut resize_delta_y = 0.0f32;
+                let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+                let window_id = egui::Id::new(format!(
+                    "gui_zone_{}_window_{}",
+                    zone.id_fragment(),
+                    tab.id.key.short_id()
+                ));
+                if let Some(inner) = egui::Window::new(tab.id.title.clone())
+                    .id(window_id)
+                    .fixed_pos(slot_rect.min)
+                    .fixed_size(Self::docked_inner_size_for_outer(
+                        ctx,
+                        slot_rect.size(),
+                        !title_bar_hidden,
+                    ))
+                    .resizable(false)
+                    .movable(false)
+                    .title_bar(!title_bar_hidden)
+                    .collapsible(false)
+                    .frame(
+                        egui::Frame::window(ctx.global_style().as_ref())
+                            .outer_margin(egui::Margin::ZERO)
+                            .shadow(egui::epaint::Shadow::NONE),
+                    )
+                    .constrain_to(root_rect)
+                    .show(ctx, |ui| {
+                        ui.push_id(tab.id.key.short_id(), |ui| {
+                            let clicked = Self::render_window_content(&self.app_core, ui, &tab);
+                            ui.separator();
+                            let handle_response = ui.allocate_response(
+                                Vec2::new(ui.available_width().max(1.0), 6.0),
+                                egui::Sense::click_and_drag(),
+                            );
+                            if handle_response.hovered() || handle_response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                            }
+                            if handle_response.dragged() {
+                                resize_delta_y += ui.ctx().input(|i| i.pointer.delta().y);
+                            }
+                            clicked
+                        })
+                        .inner
+                    })
+                {
+                    clicked_link = inner.inner.flatten();
+                    if let Some(pointer_pos) = secondary_click_pos {
+                        if inner.response.rect.contains(pointer_pos) {
+                            actions.window_menu_request = Some(GuiWindowMenuRequest {
+                                tab_key: tab.id.key.clone(),
+                                zone,
+                                allow_reorder: true,
+                                title_bar_hidden,
+                                position: pointer_pos,
+                            });
+                        }
+                    }
+                }
+
+                if let Some(click) = clicked_link {
+                    actions.link_clicks.push(click);
+                }
+                if resize_delta_y.abs() > 0.0 {
+                    let resized_height =
+                        (slot_rect.height() + resize_delta_y).clamp(min_slot_height, max_height_here);
+                    let entry = self
+                        .main_window_rects
+                        .entry(tab.id.key.clone())
+                        .or_insert([slot_rect.min.x, slot_rect.min.y, slot_rect.width(), resized_height]);
+                    entry[3] = resized_height;
+                    self.layout_dirty = true;
+                }
+            }
+
+            return actions;
+        }
+
+        let window_bounds = if zone == GuiShellZone::Center {
+            root_rect.shrink(1.0)
+        } else {
+            root_rect
+        };
+        if !window_bounds.is_finite() || window_bounds.width() <= 8.0 || window_bounds.height() <= 8.0 {
+            return actions;
+        }
+        let min_window_height: f32 = if matches!(zone, GuiShellZone::Header | GuiShellZone::Footer)
+        {
+            32.0
+        } else {
+            90.0
+        };
+        let min_window_size = Vec2::new(
+            120.0_f32.min(window_bounds.width().max(1.0)),
+            min_window_height.min(window_bounds.height().max(1.0)),
+        );
+        // Keep a little vertical headroom in header/footer so windows can be repositioned
+        // instead of filling the entire zone and snapping back to the top.
+        let max_window_height = if matches!(zone, GuiShellZone::Header | GuiShellZone::Footer) {
+            (window_bounds.height() - 12.0).max(min_window_size.y)
+        } else {
+            window_bounds.height().max(min_window_size.y)
+        };
+        let max_window_size = Vec2::new(
+            window_bounds.width().max(min_window_size.x),
+            max_window_height,
+        );
+
+        let mut occupied_rects: Vec<Rect> = Vec::new();
+        for tab in tabs {
+            let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
+                continue;
+            };
+            let fallback_rect =
+                Self::tab_window_rect(window_bounds, layout_bounds, window).unwrap_or_else(|| {
+                    Rect::from_min_size(
+                        Pos2::new(window_bounds.min.x + 8.0, window_bounds.min.y + 8.0),
+                        Vec2::new(
+                            (window_bounds.width() - 16.0).max(min_window_size.x),
+                            (window_bounds.height() - 16.0).max(min_window_size.y),
+                        ),
+                    )
+                });
+            let initial_rect = self
+                .main_window_rects
+                .get(&tab.id.key)
+                .copied()
+                .and_then(Self::rect_from_snapshot)
+                .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
+                .unwrap_or(fallback_rect);
+            if !initial_rect.is_finite() {
+                continue;
+            }
+
+            let mut clicked_link = None;
+            let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+            let window_id = egui::Id::new(format!(
+                "gui_zone_{}_window_{}",
+                zone.id_fragment(),
+                tab.id.key.short_id()
+            ));
+            let docked_window_frame = egui::Frame::window(ctx.global_style().as_ref())
+                .outer_margin(egui::Margin::ZERO)
+                .shadow(egui::epaint::Shadow::NONE);
+            let mut window_builder = egui::Window::new(tab.id.title.clone())
+                .id(window_id)
+                .default_size(if zone == GuiShellZone::Center {
+                    initial_rect.size()
+                } else {
+                    Self::docked_inner_size_for_outer(ctx, initial_rect.size(), !title_bar_hidden)
+                })
+                .min_size(min_window_size)
+                .max_size(max_window_size)
+                .resizable(true)
+                .movable(true)
+                .title_bar(!title_bar_hidden)
+                .collapsible(false)
+                .constrain_to(window_bounds)
+                .frame(docked_window_frame);
+            if zone == GuiShellZone::Center {
+                // Prevent content-driven growth by making the window scroll instead of expanding.
+                window_builder = window_builder.scroll([true, true]);
+            }
+            window_builder = if zone == GuiShellZone::Center {
+                window_builder.current_pos(initial_rect.min)
+            } else {
+                window_builder.default_pos(initial_rect.min)
+            };
+            if let Some(inner) = window_builder.show(ctx, |ui| {
+                    ui.push_id(tab.id.key.short_id(), |ui| {
+                        Self::render_window_content(&self.app_core, ui, &tab)
+                    })
+                    .inner
+                }) {
+                let should_track_rect = zone != GuiShellZone::Center || inner.response.dragged();
+                if should_track_rect {
+                    self.track_main_window_rect(&tab.id.key, inner.response.rect, window_bounds);
+                }
+                clicked_link = inner.inner.flatten();
+                if let Some(pointer_pos) = secondary_click_pos {
+                    if inner.response.rect.contains(pointer_pos) {
+                        actions.window_menu_request = Some(GuiWindowMenuRequest {
+                            tab_key: tab.id.key.clone(),
+                            zone,
+                            allow_reorder: false,
+                            title_bar_hidden,
+                            position: pointer_pos,
+                        });
+                    }
+                }
+                occupied_rects.push(inner.response.rect);
+            }
+            if let Some(click) = clicked_link {
+                actions.link_clicks.push(click);
+            }
+        }
+
+        actions
+    }
+
+    fn render_detached_window_host(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> (Vec<TabKey>, Vec<GuiLinkClick>) {
+        let mut closed_tabs = Vec::new();
+        let mut link_clicks = Vec::new();
+        let Some(dock_state) = &mut self.dock_state else {
+            return (closed_tabs, link_clicks);
+        };
+
+        let max_rect = ui.max_rect();
+        if !max_rect.is_finite() {
+            return (closed_tabs, link_clicks);
+        }
+        let host_rect = Rect::from_min_size(max_rect.min, Vec2::new(1.0, 1.0));
+        ui.allocate_ui_at_rect(host_rect, |ui| {
+            let mut viewer = GuiDockTabViewer::new(&self.app_core);
+            DockArea::new(dock_state).show_inside(ui, &mut viewer);
+            closed_tabs = viewer.take_closed_tabs();
+            link_clicks = viewer.take_link_clicks();
+        });
+
+        (closed_tabs, link_clicks)
     }
 }
 
@@ -1598,6 +3180,7 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.pump_server_messages();
+        self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();
         let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);
         self.last_monitor_bounds = Some(monitor_bounds);
@@ -1615,58 +3198,407 @@ impl eframe::App for VellumGuiApp {
             return;
         }
 
-        let mut restore_key: Option<TabKey> = None;
-
-        egui::TopBottomPanel::top("gui_header").show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("VellumFE GUI");
-                let connection_text = if self.app_core.game_state.connected {
-                    RichText::new("Connected").color(Color32::from_rgb(0x3a, 0xc5, 0x6d))
-                } else {
-                    RichText::new("Disconnected").color(Color32::from_rgb(0xd9, 0x55, 0x55))
-                };
-                ui.separator();
-                ui.label(connection_text);
-                ui.separator();
-
-                ui.menu_button("Hidden Tabs", |ui| {
-                    let hidden = self.hidden_tabs_for_menu();
-                    if hidden.is_empty() {
-                        ui.label("No hidden tabs");
-                    } else {
-                        for (key, title) in hidden {
-                            if ui.button(title).clicked() {
-                                restore_key = Some(key);
-                                ui.close_menu();
-                            }
-                        }
-                    }
-                });
-            });
-        });
-
-        if let Some(key) = restore_key {
-            self.restore_tab(key);
-        }
-
         let detached_before_frame = self
             .dock_state
             .as_ref()
             .map(Self::collect_detached_tab_keys)
             .unwrap_or_default();
+        let mut visibility_toggles: Vec<TabKey> = Vec::new();
+        let mut zone_assignments: Vec<(TabKey, GuiShellZone)> = Vec::new();
+        let mut zone_actions = GuiWindowActions::default();
         let mut closed_tabs = Vec::new();
-        let mut link_clicks = Vec::new();
-        egui::CentralPanel::default().show(&ctx, |ui| {
-            if let Some(dock_state) = &mut self.dock_state {
-                let mut viewer = GuiDockTabViewer::new(&self.app_core);
-                DockArea::new(dock_state).show_inside(ui, &mut viewer);
-                link_clicks = viewer.take_link_clicks();
-                closed_tabs = viewer.take_closed_tabs();
-            } else {
-                ui.heading("No visible tabs");
-                ui.label("Use Hidden Tabs to restore one or more tabs.");
+        let mut detached_link_clicks = Vec::new();
+        let mut command_input_sent = false;
+
+        egui::TopBottomPanel::top("gui_shell_toolbar")
+            .resizable(false)
+            .exact_height(30.0)
+            .show(&ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("VellumFE GUI");
+                    let connection_text = if self.app_core.game_state.connected {
+                        RichText::new("Connected").color(Color32::from_rgb(0x3a, 0xc5, 0x6d))
+                    } else {
+                        RichText::new("Disconnected").color(Color32::from_rgb(0xd9, 0x55, 0x55))
+                    };
+                    ui.separator();
+                    ui.label(connection_text);
+                    ui.separator();
+
+                    if ui
+                        .small_button(if self.shell_layout.header_visible {
+                            "Hide Header"
+                        } else {
+                            "Show Header"
+                        })
+                        .clicked()
+                    {
+                        self.shell_layout.header_visible = !self.shell_layout.header_visible;
+                        self.layout_dirty = true;
+                    }
+                    if ui
+                        .small_button(if self.shell_layout.footer_visible {
+                            "Hide Footer"
+                        } else {
+                            "Show Footer"
+                        })
+                        .clicked()
+                    {
+                        self.shell_layout.footer_visible = !self.shell_layout.footer_visible;
+                        self.layout_dirty = true;
+                    }
+                    if ui
+                        .small_button(if self.shell_layout.left_sidebar_collapsed {
+                            "Show Left Bar"
+                        } else {
+                            "Hide Left Bar"
+                        })
+                        .clicked()
+                    {
+                        self.shell_layout.left_sidebar_collapsed =
+                            !self.shell_layout.left_sidebar_collapsed;
+                        self.layout_dirty = true;
+                    }
+                    if ui
+                        .small_button(if self.shell_layout.right_sidebar_collapsed {
+                            "Show Right Bar"
+                        } else {
+                            "Hide Right Bar"
+                        })
+                        .clicked()
+                    {
+                        self.shell_layout.right_sidebar_collapsed =
+                            !self.shell_layout.right_sidebar_collapsed;
+                        self.layout_dirty = true;
+                    }
+
+                    ui.menu_button("Windows", |ui| {
+                        let windows = self.windows_for_menu();
+                        if windows.is_empty() {
+                            ui.label("No windows available");
+                            return;
+                        }
+
+                        for (key, title, is_hidden, is_detached, zone) in windows {
+                            ui.horizontal(|ui| {
+                                let mut visible = !is_hidden;
+                                let mut label = title.clone();
+                                if is_detached {
+                                    label.push_str(" (detached)");
+                                }
+                                if ui.checkbox(&mut visible, label).changed() {
+                                    visibility_toggles.push(key.clone());
+                                }
+
+                                ui.menu_button(format!("Zone: {}", zone.label()), |ui| {
+                                    for target in GuiShellZone::all() {
+                                        let is_current = target == zone;
+                                        let target_label = if is_current {
+                                            format!("{} (current)", target.label())
+                                        } else {
+                                            target.label().to_string()
+                                        };
+                                        if ui.selectable_label(is_current, target_label).clicked() {
+                                            zone_assignments.push((key.clone(), target));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                    });
+                });
+            });
+
+        if self.shell_layout.header_visible {
+            egui::TopBottomPanel::top("gui_shell_header")
+                .resizable(false)
+                .exact_height(self.shell_layout.header_height)
+                .frame(
+                    egui::Frame::default()
+                        .inner_margin(egui::Margin::ZERO)
+                        .outer_margin(egui::Margin::ZERO),
+                )
+                .show(&ctx, |ui| {
+                    let header_zone_rect = ui.max_rect();
+                    let header_handle_h = 10.0;
+                    let header_handle_rect = if header_zone_rect.height() > header_handle_h {
+                        Some(Rect::from_min_max(
+                            Pos2::new(
+                                header_zone_rect.min.x,
+                                header_zone_rect.max.y - header_handle_h,
+                            ),
+                            header_zone_rect.max,
+                        ))
+                    } else {
+                        None
+                    };
+                    zone_actions.merge(self.render_zone_surface(
+                        &ctx,
+                        &detached_before_frame,
+                        GuiShellZone::Header,
+                        header_zone_rect,
+                    ));
+
+                    if let Some(handle_rect) = header_handle_rect {
+                        let handle_response = ui.interact(
+                            handle_rect,
+                            egui::Id::new("gui_header_resize_handle"),
+                            egui::Sense::click_and_drag(),
+                        );
+                        if handle_response.hovered() || handle_response.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        }
+                        if handle_response.dragged() {
+                            let dy = ui.ctx().input(|i| i.pointer.delta().y);
+                            self.shell_layout.header_height =
+                                (self.shell_layout.header_height + dy).clamp(96.0, 360.0);
+                            self.layout_dirty = true;
+                        }
+                    }
+                });
+        }
+
+        egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.command_input)
+                    .hint_text("Enter command...")
+                    .desired_width(ui.available_width()),
+            );
+
+            let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if response.lost_focus() && pressed_enter {
+                self.submit_command();
+                command_input_sent = true;
+                response.request_focus();
             }
         });
+
+        if self.shell_layout.footer_visible {
+            egui::TopBottomPanel::bottom("gui_shell_footer")
+                .resizable(false)
+                .exact_height(self.shell_layout.footer_height)
+                .frame(
+                    egui::Frame::default()
+                        .inner_margin(egui::Margin::ZERO)
+                        .outer_margin(egui::Margin::ZERO),
+                )
+                .show(&ctx, |ui| {
+                    let footer_zone_rect = ui.max_rect();
+                    let footer_handle_h = 10.0;
+                    let footer_handle_rect = if footer_zone_rect.height() > footer_handle_h {
+                        Some(Rect::from_min_max(
+                            footer_zone_rect.min,
+                            Pos2::new(
+                                footer_zone_rect.max.x,
+                                footer_zone_rect.min.y + footer_handle_h,
+                            ),
+                        ))
+                    } else {
+                        None
+                    };
+                    zone_actions.merge(self.render_zone_surface(
+                        &ctx,
+                        &detached_before_frame,
+                        GuiShellZone::Footer,
+                        footer_zone_rect,
+                    ));
+
+                    if let Some(handle_rect) = footer_handle_rect {
+                        let handle_response = ui.interact(
+                            handle_rect,
+                            egui::Id::new("gui_footer_resize_handle"),
+                            egui::Sense::click_and_drag(),
+                        );
+                        if handle_response.hovered() || handle_response.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        }
+                        if handle_response.dragged() {
+                            let dy = ui.ctx().input(|i| i.pointer.delta().y);
+                            self.shell_layout.footer_height =
+                                (self.shell_layout.footer_height - dy).clamp(96.0, 420.0);
+                            self.layout_dirty = true;
+                        }
+                    }
+                });
+        }
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .inner_margin(egui::Margin::ZERO)
+                    .outer_margin(egui::Margin::ZERO),
+            )
+            .show(&ctx, |ui| {
+            let root = ui.max_rect();
+            if !root.is_finite() || root.width() <= 24.0 || root.height() <= 24.0 {
+                return;
+            }
+
+            self.shell_layout.sanitize(root.width());
+            let min_center_width = 220.0;
+            let mut left_width = if self.shell_layout.left_sidebar_collapsed {
+                0.0
+            } else {
+                self.shell_layout.left_sidebar_width
+            };
+            let mut right_width = if self.shell_layout.right_sidebar_collapsed {
+                0.0
+            } else {
+                self.shell_layout.right_sidebar_width
+            };
+            if left_width + right_width > (root.width() - min_center_width).max(0.0) {
+                let overflow = left_width + right_width - (root.width() - min_center_width).max(0.0);
+                let shrink_left = (overflow * 0.5).min(left_width.max(0.0));
+                left_width = (left_width - shrink_left).max(220.0);
+                right_width = (right_width - (overflow - shrink_left)).max(220.0);
+            }
+            if !self.shell_layout.left_sidebar_collapsed
+                && (self.shell_layout.left_sidebar_width - left_width).abs() > 0.5
+            {
+                self.shell_layout.left_sidebar_width = left_width;
+                self.layout_dirty = true;
+            }
+            if !self.shell_layout.right_sidebar_collapsed
+                && (self.shell_layout.right_sidebar_width - right_width).abs() > 0.5
+            {
+                self.shell_layout.right_sidebar_width = right_width;
+                self.layout_dirty = true;
+            }
+
+            let left_rect = if left_width > 0.0 {
+                Some(Rect::from_min_max(
+                    root.min,
+                    Pos2::new(root.min.x + left_width, root.max.y),
+                ))
+            } else {
+                None
+            };
+            let right_rect = if right_width > 0.0 {
+                Some(Rect::from_min_max(
+                    Pos2::new(root.max.x - right_width, root.min.y),
+                    root.max,
+                ))
+            } else {
+                None
+            };
+            let center_min_x = left_rect.map(|rect| rect.max.x).unwrap_or(root.min.x);
+            let center_max_x = right_rect.map(|rect| rect.min.x).unwrap_or(root.max.x);
+            let center_rect = Rect::from_min_max(
+                Pos2::new(center_min_x, root.min.y),
+                Pos2::new(center_max_x, root.max.y),
+            );
+
+            let sidebar_divider_stroke = egui::Stroke::new(
+                1.5,
+                ui.visuals().window_stroke.color,
+            );
+            if let Some(rect) = left_rect {
+                ui.painter()
+                    .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
+            }
+            if let Some(rect) = right_rect {
+                ui.painter()
+                    .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
+            }
+
+            zone_actions.merge(self.render_zone_surface(
+                &ctx,
+                &detached_before_frame,
+                GuiShellZone::Center,
+                center_rect,
+            ));
+
+            if let Some(rect) = left_rect {
+                let splitter = Rect::from_min_max(
+                    Pos2::new(rect.max.x - 6.0, rect.min.y),
+                    Pos2::new(rect.max.x + 6.0, rect.max.y),
+                );
+                let splitter_response = ui.interact(
+                    splitter,
+                    egui::Id::new("gui_left_sidebar_splitter"),
+                    egui::Sense::click_and_drag(),
+                );
+                if splitter_response.hovered() || splitter_response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if splitter_response.dragged() {
+                    let dx = ui.ctx().input(|i| i.pointer.delta().x);
+                    self.shell_layout.left_sidebar_width =
+                        (self.shell_layout.left_sidebar_width + dx).clamp(220.0, 700.0);
+                    self.layout_dirty = true;
+                }
+                zone_actions.merge(self.render_zone_surface(
+                    &ctx,
+                    &detached_before_frame,
+                    GuiShellZone::LeftSidebar,
+                    rect,
+                ));
+            }
+
+            if let Some(rect) = right_rect {
+                let splitter = Rect::from_min_max(
+                    Pos2::new(rect.min.x - 6.0, rect.min.y),
+                    Pos2::new(rect.min.x + 6.0, rect.max.y),
+                );
+                let splitter_response = ui.interact(
+                    splitter,
+                    egui::Id::new("gui_right_sidebar_splitter"),
+                    egui::Sense::click_and_drag(),
+                );
+                if splitter_response.hovered() || splitter_response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if splitter_response.dragged() {
+                    let dx = ui.ctx().input(|i| i.pointer.delta().x);
+                    self.shell_layout.right_sidebar_width =
+                        (self.shell_layout.right_sidebar_width - dx).clamp(220.0, 700.0);
+                    self.layout_dirty = true;
+                }
+                zone_actions.merge(self.render_zone_surface(
+                    &ctx,
+                    &detached_before_frame,
+                    GuiShellZone::RightSidebar,
+                    rect,
+                ));
+            }
+            (closed_tabs, detached_link_clicks) = self.render_detached_window_host(ui);
+        });
+
+        for key in visibility_toggles {
+            if self.hidden_tabs.contains(&key) {
+                self.restore_tab(key);
+            } else {
+                self.hide_tab(key);
+            }
+        }
+        for (key, zone) in zone_assignments {
+            self.set_tab_zone(key, zone);
+        }
+        for (key, zone) in zone_actions.moved_tabs {
+            self.set_tab_zone(key, zone);
+        }
+        for (key, zone) in zone_actions.move_up_in_zone {
+            self.move_tab_within_zone(&key, zone, true);
+        }
+        for (key, zone) in zone_actions.move_down_in_zone {
+            self.move_tab_within_zone(&key, zone, false);
+        }
+        for key in zone_actions.toggle_title_tabs {
+            self.toggle_title_bar(key);
+        }
+        for key in zone_actions.hidden_tabs {
+            self.hide_tab(key);
+        }
+        for key in zone_actions.detached_tabs {
+            self.detach_tab(key);
+        }
+        if let Some(request) = zone_actions.window_menu_request {
+            self.close_all_popup_menus();
+            self.window_context_menu = Some(request);
+        }
+        let mut link_clicks = zone_actions.link_clicks;
+        link_clicks.extend(detached_link_clicks);
 
         for key in closed_tabs {
             self.hide_tab(key);
@@ -1675,22 +3607,9 @@ impl eframe::App for VellumGuiApp {
         for click in link_clicks {
             self.handle_link_click(click);
         }
+        self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
-
-        egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.command_input)
-                    .hint_text("Enter command...")
-                    .desired_width(f32::INFINITY),
-            );
-
-            let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if response.lost_focus() && pressed_enter {
-                self.submit_command();
-                response.request_focus();
-            }
-        });
-        if ctx.input(|i| i.pointer.any_released()) {
+        if ctx.input(|i| i.pointer.any_released()) || command_input_sent {
             self.layout_dirty = true;
         }
 
@@ -1751,13 +3670,14 @@ fn parse_hex_color(input: &str) -> Option<Color32> {
 mod tests {
     use super::{
         parse_hex_color, AppShortcut, DockStateSnapshot, GlobalDispatchTarget, GuiLinkDispatch,
-        GuiTab, VellumGuiApp,
+        GuiTab, ShellLayoutSnapshot, VellumGuiApp,
     };
-    use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction};
+    use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction, TargetListConfig};
+    use crate::core::state::{Creature, Player};
     use crate::data::{LinkData, SpanType, TextSegment};
     use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
     use crate::frontend::gui::{GuiLayoutFileV1, TabId, TabKey, ViewportState};
-    use eframe::egui::{Color32, Pos2, Vec2};
+    use eframe::egui::{Color32, Pos2, Rect, Vec2};
     use egui_dock::DockState;
     use std::collections::{HashMap, HashSet};
 
@@ -1798,6 +3718,10 @@ mod tests {
     fn test_dock_state_snapshot_round_trip() {
         let snapshot = DockStateSnapshot {
             visible_tabs: vec![TabKey::TextMain, TabKey::Vitals],
+            main_window_rects: Vec::new(),
+            tab_zones: Vec::new(),
+            no_title_tabs: Vec::new(),
+            shell_layout: ShellLayoutSnapshot::default(),
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -2103,4 +4027,182 @@ mod tests {
         assert_eq!(x, 0);
         assert_eq!(y, u16::MAX);
     }
+
+    #[test]
+    fn test_default_zone_for_tab_key_assignments() {
+        assert_eq!(
+            VellumGuiApp::default_zone_for_tab_key(&TabKey::LeftHand),
+            super::GuiShellZone::Header
+        );
+        assert_eq!(
+            VellumGuiApp::default_zone_for_tab_key(&TabKey::Compass),
+            super::GuiShellZone::Footer
+        );
+        assert_eq!(
+            VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
+            super::GuiShellZone::Center
+        );
+    }
+
+    #[test]
+    fn test_should_close_popup_menus_on_outside_click_true() {
+        let menu_rect = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(220.0, 180.0));
+        let should_close = VellumGuiApp::should_close_popup_menus_on_outside_click(
+            true,
+            Some(Pos2::new(50.0, 50.0)),
+            &[menu_rect],
+        );
+        assert!(should_close);
+    }
+
+    #[test]
+    fn test_should_close_popup_menus_on_outside_click_false_for_inside_click() {
+        let menu_rect = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(220.0, 180.0));
+        let should_close = VellumGuiApp::should_close_popup_menus_on_outside_click(
+            true,
+            Some(Pos2::new(150.0, 120.0)),
+            &[menu_rect],
+        );
+        assert!(!should_close);
+    }
+
+    #[test]
+    fn test_should_close_popup_menus_on_outside_click_false_without_click() {
+        let menu_rect = Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(220.0, 180.0));
+        let should_close = VellumGuiApp::should_close_popup_menus_on_outside_click(
+            false,
+            Some(Pos2::new(50.0, 50.0)),
+            &[menu_rect],
+        );
+        assert!(!should_close);
+    }
+
+    #[test]
+    fn test_status_abbreviation_prefers_config_value() {
+        let mut cfg = TargetListConfig::default();
+        cfg.status_abbrev
+            .insert("weirdstatus".to_string(), "wiz".to_string());
+
+        let abbreviated = VellumGuiApp::status_abbreviation("weirdstatus", &cfg);
+        assert_eq!(abbreviated, "wiz");
+    }
+
+    #[test]
+    fn test_status_abbreviation_falls_back_to_first_three_chars() {
+        let cfg = TargetListConfig::default();
+
+        let abbreviated = VellumGuiApp::status_abbreviation("awkward", &cfg);
+        assert_eq!(abbreviated, "awk");
+    }
+
+    #[test]
+    fn test_normalize_entity_id_strips_hash_prefix() {
+        assert_eq!(VellumGuiApp::normalize_entity_id("#12345"), "12345");
+        assert_eq!(VellumGuiApp::normalize_entity_id("12345"), "12345");
+    }
+
+    #[test]
+    fn test_room_component_entries_trims_and_filters_empty() {
+        let component = vec![
+            vec![TextSegment::plain("  north  ")],
+            vec![TextSegment::plain(""), TextSegment::plain(" ")],
+            vec![TextSegment::plain("south")],
+        ];
+
+        let entries = VellumGuiApp::room_component_entries(Some(&component));
+
+        assert_eq!(entries, vec!["north".to_string(), "south".to_string()]);
+    }
+
+    #[test]
+    fn test_room_component_lines_preserve_segments_and_set_stream() {
+        let component = vec![vec![TextSegment::plain("Room text")]];
+
+        let lines = VellumGuiApp::room_component_lines(Some(&component));
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].stream, "room");
+        assert_eq!(lines[0].segments[0].text, "Room text");
+    }
+
+    #[test]
+    fn test_format_target_line_respects_status_position() {
+        let mut cfg = TargetListConfig::default();
+        let creature = Creature {
+            name: "a goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            id: "#101".to_string(),
+            status: Some("stunned".to_string()),
+        };
+
+        cfg.status_position = "start".to_string();
+        let start = VellumGuiApp::format_target_line(&creature, &cfg);
+        assert_eq!(start, "[stu] a goblin");
+
+        cfg.status_position = "end".to_string();
+        let end = VellumGuiApp::format_target_line(&creature, &cfg);
+        assert_eq!(end, "a goblin [stu]");
+    }
+
+    #[test]
+    fn test_format_player_line_includes_both_statuses() {
+        let mut cfg = TargetListConfig::default();
+        cfg.status_position = "start".to_string();
+        let player = Player {
+            name: "Nisugi".to_string(),
+            id: "-42".to_string(),
+            primary_status: Some("stunned".to_string()),
+            secondary_status: Some("prone".to_string()),
+        };
+
+        let start = VellumGuiApp::format_player_line(&player, &cfg);
+        assert_eq!(start, "[stu] [prn] Nisugi");
+
+        cfg.status_position = "end".to_string();
+        let end = VellumGuiApp::format_player_line(&player, &cfg);
+        assert_eq!(end, "Nisugi [stu] [prn]");
+    }
+
+    #[test]
+    fn test_should_filter_target_creature_filters_dead_and_excluded_nouns() {
+        let cfg = TargetListConfig::default();
+        let dead_creature = Creature {
+            name: "a dead goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            id: "#1".to_string(),
+            status: Some("dead".to_string()),
+        };
+        let body_part_creature = Creature {
+            name: "an arm".to_string(),
+            noun: Some("arm".to_string()),
+            id: "#2".to_string(),
+            status: None,
+        };
+
+        assert!(VellumGuiApp::should_filter_target_creature(
+            &dead_creature,
+            &cfg
+        ));
+        assert!(VellumGuiApp::should_filter_target_creature(
+            &body_part_creature,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn test_should_filter_target_creature_keeps_live_creatures() {
+        let cfg = TargetListConfig::default();
+        let live_creature = Creature {
+            name: "a forest troll".to_string(),
+            noun: Some("troll".to_string()),
+            id: "#3".to_string(),
+            status: Some("stunned".to_string()),
+        };
+
+        assert!(!VellumGuiApp::should_filter_target_creature(
+            &live_creature,
+            &cfg
+        ));
+    }
+
 }
