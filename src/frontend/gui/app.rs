@@ -241,6 +241,13 @@ enum GuiWindowMenuCommand {
     MoveTo(GuiShellZone),
 }
 
+#[derive(Clone, Debug)]
+struct GuiZoneDragState {
+    tab_key: TabKey,
+    from_zone: GuiShellZone,
+    pointer_pos: Pos2,
+}
+
 pub struct VellumGuiApp {
     app_core: AppCore,
     _runtime: tokio::runtime::Runtime,
@@ -260,6 +267,7 @@ pub struct VellumGuiApp {
     layout_character: String,
     layout_dirty: bool,
     window_context_menu: Option<GuiWindowMenuRequest>,
+    zone_drag_state: Option<GuiZoneDragState>,
     pending_detached_viewports: Vec<ViewportState>,
     last_monitor_bounds: Option<[f32; 4]>,
 }
@@ -399,6 +407,7 @@ impl VellumGuiApp {
             layout_character,
             layout_dirty: false,
             window_context_menu: None,
+            zone_drag_state: None,
             pending_detached_viewports: detached_viewports,
             last_monitor_bounds: None,
         })
@@ -2402,26 +2411,22 @@ impl VellumGuiApp {
 
     fn render_hand_content(
         ui: &mut egui::Ui,
-        hand_title: &str,
+        hand_prefix: &str,
         item: &Option<String>,
         link: &Option<LinkData>,
     ) -> Option<GuiLinkClick> {
-        ui.label(RichText::new(hand_title).strong());
-        ui.separator();
+        let item_text = item.as_deref().unwrap_or("Empty");
+        let display_text = format!("{hand_prefix}: {item_text}");
 
-        if let Some(item_text) = item.as_deref() {
-            if let Some(link_data) = link.clone() {
-                let response = ui
-                    .add(egui::Label::new(item_text).sense(egui::Sense::click()))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                if response.clicked() {
-                    return Some(Self::gui_link_click_from_response(&response, ui, link_data));
-                }
-            } else {
-                ui.label(item_text);
+        if let Some(link_data) = link.clone() {
+            let response = ui
+                .add(egui::Label::new(display_text).sense(egui::Sense::click()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                return Some(Self::gui_link_click_from_response(&response, ui, link_data));
             }
         } else {
-            ui.label(RichText::new("Empty").weak());
+            ui.label(display_text);
         }
 
         None
@@ -2743,24 +2748,17 @@ impl VellumGuiApp {
             }
             WindowContent::Compass(compass) => Self::render_compass_content(app_core, ui, compass),
             WindowContent::Hand { item, link } => {
-                let hand_title = if window.name.to_ascii_lowercase().contains("left") {
-                    "Left Hand"
+                let hand_prefix = if window.name.to_ascii_lowercase().contains("left") {
+                    "L"
                 } else if window.name.to_ascii_lowercase().contains("right") {
-                    "Right Hand"
+                    "R"
                 } else {
-                    "Spell Hand"
+                    "S"
                 };
-                Self::render_hand_content(ui, hand_title, item, link)
+                Self::render_hand_content(ui, hand_prefix, item, link)
             }
             WindowContent::TabbedText(tabbed) => {
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
-                    if tabbed.tabs.len() > 1 {
-                        ui.label(
-                            RichText::new(format!("Active tab: {}", active.definition.name))
-                                .italics(),
-                        );
-                        ui.separator();
-                    }
                     Self::render_text_content(ui, &active.content, &tab.window_name)
                 } else {
                     ui.label("No active tab content.");
@@ -2840,6 +2838,82 @@ impl VellumGuiApp {
             };
             if ui.selectable_label(is_current, label).clicked() {
                 return Some(GuiWindowMenuCommand::MoveTo(target));
+            }
+        }
+        None
+    }
+
+    fn zone_drag_pointer_for_rect(ctx: &egui::Context, window_rect: Rect) -> Option<Pos2> {
+        ctx.input(|i| {
+            if !i.modifiers.alt || !i.pointer.button_down(egui::PointerButton::Primary) {
+                return None;
+            }
+            let pointer_pos = i.pointer.interact_pos().or(i.pointer.latest_pos())?;
+            if !window_rect.contains(pointer_pos) || i.pointer.delta().length_sq() <= f32::EPSILON {
+                return None;
+            }
+            Some(pointer_pos)
+        })
+    }
+
+    fn zone_for_pointer(
+        zone_rects: &[(GuiShellZone, Rect)],
+        pointer_pos: Pos2,
+    ) -> Option<GuiShellZone> {
+        zone_rects
+            .iter()
+            .find_map(|(zone, rect)| rect.contains(pointer_pos).then_some(*zone))
+    }
+
+    fn render_zone_drop_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        zone_rects: &[(GuiShellZone, Rect)],
+    ) -> Option<(TabKey, GuiShellZone)> {
+        let mut drag = self.zone_drag_state.clone()?;
+        let pointer_pos = ctx
+            .input(|i| i.pointer.interact_pos().or(i.pointer.latest_pos()))
+            .unwrap_or(drag.pointer_pos);
+        drag.pointer_pos = pointer_pos;
+        self.zone_drag_state = Some(drag.clone());
+        if !ctx.input(|i| i.modifiers.alt) {
+            self.zone_drag_state = None;
+            return None;
+        }
+
+        let hovered_zone = Self::zone_for_pointer(zone_rects, pointer_pos);
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("gui_zone_drop_overlay"),
+        ));
+        for (zone, rect) in zone_rects {
+            let tint = if Some(*zone) == hovered_zone {
+                Color32::from_rgba_unmultiplied(70, 130, 220, 48)
+            } else {
+                Color32::from_rgba_unmultiplied(35, 35, 35, 24)
+            };
+            painter.rect_filled(*rect, 0.0, tint);
+        }
+
+        let drop_hint = hovered_zone
+            .map(|zone| format!("Drop to {}", zone.label()))
+            .unwrap_or_else(|| "Release to cancel move".to_string());
+        egui::Area::new(egui::Id::new("gui_zone_drop_hint"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pointer_pos + Vec2::new(16.0, 16.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.label(drop_hint);
+            });
+
+        let pointer_released = ctx.input(|i| i.pointer.any_released());
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        if pointer_released || !pointer_down {
+            self.zone_drag_state = None;
+            if let Some(target_zone) = hovered_zone {
+                if target_zone != drag.from_zone {
+                    return Some((drag.tab_key, target_zone));
+                }
             }
         }
         None
@@ -2961,6 +3035,13 @@ impl VellumGuiApp {
                             });
                         }
                     }
+                    if let Some(pointer_pos) = Self::zone_drag_pointer_for_rect(ctx, inner.response.rect) {
+                        self.zone_drag_state = Some(GuiZoneDragState {
+                            tab_key: tab.id.key.clone(),
+                            from_zone: zone,
+                            pointer_pos,
+                        });
+                    }
                 }
 
                 if let Some(click) = clicked_link {
@@ -3057,7 +3138,7 @@ impl VellumGuiApp {
                 .min_size(min_window_size)
                 .max_size(max_window_size)
                 .resizable(true)
-                .movable(true)
+                .movable(!ctx.input(|i| i.modifiers.alt))
                 .title_bar(!title_bar_hidden)
                 .collapsible(false)
                 .constrain_to(window_bounds)
@@ -3094,6 +3175,13 @@ impl VellumGuiApp {
                     }
                 }
                 occupied_rects.push(inner.response.rect);
+                if let Some(pointer_pos) = Self::zone_drag_pointer_for_rect(ctx, inner.response.rect) {
+                    self.zone_drag_state = Some(GuiZoneDragState {
+                        tab_key: tab.id.key.clone(),
+                        from_zone: zone,
+                        pointer_pos,
+                    });
+                }
             }
             if let Some(click) = clicked_link {
                 actions.link_clicks.push(click);
@@ -3209,6 +3297,7 @@ impl eframe::App for VellumGuiApp {
         let mut closed_tabs = Vec::new();
         let mut detached_link_clicks = Vec::new();
         let mut command_input_sent = false;
+        let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
 
         egui::TopBottomPanel::top("gui_shell_toolbar")
             .resizable(false)
@@ -3321,6 +3410,7 @@ impl eframe::App for VellumGuiApp {
                 )
                 .show(&ctx, |ui| {
                     let header_zone_rect = ui.max_rect();
+                    visible_zone_rects.push((GuiShellZone::Header, header_zone_rect));
                     let header_handle_h = 10.0;
                     let header_handle_rect = if header_zone_rect.height() > header_handle_h {
                         Some(Rect::from_min_max(
@@ -3385,6 +3475,7 @@ impl eframe::App for VellumGuiApp {
                 )
                 .show(&ctx, |ui| {
                     let footer_zone_rect = ui.max_rect();
+                    visible_zone_rects.push((GuiShellZone::Footer, footer_zone_rect));
                     let footer_handle_h = 10.0;
                     let footer_handle_rect = if footer_zone_rect.height() > footer_handle_h {
                         Some(Rect::from_min_max(
@@ -3488,6 +3579,7 @@ impl eframe::App for VellumGuiApp {
                 Pos2::new(center_min_x, root.min.y),
                 Pos2::new(center_max_x, root.max.y),
             );
+            visible_zone_rects.push((GuiShellZone::Center, center_rect));
 
             let sidebar_divider_stroke = egui::Stroke::new(
                 1.5,
@@ -3510,6 +3602,7 @@ impl eframe::App for VellumGuiApp {
             ));
 
             if let Some(rect) = left_rect {
+                visible_zone_rects.push((GuiShellZone::LeftSidebar, rect));
                 let splitter = Rect::from_min_max(
                     Pos2::new(rect.max.x - 6.0, rect.min.y),
                     Pos2::new(rect.max.x + 6.0, rect.max.y),
@@ -3537,6 +3630,7 @@ impl eframe::App for VellumGuiApp {
             }
 
             if let Some(rect) = right_rect {
+                visible_zone_rects.push((GuiShellZone::RightSidebar, rect));
                 let splitter = Rect::from_min_max(
                     Pos2::new(rect.min.x - 6.0, rect.min.y),
                     Pos2::new(rect.min.x + 6.0, rect.max.y),
@@ -3564,6 +3658,10 @@ impl eframe::App for VellumGuiApp {
             }
             (closed_tabs, detached_link_clicks) = self.render_detached_window_host(ui);
         });
+
+        if let Some((key, zone)) = self.render_zone_drop_overlay(&ctx, &visible_zone_rects) {
+            zone_assignments.push((key, zone));
+        }
 
         for key in visibility_toggles {
             if self.hidden_tabs.contains(&key) {
@@ -4042,6 +4140,34 @@ mod tests {
             VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
             super::GuiShellZone::Center
         );
+    }
+
+    #[test]
+    fn test_zone_for_pointer_returns_matching_zone() {
+        let zone_rects = vec![
+            (
+                super::GuiShellZone::Header,
+                Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 100.0)),
+            ),
+            (
+                super::GuiShellZone::Center,
+                Rect::from_min_max(Pos2::new(0.0, 100.0), Pos2::new(400.0, 400.0)),
+            ),
+        ];
+
+        let zone = VellumGuiApp::zone_for_pointer(&zone_rects, Pos2::new(80.0, 40.0));
+        assert_eq!(zone, Some(super::GuiShellZone::Header));
+    }
+
+    #[test]
+    fn test_zone_for_pointer_returns_none_outside_rects() {
+        let zone_rects = vec![(
+            super::GuiShellZone::Center,
+            Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(300.0, 300.0)),
+        )];
+
+        let zone = VellumGuiApp::zone_for_pointer(&zone_rects, Pos2::new(50.0, 50.0));
+        assert_eq!(zone, None);
     }
 
     #[test]
