@@ -1496,6 +1496,87 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    /// Estimated height of one line at the given wrap width, from a single
+    /// LayoutJob over all segments. Exact for link-free lines (they render as
+    /// one galley); link-bearing lines wrap as separate widgets and may
+    /// differ slightly — the renderer self-corrects those once visible.
+    fn measure_line_height(
+        ctx: &egui::Context,
+        line: &StyledLine,
+        visuals: &egui::Visuals,
+        wrap_width: f32,
+    ) -> f32 {
+        let mut job = egui::text::LayoutJob {
+            wrap: egui::text::TextWrapping {
+                max_width: wrap_width,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for segment in &line.segments {
+            if segment.text.is_empty() {
+                continue;
+            }
+            job.append(
+                &segment.text,
+                0.0,
+                Self::segment_text_format(segment, visuals, false),
+            );
+        }
+        if job.is_empty() {
+            // Blank line: renders as an empty row; estimate one text row and
+            // let the on-render correction settle the exact value.
+            return ctx.fonts_mut(|fonts| {
+                fonts.row_height(&egui::FontId::proportional(DEFAULT_FONT_SIZE))
+            });
+        }
+        ctx.fonts_mut(|fonts| fonts.layout_job(job)).size().y
+    }
+
+    /// Bring the height cache in sync with the rendered slice
+    /// `content.lines[start..start + rendered_count]`. Appends measure only
+    /// the new lines; width changes or non-monotonic generations rebuild.
+    fn update_row_height_cache(
+        cache: &mut RowHeightCache,
+        ctx: &egui::Context,
+        content: &TextContent,
+        start: usize,
+        rendered_count: usize,
+        wrap_width: f32,
+        visuals: &egui::Visuals,
+    ) {
+        let width_changed = (cache.wrap_width - wrap_width).abs() > 0.5;
+        let delta = content.generation.wrapping_sub(cache.generation) as usize;
+        let incremental = !width_changed
+            && content.generation >= cache.generation
+            && delta <= rendered_count
+            && cache.heights.len() + delta >= rendered_count;
+
+        if incremental {
+            if delta > 0 {
+                let drop_front = (cache.heights.len() + delta).saturating_sub(rendered_count);
+                cache.heights.drain(..drop_front.min(cache.heights.len()));
+                let len = content.lines.len();
+                for line in content.lines.iter().skip(len - delta) {
+                    cache
+                        .heights
+                        .push(Self::measure_line_height(ctx, line, visuals, wrap_width));
+                }
+            }
+        } else {
+            cache.heights.clear();
+            cache.heights.reserve(rendered_count);
+            for line in content.lines.iter().skip(start) {
+                cache
+                    .heights
+                    .push(Self::measure_line_height(ctx, line, visuals, wrap_width));
+            }
+        }
+        cache.wrap_width = wrap_width;
+        cache.generation = content.generation;
+        debug_assert_eq!(cache.heights.len(), rendered_count);
+    }
+
     pub(super) fn render_text_content(
         ui: &mut egui::Ui,
         content: &TextContent,
@@ -1504,8 +1585,10 @@ impl VellumGuiApp {
     ) -> Option<GuiLinkClick> {
         let visuals = ui.visuals().clone();
         let mut clicked_link = None;
-        let start = content.lines.len().saturating_sub(MAX_RENDERED_LINES);
+        let rendered_count = content.lines.len().min(MAX_RENDERED_LINES);
+        let start = content.lines.len() - rendered_count;
         let max_height = ui.available_height().max(1.0);
+        let cache_id = egui::Id::new(("text_row_heights", scroll_id));
 
         egui::ScrollArea::vertical()
             .id_salt(format!("text_scroll_{}", scroll_id))
@@ -1513,13 +1596,97 @@ impl VellumGuiApp {
             .auto_shrink([false, false])
             .min_scrolled_height(max_height)
             .max_height(max_height)
-            .show(ui, |ui| {
-                for line in content.lines.iter().skip(start) {
-                    if let Some(link) =
-                        Self::render_styled_line(ui, line, &visuals, search_query)
+            .show_viewport(ui, |ui, viewport| {
+                if rendered_count == 0 {
+                    return;
+                }
+                let ctx = ui.ctx().clone();
+                let wrap_width = ui.available_width().max(1.0);
+                let spacing_y = ui.spacing().item_spacing.y;
+
+                // The cache lives in egui temp data so renderers stay
+                // stateless; the Arc dance keeps ctx.fonts_mut() callable
+                // while the cache is borrowed (calling it inside ctx.data_mut
+                // would deadlock on the context lock).
+                let cache_handle = ctx.data_mut(|data| {
+                    data.get_temp_mut_or_insert_with::<std::sync::Arc<
+                        std::sync::Mutex<RowHeightCache>,
+                    >>(cache_id, Default::default)
+                        .clone()
+                });
+                let mut cache = cache_handle.lock().expect("row height cache poisoned");
+                Self::update_row_height_cache(
+                    &mut cache,
+                    &ctx,
+                    content,
+                    start,
+                    rendered_count,
+                    wrap_width,
+                    &visuals,
+                );
+
+                // Visible index range from cumulative strides (height +
+                // vertical item spacing). Only those lines become widgets;
+                // the rest are stand-in spacers.
+                let top = viewport.min.y.max(0.0);
+                let bottom = viewport.max.y.max(top);
+                let mut first_visible = rendered_count;
+                let mut top_space = 0.0f32;
+                let mut y = 0.0f32;
+                for (i, h) in cache.heights.iter().enumerate() {
+                    let stride = h + spacing_y;
+                    if y + stride > top {
+                        first_visible = i;
+                        top_space = y;
+                        break;
+                    }
+                    y += stride;
+                }
+                let mut last_visible = rendered_count;
+                let mut yy = top_space;
+                for i in first_visible..rendered_count {
+                    if yy > bottom {
+                        last_visible = i;
+                        break;
+                    }
+                    yy += cache.heights[i] + spacing_y;
+                }
+
+                if first_visible > 0 && top_space > spacing_y {
+                    // The spacer's trailing item_spacing stands in for the
+                    // last skipped line's own spacing.
+                    ui.allocate_space(Vec2::new(1.0, top_space - spacing_y));
+                }
+                for (offset, line) in content
+                    .lines
+                    .iter()
+                    .skip(start + first_visible)
+                    .take(last_visible.saturating_sub(first_visible))
+                    .enumerate()
+                {
+                    let before = ui.cursor().min.y;
+                    if let Some(link) = Self::render_styled_line(ui, line, &visuals, search_query)
                     {
                         clicked_link = Some(link);
                     }
+                    // Self-correct the estimate with the rendered height so
+                    // spacers stay aligned with reality (see
+                    // measure_line_height on why link lines can differ).
+                    let actual = ui.cursor().min.y - before - spacing_y;
+                    let slot = first_visible + offset;
+                    if actual.is_finite()
+                        && actual >= 0.0
+                        && (cache.heights[slot] - actual).abs() > 0.5
+                    {
+                        cache.heights[slot] = actual;
+                    }
+                }
+                let bottom_space: f32 = cache.heights[last_visible..]
+                    .iter()
+                    .map(|h| h + spacing_y)
+                    .sum();
+                if bottom_space > spacing_y {
+                    ui.allocate_space(Vec2::new(1.0, bottom_space - spacing_y));
                 }
             });
         clicked_link
@@ -1587,10 +1754,15 @@ impl VellumGuiApp {
                     Self::render_tabbed_text_tab_strip(ui, &tab.window_name, tabbed);
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
                     let query = Self::active_search_query(app_core);
+                    // Per-tab scroll id: each tab keeps its own scroll
+                    // position and height cache (tabs have independent
+                    // buffers and generations).
+                    let scroll_id =
+                        format!("{}::tab{}", tab.window_name, tabbed.active_tab_index);
                     if let Some(link) = Self::render_text_content(
                         ui,
                         &active.content,
-                        &tab.window_name,
+                        &scroll_id,
                         query.as_deref(),
                     ) {
                         clicked_link.get_or_insert(link);
@@ -1676,6 +1848,16 @@ impl VellumGuiApp {
             }
         }
     }
+}
+
+/// Per-window cache of estimated line heights driving text virtualization.
+/// Keyed in egui temp data by scroll id; tracks the rendered slice (the last
+/// `MAX_RENDERED_LINES` of the buffer) at a specific wrap width/generation.
+#[derive(Default)]
+pub(super) struct RowHeightCache {
+    wrap_width: f32,
+    generation: u64,
+    heights: Vec<f32>,
 }
 
 pub(super) fn parse_hex_color(input: &str) -> Option<Color32> {
