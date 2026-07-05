@@ -131,8 +131,27 @@ fn bench_highlight(pattern: &str) -> HighlightPattern {
     }
 }
 
-fn bench_config() -> Config {
+/// Optional real-world highlight set via VELLUM_BENCH_HIGHLIGHTS (a
+/// highlights.toml). Replaces the frozen synthetic set, so runs using it are
+/// NOT comparable with default runs - the output labels which was used.
+fn load_bench_highlights() -> Option<(std::collections::HashMap<String, HighlightPattern>, String)> {
+    let path = std::env::var("VELLUM_BENCH_HIGHLIGHTS").ok()?;
+    let contents = std::fs::read_to_string(&path).expect("failed to read VELLUM_BENCH_HIGHLIGHTS file");
+    let mut highlights: std::collections::HashMap<String, HighlightPattern> =
+        toml::from_str(&contents).expect("failed to parse VELLUM_BENCH_HIGHLIGHTS as highlights toml");
+    // Mirror app startup: compile regexes once at load
+    Config::compile_highlight_patterns(&mut highlights);
+    Some((highlights, path))
+}
+
+fn bench_config() -> (Config, String) {
     let mut config = Config::default();
+
+    if let Some((highlights, path)) = load_bench_highlights() {
+        let label = format!("{} patterns from {}", highlights.len(), path);
+        config.highlights = highlights;
+        return (config, label);
+    }
 
     // 2 color highlights matching common words
     let mut h1 = bench_highlight("You");
@@ -164,7 +183,7 @@ fn bench_config() -> Config {
     s2.squelch = true;
     config.highlights.insert("bench_squelch_2".to_string(), s2);
 
-    config
+    (config, "6 frozen synthetic patterns (default)".to_string())
 }
 
 fn bench_ui_state(mp: &mut MessageProcessor) -> UiState {
@@ -205,7 +224,11 @@ fn bench_parse_process_throughput() {
     for iteration in 1..=3 {
         // Fresh state per iteration, built outside the timed region
         let mut parser = XmlParser::new();
-        let mut mp = MessageProcessor::new(bench_config(), SavedDialogPositions::default());
+        let (config, highlights_label) = bench_config();
+        if iteration == 1 {
+            println!("highlights: {}", highlights_label);
+        }
+        let mut mp = MessageProcessor::new(config, SavedDialogPositions::default());
         let mut ui_state = bench_ui_state(&mut mp);
         let mut game_state = GameState::new();
 
