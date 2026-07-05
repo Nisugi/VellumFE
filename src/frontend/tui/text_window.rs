@@ -596,12 +596,12 @@ impl TextWindow {
                                         current_line_spans.clear();
                                         current_line_len = 0;
                                     }
-                                    Self::append_to_line(
+                                    Self::append_char_to_line(
                                         &mut current_line_spans,
-                                        word_ch.to_string(),
+                                        word_ch,
                                         word_style,
                                         word_type,
-                                        word_link.clone(),
+                                        &word_link,
                                     );
                                     current_line_len += 1;
                                 }
@@ -622,23 +622,23 @@ impl TextWindow {
                         // Don't add whitespace at start of new line
                         continue;
                     }
-                    Self::append_to_line(
+                    Self::append_char_to_line(
                         &mut current_line_spans,
-                        ch.to_string(),
+                        ch,
                         *style,
                         *span_type,
-                        link.clone(),
+                        link,
                     );
                     current_line_len += 1;
                 } else {
                     // Non-whitespace character - add to word buffer
                     in_word = true;
-                    Self::append_to_buffer(
+                    Self::append_char_to_line(
                         &mut word_buffer,
-                        ch.to_string(),
+                        ch,
                         *style,
                         *span_type,
-                        link.clone(),
+                        link,
                     );
                     word_buffer_len += 1;
                 }
@@ -686,12 +686,12 @@ impl TextWindow {
                             current_line_spans.clear();
                             current_line_len = 0;
                         }
-                        Self::append_to_line(
+                        Self::append_char_to_line(
                             &mut current_line_spans,
-                            word_ch.to_string(),
+                            word_ch,
                             word_style,
                             word_type,
-                            word_link.clone(),
+                            &word_link,
                         );
                         current_line_len += 1;
                     }
@@ -733,23 +733,23 @@ impl TextWindow {
         }
     }
 
-    // Helper to append text to buffer, merging with last entry if style matches
-    fn append_to_buffer(
-        buffer: &mut Vec<(String, Style, SpanType, Option<LinkData>)>,
-        text: String,
+    // Helper to append one character, merging with the last span if the style
+    // matches. The merge path is the overwhelmingly common case and performs
+    // no allocation and no LinkData clone; only a new span pays for those.
+    fn append_char_to_line(
+        spans: &mut Vec<(String, Style, SpanType, Option<LinkData>)>,
+        ch: char,
         style: Style,
         span_type: SpanType,
-        link: Option<LinkData>,
+        link: &Option<LinkData>,
     ) {
-        if let Some((last_text, last_style, last_type, last_link)) = buffer.last_mut() {
-            if *last_style == style && *last_type == span_type && *last_link == link {
-                last_text.push_str(&text);
-            } else {
-                buffer.push((text, style, span_type, link));
+        if let Some((last_text, last_style, last_type, last_link)) = spans.last_mut() {
+            if *last_style == style && *last_type == span_type && last_link == link {
+                last_text.push(ch);
+                return;
             }
-        } else {
-            buffer.push((text, style, span_type, link));
         }
+        spans.push((ch.to_string(), style, span_type, link.clone()));
     }
 
     pub fn update_inner_width(&mut self, width: u16) {
