@@ -9,7 +9,6 @@ use crate::config::HighlightPattern;
 use crate::data::{LinkData, SpanType, TextSegment};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::Regex;
-use std::collections::HashMap;
 
 /// Sound trigger from a highlight match
 #[derive(Clone, Debug)]
@@ -361,11 +360,19 @@ impl CoreHighlightEngine {
         let mut line_is_silent = false;
 
         if !matches.is_empty() {
-            // Map byte offsets to char indices
-            let mut byte_to_char: HashMap<usize, usize> = HashMap::new();
-            for (idx, (byte, _ch)) in full_text.char_indices().enumerate() {
-                byte_to_char.insert(byte, idx);
+            // Map byte offsets to char indices. Match boundaries from regex
+            // and Aho-Corasick always fall on char boundaries, so a flat
+            // vector indexed by byte (interior bytes unused) replaces the
+            // previous per-char HashMap insert - the heaviest allocation in
+            // highlighting. Index len maps to the total char count so
+            // end-of-string boundaries resolve.
+            let mut byte_to_char = vec![0u32; full_text.len() + 1];
+            let mut char_count = 0u32;
+            for (byte, _ch) in full_text.char_indices() {
+                byte_to_char[byte] = char_count;
+                char_count += 1;
             }
+            byte_to_char[full_text.len()] = char_count;
 
             let full_text_chars: Vec<char> = full_text.chars().collect();
             matches.sort_by_key(|m| m.start_byte);
@@ -376,9 +383,11 @@ impl CoreHighlightEngine {
                 let mut silent_covered = vec![false; full_text_chars.len()];
                 for m in matches.iter() {
                     if m.silent_prompt {
-                        let start_char = *byte_to_char.get(&m.start_byte).unwrap_or(&0);
-                        let end_char =
-                            *byte_to_char.get(&m.end_byte).unwrap_or(&full_text_chars.len());
+                        let start_char =
+                            byte_to_char.get(m.start_byte).map_or(0, |&c| c as usize);
+                        let end_char = byte_to_char
+                            .get(m.end_byte)
+                            .map_or(full_text_chars.len(), |&c| c as usize);
                         for i in start_char..end_char.min(silent_covered.len()) {
                             silent_covered[i] = true;
                         }
@@ -390,15 +399,19 @@ impl CoreHighlightEngine {
                 });
             }
 
-            let mut new_text = String::new();
-            let mut new_styles: Vec<CharStyle> = Vec::new();
-            let mut new_links: Vec<Option<LinkData>> = Vec::new();
+            let mut new_text = String::with_capacity(full_text.len());
+            let mut new_styles: Vec<CharStyle> = Vec::with_capacity(full_text_chars.len());
+            let mut new_links: Vec<Option<LinkData>> = Vec::with_capacity(full_text_chars.len());
             let mut new_match_ranges: Vec<(usize, usize, MatchInfo)> = Vec::new();
 
             let mut last_char_idx = 0usize;
             for m in matches {
-                let start_char = *byte_to_char.get(&m.start_byte).unwrap_or(&last_char_idx);
-                let end_char = *byte_to_char.get(&m.end_byte).unwrap_or(&full_text_chars.len());
+                let start_char = byte_to_char
+                    .get(m.start_byte)
+                    .map_or(last_char_idx, |&c| c as usize);
+                let end_char = byte_to_char
+                    .get(m.end_byte)
+                    .map_or(full_text_chars.len(), |&c| c as usize);
                 if start_char < last_char_idx {
                     continue; // overlapping; skip
                 }
@@ -528,16 +541,18 @@ impl CoreHighlightEngine {
             full_text = new_text;
         }
 
-        // STEP 5: Reconstruct TextSegments from char_styles
+        // STEP 5: Reconstruct TextSegments from char_styles.
+        // Chars are consumed from a single iterator in lockstep with the style
+        // vector - no second Vec<char> materialization.
         let mut result_segments: Vec<TextSegment> = Vec::new();
-        let full_text_chars: Vec<char> = full_text.chars().collect();
+        let mut chars_iter = full_text.chars();
 
         let mut i = 0;
         while i < char_styles.len() {
             let current_style = &char_styles[i];
             let current_link = char_links.get(i).cloned().unwrap_or(None);
             let mut content = String::new();
-            content.push(full_text_chars[i]);
+            content.push(chars_iter.next().expect("char count matches style count"));
 
             // Extend span while style matches
             i += 1;
@@ -550,7 +565,7 @@ impl CoreHighlightEngine {
                     && next_style.span_type == current_style.span_type
                     && next_link == current_link
                 {
-                    content.push(full_text_chars[i]);
+                    content.push(chars_iter.next().expect("char count matches style count"));
                     i += 1;
                 } else {
                     break;
@@ -753,6 +768,77 @@ mod tests {
     // Helper to get full text from segments
     fn segments_to_text(segments: &[TextSegment]) -> String {
         segments.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    // ===========================================
+    // Multi-byte (UTF-8) correctness tests
+    // These lock in behavior across the byte->char mapping rewrite.
+    // ===========================================
+
+    #[test]
+    fn test_highlight_multibyte_text_preserved() {
+        // Curly apostrophe (3 bytes) before the match; CJK (3 bytes each) after
+        let mut p = make_pattern("wounds");
+        p.fg = Some("#ff0000".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+        let segments = vec![make_segment("The troll’s wounds bleed. 傷が痛む")];
+        let result = engine.apply_highlights(&segments, "main");
+
+        assert_eq!(segments_to_text(&result.segments), "The troll’s wounds bleed. 傷が痛む");
+        // The matched word carries the color; surrounding text does not
+        let colored: String = result
+            .segments
+            .iter()
+            .filter(|s| s.fg.as_deref() == Some("#ff0000"))
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(colored, "wounds");
+    }
+
+    #[test]
+    fn test_replace_after_multibyte_prefix() {
+        let mut p = make_pattern("bleed");
+        p.replace = Some("BLEED".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+        let segments = vec![make_segment("’’’ the wound may bleed badly")];
+        let result = engine.apply_highlights(&segments, "main");
+
+        assert_eq!(segments_to_text(&result.segments), "’’’ the wound may BLEED badly");
+    }
+
+    #[test]
+    fn test_silent_prompt_with_multibyte_whitespace_line() {
+        let mut p = make_pattern("Roundtime");
+        p.silent_prompt = true;
+        let engine = CoreHighlightEngine::new(vec![p]);
+        // Whole line covered by the silent match plus whitespace
+        let segments = vec![make_segment("  Roundtime  ")];
+        let result = engine.apply_highlights(&segments, "main");
+        assert!(result.line_is_silent);
+
+        // Multi-byte char outside the match breaks silence
+        let segments = vec![make_segment("  Roundtime 傷 ")];
+        let result = engine.apply_highlights(&segments, "main");
+        assert!(!result.line_is_silent);
+    }
+
+    #[test]
+    fn test_match_at_end_of_multibyte_line() {
+        // Match boundary at end-of-string exercises the byte==len lookup
+        let mut p = make_pattern("痛む");
+        p.fg = Some("#00ff00".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+        let segments = vec![make_segment("傷が痛む")];
+        let result = engine.apply_highlights(&segments, "main");
+
+        assert_eq!(segments_to_text(&result.segments), "傷が痛む");
+        let colored: String = result
+            .segments
+            .iter()
+            .filter(|s| s.fg.as_deref() == Some("#00ff00"))
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(colored, "痛む");
     }
 
     // ===========================================
