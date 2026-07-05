@@ -93,10 +93,10 @@ impl VellumGuiApp {
     /// Re-apply visuals when `config.active_theme` changes (startup, .settheme,
     /// layout-driven theme switches).
     pub(super) fn apply_theme_if_changed(&mut self, ctx: &egui::Context) {
-        let active = self.app_core.config.active_theme.clone();
-        if self.applied_theme_id.as_deref() == Some(active.as_str()) {
+        if self.applied_theme_id.as_deref() == Some(self.app_core.config.active_theme.as_str()) {
             return;
         }
+        let active = self.app_core.config.active_theme.clone();
 
         let presets = crate::theme::ThemePresets::all_with_custom(
             self.app_core.config.character.as_deref(),

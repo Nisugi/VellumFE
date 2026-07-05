@@ -1583,7 +1583,9 @@ impl VellumGuiApp {
         scroll_id: &str,
         search_query: Option<&str>,
     ) -> Option<GuiLinkClick> {
-        let visuals = ui.visuals().clone();
+        // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
+        let style = ui.style().clone();
+        let visuals = &style.visuals;
         let mut clicked_link = None;
         let rendered_count = content.lines.len().min(MAX_RENDERED_LINES);
         let start = content.lines.len() - rendered_count;
@@ -1697,7 +1699,9 @@ impl VellumGuiApp {
         lines: &[StyledLine],
         scroll_id: &str,
     ) -> Option<GuiLinkClick> {
-        let visuals = ui.visuals().clone();
+        // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
+        let style = ui.style().clone();
+        let visuals = &style.visuals;
         let mut clicked_link = None;
         let max_height = ui.available_height().max(1.0);
 
