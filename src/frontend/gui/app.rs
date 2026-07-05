@@ -286,6 +286,7 @@ pub struct VellumGuiApp {
     ui_font: FontRef,
     fonts_applied: bool,
     settings_editor: Option<editors::SettingsEditorState>,
+    highlight_editor: Option<editors::HighlightEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -450,6 +451,7 @@ impl VellumGuiApp {
             ui_font,
             fonts_applied: false,
             settings_editor: None,
+            highlight_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1926,6 +1928,24 @@ impl VellumGuiApp {
         }
         if action == "action:settings" {
             self.open_settings_editor();
+            return true;
+        }
+        if action == "action:highlights" {
+            self.open_highlight_editor(None);
+            return true;
+        }
+        if action == "action:addhighlight" {
+            self.open_highlight_editor(None);
+            self.open_highlight_form_new();
+            return true;
+        }
+        if let Some(name) = action.strip_prefix("action:edithighlight") {
+            let name = name.strip_prefix(':').unwrap_or("").to_string();
+            if name.is_empty() {
+                self.open_highlight_editor(None);
+            } else {
+                self.open_highlight_editor(Some(&name));
+            }
             return true;
         }
         false
