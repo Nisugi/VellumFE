@@ -708,6 +708,45 @@ impl VellumGuiApp {
     /// link-click channel (content renderers only get `&AppCore`).
     pub(super) const QUICKBAR_SWITCH_SENTINEL: &'static str = "_quickbar_switch_";
 
+    /// Sentinel exist_id for switching the active tab of a tabbedtext window;
+    /// noun is "<window_name>|<tab_index>".
+    pub(super) const TABBED_SWITCH_SENTINEL: &'static str = "_tabbed_switch_";
+
+    /// Inner tab strip for tabbedtext windows. Unread tabs render bold; clicks
+    /// flow through the link channel since renderers only get `&AppCore`.
+    fn render_tabbed_text_tab_strip(
+        ui: &mut egui::Ui,
+        window_name: &str,
+        tabbed: &TabbedTextContent,
+    ) -> Option<GuiLinkClick> {
+        if tabbed.tabs.len() < 2 {
+            return None;
+        }
+        let mut clicked = None;
+        ui.horizontal_wrapped(|ui| {
+            for (index, tab_state) in tabbed.tabs.iter().enumerate() {
+                let is_active = index == tabbed.active_tab_index;
+                let mut label = RichText::new(&tab_state.definition.name);
+                if tab_state.has_unread && !is_active {
+                    label = label.strong();
+                }
+                if ui.selectable_label(is_active, label).clicked() && !is_active {
+                    clicked = Some(GuiLinkClick {
+                        link_data: LinkData {
+                            exist_id: Self::TABBED_SWITCH_SENTINEL.to_string(),
+                            noun: format!("{}|{}", window_name, index),
+                            text: String::new(),
+                            coord: None,
+                        },
+                        click_pos: (0, 0),
+                    });
+                }
+            }
+        });
+        ui.separator();
+        clicked
+    }
+
     pub(super) fn render_quickbar_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -1260,12 +1299,18 @@ impl VellumGuiApp {
                 Self::render_hand_content(ui, hand_prefix, item, link)
             }
             WindowContent::TabbedText(tabbed) => {
+                let mut clicked_link =
+                    Self::render_tabbed_text_tab_strip(ui, &tab.window_name, tabbed);
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
-                    Self::render_text_content(ui, &active.content, &tab.window_name)
+                    if let Some(link) =
+                        Self::render_text_content(ui, &active.content, &tab.window_name)
+                    {
+                        clicked_link.get_or_insert(link);
+                    }
                 } else {
                     ui.label("No active tab content.");
-                    None
                 }
+                clicked_link
             }
             WindowContent::Room(room) => {
                 ui.heading(&room.name);

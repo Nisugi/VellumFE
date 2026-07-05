@@ -1926,6 +1926,60 @@ impl VellumGuiApp {
         }
     }
 
+    fn switch_tabbed_tab(&mut self, window_name: &str, index: usize) {
+        if let Some(window) = self.app_core.ui_state.windows.get_mut(window_name) {
+            if let WindowContent::TabbedText(tabbed) = &mut window.content {
+                if index < tabbed.tabs.len() {
+                    tabbed.active_tab_index = index;
+                    tabbed.tabs[index].has_unread = false;
+                    self.app_core.needs_render = true;
+                }
+            }
+        }
+    }
+
+    /// Cycle or jump tabs on tabbedtext windows. Applies to every tabbedtext
+    /// window (there is usually exactly one).
+    fn cycle_tabbed_tabs(&mut self, forward: bool) {
+        let mut any = false;
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::TabbedText(tabbed) = &mut window.content {
+                let count = tabbed.tabs.len();
+                if count == 0 {
+                    continue;
+                }
+                let next = if forward {
+                    (tabbed.active_tab_index + 1) % count
+                } else {
+                    (tabbed.active_tab_index + count - 1) % count
+                };
+                tabbed.active_tab_index = next;
+                tabbed.tabs[next].has_unread = false;
+                any = true;
+            }
+        }
+        if any {
+            self.app_core.needs_render = true;
+        } else {
+            self.app_core
+                .add_system_message("No tabbed windows to cycle.");
+        }
+    }
+
+    fn goto_unread_tab(&mut self) {
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::TabbedText(tabbed) = &mut window.content {
+                if let Some(index) = tabbed.tabs.iter().position(|tab| tab.has_unread) {
+                    tabbed.active_tab_index = index;
+                    tabbed.tabs[index].has_unread = false;
+                    self.app_core.needs_render = true;
+                    return;
+                }
+            }
+        }
+        self.app_core.add_system_message("No unread tabs.");
+    }
+
     /// Dispatch an `action:*` string from a dot-command or menu item.
     /// Returns false when the action has no GUI handler yet.
     fn handle_action_string(&mut self, action: &str) -> bool {
@@ -2007,6 +2061,40 @@ impl VellumGuiApp {
             }
             return true;
         }
+        if action == "action:nexttab" {
+            self.cycle_tabbed_tabs(true);
+            return true;
+        }
+        if action == "action:prevtab" {
+            self.cycle_tabbed_tabs(false);
+            return true;
+        }
+        if action == "action:nextunread" {
+            self.goto_unread_tab();
+            return true;
+        }
+        if let Some(name) = action.strip_prefix("action:hidewindow:") {
+            let name = name.to_string();
+            let key = self
+                .app_core
+                .ui_state
+                .windows
+                .get(&name)
+                .and_then(|window| Self::tab_key_for_window(&name, window));
+            match key {
+                Some(key) => self.hide_tab(key),
+                None => self
+                    .app_core
+                    .add_system_message(&format!("Window '{}' not found.", name)),
+            }
+            return true;
+        }
+        if action == "action:setpalette" || action == "action:resetpalette" {
+            self.app_core.add_system_message(
+                "Terminal palette commands do not apply to the GUI; use .themes instead.",
+            );
+            return true;
+        }
         false
     }
 
@@ -2079,6 +2167,15 @@ impl VellumGuiApp {
     fn handle_link_click(&mut self, click: GuiLinkClick) {
         if click.link_data.exist_id == Self::QUICKBAR_SWITCH_SENTINEL {
             self.app_core.ui_state.active_quickbar_id = Some(click.link_data.noun.clone());
+            return;
+        }
+        if click.link_data.exist_id == Self::TABBED_SWITCH_SENTINEL {
+            if let Some((window_name, index)) = click.link_data.noun.split_once('|') {
+                if let Ok(index) = index.parse::<usize>() {
+                    let window_name = window_name.to_string();
+                    self.switch_tabbed_tab(&window_name, index);
+                }
+            }
             return;
         }
         let dispatch =
