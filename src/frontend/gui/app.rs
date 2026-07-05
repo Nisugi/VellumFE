@@ -291,6 +291,7 @@ pub struct VellumGuiApp {
     colors_editor: Option<editors::ColorsEditorState>,
     theme_browser: Option<editors::ThemeBrowserState>,
     theme_editor: Option<editors::ThemeEditorState>,
+    indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -460,6 +461,7 @@ impl VellumGuiApp {
             colors_editor: None,
             theme_browser: None,
             theme_editor: None,
+            indicator_templates_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -2293,10 +2295,8 @@ impl VellumGuiApp {
         if let Some(submenu) = command.strip_prefix("menu:") {
             let items = self.app_core.build_submenu(submenu);
             if items.is_empty() {
-                self.app_core.add_system_message(&format!(
-                    "Menu '{}' is not available in GUI yet.",
-                    submenu
-                ));
+                self.app_core
+                    .add_system_message(&format!("Menu '{}' has no entries.", submenu));
                 self.close_all_popup_menus();
                 self.app_core.ui_state.input_mode = InputMode::Normal;
             } else {
@@ -2310,6 +2310,22 @@ impl VellumGuiApp {
                 self.app_core
                     .add_system_message(&format!("GUI action not implemented yet: {}", command));
             }
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            return;
+        }
+
+        if command == "__INDICATOR_EDITOR" {
+            self.open_indicator_templates_editor();
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            return;
+        }
+
+        // Internal (double-underscore) menu commands must never reach the server.
+        if command.starts_with("__") {
+            self.app_core
+                .add_system_message(&format!("GUI menu command not implemented yet: {}", command));
             self.close_all_popup_menus();
             self.app_core.ui_state.input_mode = InputMode::Normal;
             return;
