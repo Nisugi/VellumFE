@@ -2397,9 +2397,20 @@ impl MessageProcessor {
         // Route via the prebuilt subscriber index (one O(1) lookup per line)
         // instead of scanning every window's stream list. The index is kept in
         // sync by update_text_stream_subscribers at every window/tab mutation.
-        let subscriber_names: Vec<String> = self
-            .get_stream_subscribers(&self.current_stream)
-            .to_vec();
+        //
+        // The map is taken out of self for the loop so subscriber names can be
+        // borrowed while &mut self methods run - no per-line Vec/String clones.
+        // Nothing inside the loop reads text_stream_subscribers; it is restored
+        // immediately after (the loop has no early return, only continue).
+        let subscribers_map = std::mem::take(&mut self.text_stream_subscribers);
+        let trimmed_stream = self.current_stream.trim();
+        let subscriber_names: &[String] = match subscribers_map.get(trimmed_stream) {
+            Some(v) => v.as_slice(),
+            None => {
+                let key = trimmed_stream.to_ascii_lowercase();
+                subscribers_map.get(&key).map(|v| v.as_slice()).unwrap_or(&[])
+            }
+        };
 
         tracing::trace!(
             "Routing stream '{}' to {} subscriber(s)",
@@ -2585,6 +2596,8 @@ impl MessageProcessor {
             }
         }
 
+        // Restore the subscriber index taken before the loop
+        self.text_stream_subscribers = subscribers_map;
 
         // Fallback routing if no window handled the stream
         // Uses config.streams settings: drop_unsubscribed list and fallback window
