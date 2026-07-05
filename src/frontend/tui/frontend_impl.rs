@@ -145,6 +145,10 @@ impl Frontend for TuiFrontend {
 
         let render_start = Instant::now();
 
+        // Refresh the cached render order (no-op unless the window set changed)
+        self.window_order_cache.refresh(&app_core.ui_state);
+        let order_cache = &self.window_order_cache;
+
         self.terminal.draw(|f| {
             use crate::data::WindowContent;
             use ratatui::layout::Rect;
@@ -153,33 +157,11 @@ impl Frontend for TuiFrontend {
             let theme = theme_for_render.clone();
             let screen_area = f.area();
 
-            // Stable render order: sort by name, then move ephemeral windows and performance_overlay to end
-            // so they render on top of other windows
-            let mut window_order: Vec<&String> = app_core.ui_state.windows.keys().collect();
-            window_order.sort();
-
-            // Move ephemeral container windows to end (they should render on top of regular windows)
-            let ephemeral_names: Vec<_> = window_order
-                .iter()
-                .filter(|n| app_core.ui_state.ephemeral_windows.contains(**n))
-                .cloned()
-                .collect();
-            window_order.retain(|n| !app_core.ui_state.ephemeral_windows.contains(*n));
-            window_order.extend(ephemeral_names);
-
-            // Performance overlay renders last (on very top)
-            if let Some(pos) = window_order.iter().position(|n| n.as_str() == "performance_overlay") {
-                let overlay = window_order.remove(pos);
-                window_order.push(overlay);
-            }
-            let window_index_map: std::collections::HashMap<&String, usize> = window_order
-                .iter()
-                .enumerate()
-                .map(|(idx, name)| (*name, idx))
-                .collect();
+            // Cached render order and z-index map (see WindowOrderCache)
+            let window_index_map = &order_cache.render_index;
 
             // Render each window at its position
-            for name in window_order {
+            for name in &order_cache.render_order {
                 let Some(window) = app_core.ui_state.windows.get(name) else {
                     continue;
                 };

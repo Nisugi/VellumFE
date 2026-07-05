@@ -162,14 +162,11 @@ impl TuiFrontend {
             }
         }
 
-        // Create stable window index mapping (sorted by window name for consistency)
+        // Stable window index = position in the sorted name list. A binary
+        // search at the two use sites replaces the HashMap previously built
+        // on every mouse event.
         let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
         window_names.sort();
-        let window_index_map: std::collections::HashMap<&String, usize> = window_names
-            .iter()
-            .enumerate()
-            .map(|(idx, name)| (*name, idx))
-            .collect();
 
         // Handle window editor mouse events first (if open)
         if self.window_editor.is_some() {
@@ -1569,10 +1566,9 @@ impl TuiFrontend {
                                 *y,
                                 window_rect,
                             ) {
-                                // Find window index from the stable mapping
-                                let window_index = window_index_map
-                                    .get(&window_name)
-                                    .copied()
+                                // Find window index from the stable (sorted) ordering
+                                let window_index = window_names
+                                    .binary_search(&&window_name)
                                     .unwrap_or(0);
                                 app_core.ui_state.selection_state =
                                     Some(crate::selection::SelectionState::new(
@@ -1715,10 +1711,8 @@ impl TuiFrontend {
                                 if let Some((line, col)) = self
                                     .mouse_to_text_coords(name, *x, *y, window_rect)
                                 {
-                                    let window_index = window_index_map
-                                        .get(name)
-                                        .copied()
-                                        .unwrap_or(0);
+                                    let window_index =
+                                        window_names.binary_search(&name).unwrap_or(0);
                                     selection.update_end(window_index, line, col);
                                     app_core.needs_render = true;
                                 }

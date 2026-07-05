@@ -116,6 +116,72 @@ pub struct TuiFrontend {
     resize_debouncer: ResizeDebouncer,
     /// Theme cache to avoid HashMap lookup + clone every render
     theme_cache: ThemeCache,
+    /// Cached window render order (sorted, ephemerals + overlay moved last),
+    /// rebuilt only when the window set changes
+    window_order_cache: WindowOrderCache,
+}
+
+/// Cached window render order and z-index map. Rebuilding cost is two Vec
+/// allocations + sort + HashMap build; previously paid on every render.
+/// Validity is checked structurally each render (O(N) hash lookups, no
+/// allocations), so the cache can never serve a stale order.
+#[derive(Default)]
+pub(crate) struct WindowOrderCache {
+    /// Sorted names with ephemeral windows, then performance_overlay, at the end
+    pub render_order: Vec<String>,
+    /// Window name -> position in render_order (z-index for selection logic)
+    pub render_index: std::collections::HashMap<String, usize>,
+    /// Ephemeral membership snapshot used for the validity check
+    ephemeral: Vec<String>,
+}
+
+impl WindowOrderCache {
+    fn is_valid(&self, ui_state: &crate::data::ui_state::UiState) -> bool {
+        self.render_order.len() == ui_state.windows.len()
+            && self.ephemeral.len() == ui_state.ephemeral_windows.len()
+            && self
+                .render_order
+                .iter()
+                .all(|n| ui_state.windows.contains_key(n))
+            && self
+                .ephemeral
+                .iter()
+                .all(|n| ui_state.ephemeral_windows.contains(n))
+    }
+
+    /// Rebuild if the window set or ephemeral membership changed
+    pub(crate) fn refresh(&mut self, ui_state: &crate::data::ui_state::UiState) {
+        if self.is_valid(ui_state) {
+            return;
+        }
+
+        // Stable render order: sort by name, then move ephemeral windows and
+        // performance_overlay to the end so they render on top
+        let mut order: Vec<String> = ui_state.windows.keys().cloned().collect();
+        order.sort();
+
+        let ephemeral: Vec<String> = order
+            .iter()
+            .filter(|n| ui_state.ephemeral_windows.contains(*n))
+            .cloned()
+            .collect();
+        order.retain(|n| !ui_state.ephemeral_windows.contains(n));
+        order.extend(ephemeral.iter().cloned());
+
+        // Performance overlay renders last (on very top)
+        if let Some(pos) = order.iter().position(|n| n == "performance_overlay") {
+            let overlay = order.remove(pos);
+            order.push(overlay);
+        }
+
+        self.render_index = order
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| (name.clone(), idx))
+            .collect();
+        self.render_order = order;
+        self.ephemeral = ephemeral;
+    }
 }
 
 impl TuiFrontend {
@@ -150,6 +216,7 @@ impl TuiFrontend {
             settings_editor: None,
             resize_debouncer: ResizeDebouncer::new(300), // 300ms debounce
             theme_cache: ThemeCache::new(),
+            window_order_cache: WindowOrderCache::default(),
         })
     }
 
