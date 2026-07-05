@@ -3476,6 +3476,10 @@ impl eframe::App for VellumGuiApp {
                 Self::drag_modifier_from_config(&self.app_core.config.ui.drag_modifier_key),
             );
         });
+        // While an item drag is in flight, sweeping the pointer across text
+        // must not select it.
+        let dragging_item = egui::DragAndDrop::has_any_payload(&ctx);
+        ctx.style_mut(|style| style.interaction.selectable_labels = !dragging_item);
         if !self.fonts_applied {
             self.fonts_applied = true;
             if let Some(fonts) = theme::font_definitions_from_ref(&self.ui_font) {

@@ -131,11 +131,17 @@ impl VellumGuiApp {
 
                     if is_link {
                         // Links stay one clickable widget; highlight the whole
-                        // segment when it matches.
+                        // segment when it matches. While the drag modifier is
+                        // held the label is not selectable text, so starting an
+                        // item drag never starts a text selection.
                         let rich =
                             Self::segment_to_rich_text(segment, visuals, is_link, search_match);
                         let response = ui
-                            .add(egui::Label::new(rich).sense(egui::Sense::click_and_drag()))
+                            .add(
+                                egui::Label::new(rich)
+                                    .sense(egui::Sense::click_and_drag())
+                                    .selectable(!Self::link_drag_modifier_down(ui)),
+                            )
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if let Some(link_data) = &segment.link_data {
                             if let Some(drop) = Self::handle_link_dnd(ui, &response, link_data) {
@@ -551,7 +557,8 @@ impl VellumGuiApp {
                         [text_width, row_height],
                         egui::Label::new(display_text)
                             .truncate()
-                            .sense(egui::Sense::click_and_drag()),
+                            .sense(egui::Sense::click_and_drag())
+                            .selectable(!Self::link_drag_modifier_down(ui)),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 // Drag source only: releases over hand windows resolve at the
@@ -746,7 +753,8 @@ impl VellumGuiApp {
                     let response = ui
                         .add(
                             egui::Label::new(object.name.as_str())
-                                .sense(egui::Sense::click_and_drag()),
+                                .sense(egui::Sense::click_and_drag())
+                                .selectable(!Self::link_drag_modifier_down(ui)),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if let Some(drop) = Self::handle_link_dnd(ui, &response, &object_link) {
@@ -806,13 +814,16 @@ impl VellumGuiApp {
         egui::Id::new("vellum_drag_modifier")
     }
 
-    /// True while the configured item-drag modifier (default Ctrl) is held.
+    /// True while exactly the configured item-drag modifier (default Ctrl) is
+    /// held. Exact matching keeps combined modifiers (e.g. Ctrl+Shift) free
+    /// for keybinds and prevents AltGr (reported as Ctrl+Alt on Windows
+    /// international layouts) from triggering Ctrl drags.
     fn link_drag_modifier_down(ui: &egui::Ui) -> bool {
         let required: egui::Modifiers = ui
             .ctx()
             .data(|data| data.get_temp(Self::drag_modifier_data_id()))
             .unwrap_or(egui::Modifiers::CTRL);
-        ui.input(|input| input.modifiers.contains(required))
+        ui.input(|input| input.modifiers.matches_exact(required))
     }
 
     /// Only real game entities can be dragged (not command/sentinel links).
