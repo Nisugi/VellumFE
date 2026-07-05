@@ -468,6 +468,16 @@ impl TextWindow {
             for line in wrapped {
                 self.pending_wrapped_lines.push_back(line);
             }
+            // Cap pending growth: anything beyond max_lines would be evicted
+            // immediately on unfreeze anyway, so drop the oldest pending line
+            // now instead of growing without bound during a long freeze.
+            while self.pending_logical_lines.len() > self.max_lines {
+                if let Some(old_line) = self.pending_logical_lines.pop_front() {
+                    for _ in 0..old_line.wrapped_count {
+                        self.pending_wrapped_lines.pop_front();
+                    }
+                }
+            }
             self.current_line_spans.clear();
             return;
         }
