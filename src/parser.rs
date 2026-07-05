@@ -499,17 +499,6 @@ impl XmlParser {
         text_buffer: &mut String,
         elements: &mut Vec<ParsedElement>,
     ) {
-        // Debug: log tags that might be LaunchURL
-        if tag.contains("LaunchURL") || tag.contains("launch") {
-            tracing::info!("process_tag received potential LaunchURL: {}", tag);
-        }
-
-        // Debug: log any tag containing "container" or "inv" for troubleshooting
-        let tag_lower = tag.to_lowercase();
-        if tag_lower.contains("container") || tag_lower.starts_with("<inv ") || tag_lower.starts_with("</inv") {
-            tracing::info!("process_tag received container/inv tag: {}", &tag[..tag.len().min(150)]);
-        }
-
         // Determine if this tag changes color state
         let color_opening = tag.starts_with("<preset ")
             || tag.starts_with("<color ")
@@ -691,7 +680,6 @@ impl XmlParser {
         }
         // Handle container tags
         else if tag.starts_with("<container ") {
-            tracing::info!("Parser: Matched container tag: {}", &tag[..tag.len().min(100)]);
             self.handle_container(tag, elements);
         } else if tag.starts_with("<clearContainer ") {
             self.handle_clear_container(tag, elements);
@@ -702,7 +690,8 @@ impl XmlParser {
             self.handle_dropdown(tag, elements);
         }
         // Debug: catch any dropdown-related tags we might be missing
-        else if tag.to_lowercase().contains("dropdown") || tag.contains("dDB") {
+        // (case-sensitive checks - avoids a per-tag to_lowercase allocation)
+        else if tag.contains("dropDown") || tag.contains("dropdown") || tag.contains("dDB") {
             tracing::warn!("Parser: Unhandled dropdown-like tag: {}", &tag[..tag.len().min(100)]);
         }
         // Silently ignore these tags
@@ -2092,7 +2081,7 @@ impl XmlParser {
     fn handle_launch_url(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <LaunchURL src="/gs4/play/cm/loader.asp?uname=..."/>
         if let Some(src) = Self::extract_attribute(tag, "src") {
-            tracing::info!("Parsed LaunchURL: src={}", src);
+            tracing::debug!("Parsed LaunchURL: src={}", src);
             elements.push(ParsedElement::LaunchURL { url: src });
         } else {
             tracing::warn!("LaunchURL tag without src attribute: {}", tag);
