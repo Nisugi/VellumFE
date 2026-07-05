@@ -45,6 +45,49 @@ fn core_and_data_do_not_reference_frontend() {
 }
 
 #[test]
+fn gui_does_not_reference_tui() {
+    // The GUI and TUI are peer frontends sharing core/, data/, and
+    // frontend/common/. Anything both need belongs in one of those shared
+    // layers (e.g. parse_color_flexible lives in frontend/common/color.rs),
+    // never imported across frontends.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    scan_dir(
+        &src.join("frontend/gui"),
+        &["crate::frontend::tui", "super::tui", "ratatui", "crossterm"],
+        &mut violations,
+    );
+    assert!(
+        violations.is_empty(),
+        "frontend/gui/ must not reference frontend/tui/ or terminal crates.\n\
+         Move shared logic to core/, data/, or frontend/common/.\n\
+         Violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn core_and_data_do_not_reference_egui() {
+    // Rendering stays in frontends: core/, data/, and config/ must compile
+    // without any UI toolkit.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+    for layer in ["core", "data", "config"] {
+        scan_dir(
+            &src.join(layer),
+            &["egui", "eframe"],
+            &mut violations,
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "core/, data/, and config/ must not reference egui/eframe.\n\
+         Violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn config_root_stays_a_facade() {
     // config.rs was split into focused submodules (templates, widgets,
     // window_def, settings, layout, colors, paths, io). The root should
