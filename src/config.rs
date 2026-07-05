@@ -13,6 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 pub mod menu_keybind_validator;
+pub mod wrayth_import;
 mod highlights;
 mod keybinds;
 

@@ -20,7 +20,7 @@ mod theme;
 mod tts;
 mod window_position;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser as ClapParser, Subcommand};
 use std::path::PathBuf;
 
@@ -164,6 +164,21 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Import highlights from a Wrayth/StormFront settings XML file
+    ImportHighlights {
+        /// Wrayth settings XML file (e.g. 70682.xml)
+        #[arg(value_name = "FILE")]
+        src: PathBuf,
+
+        /// Output TOML file (default: <FILE>-highlights.toml next to source)
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+
+        /// Show what would be imported without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -267,6 +282,71 @@ fn main() -> Result<()> {
                         eprintln!("✗ Migration failed: {}", e);
                         std::process::exit(1);
                     }
+                }
+
+                return Ok(());
+            }
+
+            Commands::ImportHighlights { src, out, dry_run } => {
+                let xml = std::fs::read_to_string(&src)
+                    .with_context(|| format!("Failed to read {}", src.display()))?;
+                let result = config::wrayth_import::import_wrayth_settings(&xml)?;
+
+                println!("Wrayth Highlight Import");
+                println!("=======================");
+                println!("Source: {}", src.display());
+                println!();
+                println!(
+                    "  Strings:  {} imported ({} skipped)",
+                    result.string_count - result.skipped,
+                    result.skipped
+                );
+                println!(
+                    "  Names:    {} merged into {} patterns (grouped by color)",
+                    result.name_count, result.name_group_count
+                );
+
+                if !result.palette_misses.is_empty() {
+                    println!(
+                        "  Warning:  unresolved palette references (color dropped): {}",
+                        result.palette_misses.join(", ")
+                    );
+                }
+                if !result.sound_files.is_empty() {
+                    let sounds_dir = config::Config::sounds_dir()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| "~/.vellum-fe/sounds".to_string());
+                    println!();
+                    println!("  Sounds referenced (copy these into {}):", sounds_dir);
+                    for sound in &result.sound_files {
+                        println!("    - {}", sound);
+                    }
+                }
+
+                if dry_run {
+                    println!();
+                    println!("Dry run: no file written.");
+                    return Ok(());
+                }
+
+                let out_path = out.unwrap_or_else(|| {
+                    let stem = src
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("wrayth");
+                    src.with_file_name(format!("{}-highlights.toml", stem))
+                });
+                let toml_str = config::wrayth_import::to_toml_string(&result.highlights)?;
+                std::fs::write(&out_path, toml_str)
+                    .with_context(|| format!("Failed to write {}", out_path.display()))?;
+
+                println!();
+                println!("Wrote {} highlights to {}", result.highlights.len(), out_path.display());
+                if let Ok(global) = config::Config::common_highlights_path() {
+                    println!(
+                        "To activate for all characters, merge or copy it to {}",
+                        global.display()
+                    );
                 }
 
                 return Ok(());

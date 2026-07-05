@@ -43,7 +43,7 @@ pub struct HighlightPattern {
     pub silent_prompt: bool, // If true, lines matching don't trigger prompt display (prompt suppressed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_to: Option<String>, // Window name to redirect matching lines to
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_redirect_mode")]
     pub redirect_mode: RedirectMode, // How to handle redirect: only or copy
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replace: Option<String>, // If set, replace matched text with this string (supports $1, $2 capture groups)
@@ -91,6 +91,10 @@ fn default_enabled() -> bool {
 
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+fn is_default_redirect_mode(mode: &RedirectMode) -> bool {
+    *mode == RedirectMode::default()
 }
 
 impl Config {
