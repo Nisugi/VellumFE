@@ -10,11 +10,11 @@ use crate::frontend::tui::menu_actions;
 impl super::TuiFrontend {
     pub(super) fn handle_search_mode_keys(
         &mut self,
-        code: crate::frontend::KeyCode,
-        modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
-        use crate::frontend::KeyCode;
+        use crate::data::input::KeyCode;
 
         // Handle Ctrl+PageUp/PageDown for cycling through search results
         if modifiers.ctrl {
@@ -115,11 +115,11 @@ impl super::TuiFrontend {
     /// Handle Normal mode keyboard events (extracted from main.rs Phase 4.2)
     pub(super) fn handle_normal_mode_keys(
         &mut self,
-        code: crate::frontend::KeyCode,
-        modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
-        use crate::frontend::KeyCode;
+        use crate::data::input::KeyCode;
         use crate::data::window::WidgetType;
 
         let focused_name = app_core.get_focused_window_name();
@@ -179,7 +179,7 @@ impl super::TuiFrontend {
                 KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
                 other => other,
             };
-            let key_event = crate::frontend::common::KeyEvent { code: normalized_code, modifiers };
+            let key_event = crate::data::input::KeyEvent { code: normalized_code, modifiers };
             if let Some(action) = app_core.keybind_map.get(&key_event).cloned() {
                 let is_command_input_action = matches!(&action,
                     crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),

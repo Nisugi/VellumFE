@@ -37,7 +37,7 @@ impl Frontend for TuiFrontend {
                     // Convert crossterm MouseEvent to frontend-agnostic MouseEvent
                     if let Some(kind) = crossterm_bridge::convert_mouse_kind(mouse.kind) {
                         let modifiers = crossterm_bridge::convert_modifiers(mouse.modifiers);
-                        let mouse_event = crate::frontend::common::MouseEvent::new(
+                        let mouse_event = crate::data::input::MouseEvent::new(
                             kind,
                             mouse.column,
                             mouse.row,

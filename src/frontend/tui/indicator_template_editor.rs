@@ -1,5 +1,5 @@
 use crate::config::{Config, IndicatorTemplateEntry, IndicatorTemplateStore};
-use crate::frontend::{KeyCode, KeyModifiers};
+use crate::data::input::{KeyCode, KeyModifiers};
 use crate::theme::AppTheme;
 use crate::frontend::tui::crossterm_bridge;
 use ratatui::{

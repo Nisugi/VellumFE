@@ -1,7 +1,9 @@
 //! Frontend-agnostic input types for keyboard and mouse events.
 //!
 //! These types abstract over platform-specific input handling (crossterm for TUI,
-//! native events for GUI) to enable shared input processing logic.
+//! native events for GUI) to enable shared input processing logic. They live in
+//! the data layer because core (keybinds, input routing, menus) consumes them,
+//! and core must not import from frontend/.
 
 /// Represents a key press, independent of the underlying frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

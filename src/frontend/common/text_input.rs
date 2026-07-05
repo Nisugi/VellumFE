@@ -3,7 +3,7 @@
 //! Provides a trait-based abstraction over text editing backends (tui-textarea for TUI,
 //! native widgets for GUI) to enable shared text editing logic across frontends.
 
-use super::input::{KeyCode, KeyModifiers};
+use crate::data::input::{KeyCode, KeyModifiers};
 
 /// Cursor movement operations for text editing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

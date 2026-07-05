@@ -133,7 +133,7 @@ pub struct AppCore {
     // === Keybind Runtime Cache ===
     /// Runtime keybind map for fast O(1) lookups (KeyEvent -> KeyBindAction)
     /// Built from config.keybinds at startup and on config reload
-    pub keybind_map: HashMap<crate::frontend::common::KeyEvent, crate::config::KeyBindAction>,
+    pub keybind_map: HashMap<crate::data::input::KeyEvent, crate::config::KeyBindAction>,
 
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml

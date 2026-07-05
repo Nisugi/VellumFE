@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::config::{BorderSides, Config, KeyAction, KeyBindAction, PerformanceWidgetData, WindowBase, WindowDef};
-use crate::frontend::common::KeyEvent;
+use crate::data::input::KeyEvent;
 
 use super::AppCore;
 
@@ -340,7 +340,7 @@ impl AppCore {
 mod tests {
     use super::AppCore;
     use crate::config::{Config, KeyBindAction};
-    use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
+    use crate::data::input::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn build_keybind_map_parses_valid_entries() {

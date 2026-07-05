@@ -3,7 +3,7 @@
 //! Presents a VellumFE-inspired popup that lets the user tweak geometry,
 //! borders, and stream assignments for a given window definition.
 //!
-use crate::frontend::common::{KeyCode, KeyEvent as TfKeyEvent};
+use crate::data::input::{KeyCode, KeyEvent as TfKeyEvent};
 use crate::config::Config;
 use crate::frontend::tui::crossterm_bridge;
 use crate::frontend::tui::textarea_bridge;

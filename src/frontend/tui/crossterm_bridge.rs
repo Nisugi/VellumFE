@@ -1,7 +1,7 @@
 //! Bridge between crossterm events and frontend-agnostic input types.
 //!
 //! This module translates crossterm-specific event types into our UI-agnostic types
-//! defined in `frontend::common::input`. This allows the rest of the application to
+//! defined in `data::input`. This allows the rest of the application to
 //! work with platform-independent input representations.
 //!
 //! NOTE: Also provides reverse conversion (frontend -> crossterm) for legacy code
@@ -10,6 +10,7 @@
 
 use crossterm::event as ct;
 use ratatui::style as ratatui_style;
+use crate::data::input::*;
 use crate::frontend::common::*;
 
 /// Convert crossterm KeyCode to frontend-agnostic KeyCode

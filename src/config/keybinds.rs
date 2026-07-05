@@ -343,7 +343,7 @@ impl MenuKeybinds {
     /// Resolve a KeyEvent to a MenuAction based on the current context
     pub fn resolve_action(
         &self,
-        key: &crate::frontend::common::KeyEvent,
+        key: &crate::data::input::KeyEvent,
         context: crate::core::menu_actions::ActionContext,
     ) -> crate::core::menu_actions::MenuAction {
         use crate::core::menu_actions::{key_event_to_string, ActionContext, MenuAction};

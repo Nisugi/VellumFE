@@ -138,12 +138,12 @@ impl TuiFrontend {
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
         &mut self,
-        mouse_event: &crate::frontend::MouseEvent,
+        mouse_event: &crate::data::input::MouseEvent,
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<(bool, Option<String>)> {
         use crate::data::ui_state::InputMode;
-        use crate::frontend::MouseEventKind;
+        use crate::data::input::MouseEventKind;
         use crate::data::{DragOperation, DialogDragState, DialogDragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
         use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
@@ -185,17 +185,17 @@ impl TuiFrontend {
                 use crate::frontend::tui::window_editor::WindowEditorMouseAction;
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         let action = window_editor.handle_mouse(*x, *y, true, area);
                         app_core.needs_render = true;
                         action
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         let action = window_editor.handle_mouse(*x, *y, true, area);
                         app_core.needs_render = true;
                         action
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         let action = window_editor.handle_mouse(*x, *y, false, area);
                         app_core.needs_render = true;
                         action
@@ -207,8 +207,8 @@ impl TuiFrontend {
                 match action {
                     WindowEditorMouseAction::Save => {
                         // Trigger save via simulated Ctrl+S key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_window_editor_keys(
                             KeyCode::Char('s'),
                             KeyModifiers::CTRL,
@@ -218,8 +218,8 @@ impl TuiFrontend {
                     }
                     WindowEditorMouseAction::Cancel => {
                         // Trigger cancel via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_window_editor_keys(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -248,13 +248,13 @@ impl TuiFrontend {
                 use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, false, area)
                     }
                     _ => HighlightFormMouseAction::None,
@@ -265,8 +265,8 @@ impl TuiFrontend {
                 match action {
                     HighlightFormMouseAction::Save => {
                         // Trigger save via simulated Ctrl+S key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('s'),
                             KeyModifiers::CTRL,
@@ -277,8 +277,8 @@ impl TuiFrontend {
                     }
                     HighlightFormMouseAction::Cancel => {
                         // Trigger cancel via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -315,13 +315,13 @@ impl TuiFrontend {
                 };
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, false, scroll_direction, area)
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -335,8 +335,8 @@ impl TuiFrontend {
                 match action {
                     HighlightBrowserMouseAction::Edit => {
                         // Trigger edit via simulated Enter key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Enter,
                             KeyModifiers::NONE,
@@ -347,8 +347,8 @@ impl TuiFrontend {
                     }
                     HighlightBrowserMouseAction::Delete => {
                         // Trigger delete via simulated Delete key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Delete,
                             KeyModifiers::NONE,
@@ -359,8 +359,8 @@ impl TuiFrontend {
                     }
                     HighlightBrowserMouseAction::Add => {
                         // Trigger add via simulated 'a' key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('a'),
                             KeyModifiers::NONE,
@@ -371,8 +371,8 @@ impl TuiFrontend {
                     }
                     HighlightBrowserMouseAction::Close => {
                         // Trigger close via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -409,13 +409,13 @@ impl TuiFrontend {
                 };
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, false, scroll_direction, area)
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -429,8 +429,8 @@ impl TuiFrontend {
                 match action {
                     KeybindBrowserMouseAction::Edit => {
                         // Trigger edit via simulated Enter key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Enter,
                             KeyModifiers::NONE,
@@ -441,8 +441,8 @@ impl TuiFrontend {
                     }
                     KeybindBrowserMouseAction::Delete => {
                         // Trigger delete via simulated Delete key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Delete,
                             KeyModifiers::NONE,
@@ -453,8 +453,8 @@ impl TuiFrontend {
                     }
                     KeybindBrowserMouseAction::Add => {
                         // Trigger add via simulated 'a' key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('a'),
                             KeyModifiers::NONE,
@@ -465,8 +465,8 @@ impl TuiFrontend {
                     }
                     KeybindBrowserMouseAction::Close => {
                         // Trigger close via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -496,13 +496,13 @@ impl TuiFrontend {
                 use crate::frontend::tui::keybind_form::KeybindFormMouseAction;
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, false, area)
                     }
                     _ => KeybindFormMouseAction::None,
@@ -513,8 +513,8 @@ impl TuiFrontend {
                 match action {
                     KeybindFormMouseAction::Save => {
                         // Trigger save via simulated Ctrl+S key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('s'),
                             KeyModifiers::CTRL,
@@ -525,8 +525,8 @@ impl TuiFrontend {
                     }
                     KeybindFormMouseAction::Delete => {
                         // Trigger delete via simulated Ctrl+D key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('d'),
                             KeyModifiers::CTRL,
@@ -537,8 +537,8 @@ impl TuiFrontend {
                     }
                     KeybindFormMouseAction::Cancel => {
                         // Trigger cancel via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -575,13 +575,13 @@ impl TuiFrontend {
                 };
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         browser.handle_mouse(*x, *y, false, scroll_direction, area)
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -595,8 +595,8 @@ impl TuiFrontend {
                 match action {
                     ColorPaletteBrowserMouseAction::Edit => {
                         // Trigger edit via simulated Enter key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Enter,
                             KeyModifiers::NONE,
@@ -607,8 +607,8 @@ impl TuiFrontend {
                     }
                     ColorPaletteBrowserMouseAction::Delete => {
                         // Trigger delete via simulated Delete key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Delete,
                             KeyModifiers::NONE,
@@ -619,8 +619,8 @@ impl TuiFrontend {
                     }
                     ColorPaletteBrowserMouseAction::Add => {
                         // Trigger add via simulated 'a' key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('a'),
                             KeyModifiers::NONE,
@@ -631,8 +631,8 @@ impl TuiFrontend {
                     }
                     ColorPaletteBrowserMouseAction::ToggleFavorite => {
                         // Favorite already toggled in handle_mouse, just trigger save via 'f' key
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('f'),
                             KeyModifiers::NONE,
@@ -643,8 +643,8 @@ impl TuiFrontend {
                     }
                     ColorPaletteBrowserMouseAction::Close => {
                         // Trigger close via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -674,13 +674,13 @@ impl TuiFrontend {
                 use crate::frontend::tui::color_form::ColorFormMouseAction;
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, true, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         form.handle_mouse(*x, *y, false, area)
                     }
                     _ => ColorFormMouseAction::None,
@@ -691,8 +691,8 @@ impl TuiFrontend {
                 match action {
                     ColorFormMouseAction::Save => {
                         // Trigger save via simulated Ctrl+S key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('s'),
                             KeyModifiers::CTRL,
@@ -703,8 +703,8 @@ impl TuiFrontend {
                     }
                     ColorFormMouseAction::Cancel => {
                         // Trigger cancel via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -741,13 +741,13 @@ impl TuiFrontend {
                 };
 
                 let action = match kind {
-                    MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                         editor.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                         editor.handle_mouse(*x, *y, true, scroll_direction, area)
                     }
-                    MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                         editor.handle_mouse(*x, *y, false, scroll_direction, area)
                     }
                     MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -761,8 +761,8 @@ impl TuiFrontend {
                 match action {
                     SettingsEditorMouseAction::EditValue => {
                         // Trigger edit via simulated Enter key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Enter,
                             KeyModifiers::NONE,
@@ -773,8 +773,8 @@ impl TuiFrontend {
                     }
                     SettingsEditorMouseAction::ToggleScope => {
                         // Trigger scope toggle via simulated 'g' key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Char('g'),
                             KeyModifiers::NONE,
@@ -785,8 +785,8 @@ impl TuiFrontend {
                     }
                     SettingsEditorMouseAction::Close => {
                         // Trigger close via simulated Esc key press
-                        use crate::frontend::KeyCode;
-                        use crate::frontend::KeyModifiers;
+                        use crate::data::input::KeyCode;
+                        use crate::data::input::KeyModifiers;
                         let _ = self.handle_key_event(
                             KeyCode::Esc,
                             KeyModifiers::NONE,
@@ -816,7 +816,7 @@ impl TuiFrontend {
 
             // Handle drag operations first
             match kind {
-                MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                     if let Some(ref drag_state) = app_core.ui_state.dialog_drag {
                         if let Some(ref mut dialog) = app_core.ui_state.active_dialog {
                             let dx = *x as i32 - drag_state.start_pos.0 as i32;
@@ -912,7 +912,7 @@ impl TuiFrontend {
                     }
                     return Ok((true, None));
                 }
-                MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                     if app_core.ui_state.dialog_drag.is_some() {
                         // Save position if dialog has save_position flag
                         if let Some(ref dialog) = app_core.ui_state.active_dialog {
@@ -952,7 +952,7 @@ impl TuiFrontend {
                     return Ok((true, None));
                 };
 
-                if let MouseEventKind::Down(crate::frontend::MouseButton::Left) = kind {
+                if let MouseEventKind::Down(crate::data::input::MouseButton::Left) = kind {
                     let layout = dialog::compute_dialog_layout(screen_area, dialog_state);
 
                     // Check resize handles first
@@ -1040,7 +1040,7 @@ impl TuiFrontend {
                 app_core.needs_render = true;
                 return Ok((true, None));
             }
-            MouseEventKind::Down(crate::frontend::MouseButton::Left) => {
+            MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                 // If in menu mode, handle menu clicks first
                 if app_core.ui_state.input_mode == InputMode::Menu {
                     let mut clicked_item = None;
@@ -1604,7 +1604,7 @@ impl TuiFrontend {
                 }
                 return Ok((true, None));
             }
-            MouseEventKind::Drag(crate::frontend::MouseButton::Left) => {
+            MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                 if let Some(ref mut link_drag) = app_core.ui_state.link_drag_state {
                     link_drag.current_pos = (*x, *y);
                     app_core.needs_render = true;
@@ -1729,7 +1729,7 @@ impl TuiFrontend {
                 }
                 return Ok((true, None));
             }
-            MouseEventKind::Up(crate::frontend::MouseButton::Left) => {
+            MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                 let mut command_to_send: Option<String> = None;
 
                 if let Some(link_drag) = app_core.ui_state.link_drag_state.take() {
@@ -2001,7 +2001,7 @@ impl TuiFrontend {
 
                 return Ok((true, command_to_send));
             }
-            MouseEventKind::Down(crate::frontend::MouseButton::Right) => {
+            MouseEventKind::Down(crate::data::input::MouseButton::Right) => {
                 // Right-click on performance overlay: show metrics toggle menu
                 if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
                     let pos = &window.position;
@@ -2067,13 +2067,13 @@ impl TuiFrontend {
     /// Returns optional command to send to server
     pub fn handle_key_event(
         &mut self,
-        code: crate::frontend::KeyCode,
-        modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
         use crate::data::ui_state::InputMode;
-        use crate::frontend::{KeyCode, KeyModifiers};
+        use crate::data::input::{KeyCode, KeyModifiers};
         use crate::core::input_router;
 
         tracing::debug!(
@@ -2101,7 +2101,7 @@ impl TuiFrontend {
             }
             InputMode::HighlightBrowser => {
                 if let Some(ref mut browser) = self.highlight_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2209,7 +2209,7 @@ impl TuiFrontend {
             }
             InputMode::KeybindBrowser => {
                 if let Some(ref mut browser) = self.keybind_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2283,7 +2283,7 @@ impl TuiFrontend {
             }
             InputMode::ColorPaletteBrowser => {
                 if let Some(ref mut browser) = self.color_palette_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2366,7 +2366,7 @@ impl TuiFrontend {
             }
             InputMode::UIColorsBrowser => {
                 if let Some(ref mut browser) = self.uicolors_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2396,7 +2396,7 @@ impl TuiFrontend {
             }
             InputMode::SpellColorsBrowser => {
                 if let Some(ref mut browser) = self.spell_color_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2459,7 +2459,7 @@ impl TuiFrontend {
             }
             InputMode::ThemeBrowser => {
                 if let Some(ref mut browser) = self.theme_browser {
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2635,7 +2635,7 @@ impl TuiFrontend {
                         app_core.needs_render = true;
                         return Ok(None);
                     }
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -2957,7 +2957,7 @@ impl TuiFrontend {
                     // Section navigation removed - not applicable to simple form widget
                     // (This code was likely meant for KeybindBrowser, not KeybindForm)
 
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -3131,7 +3131,7 @@ impl TuiFrontend {
                     use crate::frontend::tui::widget_traits::{
                         FieldNavigable, TextEditable, Toggleable,
                     };
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -3304,7 +3304,7 @@ impl TuiFrontend {
             InputMode::SpellColorForm => {
                 if let Some(ref mut form) = self.spell_color_form {
                     use crate::frontend::tui::widget_traits::{FieldNavigable, TextEditable};
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -3431,7 +3431,7 @@ impl TuiFrontend {
                     // Ctrl+1-6 section jumping (high priority)
                     if modifiers.ctrl {
                         match code {
-                            crate::frontend::KeyCode::Char(c @ '1'..='6') => {
+                            crate::data::input::KeyCode::Char(c @ '1'..='6') => {
                                 let section = c.to_digit(10).expect("char '1'..='6' is always a digit") as usize;
                                 editor.jump_to_section(section);
                                 app_core.needs_render = true;
@@ -3441,7 +3441,7 @@ impl TuiFrontend {
                         }
                     }
 
-                    let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
                         &app_core.ui_state.input_mode,
@@ -3555,12 +3555,12 @@ impl TuiFrontend {
     /// Handle Dialog mode keyboard navigation
     fn handle_dialog_mode_keys(
         &mut self,
-        code: crate::frontend::KeyCode,
-        _modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        _modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         use crate::data::ui_state::InputMode;
-        use crate::frontend::KeyCode;
+        use crate::data::input::KeyCode;
 
         let mut command_to_send: Option<String> = None;
         let mut close_dialog = false;
@@ -3816,14 +3816,14 @@ impl TuiFrontend {
     /// Handle Menu mode keyboard navigation (extracted from main.rs Phase 4.2)
     fn handle_menu_mode_keys(
         &mut self,
-        code: crate::frontend::KeyCode,
-        _modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        _modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
         
         
-        use crate::frontend::KeyCode;
+        use crate::data::input::KeyCode;
         use crate::data::ui_state::InputMode;
 
         tracing::debug!("Menu mode active - handling key: {:?}", code);
@@ -4455,14 +4455,14 @@ impl TuiFrontend {
     /// Handle WindowEditor mode keyboard events (extracted from main.rs Phase 4.2)
     fn handle_window_editor_keys(
         &mut self,
-        code: crate::frontend::KeyCode,
-        modifiers: crate::frontend::KeyModifiers,
+        code: crate::data::input::KeyCode,
+        modifiers: crate::data::input::KeyModifiers,
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         use crate::core::input_router;
         use crate::data::ui_state::InputMode;
         if let Some(ref mut editor) = self.window_editor {
-            let key_event = crate::frontend::common::KeyEvent { code, modifiers };
+            let key_event = crate::data::input::KeyEvent { code, modifiers };
             let action = input_router::route_input(
                 &key_event,
                 &app_core.ui_state.input_mode,
@@ -4646,9 +4646,9 @@ impl TuiFrontend {
                     if let Some(ref mut editor) = self.window_editor {
                         // If a sub-editor is active, delegate Delete to it (e.g., delete tab in TabEditor)
                         if editor.is_sub_editor_active() {
-                            let tf_key = crate::frontend::common::KeyEvent {
-                                code: crate::frontend::KeyCode::Delete,
-                                modifiers: crate::frontend::KeyModifiers::NONE,
+                            let tf_key = crate::data::input::KeyEvent {
+                                code: crate::data::input::KeyCode::Delete,
+                                modifiers: crate::data::input::KeyModifiers::NONE,
                             };
                             if editor.handle_sub_editor_key(tf_key) {
                                 app_core.needs_render = true;
@@ -4683,7 +4683,7 @@ impl TuiFrontend {
                 }
                 _ => {
                     use crate::frontend::tui::crossterm_bridge;
-                    let tf_key = crate::frontend::common::KeyEvent { code, modifiers };
+                    let tf_key = crate::data::input::KeyEvent { code, modifiers };
                     let ct_code = crossterm_bridge::to_crossterm_keycode(code);
                     let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
                     let key_event = crossterm::event::KeyEvent::new(ct_code, ct_mods);

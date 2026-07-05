@@ -5,7 +5,7 @@
 //! overrides, and persists edits that come from the UI.
 
 use anyhow::{Context, Result};
-use crate::frontend::common::{KeyCode, KeyModifiers};
+use crate::data::input::{KeyCode, KeyModifiers};
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

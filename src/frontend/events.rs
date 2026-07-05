@@ -3,7 +3,7 @@
 //! Individual frontends translate their native event streams (crossterm, egui,
 //! etc.) into this enum so the core logic only handles one event shape.
 
-use super::common::{KeyCode, KeyModifiers, MouseEvent};
+use crate::data::input::{KeyCode, KeyModifiers, MouseEvent};
 
 /// Frontend-agnostic event system
 /// Events emitted by frontends (TUI, GUI) are converted to this unified format
@@ -54,7 +54,7 @@ impl FrontendEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::common::{MouseEventKind, MouseButton};
+    use crate::data::input::{MouseEventKind, MouseButton};
 
     #[test]
     fn test_event_creation() {
