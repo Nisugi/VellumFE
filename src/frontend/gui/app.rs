@@ -134,6 +134,8 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     search_bar_needs_focus: bool,
+    /// Cached search-bar match count: (lowercased query, content fingerprint, count).
+    search_match_cache: Option<(String, u64, usize)>,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
@@ -341,6 +343,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             search_bar_needs_focus: false,
+            search_match_cache: None,
             command_input_id: None,
             repaint_ctx,
             layout_save_tx: Some(layout_save_tx),
@@ -1178,7 +1181,9 @@ impl VellumGuiApp {
 
         // Count matching lines across visible text content, including the
         // active tab of tabbed windows (read-only pass before the window
-        // closure takes mutable borrows).
+        // closure takes mutable borrows). The scan is cached: buffer
+        // generations only move when content changes, so an idle search bar
+        // costs a fingerprint pass instead of a full-buffer rescan per frame.
         let query = self
             .app_core
             .ui_state
@@ -1188,27 +1193,60 @@ impl VellumGuiApp {
         let match_count = if query.is_empty() {
             0
         } else {
-            self.app_core
+            let contents = || {
+                self.app_core
+                    .ui_state
+                    .windows
+                    .values()
+                    .filter_map(|window| match &window.content {
+                        WindowContent::Text(content)
+                        | WindowContent::Inventory(content)
+                        | WindowContent::Spells(content) => Some(content),
+                        WindowContent::TabbedText(tabbed) => tabbed
+                            .tabs
+                            .get(tabbed.active_tab_index)
+                            .map(|tab| &tab.content),
+                        _ => None,
+                    })
+            };
+            // Order-independent content fingerprint (windows is a HashMap).
+            // Active tab indices are mixed in so switching tabs invalidates
+            // the cache even when two tabs share generation and length.
+            let tab_switch_salt: u64 = self
+                .app_core
                 .ui_state
                 .windows
                 .values()
                 .filter_map(|window| match &window.content {
-                    WindowContent::Text(content)
-                    | WindowContent::Inventory(content)
-                    | WindowContent::Spells(content) => Some(content),
-                    WindowContent::TabbedText(tabbed) => tabbed
-                        .tabs
-                        .get(tabbed.active_tab_index)
-                        .map(|tab| &tab.content),
+                    WindowContent::TabbedText(tabbed) => Some(tabbed.active_tab_index as u64),
                     _ => None,
                 })
-                .flat_map(|content| content.lines.iter())
-                .filter(|line| {
-                    line.segments
-                        .iter()
-                        .any(|segment| segment.text.to_ascii_lowercase().contains(&query))
-                })
-                .count()
+                .fold(0u64, |acc, index| {
+                    acc.wrapping_add(index.wrapping_mul(0x517c_c1b7_2722_0a95))
+                });
+            let fingerprint = contents().fold(tab_switch_salt, |acc, content| {
+                acc.wrapping_add(content.generation)
+                    .wrapping_add((content.lines.len() as u64).wrapping_mul(0x9e37_79b9))
+            });
+            match &self.search_match_cache {
+                Some((cached_query, cached_fingerprint, cached_count))
+                    if *cached_query == query && *cached_fingerprint == fingerprint =>
+                {
+                    *cached_count
+                }
+                _ => {
+                    let count = contents()
+                        .flat_map(|content| content.lines.iter())
+                        .filter(|line| {
+                            line.segments.iter().any(|segment| {
+                                Self::find_ascii_ci(&segment.text, &query, 0).is_some()
+                            })
+                        })
+                        .count();
+                    self.search_match_cache = Some((query.clone(), fingerprint, count));
+                    count
+                }
+            }
         };
 
         let mut close = false;

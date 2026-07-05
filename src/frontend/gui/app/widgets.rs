@@ -77,10 +77,33 @@ impl VellumGuiApp {
         segment.link_data.is_some()
     }
 
+    /// Allocation-free ASCII case-insensitive substring search starting at
+    /// `from`. `needle_lower` must already be ASCII-lowercased. Byte indices
+    /// returned are always char boundaries: a valid UTF-8 needle can never
+    /// match starting on a continuation byte.
+    pub(super) fn find_ascii_ci(haystack: &str, needle_lower: &str, from: usize) -> Option<usize> {
+        let h = haystack.as_bytes();
+        let n = needle_lower.as_bytes();
+        if n.is_empty() {
+            return (from <= h.len()).then_some(from);
+        }
+        if from + n.len() > h.len() {
+            return None;
+        }
+        'outer: for i in from..=h.len() - n.len() {
+            for (j, &nb) in n.iter().enumerate() {
+                if h[i + j].to_ascii_lowercase() != nb {
+                    continue 'outer;
+                }
+            }
+            return Some(i);
+        }
+        None
+    }
+
     /// True when the active search query matches this segment (case-insensitive).
     fn segment_matches_query(segment: &TextSegment, query_lower: Option<&str>) -> bool {
-        query_lower
-            .is_some_and(|query| segment.text.to_ascii_lowercase().contains(query))
+        query_lower.is_some_and(|query| Self::find_ascii_ci(&segment.text, query, 0).is_some())
     }
 
     /// The active in-window search query (lowercased), if searching.
@@ -102,10 +125,8 @@ impl VellumGuiApp {
             runs.push((text, false));
             return runs;
         }
-        let lower = text.to_ascii_lowercase();
         let mut pos = 0;
-        while let Some(found) = lower[pos..].find(query_lower) {
-            let start = pos + found;
+        while let Some(start) = Self::find_ascii_ci(text, query_lower, pos) {
             let end = start + query_lower.len();
             if start > pos {
                 runs.push((&text[pos..start], false));
