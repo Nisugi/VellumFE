@@ -1932,6 +1932,10 @@ impl VellumGuiApp {
     }
 
     fn handle_link_click(&mut self, click: GuiLinkClick) {
+        if click.link_data.exist_id == Self::QUICKBAR_SWITCH_SENTINEL {
+            self.app_core.ui_state.active_quickbar_id = Some(click.link_data.noun.clone());
+            return;
+        }
         let dispatch =
             Self::resolve_link_dispatch(&click.link_data, self.app_core.cmdlist.as_ref());
         let Some(dispatch) = dispatch else {

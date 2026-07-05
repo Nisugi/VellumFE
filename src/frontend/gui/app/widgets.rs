@@ -704,6 +704,102 @@ impl VellumGuiApp {
             });
     }
 
+    /// Sentinel exist_id used to route quickbar switching through the
+    /// link-click channel (content renderers only get `&AppCore`).
+    pub(super) const QUICKBAR_SWITCH_SENTINEL: &'static str = "_quickbar_switch_";
+
+    pub(super) fn render_quickbar_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+    ) -> Option<GuiLinkClick> {
+        let ui_state = &app_core.ui_state;
+        if ui_state.quickbars.is_empty() {
+            ui.weak("No quickbars configured.");
+            return None;
+        }
+
+        let mut ids: Vec<&String> = ui_state.quickbars.keys().collect();
+        ids.sort();
+        let active_id = ui_state
+            .active_quickbar_id
+            .as_ref()
+            .filter(|id| ui_state.quickbars.contains_key(*id))
+            .cloned()
+            .unwrap_or_else(|| ids[0].clone());
+        let quickbar = &ui_state.quickbars[&active_id];
+        let quickbar_title = |id: &String| {
+            ui_state.quickbars[id]
+                .title
+                .clone()
+                .unwrap_or_else(|| id.clone())
+        };
+
+        let mut clicked = None;
+        ui.horizontal_wrapped(|ui| {
+            if ids.len() > 1 {
+                let mut selected = active_id.clone();
+                egui::ComboBox::from_id_salt("quickbar_switcher")
+                    .selected_text(quickbar_title(&active_id))
+                    .show_ui(ui, |ui| {
+                        for id in &ids {
+                            ui.selectable_value(&mut selected, (*id).clone(), quickbar_title(id));
+                        }
+                    });
+                if selected != active_id && clicked.is_none() {
+                    clicked = Some(GuiLinkClick {
+                        link_data: LinkData {
+                            exist_id: Self::QUICKBAR_SWITCH_SENTINEL.to_string(),
+                            noun: selected,
+                            text: String::new(),
+                            coord: None,
+                        },
+                        click_pos: (0, 0),
+                    });
+                }
+                ui.separator();
+            }
+
+            for entry in &quickbar.entries {
+                match entry {
+                    crate::data::QuickbarEntry::Label { value, .. } => {
+                        ui.label(value);
+                    }
+                    crate::data::QuickbarEntry::Link { value, cmd, .. } => {
+                        let response = ui.button(value);
+                        if response.clicked() && clicked.is_none() {
+                            clicked = Some(Self::gui_link_click_from_response(
+                                &response,
+                                ui,
+                                Self::direct_command_link(cmd.clone()),
+                            ));
+                        }
+                    }
+                    crate::data::QuickbarEntry::MenuLink {
+                        value, exist, noun, ..
+                    } => {
+                        let response = ui.button(value);
+                        if response.clicked() && clicked.is_none() {
+                            clicked = Some(Self::gui_link_click_from_response(
+                                &response,
+                                ui,
+                                LinkData {
+                                    exist_id: exist.clone(),
+                                    noun: noun.clone(),
+                                    text: value.clone(),
+                                    coord: None,
+                                },
+                            ));
+                        }
+                    }
+                    crate::data::QuickbarEntry::Separator => {
+                        ui.separator();
+                    }
+                }
+            }
+        });
+        clicked
+    }
+
     pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
@@ -1119,6 +1215,7 @@ impl VellumGuiApp {
                 Self::render_container_content(app_core, ui, container_title);
                 None
             }
+            WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
                 ui.label(format!(
