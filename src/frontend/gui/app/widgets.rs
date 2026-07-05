@@ -107,6 +107,52 @@ impl VellumGuiApp {
         runs
     }
 
+    /// Text format for a slice of a segment, mirroring segment_to_rich_text.
+    fn segment_text_format(
+        segment: &TextSegment,
+        visuals: &egui::Visuals,
+        search_match: bool,
+    ) -> egui::TextFormat {
+        let color = segment
+            .fg
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| visuals.text_color());
+        let background = if search_match {
+            visuals.selection.bg_fill
+        } else {
+            segment
+                .bg
+                .as_deref()
+                .and_then(parse_hex_color)
+                .unwrap_or(Color32::TRANSPARENT)
+        };
+        egui::TextFormat {
+            font_id: egui::FontId {
+                size: DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 },
+                family: if segment.mono {
+                    egui::FontFamily::Monospace
+                } else {
+                    egui::FontFamily::Proportional
+                },
+            },
+            color,
+            background,
+            ..Default::default()
+        }
+    }
+
+    /// Emit the accumulated non-link text as a single label. One galley per
+    /// run (instead of one widget per segment) keeps wrapping natural and
+    /// lets egui's galley cache reuse the layout across frames.
+    fn flush_text_job(ui: &mut egui::Ui, job: &mut egui::text::LayoutJob) {
+        if job.is_empty() {
+            return;
+        }
+        let job = std::mem::take(job);
+        ui.add(egui::Label::new(job));
+    }
+
     pub(super) fn render_styled_line(
         ui: &mut egui::Ui,
         line: &StyledLine,
@@ -116,11 +162,15 @@ impl VellumGuiApp {
         let mut clicked_link = None;
 
         ui.scope(|ui| {
-            // Each styled segment is rendered as a separate widget. Keep inter-widget spacing at
-            // zero so highlights/links don't introduce artificial spaces around punctuation.
+            // Keep inter-widget spacing at zero so links don't introduce
+            // artificial spaces around punctuation.
             ui.spacing_mut().item_spacing.x = 0.0;
 
             ui.horizontal_wrapped(|ui| {
+                // Consecutive non-link segments accumulate into one LayoutJob;
+                // links flush it and render as their own clickable widgets.
+                let mut job = egui::text::LayoutJob::default();
+
                 for segment in &line.segments {
                     if segment.text.is_empty() {
                         continue;
@@ -130,6 +180,7 @@ impl VellumGuiApp {
                     let search_match = Self::segment_matches_query(segment, search_query);
 
                     if is_link {
+                        Self::flush_text_job(ui, &mut job);
                         // Links stay one clickable widget; highlight the whole
                         // segment when it matches. While the drag modifier is
                         // held the label is not selectable text, so starting an
@@ -164,14 +215,22 @@ impl VellumGuiApp {
                         // Highlight only the matched substrings.
                         let query = search_query.unwrap_or_default();
                         for (piece, is_match) in Self::split_search_runs(&segment.text, query) {
-                            ui.label(Self::styled_rich_text(
-                                piece, segment, visuals, false, is_match,
-                            ));
+                            job.append(
+                                piece,
+                                0.0,
+                                Self::segment_text_format(segment, visuals, is_match),
+                            );
                         }
                     } else {
-                        ui.label(Self::segment_to_rich_text(segment, visuals, false, false));
+                        job.append(
+                            &segment.text,
+                            0.0,
+                            Self::segment_text_format(segment, visuals, false),
+                        );
                     }
                 }
+
+                Self::flush_text_job(ui, &mut job);
             });
         });
 
