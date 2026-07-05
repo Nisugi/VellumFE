@@ -295,6 +295,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     search_bar_needs_focus: bool,
+    command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
@@ -487,6 +488,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             search_bar_needs_focus: false,
+            command_input_id: None,
             repaint_ctx,
             window_context_menu: None,
             zone_drag_state: None,
@@ -3559,6 +3561,7 @@ impl eframe::App for VellumGuiApp {
                     .hint_text("Enter command...")
                     .desired_width(ui.available_width()),
             );
+            self.command_input_id = Some(response.id);
 
             let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if response.lost_focus() && pressed_enter {
@@ -3813,6 +3816,18 @@ impl eframe::App for VellumGuiApp {
             if dirty_since.elapsed() >= LAYOUT_SAVE_DEBOUNCE {
                 self.save_layout_state();
                 self.layout_dirty_since = None;
+            }
+        }
+
+        // Focus-follows rule: any click that no text widget captured returns
+        // keyboard focus to the command input, so the player can always type
+        // without hunting for the input bar. Editors, dialogs, and the search
+        // bar keep focus while their fields are in use; keybind capture is
+        // exempt so the captured key doesn't also type into the input.
+        if let Some(input_id) = self.command_input_id {
+            let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
+            if nothing_focused && !self.keybind_capture_armed() {
+                ctx.memory_mut(|memory| memory.request_focus(input_id));
             }
         }
 

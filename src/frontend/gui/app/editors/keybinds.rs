@@ -112,6 +112,15 @@ impl VellumGuiApp {
         self.keybind_editor = Some(KeybindEditorState::new());
     }
 
+    /// True while the keybind form is waiting to capture a key press.
+    /// The focus-follows rule must not steal focus during capture.
+    pub(in super::super) fn keybind_capture_armed(&self) -> bool {
+        self.keybind_editor
+            .as_ref()
+            .and_then(|state| state.form.as_ref())
+            .is_some_and(|form| form.capture_armed)
+    }
+
     pub(in super::super) fn open_keybind_form_new(&mut self) {
         let mut state = self
             .keybind_editor
