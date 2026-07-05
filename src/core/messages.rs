@@ -2805,8 +2805,9 @@ impl MessageProcessor {
                 tracing::debug!("Updated {} inventory window(s)", updated_count);
             }
 
-            // Store as new previous inventory
-            self.previous_inventory = self.inventory_buffer.clone();
+            // Store as new previous inventory. The buffer is cleared below
+            // either way, so swapping avoids deep-cloning every line.
+            std::mem::swap(&mut self.previous_inventory, &mut self.inventory_buffer);
         } else {
             tracing::debug!(
                 "Inventory unchanged - skipping update ({} lines)",
