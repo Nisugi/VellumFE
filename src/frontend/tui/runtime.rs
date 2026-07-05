@@ -30,8 +30,14 @@ async fn async_run(
     use crate::network::{DirectConnection, LichConnection, ServerMessage};
     use tokio::sync::mpsc;
 
-    // Create channels for network communication
-    let (server_tx, mut server_rx) = mpsc::unbounded_channel::<ServerMessage>();
+    // Create channels for network communication.
+    // Server channel is bounded: if the UI stalls, the network read task
+    // blocks on send() and TCP flow control takes over, instead of the
+    // queue growing without bound.
+    let (server_tx, mut server_rx) =
+        mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
+    // Command channel stays unbounded: sends happen in the synchronous UI
+    // event loop (can't await) and volume is user-typed commands only.
     let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
 
     // Store connection info

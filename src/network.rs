@@ -28,6 +28,11 @@ pub enum ServerMessage {
     Disconnected,
 }
 
+/// Capacity of the server→UI message channel. When full, the network read
+/// task blocks on send and TCP flow control provides backpressure, instead
+/// of the queue growing without bound while the UI is stalled.
+pub const SERVER_CHANNEL_CAPACITY: usize = 4096;
+
 /// Stub type that exposes the async `start` helper.
 pub struct LichConnection;
 
@@ -297,7 +302,7 @@ impl LichConnection {
         host: &str,
         port: u16,
         login_key: Option<String>,
-        server_tx: mpsc::UnboundedSender<ServerMessage>,
+        server_tx: mpsc::Sender<ServerMessage>,
         command_rx: mpsc::UnboundedReceiver<String>,
         raw_logger: Option<RawLogger>,
     ) -> Result<()> {
@@ -318,7 +323,7 @@ impl LichConnection {
 impl DirectConnection {
     pub async fn start(
         config: DirectConnectConfig,
-        server_tx: mpsc::UnboundedSender<ServerMessage>,
+        server_tx: mpsc::Sender<ServerMessage>,
         command_rx: mpsc::UnboundedReceiver<String>,
         raw_logger: Option<RawLogger>,
     ) -> Result<()> {
@@ -360,14 +365,14 @@ impl DirectConnection {
 
 async fn run_stream(
     stream: TcpStream,
-    server_tx: mpsc::UnboundedSender<ServerMessage>,
+    server_tx: mpsc::Sender<ServerMessage>,
     mut command_rx: mpsc::UnboundedReceiver<String>,
     raw_logger: Option<RawLogger>,
 ) -> Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
-    let _ = server_tx.send(ServerMessage::Connected);
+    let _ = server_tx.send(ServerMessage::Connected).await;
 
     let server_tx_clone = server_tx.clone();
     let read_handle = tokio::spawn(async move {
@@ -376,7 +381,7 @@ async fn run_stream(
             match reader.read_line(&mut line).await {
                 Ok(0) => {
                     info!("Connection closed by server");
-                    let _ = server_tx_clone.send(ServerMessage::Disconnected);
+                    let _ = server_tx_clone.send(ServerMessage::Disconnected).await;
                     break;
                 }
                 Ok(_) => {
@@ -384,11 +389,13 @@ async fn run_stream(
                     if let Some(logger) = &raw_logger {
                         logger.log_line(line);
                     }
-                    let _ = server_tx_clone.send(ServerMessage::Text(line.to_string()));
+                    // Bounded send: blocks when the UI is behind, which stalls
+                    // the read loop and lets TCP flow control apply backpressure
+                    let _ = server_tx_clone.send(ServerMessage::Text(line.to_string())).await;
                 }
                 Err(e) => {
                     error!("Error reading from server: {}", e);
-                    let _ = server_tx_clone.send(ServerMessage::Disconnected);
+                    let _ = server_tx_clone.send(ServerMessage::Disconnected).await;
                     break;
                 }
             }
