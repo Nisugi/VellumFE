@@ -316,7 +316,14 @@ impl LichConnection {
 
         send_lich_handshake(&mut stream, login_key.as_deref()).await?;
 
-        run_stream(stream, server_tx, command_rx, raw_logger).await
+        // Lich's detachable-client thread unconditionally prepends <c> to every
+        // line it receives (main.rb client_thread), so detachable mode must send
+        // bare commands or the game sees <c><c>cmd and rejects it. Lich-launched
+        // frontends (--key) go through the regular client thread, which does not
+        // prepend for Stormfront frontends, so we must send <c> ourselves.
+        let cmd_prefix = if login_key.is_some() { "<c>" } else { "" };
+
+        run_stream(stream, server_tx, command_rx, raw_logger, cmd_prefix).await
     }
 }
 
@@ -359,7 +366,9 @@ impl DirectConnection {
 
         send_direct_handshake(&mut stream, &ticket).await?;
 
-        run_stream(stream, server_tx, command_rx, raw_logger).await
+        // Direct connections speak Stormfront protocol to the game itself,
+        // which expects the <c> command prefix.
+        run_stream(stream, server_tx, command_rx, raw_logger, "<c>").await
     }
 }
 
@@ -368,6 +377,7 @@ async fn run_stream(
     server_tx: mpsc::Sender<ServerMessage>,
     mut command_rx: mpsc::UnboundedReceiver<String>,
     raw_logger: Option<RawLogger>,
+    cmd_prefix: &'static str,
 ) -> Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
@@ -404,11 +414,12 @@ async fn run_stream(
 
     let _ = async {
         while let Some(cmd) = command_rx.recv().await {
-            // Build the complete message: <c> prefix + command + newline
-            // The <c> prefix is required for Stormfront protocol - it prevents
-            // Lich's do_client() from stripping leading spaces via strip!
-            let mut message = String::with_capacity(cmd.len() + 4);
-            message.push_str("<c>");
+            // Build the complete message: command prefix + command + newline.
+            // The prefix is mode-dependent (see call sites): "<c>" when we talk
+            // Stormfront protocol ourselves (direct / Lich-launched), empty for
+            // Lich detachable clients where Lich prepends <c> itself.
+            let mut message = String::with_capacity(cmd_prefix.len() + cmd.len() + 1);
+            message.push_str(cmd_prefix);
             message.push_str(&cmd);
             message.push('\n');
 
