@@ -289,6 +289,8 @@ pub struct VellumGuiApp {
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
     colors_editor: Option<editors::ColorsEditorState>,
+    theme_browser: Option<editors::ThemeBrowserState>,
+    theme_editor: Option<editors::ThemeEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -456,6 +458,8 @@ impl VellumGuiApp {
             highlight_editor: None,
             keybind_editor: None,
             colors_editor: None,
+            theme_browser: None,
+            theme_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1979,6 +1983,15 @@ impl VellumGuiApp {
         }
         if action == "action:addspellcolor" {
             self.open_spell_form_new();
+            return true;
+        }
+        if action == "action:themes" {
+            self.open_theme_browser();
+            return true;
+        }
+        if action == "action:edittheme" {
+            let base = self.current_theme.clone();
+            self.open_theme_editor(&base);
             return true;
         }
         false

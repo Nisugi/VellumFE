@@ -201,20 +201,7 @@ impl UiColorsBuffer {
     }
 }
 
-/// Hex/name text field with a live swatch and an egui color picker.
-fn color_field(ui: &mut egui::Ui, value: &mut String) {
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(value).desired_width(110.0));
-        if let Some(color) = theme::resolve_color(value) {
-            let mut rgb = [color.r(), color.g(), color.b()];
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                *value = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
-            }
-        } else if !value.trim().is_empty() {
-            ui.weak("?");
-        }
-    });
-}
+use super::color_field;
 
 impl VellumGuiApp {
     pub(in super::super) fn open_colors_editor(&mut self) {
