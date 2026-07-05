@@ -639,6 +639,71 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    pub(super) fn render_items_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+        let objects = &app_core.game_state.room_objects;
+        if objects.is_empty() {
+            ui.weak("No objects here.");
+            return None;
+        }
+
+        let mut clicked_link = None;
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("items_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for object in objects {
+                    let response = ui
+                        .add(egui::Label::new(object.name.as_str()).sense(egui::Sense::click()))
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if response.clicked() && clicked_link.is_none() {
+                        clicked_link = Some(Self::gui_link_click_from_response(
+                            &response,
+                            ui,
+                            LinkData {
+                                exist_id: object.id.clone(),
+                                noun: object.noun.clone().unwrap_or_default(),
+                                text: object.name.clone(),
+                                coord: None,
+                            },
+                        ));
+                    }
+                }
+            });
+        clicked_link
+    }
+
+    pub(super) fn render_container_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        container_title: &str,
+    ) {
+        let Some(container) = app_core.game_state.container_cache.find_by_title(container_title)
+        else {
+            ui.weak(format!("No contents cached for \"{}\".", container_title));
+            return;
+        };
+
+        if container.items.is_empty() {
+            ui.weak("Empty.");
+            return;
+        }
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt(format!("container_scroll_{}", container.id))
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for item in &container.items {
+                    ui.label(item);
+                }
+            });
+    }
+
     pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
@@ -1048,6 +1113,11 @@ impl VellumGuiApp {
             }
             WindowContent::Perception(perception) => {
                 Self::render_perception_content(ui, perception)
+            }
+            WindowContent::Items => Self::render_items_content(app_core, ui),
+            WindowContent::Container { container_title } => {
+                Self::render_container_content(app_core, ui, container_title);
+                None
             }
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
