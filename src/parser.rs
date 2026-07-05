@@ -430,15 +430,17 @@ impl XmlParser {
                 ("<inv", "</inv>"),
             ];
 
-            for (start_pattern, end_pattern) in PAIRED_TAGS {
-                if let Some(tag_start) = remaining.find(start_pattern) {
-                    // Make sure this is the earliest match
-                    if remaining.find('<').is_some_and(|pos| pos < tag_start) {
+            // A paired tag is only handled when the first '<' in the tail
+            // starts one, so find that '<' once and prefix-check the ten
+            // patterns there instead of scanning the whole tail per pattern.
+            if let Some(tag_start) = remaining.find('<') {
+                for (start_pattern, end_pattern) in PAIRED_TAGS {
+                    if !remaining[tag_start..].starts_with(start_pattern) {
                         continue;
                     }
 
                     // Find the closing tag
-                    if let Some(tag_end_start) = remaining[tag_start..].find(&end_pattern) {
+                    if let Some(tag_end_start) = remaining[tag_start..].find(end_pattern) {
                         let tag_end = tag_start + tag_end_start + end_pattern.len();
 
                         // Add text before the paired tag
