@@ -1515,6 +1515,7 @@ impl MessageProcessor {
                                 text_color: style.text_color.clone(),
                             });
                         }
+                        effects_content.generation += 1;
                     }
                 }
             }
@@ -1536,6 +1537,7 @@ impl MessageProcessor {
                         window.content
                     {
                         effects_content.effects.clear();
+                        effects_content.generation += 1;
                     }
                 }
             }
@@ -1548,8 +1550,15 @@ impl MessageProcessor {
 
                 // Store current target and targetable IDs from dropdown
                 // These IDs filter room_creatures to show only targetable creatures
-                game_state.target_list.current_target = current_target.clone();
-                game_state.target_list.target_ids = target_ids.clone();
+                // (only bump the generation on real changes - the dropdown is
+                // re-sent frequently with identical content)
+                if game_state.target_list.current_target != *current_target
+                    || game_state.target_list.target_ids != *target_ids
+                {
+                    game_state.target_list.current_target = current_target.clone();
+                    game_state.target_list.target_ids = target_ids.clone();
+                    game_state.target_list.generation += 1;
+                }
 
                 tracing::debug!(
                     "Updated targets from dropdown: current='{}', {} targetable IDs",
@@ -1760,6 +1769,9 @@ impl MessageProcessor {
         if id == "room objs" {
             let had_objs = !game_state.room_creatures.is_empty();
             game_state.room_creatures.clear();
+            // handle_component early-returns on unchanged values, so this
+            // block only runs on real changes - the bump is accurate
+            game_state.room_creatures_generation += 1;
 
             // Log when room objs becomes empty (item picked up, etc.)
             if value.is_empty() {
@@ -1873,6 +1885,7 @@ impl MessageProcessor {
             // Now extract room objects (non-bold links = items on ground)
             // Strategy: remove all <b>...</b> sections, then parse remaining <a> links
             game_state.room_objects.clear();
+            game_state.room_objects_generation += 1;
 
             // Create a version of the value with bold sections removed
             let mut no_bold = String::new();
@@ -1967,6 +1980,7 @@ impl MessageProcessor {
         // Format: "Also here: <a exist='-ID' noun='Name'>Name</a> (prone), a stunned <a exist='...' noun='...'>Name2</a> (prone)"
         if id == "room players" {
             game_state.room_players.clear();
+            game_state.room_players_generation += 1;
 
             let mut remaining = value;
 
@@ -3647,6 +3661,64 @@ mod tests {
             result,
             Some((_window, crate::config::RedirectMode::RedirectOnly, 3))
         ));
+    }
+
+    // ===========================================
+    // Widget data generation tests
+    // ===========================================
+
+    fn process_component(processor: &mut MessageProcessor, game_state: &mut GameState, id: &str, value: &str) {
+        let mut room_components = std::collections::HashMap::new();
+        let mut current_room_component = None;
+        let mut room_dirty = false;
+        processor.handle_component(
+            id,
+            value,
+            game_state,
+            &mut room_components,
+            &mut current_room_component,
+            &mut room_dirty,
+        );
+    }
+
+    #[test]
+    fn test_room_component_generations_bump_on_change_only() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        let players_v1 = "Also here: <a exist='-123' noun='Bob'>Bob</a>";
+        process_component(&mut processor, &mut game_state, "room players", players_v1);
+        assert_eq!(game_state.room_players_generation, 1);
+        assert_eq!(game_state.room_players.len(), 1);
+
+        // Identical re-send: previous_room_components dedup must skip processing
+        process_component(&mut processor, &mut game_state, "room players", players_v1);
+        assert_eq!(game_state.room_players_generation, 1, "unchanged component must not bump");
+
+        // Real change bumps again
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist='-456' noun='Alice'>Alice</a>",
+        );
+        assert_eq!(game_state.room_players_generation, 2);
+    }
+
+    #[test]
+    fn test_room_objs_bumps_creature_and_object_generations() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        let objs = "You also see <a exist='789' noun='rock'>a rock</a>.";
+        process_component(&mut processor, &mut game_state, "room objs", objs);
+        assert_eq!(game_state.room_creatures_generation, 1);
+        assert_eq!(game_state.room_objects_generation, 1);
+
+        // Identical re-send: no bumps
+        process_component(&mut processor, &mut game_state, "room objs", objs);
+        assert_eq!(game_state.room_creatures_generation, 1);
+        assert_eq!(game_state.room_objects_generation, 1);
     }
 
     // ===========================================

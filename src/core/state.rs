@@ -96,13 +96,19 @@ pub struct GameState {
     /// Creatures currently in room (parsed from room objs component)
     /// Primary source for targets widget
     pub room_creatures: Vec<Creature>,
+    /// Bumped whenever room_creatures is rewritten; sync skips unchanged rebuilds
+    pub room_creatures_generation: u64,
 
     /// Objects (non-creatures) in room (parsed from room objs component)
     /// Primary source for items widget
     pub room_objects: Vec<RoomObject>,
+    /// Bumped whenever room_objects is rewritten
+    pub room_objects_generation: u64,
 
     /// Players currently in room (parsed from room players component)
     pub room_players: Vec<Player>,
+    /// Bumped whenever room_players is rewritten
+    pub room_players_generation: u64,
 
     /// Container cache for bag/container contents
     pub container_cache: ContainerCache,
@@ -286,6 +292,8 @@ pub struct TargetListState {
     /// Targetable creature IDs from dDBTarget content_value
     /// Used to filter room_creatures - only show creatures in both lists
     pub target_ids: Vec<String>,
+    /// Bumped whenever the target list changes; sync skips unchanged rebuilds
+    pub generation: u64,
 }
 
 /// A creature in the target list
@@ -707,8 +715,11 @@ impl GameState {
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),
             room_creatures: Vec::new(),
+            room_creatures_generation: 0,
             room_objects: Vec::new(),
+            room_objects_generation: 0,
             room_players: Vec::new(),
+            room_players_generation: 0,
             container_cache: ContainerCache::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),

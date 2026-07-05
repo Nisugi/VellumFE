@@ -184,6 +184,8 @@ pub struct ActiveEffect {
 pub struct ActiveEffectsContent {
     pub category: String, // "Buffs", "Debuffs", "Cooldowns", "ActiveSpells"
     pub effects: Vec<ActiveEffect>,
+    /// Bumped on every effect change; sync skips unchanged rebuilds
+    pub generation: u64,
 }
 
 /// Tab definition for tabbed text window

@@ -66,6 +66,10 @@ pub struct WidgetManager {
     /// Track last synced generation per text window to know what's new
     /// Using generation instead of line count to handle buffer rotation at max_lines
     pub last_synced_generation: HashMap<String, u64>,
+    /// Last synced data generation per GameState-backed widget (targets,
+    /// players, items, active effects). Lets sync skip the full clear+reclone
+    /// data rebuild when the underlying data hasn't changed.
+    pub widget_data_generation: HashMap<String, u64>,
 }
 
 impl WidgetManager {
@@ -100,6 +104,7 @@ impl WidgetManager {
             minivitals_widgets: HashMap::new(),
             betrayer_widgets: HashMap::new(),
             last_synced_generation: HashMap::new(),
+            widget_data_generation: HashMap::new(),
         }
     }
 
@@ -133,6 +138,7 @@ impl WidgetManager {
         self.minivitals_widgets.clear();
         self.betrayer_widgets.clear();
         self.last_synced_generation.clear();
+        self.widget_data_generation.clear();
     }
 
     /// Remove a widget from ALL type-specific caches by name.
@@ -166,6 +172,7 @@ impl WidgetManager {
         self.minivitals_widgets.remove(name);
         self.betrayer_widgets.remove(name);
         self.last_synced_generation.remove(name);
+        self.widget_data_generation.remove(name);
     }
 }
 

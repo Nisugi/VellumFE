@@ -783,24 +783,32 @@ impl TuiFrontend {
 
                 // Update effects data and configuration
                 if let Some(widget) = self.widget_manager.active_effects_windows.get_mut(name) {
-                    let previous_scroll = widget.scroll_position();
+                    // Skip the clear+reclone data rebuild when unchanged
+                    // (config/theme application below stays unconditional)
+                    let data_gen = effects_content.generation;
+                    if self.widget_manager.widget_data_generation.get(name) != Some(&data_gen) {
+                        let previous_scroll = widget.scroll_position();
 
-                    // Clear existing effects
-                    widget.clear();
+                        // Clear existing effects
+                        widget.clear();
 
-                    // Add all effects from content
-                    for effect in &effects_content.effects {
-                        widget.add_or_update_effect(
-                            effect.id.clone(),
-                            effect.text.clone(),
-                            effect.value,
-                            effect.time.clone(),
-                            effect.bar_color.clone(),
-                            effect.text_color.clone(),
-                        );
+                        // Add all effects from content
+                        for effect in &effects_content.effects {
+                            widget.add_or_update_effect(
+                                effect.id.clone(),
+                                effect.text.clone(),
+                                effect.value,
+                                effect.time.clone(),
+                                effect.bar_color.clone(),
+                                effect.text_color.clone(),
+                            );
+                        }
+
+                        widget.restore_scroll_position(previous_scroll);
+                        self.widget_manager
+                            .widget_data_generation
+                            .insert(name.clone(), data_gen);
                     }
-
-                    widget.restore_scroll_position(previous_scroll);
 
                     // Apply window config from WindowDef
                     if let Some(def) = window_def {
@@ -1041,14 +1049,24 @@ impl TuiFrontend {
                         }
                     });
 
-                    widget.update_from_state(
-                        &app_core.game_state.room_creatures,
-                        &app_core.game_state.target_list.current_target,
-                        &app_core.game_state.target_list.target_ids,
-                        &app_core.config.target_list,
-                        widget_width,
-                        per_window_status_position,
-                    );
+                    // Skip the data rebuild when creatures and target list are
+                    // unchanged (both counters only increment, so the sum is a
+                    // valid combined generation)
+                    let data_gen = app_core.game_state.room_creatures_generation
+                        + app_core.game_state.target_list.generation;
+                    if self.widget_manager.widget_data_generation.get(name) != Some(&data_gen) {
+                        widget.update_from_state(
+                            &app_core.game_state.room_creatures,
+                            &app_core.game_state.target_list.current_target,
+                            &app_core.game_state.target_list.target_ids,
+                            &app_core.config.target_list,
+                            widget_width,
+                            per_window_status_position,
+                        );
+                        self.widget_manager
+                            .widget_data_generation
+                            .insert(name.clone(), data_gen);
+                    }
 
                     // Apply configuration
                     if let Some(window_def) = window_def {
@@ -1241,10 +1259,17 @@ impl TuiFrontend {
 
                 // Update widget from GameState.room_players
                 if let Some(widget) = self.widget_manager.players_widgets.get_mut(name) {
-                    widget.update_from_state(
-                        &app_core.game_state.room_players,
-                        &app_core.config.target_list,
-                    );
+                    // Skip the data rebuild when room players are unchanged
+                    let data_gen = app_core.game_state.room_players_generation;
+                    if self.widget_manager.widget_data_generation.get(name) != Some(&data_gen) {
+                        widget.update_from_state(
+                            &app_core.game_state.room_players,
+                            &app_core.config.target_list,
+                        );
+                        self.widget_manager
+                            .widget_data_generation
+                            .insert(name.clone(), data_gen);
+                    }
 
                     // Apply configuration (borders, colors, title)
                     if let Some(window_def) =
@@ -1298,7 +1323,14 @@ impl TuiFrontend {
 
                 // Update widget from GameState.room_objects
                 if let Some(widget) = self.widget_manager.items_widgets.get_mut(name) {
-                    widget.update_from_state(&app_core.game_state.room_objects);
+                    // Skip the data rebuild when room objects are unchanged
+                    let data_gen = app_core.game_state.room_objects_generation;
+                    if self.widget_manager.widget_data_generation.get(name) != Some(&data_gen) {
+                        widget.update_from_state(&app_core.game_state.room_objects);
+                        self.widget_manager
+                            .widget_data_generation
+                            .insert(name.clone(), data_gen);
+                    }
 
                     // Apply configuration (borders, colors, title)
                     if let Some(window_def) =
@@ -1350,8 +1382,6 @@ impl TuiFrontend {
 
                 // Update widget
                 if let Some(widget) = self.widget_manager.dashboard_widgets.get_mut(name) {
-                    let indicator_values = indicators.clone();
-
                     // Apply configuration
                     if let Some(window_def) =
                         window_defs.get(name.as_str()).copied()
@@ -1390,8 +1420,11 @@ impl TuiFrontend {
                     }
 
                     // Apply values after indicators are configured
-                    for (id, value) in indicator_values {
-                        widget.set_indicator_value(&id, value);
+                    // (config above clears indicators each sync, so values
+                    // must always be re-applied; iterate by reference - the
+                    // previous per-sync Vec clone was unnecessary)
+                    for (id, value) in indicators {
+                        widget.set_indicator_value(id, *value);
                     }
                 }
             }

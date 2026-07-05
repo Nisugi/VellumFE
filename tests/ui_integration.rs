@@ -241,6 +241,7 @@ fn add_active_effects_window(ui_state: &mut UiState, name: &str, category: &str)
         content: WindowContent::ActiveEffects(ActiveEffectsContent {
             category: category.to_string(),
             effects: vec![],
+            generation: 0,
         }),
         position: position(),
         visible: true,

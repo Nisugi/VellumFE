@@ -977,6 +977,7 @@ impl AppCore {
                     WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
                         category,
                         effects: Vec::new(),
+                        generation: 0,
                     })
                 }
                 WidgetType::Targets => WindowContent::Targets,
@@ -1271,6 +1272,7 @@ impl AppCore {
                 WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
                     category,
                     effects: Vec::new(),
+                    generation: 0,
                 })
             }
             WidgetType::Targets => WindowContent::Targets,
@@ -2415,6 +2417,7 @@ impl AppCore {
             WidgetType::ActiveEffects => WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
                 category: "Unknown".to_string(),
                 effects: Vec::new(),
+                generation: 0,
             }),
             WidgetType::Targets => WindowContent::Targets,
             WidgetType::Players => WindowContent::Players,
