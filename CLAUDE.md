@@ -57,11 +57,12 @@ src/
 ├── data/             # Pure data structures (NO frontend imports)
 │   ├── widget.rs     # Widget data types (TextSpan, ActiveEffect, etc.)
 │   ├── ui_state.rs   # UI state (InputMode, PopupMenu, etc.)
+│   ├── input.rs      # Input event types (KeyCode, KeyEvent, MouseEvent)
 │   └── window.rs     # Window state
 │
 └── frontend/
     ├── mod.rs        # Frontend trait definition
-    ├── common/       # Shared types (KeyCode, MouseEvent, color)
+    ├── common/       # Shared frontend types (Color, Rect, TextInput)
     └── tui/          # Ratatui terminal UI
         ├── mod.rs    # TuiFrontend struct
         ├── input.rs  # Keyboard/mouse event handling
@@ -72,7 +73,7 @@ src/
 
 ### Key Architectural Rules
 
-1. **Core layer has NO frontend imports** - `core/` and `data/` modules must not import from `frontend/`
+1. **Core layer has NO frontend imports** - `core/` and `data/` modules must not import from `frontend/` (enforced by `tests/architecture.rs`; input event types live in `data/input.rs` for this reason)
 2. **Frontend reads from data layer** - Frontends render by reading `AppCore.ui_state` and `AppCore.game_state`
 3. **Widget data vs rendering** - `data/widget.rs` defines data, `frontend/tui/*.rs` handles rendering
 
