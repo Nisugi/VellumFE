@@ -295,6 +295,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     search_bar_needs_focus: bool,
+    repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -316,9 +317,28 @@ impl VellumGuiApp {
         );
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
-        let (server_tx, server_rx) =
+        let (server_tx, mut network_rx) =
             mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+
+        // Forward server messages through an intermediary that wakes the egui
+        // event loop, so the idle repaint interval can stay slow without
+        // adding latency to incoming game text.
+        let repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let (forward_tx, server_rx) =
+            mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
+        let waker_ctx = std::sync::Arc::clone(&repaint_ctx);
+        runtime.spawn(async move {
+            while let Some(message) = network_rx.recv().await {
+                if forward_tx.send(message).await.is_err() {
+                    break;
+                }
+                if let Some(ctx) = waker_ctx.lock().ok().and_then(|slot| slot.clone()) {
+                    ctx.request_repaint();
+                }
+            }
+        });
 
         let host = app_core.config.connection.host.clone();
         let port = app_core.config.connection.port;
@@ -467,6 +487,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             search_bar_needs_focus: false,
+            repaint_ctx,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1931,6 +1952,31 @@ impl VellumGuiApp {
         if !self.app_core.running {
             self.close_requested = true;
         }
+    }
+
+    /// Give the server-message forwarder a context so incoming game text
+    /// wakes the event loop immediately.
+    fn set_repaint_context(&self, ctx: egui::Context) {
+        if let Ok(mut slot) = self.repaint_ctx.lock() {
+            *slot = Some(ctx);
+        }
+    }
+
+    /// True while any countdown window is actively ticking.
+    fn any_countdown_running(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
+        let adjusted = now + self.app_core.server_time_offset;
+        self.app_core
+            .ui_state
+            .windows
+            .values()
+            .any(|window| match &window.content {
+                WindowContent::Countdown(countdown) => countdown.end_time > adjusted,
+                _ => false,
+            })
     }
 
     /// Floating search bar shown while in Search mode (Ctrl+F). Matching
@@ -3760,7 +3806,15 @@ impl eframe::App for VellumGuiApp {
             }
         }
 
-        ctx.request_repaint_after(Duration::from_millis(16));
+        // Input events and incoming server data (via the forwarder task) wake
+        // the loop immediately; the periodic repaint only drives countdown
+        // ticks and background polling, so idle CPU stays near zero.
+        let repaint_after = if self.any_countdown_running() {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(500)
+        };
+        ctx.request_repaint_after(repaint_after);
     }
 
     fn on_exit(&mut self) {
@@ -3810,7 +3864,10 @@ pub fn run_native_gui(
     eframe::run_native(
         &window_title,
         options,
-        Box::new(move |_cc| Ok(Box::new(app))),
+        Box::new(move |cc| {
+            app.set_repaint_context(cc.egui_ctx.clone());
+            Ok(Box::new(app))
+        }),
     )
     .map_err(|err| anyhow!("Failed to run GUI frontend: {}", err))
 }
