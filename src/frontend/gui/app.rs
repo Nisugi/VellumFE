@@ -1,4 +1,4 @@
-use super::persistence::{load_layout, save_layout, GuiLayoutFileV1, ViewportState};
+use super::persistence::{load_layout, save_layout, FontRef, GuiLayoutFileV1, ViewportState};
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
@@ -282,6 +282,8 @@ pub struct VellumGuiApp {
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
     current_theme: crate::theme::AppTheme,
+    ui_font: FontRef,
+    fonts_applied: bool,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -328,6 +330,10 @@ impl VellumGuiApp {
 
         let (layout_profile, layout_character) = Self::resolve_layout_ids(&app_core.config);
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
+        let ui_font = persisted_layout
+            .as_ref()
+            .map(|layout| layout.ui_font.clone())
+            .unwrap_or_default();
 
         let available_tabs = Self::collect_available_tabs(&app_core);
         let mut hidden_tabs: HashSet<TabKey> = persisted_layout
@@ -428,6 +434,8 @@ impl VellumGuiApp {
             layout_dirty_since: None,
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
+            ui_font,
+            fonts_applied: false,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1409,6 +1417,7 @@ impl VellumGuiApp {
         let mut hidden_tabs: Vec<TabKey> = self.hidden_tabs.iter().cloned().collect();
         hidden_tabs.sort_by_key(|key| key.short_id());
         layout.hidden_tabs = hidden_tabs;
+        layout.ui_font = self.ui_font.clone();
 
         let snapshot = DockStateSnapshot {
             visible_tabs: self.current_main_surface_tab_keys(),
@@ -2899,6 +2908,12 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
+        if !self.fonts_applied {
+            self.fonts_applied = true;
+            if let Some(fonts) = theme::font_definitions_from_ref(&self.ui_font) {
+                ctx.set_fonts(fonts);
+            }
+        }
         self.apply_theme_if_changed(&ctx);
         self.pump_server_messages();
         self.sync_room_windows_from_components();

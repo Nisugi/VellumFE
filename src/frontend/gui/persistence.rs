@@ -181,6 +181,11 @@ pub struct GuiLayoutFileV1 {
     #[serde(default)]
     pub tab_settings: Vec<TabSettingsEntry>,
 
+    /// Application-wide UI font. `custom` takes a path to a .ttf/.otf file
+    /// loaded at startup; `system_default` keeps egui's built-in fonts.
+    #[serde(default)]
+    pub ui_font: FontRef,
+
     /// Detached viewport state keyed by viewport ID string
     #[serde(default)]
     pub detached_viewports: HashMap<String, ViewportState>,
@@ -197,6 +202,7 @@ impl GuiLayoutFileV1 {
             dock_state_json: serde_json::Value::Null,
             hidden_tabs: Vec::new(),
             tab_settings: Vec::new(),
+            ui_font: FontRef::default(),
             detached_viewports: HashMap::new(),
         }
     }

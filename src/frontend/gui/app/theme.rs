@@ -48,6 +48,47 @@ pub(super) fn visuals_from_theme(theme: &AppTheme) -> egui::Visuals {
     visuals
 }
 
+/// Build font definitions for a configured UI font. Returns None for the
+/// system default (or when the font can't be loaded), leaving egui's
+/// built-in fonts in place.
+pub(super) fn font_definitions_from_ref(
+    font: &crate::frontend::gui::persistence::FontRef,
+) -> Option<egui::FontDefinitions> {
+    use crate::frontend::gui::persistence::FontRef;
+
+    let path = match font {
+        FontRef::SystemDefault => return None,
+        FontRef::Named(name) => {
+            tracing::warn!(
+                "Named font '{}' is not supported yet; set ui_font to a custom file path instead",
+                name
+            );
+            return None;
+        }
+        FontRef::Custom(path) => path,
+    };
+
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::warn!("Failed to load UI font '{}': {}", path, err);
+            return None;
+        }
+    };
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "vellum-custom".to_string(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.insert(0, "vellum-custom".to_string());
+        }
+    }
+    Some(fonts)
+}
+
 impl VellumGuiApp {
     /// Re-apply visuals when `config.active_theme` changes (startup, .settheme,
     /// layout-driven theme switches).
