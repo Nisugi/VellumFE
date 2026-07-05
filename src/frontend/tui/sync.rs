@@ -100,41 +100,44 @@ impl TuiFrontend {
                     tw
                 });
 
-                // Existing text windows need to reapply theme-derived settings when themes change
-                if let Some(def) = window_def {
-                    let colors = resolve_window_colors(def.base(), theme);
-                    text_window.set_border_config(
-                        def.base().show_border,
-                        Some(def.base().border_style.clone()),
-                        colors.border.clone(),
-                    );
-                    text_window.set_border_sides(def.base().border_sides.clone());
-                    text_window.set_background_color(colors.background.clone());
-                    text_window.set_text_color(colors.text.clone());
-                    text_window.set_content_align(def.base().content_align.clone());
-                    let title_text = if def.base().show_title {
-                        def.base().title.clone().unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    text_window.set_title(title_text);
-                    text_window.set_title_position(super::title_position::TitlePosition::from_str(
-                        &def.base().title_position,
-                    ));
-                    if let crate::config::WindowDef::Text { data, .. } = def {
-                        text_window.set_show_timestamps(data.show_timestamps);
-                        let ts_pos = data.timestamp_position
-                            .unwrap_or(app_core.config.ui.timestamp_position);
-                        text_window.set_timestamp_position(ts_pos);
-                        text_window.set_wordwrap(data.wordwrap);
-                        // Compact mode automatically centers content
-                        if data.compact {
-                            text_window.set_content_align(Some("center".to_string()));
+                // Existing text windows re-apply def/theme-derived settings
+                // only when the config snapshot changed (themes, layout edits).
+                if self.config_sync_needed {
+                    if let Some(def) = window_def {
+                        let colors = resolve_window_colors(def.base(), theme);
+                        text_window.set_border_config(
+                            def.base().show_border,
+                            Some(def.base().border_style.clone()),
+                            colors.border.clone(),
+                        );
+                        text_window.set_border_sides(def.base().border_sides.clone());
+                        text_window.set_background_color(colors.background.clone());
+                        text_window.set_text_color(colors.text.clone());
+                        text_window.set_content_align(def.base().content_align.clone());
+                        let title_text = if def.base().show_title {
+                            def.base().title.clone().unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        text_window.set_title(title_text);
+                        text_window.set_title_position(super::title_position::TitlePosition::from_str(
+                            &def.base().title_position,
+                        ));
+                        if let crate::config::WindowDef::Text { data, .. } = def {
+                            text_window.set_show_timestamps(data.show_timestamps);
+                            let ts_pos = data.timestamp_position
+                                .unwrap_or(app_core.config.ui.timestamp_position);
+                            text_window.set_timestamp_position(ts_pos);
+                            text_window.set_wordwrap(data.wordwrap);
+                            // Compact mode automatically centers content
+                            if data.compact {
+                                text_window.set_content_align(Some("center".to_string()));
+                            }
+                        } else {
+                            text_window.set_show_timestamps(false); // Default to false
+                            text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
+                            text_window.set_wordwrap(true);
                         }
-                    } else {
-                        text_window.set_show_timestamps(false); // Default to false
-                        text_window.set_timestamp_position(app_core.config.ui.timestamp_position);
-                        text_window.set_wordwrap(true);
                     }
                 }
 
@@ -267,6 +270,12 @@ impl TuiFrontend {
                 window.content,
                 crate::data::WindowContent::CommandInput { .. }
             ) {
+                continue;
+            }
+
+            // This whole body is def/theme-derived configuration (the input's
+            // text state lives in ui_state); skip it while nothing changed.
+            if !self.config_sync_needed && self.widget_manager.command_inputs.contains_key(name) {
                 continue;
             }
 
@@ -1482,46 +1491,49 @@ impl TuiFrontend {
                     self.widget_manager.tabbed_text_windows.insert(name.clone(), widget);
                 }
 
-                // Apply configuration and sync content
+                // Apply configuration and sync content. Config re-application
+                // is gated on the config snapshot (themes, layout edits).
                 if let Some(widget) = self.widget_manager.tabbed_text_windows.get_mut(name) {
-                    if let Some(def) = window_def {
-                        let colors = resolve_window_colors(def.base(), theme);
-                        widget.set_border_config(
-                            def.base().show_border,
-                            Some(def.base().border_style.clone()),
-                            colors.border.clone(),
-                        );
-                        widget.set_border_sides(def.base().border_sides.clone());
-                        widget.set_transparent_background(def.base().transparent_background);
-                        widget.set_background_color(colors.background.clone());
-                        widget.set_content_align(def.base().content_align.clone());
-                        widget.apply_window_colors(colors.text.clone(), colors.background.clone());
-                        let title_text = if def.base().show_title {
-                            def.base().title.clone().unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
-                        widget.set_title(title_text);
+                    if self.config_sync_needed {
+                        if let Some(def) = window_def {
+                            let colors = resolve_window_colors(def.base(), theme);
+                            widget.set_border_config(
+                                def.base().show_border,
+                                Some(def.base().border_style.clone()),
+                                colors.border.clone(),
+                            );
+                            widget.set_border_sides(def.base().border_sides.clone());
+                            widget.set_transparent_background(def.base().transparent_background);
+                            widget.set_background_color(colors.background.clone());
+                            widget.set_content_align(def.base().content_align.clone());
+                            widget.apply_window_colors(colors.text.clone(), colors.background.clone());
+                            let title_text = if def.base().show_title {
+                                def.base().title.clone().unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+                            widget.set_title(title_text);
 
-                        if let crate::config::WindowDef::TabbedText { data, .. } = def {
-                            let tab_position = tabbed_text_window::TabBarPosition::from_str(
-                                &data.tab_bar_position,
-                            );
-                            widget.set_tab_bar_position(tab_position);
-                            widget.set_tab_separator(data.tab_separator);
-                            widget.set_tab_colors(
-                                data.tab_active_color.clone(),
-                                data.tab_inactive_color.clone(),
-                                data.tab_unread_color.clone(),
-                            );
-                            if let Some(prefix) = data.tab_unread_prefix.clone() {
-                                widget.set_unread_prefix(prefix);
+                            if let crate::config::WindowDef::TabbedText { data, .. } = def {
+                                let tab_position = tabbed_text_window::TabBarPosition::from_str(
+                                    &data.tab_bar_position,
+                                );
+                                widget.set_tab_bar_position(tab_position);
+                                widget.set_tab_separator(data.tab_separator);
+                                widget.set_tab_colors(
+                                    data.tab_active_color.clone(),
+                                    data.tab_inactive_color.clone(),
+                                    data.tab_unread_color.clone(),
+                                );
+                                if let Some(prefix) = data.tab_unread_prefix.clone() {
+                                    widget.set_unread_prefix(prefix);
+                                }
                             }
-                        }
 
-                        widget.set_title_position(super::title_position::TitlePosition::from_str(
-                            &def.base().title_position,
-                        ));
+                            widget.set_title_position(super::title_position::TitlePosition::from_str(
+                                &def.base().title_position,
+                            ));
+                        }
                     }
 
                     // Set active tab

@@ -122,6 +122,39 @@ pub struct TuiFrontend {
     /// Cached window render order (sorted, ephemerals + overlay moved last),
     /// rebuilt only when the window set changes
     window_order_cache: WindowOrderCache,
+    /// Snapshot of the inputs that drive def/theme-derived widget config
+    /// (borders, colors, titles). Sync re-applies that config only when
+    /// this changes; content sync stays generation-gated separately.
+    config_sync_snapshot: ConfigSyncSnapshot,
+    /// True for renders where def/theme-derived config must be re-applied.
+    pub(crate) config_sync_needed: bool,
+}
+
+/// Inputs that feed the per-widget config-application blocks in sync.rs.
+#[derive(Default)]
+pub(crate) struct ConfigSyncSnapshot {
+    theme_version: Option<u64>,
+    windows: Vec<crate::config::WindowDef>,
+    timestamp_position: Option<crate::config::TimestampPosition>,
+}
+
+impl ConfigSyncSnapshot {
+    /// Compare against the current inputs; on change, update the snapshot
+    /// and return true. The comparison allocates nothing; the WindowDef
+    /// clone happens only when something actually changed.
+    fn refresh(&mut self, app_core: &crate::core::AppCore, theme_version: u64) -> bool {
+        let ts = app_core.config.ui.timestamp_position;
+        if self.theme_version == Some(theme_version)
+            && self.timestamp_position == Some(ts)
+            && self.windows == app_core.layout.windows
+        {
+            return false;
+        }
+        self.theme_version = Some(theme_version);
+        self.timestamp_position = Some(ts);
+        self.windows = app_core.layout.windows.clone();
+        true
+    }
 }
 
 /// Cached window render order and z-index map. Rebuilding cost is two Vec
@@ -220,6 +253,8 @@ impl TuiFrontend {
             resize_debouncer: ResizeDebouncer::new(300), // 300ms debounce
             theme_cache: ThemeCache::new(),
             window_order_cache: WindowOrderCache::default(),
+            config_sync_snapshot: ConfigSyncSnapshot::default(),
+            config_sync_needed: true,
         })
     }
 

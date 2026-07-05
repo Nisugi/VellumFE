@@ -70,6 +70,13 @@ impl Frontend for TuiFrontend {
         // Clone theme once so all sync tasks share the same palette
         let theme = self.theme_cache.get_theme().clone();
 
+        // Def/theme-derived widget config (borders, colors, titles) only
+        // needs re-applying when its inputs change; content sync below stays
+        // generation-gated per widget.
+        self.config_sync_needed = self
+            .config_sync_snapshot
+            .refresh(app_core, self.theme_cache.version());
+
         // Sync data from data layer into TextWindows
         self.sync_text_windows(app_core, &theme);
 

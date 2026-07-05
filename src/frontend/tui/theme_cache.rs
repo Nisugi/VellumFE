@@ -10,6 +10,9 @@ pub struct ThemeCache {
     cached_theme: AppTheme,
     /// Cached theme ID to detect theme changes
     cached_theme_id: String,
+    /// Bumped on every update; lets sync skip theme-derived config
+    /// re-application while the theme is unchanged
+    version: u64,
 }
 
 impl ThemeCache {
@@ -18,6 +21,7 @@ impl ThemeCache {
         Self {
             cached_theme: crate::theme::ThemePresets::dark(),
             cached_theme_id: "dark".to_string(),
+            version: 0,
         }
     }
 
@@ -25,6 +29,12 @@ impl ThemeCache {
     pub fn update(&mut self, theme_id: String, theme: AppTheme) {
         self.cached_theme = theme;
         self.cached_theme_id = theme_id;
+        self.version = self.version.wrapping_add(1);
+    }
+
+    /// Monotonic version; changes whenever the cached theme is replaced
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Get a reference to the currently cached theme
