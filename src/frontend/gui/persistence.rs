@@ -40,7 +40,7 @@ pub enum FontRef {
 }
 
 /// Text copy behavior options.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CopyBehavior {
     /// Copy plain text only
