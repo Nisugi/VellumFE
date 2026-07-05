@@ -17,15 +17,6 @@ pub fn copy(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy an HTML fragment to the system clipboard, with a plain-text
-/// fallback for targets that don't accept rich text.
-pub fn copy_html(html: &str, alt_text: &str) -> Result<()> {
-    let mut clipboard = Clipboard::new()?;
-    clipboard.set_html(html, Some(alt_text))?;
-    tracing::debug!("Copied {} bytes of HTML to clipboard", html.len());
-    Ok(())
-}
-
 /// Paste text from system clipboard
 pub fn paste() -> Result<String> {
     let mut clipboard = Clipboard::new()?;
