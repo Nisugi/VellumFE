@@ -213,6 +213,54 @@ impl VellumGuiApp {
         });
     }
 
+    /// Remaining whole seconds on a countdown, adjusted for server clock drift.
+    pub(super) fn countdown_remaining_seconds(
+        end_time: i64,
+        server_time_offset: i64,
+        local_unix_time: i64,
+    ) -> u32 {
+        (end_time - (local_unix_time + server_time_offset)).max(0) as u32
+    }
+
+    pub(super) fn render_countdown_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        countdown: &crate::data::CountdownData,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
+        let remaining =
+            Self::countdown_remaining_seconds(countdown.end_time, app_core.server_time_offset, now);
+
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        let bar_width = ui.available_width().max(40.0);
+        if remaining == 0 {
+            // Idle timers render blank, matching the TUI.
+            ui.allocate_space(Vec2::new(bar_width, bar_height));
+            return;
+        }
+
+        // Bar is full at FULL_BAR_SECONDS or more and drains as the timer runs out.
+        const FULL_BAR_SECONDS: u32 = 10;
+        let fraction = remaining.min(FULL_BAR_SECONDS) as f32 / FULL_BAR_SECONDS as f32;
+        let fill = match countdown.countdown_id.to_ascii_lowercase().as_str() {
+            "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+            "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
+            _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
+        };
+        let text = if countdown.label.is_empty() {
+            format!("{remaining}")
+        } else {
+            format!("{}: {}", countdown.label, remaining)
+        };
+        ui.add_sized(
+            [bar_width, bar_height],
+            egui::ProgressBar::new(fraction).text(text).fill(fill),
+        );
+    }
+
     pub(super) fn render_compass_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -676,6 +724,10 @@ impl VellumGuiApp {
             }
             WindowContent::Targets => Self::render_targets_content(app_core, ui),
             WindowContent::Players => Self::render_players_content(app_core, ui),
+            WindowContent::Countdown(countdown) => {
+                Self::render_countdown_content(app_core, ui, countdown);
+                None
+            }
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
                 ui.label(format!(
@@ -698,4 +750,25 @@ pub(super) fn parse_hex_color(input: &str) -> Option<Color32> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color32::from_rgb(r, g, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VellumGuiApp;
+
+    #[test]
+    fn countdown_remaining_clamps_to_zero_when_elapsed() {
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(100, 0, 150), 0);
+    }
+
+    #[test]
+    fn countdown_remaining_counts_down_from_end_time() {
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 100), 10);
+    }
+
+    #[test]
+    fn countdown_remaining_applies_server_offset() {
+        // Server clock runs 5s ahead of local time.
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100), 5);
+    }
 }
