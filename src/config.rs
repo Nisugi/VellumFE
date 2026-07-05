@@ -24,10 +24,7 @@ mod templates;
 mod widgets;
 mod window_def;
 
-pub use colors::{
-    ColorConfig, PaletteColor, PresetColor, PromptColor, SpellColorRange, SpellColorStyle,
-    UiColors,
-};
+pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle};
 pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
 pub use keybinds::{
     parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
