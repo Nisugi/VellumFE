@@ -73,8 +73,13 @@ pub struct MessageProcessor {
     /// Redirect cache: true if any highlights have redirect_to configured (lazy check optimization)
     has_redirect_highlights: bool,
 
-    /// Warn-once cache for empty fast-parse redirect patterns
-    warned_empty_redirect_patterns: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Aho-Corasick matcher over all fast-parse redirect literals; pattern ids
+    /// index into redirect_literal_meta
+    redirect_matcher: Option<aho_corasick::AhoCorasick>,
+    /// (target window, mode) per fast-parse redirect literal, pattern-id-indexed
+    redirect_literal_meta: Vec<(String, crate::config::RedirectMode)>,
+    /// Prebuilt (regex, target window, mode) for non-fast redirect patterns
+    redirect_regexes: Vec<(regex::Regex, String, crate::config::RedirectMode)>,
 
     /// Text stream subscribers map: stream_id -> list of window names that subscribe
     /// Built from widget configs at startup and on layout reload
@@ -165,7 +170,9 @@ impl MessageProcessor {
             squelch_matcher: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
-            warned_empty_redirect_patterns: std::cell::RefCell::new(std::collections::HashSet::new()),
+            redirect_matcher: None,
+            redirect_literal_meta: Vec::new(),
+            redirect_regexes: Vec::new(),
             text_stream_subscribers: std::collections::HashMap::new(),
             newly_registered_container: None,
             pending_sounds: Vec::new(),
@@ -255,7 +262,6 @@ impl MessageProcessor {
         let cache_start = std::time::Instant::now();
         self.update_squelch_patterns();
         self.update_redirect_cache();
-        self.warned_empty_redirect_patterns.borrow_mut().clear();
         tracing::debug!(
             "apply_config: updated caches in {:?}",
             cache_start.elapsed()
@@ -290,7 +296,6 @@ impl MessageProcessor {
         self.config.highlight_settings = highlight_settings;
         self.update_squelch_patterns();
         self.update_redirect_cache();
-        self.warned_empty_redirect_patterns.borrow_mut().clear();
         self.update_highlights();
     }
 
@@ -3211,17 +3216,70 @@ impl MessageProcessor {
         );
     }
 
-    /// Update the redirect cache (lazy check optimization)
+    /// Rebuild the redirect matchers from config.
+    /// Fast-parse literals go into one Aho-Corasick matcher (pattern ids index
+    /// redirect_literal_meta); regex patterns are pre-collected. This replaces
+    /// re-splitting every pattern on '|' for every line.
     pub fn update_redirect_cache(&mut self) {
-        self.has_redirect_highlights = self
+        let redirect_patterns: Vec<_> = self
             .config
             .highlights
             .values()
-            .any(|pattern| pattern.redirect_to.is_some());
+            .filter(|p| p.redirect_to.is_some() && !p.squelch)
+            .collect();
+
+        let mut literals = Vec::new();
+        self.redirect_literal_meta.clear();
+        self.redirect_regexes = Vec::new();
+
+        for pattern in &redirect_patterns {
+            let window = pattern
+                .redirect_to
+                .clone()
+                .expect("redirect_to filtered above");
+            if pattern.fast_parse {
+                let mut saw_literal = false;
+                for literal in pattern.pattern.split('|') {
+                    let trimmed = literal.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    saw_literal = true;
+                    literals.push(trimmed.to_string());
+                    self.redirect_literal_meta
+                        .push((window.clone(), pattern.redirect_mode.clone()));
+                }
+                if !saw_literal {
+                    tracing::warn!(
+                        "Skipping fast-parse redirect with no usable literals: '{}'",
+                        pattern.pattern
+                    );
+                }
+            } else if let Some(regex) = &pattern.compiled_regex {
+                self.redirect_regexes
+                    .push((regex.clone(), window, pattern.redirect_mode.clone()));
+            }
+        }
+
+        self.redirect_matcher = if literals.is_empty() {
+            None
+        } else {
+            // MatchKind::Standard + find_overlapping_iter reproduces the old
+            // "longest contained literal wins" semantics; LeftmostLongest
+            // would miss a longer literal starting later in the line
+            aho_corasick::AhoCorasickBuilder::new()
+                .match_kind(aho_corasick::MatchKind::Standard)
+                .build(&literals)
+                .ok()
+        };
+
+        self.has_redirect_highlights =
+            self.redirect_matcher.is_some() || !self.redirect_regexes.is_empty();
 
         tracing::debug!(
-            "Updated redirect cache: has_redirect_highlights={}",
-            self.has_redirect_highlights
+            "Updated redirect cache: {} literals, {} regexes",
+            literals.len(),
+            self.redirect_regexes.len()
         );
     }
 
@@ -3387,77 +3445,30 @@ impl MessageProcessor {
             return None;
         }
 
-        let mut best_match: Option<(String, crate::config::RedirectMode, usize)> = None;
+        // Longest match wins, across literals and regexes; ties keep the
+        // first seen (matching the old strictly-greater comparison)
+        let mut best: Option<(&str, &crate::config::RedirectMode, usize)> = None;
 
-        // Check all highlight patterns with redirects configured
-        for pattern in self.config.highlights.values() {
-            // Skip if no redirect or if squelched (squelch takes precedence)
-            if pattern.redirect_to.is_none() || pattern.squelch {
-                continue;
-            }
-
-            let redirect_window = pattern.redirect_to.as_ref().expect("redirect_to checked above");
-
-            // Check if pattern matches
-            let match_len = if pattern.fast_parse {
-                // Check literal substring match (split on |)
-                let mut saw_literal = false;
-                let mut longest_match: Option<usize> = None;
-
-                for literal in pattern.pattern.split('|') {
-                    let trimmed = literal.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    saw_literal = true;
-
-                    if text.contains(trimmed) {
-                        let len = trimmed.len();
-                        let should_replace = longest_match.map_or(true, |best| len > best);
-                        if should_replace {
-                            longest_match = Some(len);
-                        }
-                    }
-                }
-
-                if !saw_literal {
-                    if self
-                        .warned_empty_redirect_patterns
-                        .borrow_mut()
-                        .insert(pattern.pattern.clone())
-                    {
-                        tracing::warn!(
-                            "Skipping fast-parse redirect with no usable literals: '{}'",
-                            pattern.pattern
-                        );
-                    }
-                    None
-                } else {
-                    longest_match
-                }
-            } else {
-                // Check regex match
-                if let Some(ref regex) = pattern.compiled_regex {
-                    regex.find(text).map(|m| m.end() - m.start())
-                } else {
-                    None
-                }
-            };
-
-            // Update best match if this match is longer
-            if let Some(len) = match_len {
-                let is_better = best_match.as_ref().map_or(true, |(_, _, best_len)| len > *best_len);
-                if is_better {
-                    best_match = Some((
-                        redirect_window.clone(),
-                        pattern.redirect_mode.clone(),
-                        len,
-                    ));
+        if let Some(matcher) = &self.redirect_matcher {
+            for m in matcher.find_overlapping_iter(text) {
+                let len = m.end() - m.start();
+                if best.as_ref().is_none_or(|(_, _, best_len)| len > *best_len) {
+                    let (window, mode) = &self.redirect_literal_meta[m.pattern().as_usize()];
+                    best = Some((window, mode, len));
                 }
             }
         }
 
-        best_match
+        for (regex, window, mode) in &self.redirect_regexes {
+            if let Some(m) = regex.find(text) {
+                let len = m.end() - m.start();
+                if best.as_ref().is_none_or(|(_, _, best_len)| len > *best_len) {
+                    best = Some((window, mode, len));
+                }
+            }
+        }
+
+        best.map(|(window, mode, len)| (window.to_string(), mode.clone(), len))
     }
 
     /// Check if a line should be squelched (ignored/filtered)
@@ -3569,6 +3580,44 @@ mod tests {
             result,
             Some((_window, crate::config::RedirectMode::RedirectOnly, 3))
         ));
+    }
+
+    #[test]
+    fn test_redirect_longest_match_wins_across_patterns() {
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        let mut short = make_redirect_pattern("hits");
+        short.redirect_to = Some("short_win".to_string());
+        config.highlights.insert("short".to_string(), short);
+        let mut long = make_redirect_pattern("hits you");
+        long.redirect_to = Some("long_win".to_string());
+        config.highlights.insert("long".to_string(), long);
+
+        let processor = MessageProcessor::new(config, SavedDialogPositions::default());
+        let result = processor.check_redirect_match("The troll hits you hard!");
+        let (window, _, len) = result.expect("should match");
+        assert_eq!(window, "long_win");
+        assert_eq!(len, 8);
+    }
+
+    #[test]
+    fn test_redirect_regex_beats_shorter_literal() {
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        let mut lit = make_redirect_pattern("troll");
+        lit.redirect_to = Some("lit_win".to_string());
+        config.highlights.insert("lit".to_string(), lit);
+        let mut rx = make_redirect_pattern(r"troll \w+ you");
+        rx.fast_parse = false;
+        rx.redirect_to = Some("rx_win".to_string());
+        rx.compiled_regex = regex::Regex::new(r"troll \w+ you").ok();
+        config.highlights.insert("rx".to_string(), rx);
+
+        let processor = MessageProcessor::new(config, SavedDialogPositions::default());
+        let result = processor.check_redirect_match("The troll hits you hard!");
+        let (window, _, len) = result.expect("should match");
+        assert_eq!(window, "rx_win");
+        assert_eq!(len, "troll hits you".len());
     }
 
     #[test]
