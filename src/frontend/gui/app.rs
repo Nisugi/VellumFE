@@ -611,8 +611,13 @@ impl VellumGuiApp {
             // do not inherit docked coordinates.
             if let Some(snapshot) = self.last_center_window_rects.get(&tab_key).copied() {
                 self.main_window_rects.insert(tab_key, snapshot);
-                self.layout_dirty = true;
+            } else {
+                // Never rendered in center this session: the stored rect holds
+                // synthetic docked coordinates. Drop it so the center renderer
+                // assigns its default fallback rect instead.
+                self.main_window_rects.remove(&tab_key);
             }
+            self.layout_dirty = true;
             // Center windows are freely positioned/resized; do not normalize their order
             // into synthetic y offsets or they will collapse toward the top-left.
             return;
