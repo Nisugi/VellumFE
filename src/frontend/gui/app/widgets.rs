@@ -195,15 +195,16 @@ impl VellumGuiApp {
                         Self::flush_text_job(ui, &mut job);
                         // Links stay one clickable widget; highlight the whole
                         // segment when it matches. While the drag modifier is
-                        // held the label is not selectable text, so starting an
-                        // item drag never starts a text selection.
+                        // held with the mouse button down, the label is not
+                        // selectable text, so starting an item drag never
+                        // starts a text selection.
                         let rich =
                             Self::segment_to_rich_text(segment, visuals, is_link, search_match);
                         let response = ui
                             .add(
                                 egui::Label::new(rich)
                                     .sense(egui::Sense::click_and_drag())
-                                    .selectable(!Self::link_drag_modifier_down(ui)),
+                                    .selectable(!Self::link_drag_blocks_selection(ui)),
                             )
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if let Some(link_data) = &segment.link_data {
@@ -648,7 +649,7 @@ impl VellumGuiApp {
                         egui::Label::new(display_text)
                             .truncate()
                             .sense(egui::Sense::click_and_drag())
-                            .selectable(!Self::link_drag_modifier_down(ui)),
+                            .selectable(!Self::link_drag_blocks_selection(ui)),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 // Drag source only: releases over hand windows resolve at the
@@ -851,7 +852,7 @@ impl VellumGuiApp {
                         .add(
                             egui::Label::new(object.name.as_str())
                                 .sense(egui::Sense::click_and_drag())
-                                .selectable(!Self::link_drag_modifier_down(ui)),
+                                .selectable(!Self::link_drag_blocks_selection(ui)),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if let Some(drop) = Self::handle_link_dnd(ui, &response, &object_link) {
@@ -921,6 +922,16 @@ impl VellumGuiApp {
             .data(|data| data.get_temp(Self::drag_modifier_data_id()))
             .unwrap_or(egui::Modifiers::CTRL);
         ui.input(|input| input.modifiers.matches_exact(required))
+    }
+
+    /// True while a modifier+drag on a link must not start a text selection:
+    /// the drag modifier is held AND the primary button is down. The button
+    /// check matters — suppressing on the modifier alone made link labels
+    /// non-selectable on the Ctrl+C frame (the default modifier is Ctrl), so
+    /// egui silently dropped link text from copied selections.
+    fn link_drag_blocks_selection(ui: &egui::Ui) -> bool {
+        Self::link_drag_modifier_down(ui)
+            && ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary))
     }
 
     /// Only real game entities can be dragged (not command/sentinel links).
