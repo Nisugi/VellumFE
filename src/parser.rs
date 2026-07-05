@@ -2327,24 +2327,37 @@ impl XmlParser {
         }
     }
 
-    fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
-        // Extract attribute value from tag using simple string parsing
-        // Much faster than regex compilation on every call
-        // Handles both single and double quotes
+    /// Byte offset just past `attr=<quote>` in `tag`, if present. Byte-wise
+    /// scan so the parser's hottest helper allocates nothing while searching.
+    fn find_attr_value_start(tag: &str, attr: &str, quote: u8) -> Option<usize> {
+        let bytes = tag.as_bytes();
+        let name = attr.as_bytes();
+        let probe_len = name.len() + 2; // attr + '=' + quote
+        if bytes.len() < probe_len {
+            return None;
+        }
+        for i in 0..=bytes.len() - probe_len {
+            if bytes[i..i + name.len()] == *name
+                && bytes[i + name.len()] == b'='
+                && bytes[i + name.len() + 1] == quote
+            {
+                return Some(i + probe_len);
+            }
+        }
+        None
+    }
 
-        // Try double quotes: attr="value"
-        let pattern_double = format!("{}=\"", attr);
-        if let Some(start) = tag.find(&pattern_double) {
-            let value_start = start + pattern_double.len();
+    fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
+        // Extract attribute value from tag using simple string parsing.
+        // Handles both quote styles; double quotes keep precedence to match
+        // the original pattern order.
+        if let Some(value_start) = Self::find_attr_value_start(tag, attr, b'"') {
             if let Some(end) = tag[value_start..].find('"') {
                 return Some(tag[value_start..value_start + end].to_string());
             }
         }
 
-        // Try single quotes: attr='value'
-        let pattern_single = format!("{}='", attr);
-        if let Some(start) = tag.find(&pattern_single) {
-            let value_start = start + pattern_single.len();
+        if let Some(value_start) = Self::find_attr_value_start(tag, attr, b'\'') {
             if let Some(end) = tag[value_start..].find('\'') {
                 return Some(tag[value_start..value_start + end].to_string());
             }
