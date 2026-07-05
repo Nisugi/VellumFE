@@ -191,7 +191,7 @@ enum GlobalDispatchTarget {
 
 #[derive(Clone, Copy, Debug)]
 struct GuiKeyPress {
-    key_event: crate::frontend::common::KeyEvent,
+    key_event: crate::data::input::KeyEvent,
     logical_key: Option<egui::Key>,
     physical_key: Option<egui::Key>,
     modifiers: egui::Modifiers,
@@ -267,7 +267,7 @@ pub struct VellumGuiApp {
     app_core: AppCore,
     _runtime: tokio::runtime::Runtime,
     command_tx: mpsc::UnboundedSender<String>,
-    server_rx: mpsc::UnboundedReceiver<ServerMessage>,
+    server_rx: mpsc::Receiver<ServerMessage>,
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
     close_requested: bool,
@@ -302,7 +302,8 @@ impl VellumGuiApp {
         );
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
-        let (server_tx, server_rx) = mpsc::unbounded_channel::<ServerMessage>();
+        let (server_tx, server_rx) =
+            mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
 
         let host = app_core.config.connection.host.clone();
@@ -1575,7 +1576,7 @@ impl VellumGuiApp {
 
                 let code = Self::numpad_binding_name_to_frontend_code(numpad_key.keybind_name()?)?;
                 let modifiers = numpad_key.modifiers;
-                let key_event = crate::frontend::common::KeyEvent::new(
+                let key_event = crate::data::input::KeyEvent::new(
                     code,
                     Self::egui_modifiers_to_frontend(modifiers),
                 );
@@ -1597,32 +1598,32 @@ impl VellumGuiApp {
 
     fn numpad_binding_name_to_frontend_code(
         binding: &str,
-    ) -> Option<crate::frontend::common::KeyCode> {
+    ) -> Option<crate::data::input::KeyCode> {
         let code = match binding {
-            "num_0" => crate::frontend::common::KeyCode::Keypad0,
-            "num_1" => crate::frontend::common::KeyCode::Keypad1,
-            "num_2" => crate::frontend::common::KeyCode::Keypad2,
-            "num_3" => crate::frontend::common::KeyCode::Keypad3,
-            "num_4" => crate::frontend::common::KeyCode::Keypad4,
-            "num_5" => crate::frontend::common::KeyCode::Keypad5,
-            "num_6" => crate::frontend::common::KeyCode::Keypad6,
-            "num_7" => crate::frontend::common::KeyCode::Keypad7,
-            "num_8" => crate::frontend::common::KeyCode::Keypad8,
-            "num_9" => crate::frontend::common::KeyCode::Keypad9,
-            "num_plus" => crate::frontend::common::KeyCode::KeypadPlus,
-            "num_minus" => crate::frontend::common::KeyCode::KeypadMinus,
-            "num_multiply" => crate::frontend::common::KeyCode::KeypadMultiply,
-            "num_divide" => crate::frontend::common::KeyCode::KeypadDivide,
-            "num_enter" => crate::frontend::common::KeyCode::KeypadEnter,
-            "num_decimal" => crate::frontend::common::KeyCode::KeypadPeriod,
+            "num_0" => crate::data::input::KeyCode::Keypad0,
+            "num_1" => crate::data::input::KeyCode::Keypad1,
+            "num_2" => crate::data::input::KeyCode::Keypad2,
+            "num_3" => crate::data::input::KeyCode::Keypad3,
+            "num_4" => crate::data::input::KeyCode::Keypad4,
+            "num_5" => crate::data::input::KeyCode::Keypad5,
+            "num_6" => crate::data::input::KeyCode::Keypad6,
+            "num_7" => crate::data::input::KeyCode::Keypad7,
+            "num_8" => crate::data::input::KeyCode::Keypad8,
+            "num_9" => crate::data::input::KeyCode::Keypad9,
+            "num_plus" => crate::data::input::KeyCode::KeypadPlus,
+            "num_minus" => crate::data::input::KeyCode::KeypadMinus,
+            "num_multiply" => crate::data::input::KeyCode::KeypadMultiply,
+            "num_divide" => crate::data::input::KeyCode::KeypadDivide,
+            "num_enter" => crate::data::input::KeyCode::KeypadEnter,
+            "num_decimal" => crate::data::input::KeyCode::KeypadPeriod,
             _ => return None,
         };
         Some(code)
     }
 
     fn resolve_global_dispatch_target(
-        key_event: crate::frontend::common::KeyEvent,
-        keybind_map: &HashMap<crate::frontend::common::KeyEvent, KeyBindAction>,
+        key_event: crate::data::input::KeyEvent,
+        keybind_map: &HashMap<crate::data::input::KeyEvent, KeyBindAction>,
         app_keybinds: &AppKeybinds,
         suppress_macro_dispatch: bool,
     ) -> Option<GlobalDispatchTarget> {
@@ -1639,7 +1640,7 @@ impl VellumGuiApp {
     }
 
     fn app_shortcut_for_key(
-        key_event: crate::frontend::common::KeyEvent,
+        key_event: crate::data::input::KeyEvent,
         app_keybinds: &AppKeybinds,
     ) -> Option<AppShortcut> {
         if Self::binding_matches_key_event(&app_keybinds.quit, key_event) {
@@ -1656,10 +1657,10 @@ impl VellumGuiApp {
 
     fn binding_matches_key_event(
         binding: &str,
-        key_event: crate::frontend::common::KeyEvent,
+        key_event: crate::data::input::KeyEvent,
     ) -> bool {
         crate::config::parse_key_string(binding)
-            .map(|(code, modifiers)| crate::frontend::common::KeyEvent::new(code, modifiers))
+            .map(|(code, modifiers)| crate::data::input::KeyEvent::new(code, modifiers))
             .is_some_and(|candidate| candidate == key_event)
     }
 
@@ -1734,16 +1735,16 @@ impl VellumGuiApp {
     fn egui_key_to_frontend_event(
         key: egui::Key,
         modifiers: egui::Modifiers,
-    ) -> Option<crate::frontend::common::KeyEvent> {
+    ) -> Option<crate::data::input::KeyEvent> {
         let code = Self::egui_key_to_frontend_code(key, modifiers)?;
         let modifiers = Self::egui_modifiers_to_frontend(modifiers);
-        Some(crate::frontend::common::KeyEvent::new(code, modifiers))
+        Some(crate::data::input::KeyEvent::new(code, modifiers))
     }
 
     fn egui_modifiers_to_frontend(
         modifiers: egui::Modifiers,
-    ) -> crate::frontend::common::KeyModifiers {
-        crate::frontend::common::KeyModifiers {
+    ) -> crate::data::input::KeyModifiers {
+        crate::data::input::KeyModifiers {
             ctrl: modifiers.ctrl || modifiers.command,
             shift: modifiers.shift,
             alt: modifiers.alt,
@@ -1753,77 +1754,77 @@ impl VellumGuiApp {
     fn egui_key_to_frontend_code(
         key: egui::Key,
         modifiers: egui::Modifiers,
-    ) -> Option<crate::frontend::common::KeyCode> {
+    ) -> Option<crate::data::input::KeyCode> {
         let code = match key {
-            egui::Key::ArrowDown => crate::frontend::common::KeyCode::Down,
-            egui::Key::ArrowLeft => crate::frontend::common::KeyCode::Left,
-            egui::Key::ArrowRight => crate::frontend::common::KeyCode::Right,
-            egui::Key::ArrowUp => crate::frontend::common::KeyCode::Up,
-            egui::Key::Escape => crate::frontend::common::KeyCode::Esc,
+            egui::Key::ArrowDown => crate::data::input::KeyCode::Down,
+            egui::Key::ArrowLeft => crate::data::input::KeyCode::Left,
+            egui::Key::ArrowRight => crate::data::input::KeyCode::Right,
+            egui::Key::ArrowUp => crate::data::input::KeyCode::Up,
+            egui::Key::Escape => crate::data::input::KeyCode::Esc,
             egui::Key::Tab => {
                 if modifiers.shift {
-                    crate::frontend::common::KeyCode::BackTab
+                    crate::data::input::KeyCode::BackTab
                 } else {
-                    crate::frontend::common::KeyCode::Tab
+                    crate::data::input::KeyCode::Tab
                 }
             }
-            egui::Key::Backspace => crate::frontend::common::KeyCode::Backspace,
-            egui::Key::Enter => crate::frontend::common::KeyCode::Enter,
-            egui::Key::Space => crate::frontend::common::KeyCode::Char(' '),
-            egui::Key::Insert => crate::frontend::common::KeyCode::Insert,
-            egui::Key::Delete => crate::frontend::common::KeyCode::Delete,
-            egui::Key::Home => crate::frontend::common::KeyCode::Home,
-            egui::Key::End => crate::frontend::common::KeyCode::End,
-            egui::Key::PageUp => crate::frontend::common::KeyCode::PageUp,
-            egui::Key::PageDown => crate::frontend::common::KeyCode::PageDown,
-            egui::Key::Num0 => crate::frontend::common::KeyCode::Char('0'),
-            egui::Key::Num1 => crate::frontend::common::KeyCode::Char('1'),
-            egui::Key::Num2 => crate::frontend::common::KeyCode::Char('2'),
-            egui::Key::Num3 => crate::frontend::common::KeyCode::Char('3'),
-            egui::Key::Num4 => crate::frontend::common::KeyCode::Char('4'),
-            egui::Key::Num5 => crate::frontend::common::KeyCode::Char('5'),
-            egui::Key::Num6 => crate::frontend::common::KeyCode::Char('6'),
-            egui::Key::Num7 => crate::frontend::common::KeyCode::Char('7'),
-            egui::Key::Num8 => crate::frontend::common::KeyCode::Char('8'),
-            egui::Key::Num9 => crate::frontend::common::KeyCode::Char('9'),
-            egui::Key::A => crate::frontend::common::KeyCode::Char('a'),
-            egui::Key::B => crate::frontend::common::KeyCode::Char('b'),
-            egui::Key::C => crate::frontend::common::KeyCode::Char('c'),
-            egui::Key::D => crate::frontend::common::KeyCode::Char('d'),
-            egui::Key::E => crate::frontend::common::KeyCode::Char('e'),
-            egui::Key::F => crate::frontend::common::KeyCode::Char('f'),
-            egui::Key::G => crate::frontend::common::KeyCode::Char('g'),
-            egui::Key::H => crate::frontend::common::KeyCode::Char('h'),
-            egui::Key::I => crate::frontend::common::KeyCode::Char('i'),
-            egui::Key::J => crate::frontend::common::KeyCode::Char('j'),
-            egui::Key::K => crate::frontend::common::KeyCode::Char('k'),
-            egui::Key::L => crate::frontend::common::KeyCode::Char('l'),
-            egui::Key::M => crate::frontend::common::KeyCode::Char('m'),
-            egui::Key::N => crate::frontend::common::KeyCode::Char('n'),
-            egui::Key::O => crate::frontend::common::KeyCode::Char('o'),
-            egui::Key::P => crate::frontend::common::KeyCode::Char('p'),
-            egui::Key::Q => crate::frontend::common::KeyCode::Char('q'),
-            egui::Key::R => crate::frontend::common::KeyCode::Char('r'),
-            egui::Key::S => crate::frontend::common::KeyCode::Char('s'),
-            egui::Key::T => crate::frontend::common::KeyCode::Char('t'),
-            egui::Key::U => crate::frontend::common::KeyCode::Char('u'),
-            egui::Key::V => crate::frontend::common::KeyCode::Char('v'),
-            egui::Key::W => crate::frontend::common::KeyCode::Char('w'),
-            egui::Key::X => crate::frontend::common::KeyCode::Char('x'),
-            egui::Key::Y => crate::frontend::common::KeyCode::Char('y'),
-            egui::Key::Z => crate::frontend::common::KeyCode::Char('z'),
-            egui::Key::F1 => crate::frontend::common::KeyCode::F(1),
-            egui::Key::F2 => crate::frontend::common::KeyCode::F(2),
-            egui::Key::F3 => crate::frontend::common::KeyCode::F(3),
-            egui::Key::F4 => crate::frontend::common::KeyCode::F(4),
-            egui::Key::F5 => crate::frontend::common::KeyCode::F(5),
-            egui::Key::F6 => crate::frontend::common::KeyCode::F(6),
-            egui::Key::F7 => crate::frontend::common::KeyCode::F(7),
-            egui::Key::F8 => crate::frontend::common::KeyCode::F(8),
-            egui::Key::F9 => crate::frontend::common::KeyCode::F(9),
-            egui::Key::F10 => crate::frontend::common::KeyCode::F(10),
-            egui::Key::F11 => crate::frontend::common::KeyCode::F(11),
-            egui::Key::F12 => crate::frontend::common::KeyCode::F(12),
+            egui::Key::Backspace => crate::data::input::KeyCode::Backspace,
+            egui::Key::Enter => crate::data::input::KeyCode::Enter,
+            egui::Key::Space => crate::data::input::KeyCode::Char(' '),
+            egui::Key::Insert => crate::data::input::KeyCode::Insert,
+            egui::Key::Delete => crate::data::input::KeyCode::Delete,
+            egui::Key::Home => crate::data::input::KeyCode::Home,
+            egui::Key::End => crate::data::input::KeyCode::End,
+            egui::Key::PageUp => crate::data::input::KeyCode::PageUp,
+            egui::Key::PageDown => crate::data::input::KeyCode::PageDown,
+            egui::Key::Num0 => crate::data::input::KeyCode::Char('0'),
+            egui::Key::Num1 => crate::data::input::KeyCode::Char('1'),
+            egui::Key::Num2 => crate::data::input::KeyCode::Char('2'),
+            egui::Key::Num3 => crate::data::input::KeyCode::Char('3'),
+            egui::Key::Num4 => crate::data::input::KeyCode::Char('4'),
+            egui::Key::Num5 => crate::data::input::KeyCode::Char('5'),
+            egui::Key::Num6 => crate::data::input::KeyCode::Char('6'),
+            egui::Key::Num7 => crate::data::input::KeyCode::Char('7'),
+            egui::Key::Num8 => crate::data::input::KeyCode::Char('8'),
+            egui::Key::Num9 => crate::data::input::KeyCode::Char('9'),
+            egui::Key::A => crate::data::input::KeyCode::Char('a'),
+            egui::Key::B => crate::data::input::KeyCode::Char('b'),
+            egui::Key::C => crate::data::input::KeyCode::Char('c'),
+            egui::Key::D => crate::data::input::KeyCode::Char('d'),
+            egui::Key::E => crate::data::input::KeyCode::Char('e'),
+            egui::Key::F => crate::data::input::KeyCode::Char('f'),
+            egui::Key::G => crate::data::input::KeyCode::Char('g'),
+            egui::Key::H => crate::data::input::KeyCode::Char('h'),
+            egui::Key::I => crate::data::input::KeyCode::Char('i'),
+            egui::Key::J => crate::data::input::KeyCode::Char('j'),
+            egui::Key::K => crate::data::input::KeyCode::Char('k'),
+            egui::Key::L => crate::data::input::KeyCode::Char('l'),
+            egui::Key::M => crate::data::input::KeyCode::Char('m'),
+            egui::Key::N => crate::data::input::KeyCode::Char('n'),
+            egui::Key::O => crate::data::input::KeyCode::Char('o'),
+            egui::Key::P => crate::data::input::KeyCode::Char('p'),
+            egui::Key::Q => crate::data::input::KeyCode::Char('q'),
+            egui::Key::R => crate::data::input::KeyCode::Char('r'),
+            egui::Key::S => crate::data::input::KeyCode::Char('s'),
+            egui::Key::T => crate::data::input::KeyCode::Char('t'),
+            egui::Key::U => crate::data::input::KeyCode::Char('u'),
+            egui::Key::V => crate::data::input::KeyCode::Char('v'),
+            egui::Key::W => crate::data::input::KeyCode::Char('w'),
+            egui::Key::X => crate::data::input::KeyCode::Char('x'),
+            egui::Key::Y => crate::data::input::KeyCode::Char('y'),
+            egui::Key::Z => crate::data::input::KeyCode::Char('z'),
+            egui::Key::F1 => crate::data::input::KeyCode::F(1),
+            egui::Key::F2 => crate::data::input::KeyCode::F(2),
+            egui::Key::F3 => crate::data::input::KeyCode::F(3),
+            egui::Key::F4 => crate::data::input::KeyCode::F(4),
+            egui::Key::F5 => crate::data::input::KeyCode::F(5),
+            egui::Key::F6 => crate::data::input::KeyCode::F(6),
+            egui::Key::F7 => crate::data::input::KeyCode::F(7),
+            egui::Key::F8 => crate::data::input::KeyCode::F(8),
+            egui::Key::F9 => crate::data::input::KeyCode::F(9),
+            egui::Key::F10 => crate::data::input::KeyCode::F(10),
+            egui::Key::F11 => crate::data::input::KeyCode::F(11),
+            egui::Key::F12 => crate::data::input::KeyCode::F(12),
             _ => return None,
         };
         Some(code)
@@ -4058,7 +4059,7 @@ mod tests {
     use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction, TargetListConfig};
     use crate::core::state::{Creature, Player};
     use crate::data::{LinkData, SpanType, TextSegment};
-    use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
+    use crate::data::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::frontend::gui::{GuiLayoutFileV1, TabId, TabKey, ViewportState};
     use eframe::egui::{Color32, Pos2, Rect, Vec2};
     use egui_dock::DockState;
