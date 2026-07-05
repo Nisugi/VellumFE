@@ -1,0 +1,3346 @@
+# Frozen realistic highlight set for tests/bench_parse.rs.
+# 505 patterns mined from a real session log plus dormant filler,
+# covering fast_parse literals, multi-literal groups, regexes,
+# entire-line, redirects (copy+only), squelch, silent_prompt,
+# replacements (incl. capture groups and window-scoped), stream-scoped
+# and sound triggers. DO NOT EDIT - changing this invalidates all
+# benchmark comparisons.
+
+[player_sorrenn]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Sorrenn"
+
+[player_bojezmyrth]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Bojezmyrth"
+
+[player_skeval]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Skeval"
+
+[player_manndril]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Manndril"
+
+[player_vivina]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Vivina"
+
+[player_zaaldine]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Zaaldine"
+
+[player_tweaked]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Tweaked"
+
+[player_pangin]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Pangin"
+
+[player_alsthar]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Alsthar"
+
+[player_winchester]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Winchester"
+
+[player_nickonai]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Nickonai"
+
+[player_taelrak]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Taelrak"
+
+[player_clairebie]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Clairebie"
+
+[player_kyshaa]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Kyshaa"
+
+[player_drakanious]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Drakanious"
+
+[player_zhagen]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Zhagen"
+
+[player_yakushi]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Yakushi"
+
+[player_lirasah]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Lirasah"
+
+[player_alendi]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Alendi"
+
+[player_ehria]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Ehria"
+
+[player_haidhelmunduhir]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Haidhelmunduhir"
+
+[player_sunflowerr]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Sunflowerr"
+
+[player_illumiada]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Illumiada"
+
+[player_ayvain]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Ayvain"
+
+[player_dyreknor]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Dyreknor"
+
+[player_madaraa]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Madaraa"
+
+[player_nadagast]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Nadagast"
+
+[player_deddalus]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Deddalus"
+
+[player_moonbeamz]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Moonbeamz"
+
+[player_epos]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Epos"
+
+[player_urlach]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Urlach"
+
+[player_noxs]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Noxs"
+
+[player_dinaden]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Dinaden"
+
+[player_dativoy]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Dativoy"
+
+[player_maedoc]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Maedoc"
+
+[player_starmizt]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Starmizt"
+
+[player_kabosy]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Kabosy"
+
+[player_lesorrel]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Lesorrel"
+
+[player_ardwen]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Ardwen"
+
+[player_bakarus]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Bakarus"
+
+[player_tijay]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Tijay"
+
+[player_tranquia]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Tranquia"
+
+[player_altheren]
+category = "Players"
+fast_parse = true
+fg = "#ff69b4"
+pattern = "Altheren"
+
+[player_wolfstarr]
+category = "Players"
+fast_parse = true
+fg = "#7fff00"
+pattern = "Wolfstarr"
+
+[player_chiyanna]
+category = "Players"
+fast_parse = true
+fg = "#ff8c00"
+pattern = "Chiyanna"
+
+[player_gilvren]
+category = "Players"
+fast_parse = true
+fg = "#9370db"
+pattern = "Gilvren"
+
+[player_dravur]
+category = "Players"
+fast_parse = true
+fg = "#00fa9a"
+pattern = "Dravur"
+
+[player_raincail]
+category = "Players"
+fast_parse = true
+fg = "#f08080"
+pattern = "Raincail"
+
+[player_zimitar]
+category = "Players"
+fast_parse = true
+fg = "#00ffff"
+pattern = "Zimitar"
+
+[player_trevic]
+category = "Players"
+fast_parse = true
+fg = "#ffd700"
+pattern = "Trevic"
+
+[item_00]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "pumpkin spice muffin"
+
+[item_01]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "wicker wastebin"
+
+[item_02]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "silver lockpick"
+
+[item_03]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "falcon feather"
+
+[item_04]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "copper lockpick"
+
+[item_05]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "finely woven sable frock"
+
+[item_06]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "rose-marrow potion"
+
+[item_07]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "swirled steel bowl full of sticks"
+
+[item_08]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "puckish snow spirit"
+
+[item_09]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "erratic celestial spirit"
+
+[item_10]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "water-beaded cerulean pit viper"
+
+[item_11]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "green-eyed pale grey kitten"
+
+[item_12]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "ruffled blue adolescent penguin"
+
+[item_13]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "cheerful forest spirit"
+
+[item_14]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "azure-webbed glowbark puppet"
+
+[item_15]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "silvery-faced hill caiverine"
+
+[item_16]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "merry taiga spirit"
+
+[item_17]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "golden energy"
+
+[item_18]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "a wall of force"
+
+[item_19]
+category = "Items"
+fast_parse = true
+fg = "#c0c0c0"
+pattern = "Motes of"
+
+[item_20]
+category = "Items"
+fast_parse = true
+fg = "#e6e6fa"
+pattern = "Wisps of"
+
+[disks]
+category = "Items"
+fast_parse = true
+fg = "#87cefa"
+pattern = "disk|Disk"
+
+[spirit_group]
+category = "Items"
+fast_parse = true
+fg = "#98fb98"
+pattern = "snow spirit|forest spirit|taiga spirit|celestial spirit"
+
+[casting_group]
+category = "Magic"
+fast_parse = true
+fg = "#dda0dd"
+pattern = "gestures.|concentrates.|murmurs a simple|focuses on"
+
+[creature_giant_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant rat"
+
+[creature_giant_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant kobold"
+
+[creature_giant_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant goblin"
+
+[creature_giant_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant hobgoblin"
+
+[creature_giant_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant orc"
+
+[creature_giant_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant troll"
+
+[creature_giant_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant ogre"
+
+[creature_giant_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant wolverine"
+
+[creature_giant_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant bear"
+
+[creature_giant_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant lion"
+
+[creature_giant_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant panther"
+
+[creature_giant_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant spider"
+
+[creature_giant_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant scorpion"
+
+[creature_giant_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant serpent"
+
+[creature_giant_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant wyvern"
+
+[creature_giant_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant drake"
+
+[creature_giant_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant golem"
+
+[creature_giant_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant wraith"
+
+[creature_giant_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant zombie"
+
+[creature_giant_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant skeleton"
+
+[creature_giant_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant ghoul"
+
+[creature_giant_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant banshee"
+
+[creature_giant_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant shade"
+
+[creature_giant_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant stalker"
+
+[creature_giant_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a giant hound"
+
+[creature_greater_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater rat"
+
+[creature_greater_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater kobold"
+
+[creature_greater_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater goblin"
+
+[creature_greater_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater hobgoblin"
+
+[creature_greater_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater orc"
+
+[creature_greater_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater troll"
+
+[creature_greater_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater ogre"
+
+[creature_greater_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater wolverine"
+
+[creature_greater_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater bear"
+
+[creature_greater_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater lion"
+
+[creature_greater_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater panther"
+
+[creature_greater_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater spider"
+
+[creature_greater_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater scorpion"
+
+[creature_greater_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater serpent"
+
+[creature_greater_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater wyvern"
+
+[creature_greater_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater drake"
+
+[creature_greater_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater golem"
+
+[creature_greater_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater wraith"
+
+[creature_greater_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater zombie"
+
+[creature_greater_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater skeleton"
+
+[creature_greater_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater ghoul"
+
+[creature_greater_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater banshee"
+
+[creature_greater_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater shade"
+
+[creature_greater_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater stalker"
+
+[creature_greater_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a greater hound"
+
+[creature_lesser_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser rat"
+
+[creature_lesser_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser kobold"
+
+[creature_lesser_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser goblin"
+
+[creature_lesser_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser hobgoblin"
+
+[creature_lesser_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser orc"
+
+[creature_lesser_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser troll"
+
+[creature_lesser_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser ogre"
+
+[creature_lesser_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser wolverine"
+
+[creature_lesser_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser bear"
+
+[creature_lesser_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser lion"
+
+[creature_lesser_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser panther"
+
+[creature_lesser_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser spider"
+
+[creature_lesser_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser scorpion"
+
+[creature_lesser_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser serpent"
+
+[creature_lesser_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser wyvern"
+
+[creature_lesser_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser drake"
+
+[creature_lesser_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser golem"
+
+[creature_lesser_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser wraith"
+
+[creature_lesser_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser zombie"
+
+[creature_lesser_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser skeleton"
+
+[creature_lesser_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser ghoul"
+
+[creature_lesser_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser banshee"
+
+[creature_lesser_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser shade"
+
+[creature_lesser_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser stalker"
+
+[creature_lesser_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a lesser hound"
+
+[creature_ancient_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient rat"
+
+[creature_ancient_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient kobold"
+
+[creature_ancient_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient goblin"
+
+[creature_ancient_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient hobgoblin"
+
+[creature_ancient_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient orc"
+
+[creature_ancient_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient troll"
+
+[creature_ancient_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient ogre"
+
+[creature_ancient_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient wolverine"
+
+[creature_ancient_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient bear"
+
+[creature_ancient_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient lion"
+
+[creature_ancient_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient panther"
+
+[creature_ancient_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient spider"
+
+[creature_ancient_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient scorpion"
+
+[creature_ancient_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient serpent"
+
+[creature_ancient_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient wyvern"
+
+[creature_ancient_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient drake"
+
+[creature_ancient_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient golem"
+
+[creature_ancient_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient wraith"
+
+[creature_ancient_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient zombie"
+
+[creature_ancient_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient skeleton"
+
+[creature_ancient_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient ghoul"
+
+[creature_ancient_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient banshee"
+
+[creature_ancient_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient shade"
+
+[creature_ancient_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient stalker"
+
+[creature_ancient_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a ancient hound"
+
+[creature_young_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young rat"
+
+[creature_young_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young kobold"
+
+[creature_young_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young goblin"
+
+[creature_young_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young hobgoblin"
+
+[creature_young_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young orc"
+
+[creature_young_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young troll"
+
+[creature_young_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young ogre"
+
+[creature_young_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young wolverine"
+
+[creature_young_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young bear"
+
+[creature_young_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young lion"
+
+[creature_young_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young panther"
+
+[creature_young_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young spider"
+
+[creature_young_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young scorpion"
+
+[creature_young_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young serpent"
+
+[creature_young_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young wyvern"
+
+[creature_young_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young drake"
+
+[creature_young_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young golem"
+
+[creature_young_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young wraith"
+
+[creature_young_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young zombie"
+
+[creature_young_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young skeleton"
+
+[creature_young_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young ghoul"
+
+[creature_young_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young banshee"
+
+[creature_young_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young shade"
+
+[creature_young_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young stalker"
+
+[creature_young_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a young hound"
+
+[creature_massive_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive rat"
+
+[creature_massive_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive kobold"
+
+[creature_massive_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive goblin"
+
+[creature_massive_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive hobgoblin"
+
+[creature_massive_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive orc"
+
+[creature_massive_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive troll"
+
+[creature_massive_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive ogre"
+
+[creature_massive_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive wolverine"
+
+[creature_massive_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive bear"
+
+[creature_massive_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive lion"
+
+[creature_massive_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive panther"
+
+[creature_massive_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive spider"
+
+[creature_massive_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive scorpion"
+
+[creature_massive_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive serpent"
+
+[creature_massive_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive wyvern"
+
+[creature_massive_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive drake"
+
+[creature_massive_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive golem"
+
+[creature_massive_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive wraith"
+
+[creature_massive_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive zombie"
+
+[creature_massive_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive skeleton"
+
+[creature_massive_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive ghoul"
+
+[creature_massive_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive banshee"
+
+[creature_massive_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive shade"
+
+[creature_massive_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive stalker"
+
+[creature_massive_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a massive hound"
+
+[creature_dark_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark rat"
+
+[creature_dark_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark kobold"
+
+[creature_dark_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark goblin"
+
+[creature_dark_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark hobgoblin"
+
+[creature_dark_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark orc"
+
+[creature_dark_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark troll"
+
+[creature_dark_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark ogre"
+
+[creature_dark_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark wolverine"
+
+[creature_dark_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark bear"
+
+[creature_dark_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark lion"
+
+[creature_dark_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark panther"
+
+[creature_dark_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark spider"
+
+[creature_dark_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark scorpion"
+
+[creature_dark_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark serpent"
+
+[creature_dark_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark wyvern"
+
+[creature_dark_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark drake"
+
+[creature_dark_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark golem"
+
+[creature_dark_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark wraith"
+
+[creature_dark_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark zombie"
+
+[creature_dark_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark skeleton"
+
+[creature_dark_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark ghoul"
+
+[creature_dark_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark banshee"
+
+[creature_dark_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark shade"
+
+[creature_dark_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark stalker"
+
+[creature_dark_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a dark hound"
+
+[creature_black_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black rat"
+
+[creature_black_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black kobold"
+
+[creature_black_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black goblin"
+
+[creature_black_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black hobgoblin"
+
+[creature_black_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black orc"
+
+[creature_black_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black troll"
+
+[creature_black_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black ogre"
+
+[creature_black_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black wolverine"
+
+[creature_black_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black bear"
+
+[creature_black_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black lion"
+
+[creature_black_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black panther"
+
+[creature_black_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black spider"
+
+[creature_black_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black scorpion"
+
+[creature_black_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black serpent"
+
+[creature_black_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black wyvern"
+
+[creature_black_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black drake"
+
+[creature_black_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black golem"
+
+[creature_black_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black wraith"
+
+[creature_black_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black zombie"
+
+[creature_black_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black skeleton"
+
+[creature_black_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black ghoul"
+
+[creature_black_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black banshee"
+
+[creature_black_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black shade"
+
+[creature_black_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black stalker"
+
+[creature_black_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a black hound"
+
+[creature_frost_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost rat"
+
+[creature_frost_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost kobold"
+
+[creature_frost_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost goblin"
+
+[creature_frost_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost hobgoblin"
+
+[creature_frost_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost orc"
+
+[creature_frost_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost troll"
+
+[creature_frost_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost ogre"
+
+[creature_frost_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost wolverine"
+
+[creature_frost_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost bear"
+
+[creature_frost_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost lion"
+
+[creature_frost_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost panther"
+
+[creature_frost_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost spider"
+
+[creature_frost_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost scorpion"
+
+[creature_frost_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost serpent"
+
+[creature_frost_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost wyvern"
+
+[creature_frost_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost drake"
+
+[creature_frost_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost golem"
+
+[creature_frost_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost wraith"
+
+[creature_frost_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost zombie"
+
+[creature_frost_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost skeleton"
+
+[creature_frost_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost ghoul"
+
+[creature_frost_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost banshee"
+
+[creature_frost_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost shade"
+
+[creature_frost_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost stalker"
+
+[creature_frost_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a frost hound"
+
+[creature_fire_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire rat"
+
+[creature_fire_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire kobold"
+
+[creature_fire_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire goblin"
+
+[creature_fire_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire hobgoblin"
+
+[creature_fire_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire orc"
+
+[creature_fire_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire troll"
+
+[creature_fire_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire ogre"
+
+[creature_fire_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire wolverine"
+
+[creature_fire_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire bear"
+
+[creature_fire_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire lion"
+
+[creature_fire_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire panther"
+
+[creature_fire_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire spider"
+
+[creature_fire_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire scorpion"
+
+[creature_fire_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire serpent"
+
+[creature_fire_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire wyvern"
+
+[creature_fire_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire drake"
+
+[creature_fire_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire golem"
+
+[creature_fire_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire wraith"
+
+[creature_fire_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire zombie"
+
+[creature_fire_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire skeleton"
+
+[creature_fire_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire ghoul"
+
+[creature_fire_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire banshee"
+
+[creature_fire_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire shade"
+
+[creature_fire_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire stalker"
+
+[creature_fire_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a fire hound"
+
+[creature_storm_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm rat"
+
+[creature_storm_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm kobold"
+
+[creature_storm_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm goblin"
+
+[creature_storm_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm hobgoblin"
+
+[creature_storm_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm orc"
+
+[creature_storm_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm troll"
+
+[creature_storm_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm ogre"
+
+[creature_storm_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm wolverine"
+
+[creature_storm_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm bear"
+
+[creature_storm_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm lion"
+
+[creature_storm_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm panther"
+
+[creature_storm_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm spider"
+
+[creature_storm_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm scorpion"
+
+[creature_storm_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm serpent"
+
+[creature_storm_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm wyvern"
+
+[creature_storm_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm drake"
+
+[creature_storm_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm golem"
+
+[creature_storm_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm wraith"
+
+[creature_storm_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm zombie"
+
+[creature_storm_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm skeleton"
+
+[creature_storm_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm ghoul"
+
+[creature_storm_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm banshee"
+
+[creature_storm_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm shade"
+
+[creature_storm_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm stalker"
+
+[creature_storm_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a storm hound"
+
+[creature_cave_rat]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave rat"
+
+[creature_cave_kobold]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave kobold"
+
+[creature_cave_goblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave goblin"
+
+[creature_cave_hobgoblin]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave hobgoblin"
+
+[creature_cave_orc]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave orc"
+
+[creature_cave_troll]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave troll"
+
+[creature_cave_ogre]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave ogre"
+
+[creature_cave_wolverine]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave wolverine"
+
+[creature_cave_bear]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave bear"
+
+[creature_cave_lion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave lion"
+
+[creature_cave_panther]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave panther"
+
+[creature_cave_spider]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave spider"
+
+[creature_cave_scorpion]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave scorpion"
+
+[creature_cave_serpent]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave serpent"
+
+[creature_cave_wyvern]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave wyvern"
+
+[creature_cave_drake]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave drake"
+
+[creature_cave_golem]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave golem"
+
+[creature_cave_wraith]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave wraith"
+
+[creature_cave_zombie]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave zombie"
+
+[creature_cave_skeleton]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave skeleton"
+
+[creature_cave_ghoul]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave ghoul"
+
+[creature_cave_banshee]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave banshee"
+
+[creature_cave_shade]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave shade"
+
+[creature_cave_stalker]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave stalker"
+
+[creature_cave_hound]
+bold = true
+category = "Creatures"
+fast_parse = true
+fg = "#ff4500"
+pattern = "a cave hound"
+
+[rx_roundtime]
+bold = false
+category = "Regex"
+fg = "#ffff00"
+pattern = "Roundtime:?\\s*\\d+"
+
+[rx_you_verb]
+bold = false
+category = "Regex"
+fg = "#ff6347"
+pattern = "You (?:swing|thrust|gesture|channel|hurl|fire)"
+
+[rx_damage]
+bold = true
+category = "Regex"
+fg = "#ff0000"
+pattern = "\\d+ points? of damage"
+
+[rx_lord_title]
+bold = false
+category = "Regex"
+fg = "#daa520"
+pattern = "(?:Lord|Lady|High Lord) \\w+"
+
+[rx_status]
+bold = false
+category = "Regex"
+fg = "#adff2f"
+pattern = "(?:He|She|It) (?:is|appears) (?:stunned|prone|dead|kneeling)"
+
+[rx_says]
+bold = false
+category = "Regex"
+fg = "#87ceeb"
+pattern = "\\w+ says?, \""
+
+[rx_exclaims]
+bold = false
+category = "Regex"
+fg = "#87ceeb"
+pattern = "\\w+ exclaims?, \""
+
+[rx_exp]
+bold = false
+category = "Regex"
+fg = "#00ff7f"
+pattern = "Exp(?:erience)? (?:to next level|gained)"
+
+[rx_silvers]
+bold = false
+category = "Regex"
+fg = "#c0c0c0"
+pattern = "\\d+ silvers"
+
+[rx_arrives]
+bold = false
+category = "Regex"
+fg = "#f0e68c"
+pattern = "\\w+ just arrived"
+
+[rx_dormant_00]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 0 beast with \\d+ heads"
+
+[rx_dormant_01]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 1 beast with \\d+ heads"
+
+[rx_dormant_02]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 2 beast with \\d+ heads"
+
+[rx_dormant_03]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 3 beast with \\d+ heads"
+
+[rx_dormant_04]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 4 beast with \\d+ heads"
+
+[rx_dormant_05]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 5 beast with \\d+ heads"
+
+[rx_dormant_06]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 6 beast with \\d+ heads"
+
+[rx_dormant_07]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 7 beast with \\d+ heads"
+
+[rx_dormant_08]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 8 beast with \\d+ heads"
+
+[rx_dormant_09]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 9 beast with \\d+ heads"
+
+[rx_dormant_10]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 10 beast with \\d+ heads"
+
+[rx_dormant_11]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 11 beast with \\d+ heads"
+
+[rx_dormant_12]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 12 beast with \\d+ heads"
+
+[rx_dormant_13]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 13 beast with \\d+ heads"
+
+[rx_dormant_14]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 14 beast with \\d+ heads"
+
+[rx_dormant_15]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 15 beast with \\d+ heads"
+
+[rx_dormant_16]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 16 beast with \\d+ heads"
+
+[rx_dormant_17]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 17 beast with \\d+ heads"
+
+[rx_dormant_18]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 18 beast with \\d+ heads"
+
+[rx_dormant_19]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 19 beast with \\d+ heads"
+
+[rx_dormant_20]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 20 beast with \\d+ heads"
+
+[rx_dormant_21]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 21 beast with \\d+ heads"
+
+[rx_dormant_22]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 22 beast with \\d+ heads"
+
+[rx_dormant_23]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 23 beast with \\d+ heads"
+
+[rx_dormant_24]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 24 beast with \\d+ heads"
+
+[rx_dormant_25]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 25 beast with \\d+ heads"
+
+[rx_dormant_26]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 26 beast with \\d+ heads"
+
+[rx_dormant_27]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 27 beast with \\d+ heads"
+
+[rx_dormant_28]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 28 beast with \\d+ heads"
+
+[rx_dormant_29]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 29 beast with \\d+ heads"
+
+[rx_dormant_30]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 30 beast with \\d+ heads"
+
+[rx_dormant_31]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 31 beast with \\d+ heads"
+
+[rx_dormant_32]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 32 beast with \\d+ heads"
+
+[rx_dormant_33]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 33 beast with \\d+ heads"
+
+[rx_dormant_34]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 34 beast with \\d+ heads"
+
+[rx_dormant_35]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 35 beast with \\d+ heads"
+
+[rx_dormant_36]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 36 beast with \\d+ heads"
+
+[rx_dormant_37]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 37 beast with \\d+ heads"
+
+[rx_dormant_38]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 38 beast with \\d+ heads"
+
+[rx_dormant_39]
+category = "Regex"
+fg = "#123456"
+pattern = "a nonexistent 39 beast with \\d+ heads"
+
+[line_alsosee]
+category = "Room"
+color_entire_line = true
+fast_parse = true
+fg = "#9ba2b2"
+pattern = "You also see"
+
+[line_deathflash]
+bg = "#8b0000"
+category = "Deaths"
+color_entire_line = true
+fast_parse = true
+fg = "#ffffff"
+pattern = "was just struck down"
+
+[line_mind]
+category = "Status"
+color_entire_line = true
+fast_parse = true
+fg = "#b0c4de"
+pattern = "Your mind is"
+
+[line_dormant_00]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 0"
+
+[line_dormant_01]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 1"
+
+[line_dormant_02]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 2"
+
+[line_dormant_03]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 3"
+
+[line_dormant_04]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 4"
+
+[line_dormant_05]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 5"
+
+[line_dormant_06]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 6"
+
+[line_dormant_07]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 7"
+
+[line_dormant_08]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 8"
+
+[line_dormant_09]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 9"
+
+[line_dormant_10]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 10"
+
+[line_dormant_11]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 11"
+
+[line_dormant_12]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 12"
+
+[line_dormant_13]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 13"
+
+[line_dormant_14]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 14"
+
+[line_dormant_15]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 15"
+
+[line_dormant_16]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 16"
+
+[line_dormant_17]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 17"
+
+[line_dormant_18]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 18"
+
+[line_dormant_19]
+category = "Dormant"
+color_entire_line = true
+fast_parse = true
+fg = "#222222"
+pattern = "benchmark dormant line pattern 19"
+
+[redir_casting]
+category = "Redirects"
+fast_parse = true
+pattern = "murmurs a simple|gestures."
+redirect_mode = "redirect_copy"
+redirect_to = "thoughts"
+
+[redir_says]
+category = "Redirects"
+fast_parse = true
+pattern = "says,"
+redirect_mode = "redirect_copy"
+redirect_to = "speech"
+
+[redir_arrivals]
+category = "Redirects"
+fast_parse = true
+pattern = "just arrived|just left"
+redirect_mode = "redirect_copy"
+redirect_to = "logons"
+
+[redir_deaths]
+category = "Redirects"
+fast_parse = true
+pattern = "was just struck down"
+redirect_mode = "redirect_only"
+redirect_to = "death"
+
+[redir_rx_yells]
+category = "Redirects"
+pattern = "\\w+ yells?, \"[^\"]+\""
+redirect_mode = "redirect_copy"
+redirect_to = "speech"
+
+[redir_dormant_00]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 0"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_01]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 1"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_02]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 2"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_03]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 3"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_04]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 4"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_05]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 5"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_06]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 6"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_07]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 7"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_08]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 8"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[redir_dormant_09]
+category = "Redirects"
+fast_parse = true
+pattern = "dormant redirect trigger 9"
+redirect_mode = "redirect_copy"
+redirect_to = "familiar"
+
+[squelch_refreshed]
+category = "Squelch"
+fast_parse = true
+pattern = "You feel more refreshed"
+squelch = true
+
+[squelch_disk_follows]
+category = "Squelch"
+fast_parse = true
+pattern = "disk follows you"
+squelch = true
+
+[squelch_dormant_00]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 0"
+squelch = true
+
+[squelch_dormant_01]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 1"
+squelch = true
+
+[squelch_dormant_02]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 2"
+squelch = true
+
+[squelch_dormant_03]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 3"
+squelch = true
+
+[squelch_dormant_04]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 4"
+squelch = true
+
+[squelch_dormant_05]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 5"
+squelch = true
+
+[squelch_dormant_06]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 6"
+squelch = true
+
+[squelch_dormant_07]
+category = "Squelch"
+fast_parse = true
+pattern = "dormant squelch pattern 7"
+squelch = true
+
+[silent_mind]
+category = "Silent"
+fast_parse = true
+pattern = "Your mind is as clear as a bell"
+silent_prompt = true
+
+[silent_enlightened]
+category = "Silent"
+fast_parse = true
+pattern = "You currently are enlightened"
+silent_prompt = true
+
+[silent_dormant_00]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 0"
+silent_prompt = true
+
+[silent_dormant_01]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 1"
+silent_prompt = true
+
+[silent_dormant_02]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 2"
+silent_prompt = true
+
+[silent_dormant_03]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 3"
+silent_prompt = true
+
+[silent_dormant_04]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 4"
+silent_prompt = true
+
+[silent_dormant_05]
+category = "Silent"
+fast_parse = true
+pattern = "dormant silent pattern 5"
+silent_prompt = true
+
+[repl_muffin]
+category = "Replace"
+fast_parse = true
+fg = "#ffa500"
+pattern = "pumpkin spice muffin"
+replace = "MUFFIN"
+
+[repl_rx_damage]
+category = "Replace"
+fg = "#ff0000"
+pattern = "(\\d+) points of damage"
+replace = "[$1 dmg]"
+
+[repl_rx_roundtime]
+category = "Replace"
+pattern = "Roundtime: (\\d+) sec"
+replace = "RT $1s"
+
+[repl_window_scoped]
+category = "Replace"
+fast_parse = true
+pattern = "wicker wastebin"
+replace = "BIN"
+window = "main"
+
+[repl_window_scoped2]
+category = "Replace"
+fast_parse = true
+pattern = "falcon feather"
+replace = "FEATHER"
+window = "thoughts"
+
+[repl_dormant_00]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 0"
+replace = "dormant target 0"
+
+[repl_dormant_01]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 1"
+replace = "dormant target 1"
+
+[repl_dormant_02]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 2"
+replace = "dormant target 2"
+
+[repl_dormant_03]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 3"
+replace = "dormant target 3"
+
+[repl_dormant_04]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 4"
+replace = "dormant target 4"
+
+[repl_dormant_05]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 5"
+replace = "dormant target 5"
+
+[repl_dormant_06]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 6"
+replace = "dormant target 6"
+
+[repl_dormant_07]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 7"
+replace = "dormant target 7"
+
+[repl_dormant_08]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 8"
+replace = "dormant target 8"
+
+[repl_dormant_09]
+category = "Replace"
+fast_parse = true
+pattern = "dormant replace source 9"
+replace = "dormant target 9"
+
+[stream_thoughts_hot]
+category = "Streams"
+fast_parse = true
+fg = "#ee82ee"
+pattern = "Kyshaa"
+stream = "thoughts"
+
+[stream_dormant_00]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 0"
+stream = "thoughts"
+
+[stream_dormant_01]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 1"
+stream = "thoughts"
+
+[stream_dormant_02]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 2"
+stream = "thoughts"
+
+[stream_dormant_03]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 3"
+stream = "thoughts"
+
+[stream_dormant_04]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 4"
+stream = "thoughts"
+
+[stream_dormant_05]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 5"
+stream = "thoughts"
+
+[stream_dormant_06]
+category = "Streams"
+fast_parse = true
+fg = "#334455"
+pattern = "dormant stream pattern 6"
+stream = "thoughts"
+
+[sound_death]
+category = "Sounds"
+fast_parse = true
+pattern = "was just struck down!"
+sound = "alert.wav"
+sound_volume = 0.8
+
+[sound_dormant]
+category = "Sounds"
+fast_parse = true
+pattern = "dormant sound trigger"
+sound = "ding.wav"

@@ -12,14 +12,18 @@
 //!   VELLUM_BENCH_CORPUS="C:/Gemstone/Lich5/logs/GSIV-Nisugi/2026/02/2026-02-09_16-49-09.xml" \
 //!   cargo test --release --test bench_parse -- --ignored --nocapture
 //!
-//! IMPORTANT: the window set and highlight patterns below are frozen so that
-//! numbers stay comparable across commits. Do not change them.
+//! IMPORTANT: the window set and the embedded highlight fixture are frozen so
+//! that numbers stay comparable across commits. Do not change them.
+//!
+//! Baselines with the 505-pattern realistic set (28,278-line corpus, release):
+//!   pre-optimization (bf7fb4b): 31,532 lines/sec | 10.1M allocs | 659 MB
+//!   post-Tier-2:                59,226 lines/sec |  3.25M allocs | 453 MB
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use vellum_fe::config::{Config, HighlightPattern, RedirectMode, SavedDialogPositions};
+use vellum_fe::config::{Config, HighlightPattern, SavedDialogPositions};
 use vellum_fe::core::messages::MessageProcessor;
 use vellum_fe::core::GameState;
 use vellum_fe::data::ui_state::UiState;
@@ -109,81 +113,42 @@ fn load_corpus() -> (Vec<String>, String) {
 // Frozen pipeline configuration — DO NOT CHANGE (comparability across commits)
 // ---------------------------------------------------------------------------
 
-fn bench_highlight(pattern: &str) -> HighlightPattern {
-    HighlightPattern {
-        pattern: pattern.to_string(),
-        fg: None,
-        bg: None,
-        bold: false,
-        color_entire_line: false,
-        fast_parse: false,
-        sound: None,
-        sound_volume: None,
-        category: None,
-        squelch: false,
-        silent_prompt: false,
-        redirect_to: None,
-        redirect_mode: RedirectMode::default(),
-        replace: None,
-        stream: None,
-        window: None,
-        compiled_regex: None,
-    }
-}
+/// The frozen realistic highlight set: 505 patterns mined from a real session
+/// log plus dormant filler, covering every highlight feature (literals,
+/// multi-literal groups, regexes, entire-line, redirects, squelch,
+/// silent_prompt, replacements, stream/window scoping, sounds). Embedded so
+/// the bench is reproducible from a checkout alone.
+const FROZEN_HIGHLIGHTS: &str = include_str!("fixtures/bench_highlights.toml");
 
-/// Optional real-world highlight set via VELLUM_BENCH_HIGHLIGHTS (a
-/// highlights.toml). Replaces the frozen synthetic set, so runs using it are
-/// NOT comparable with default runs - the output labels which was used.
-fn load_bench_highlights() -> Option<(std::collections::HashMap<String, HighlightPattern>, String)> {
-    let path = std::env::var("VELLUM_BENCH_HIGHLIGHTS").ok()?;
-    let contents = std::fs::read_to_string(&path).expect("failed to read VELLUM_BENCH_HIGHLIGHTS file");
+fn parse_highlights(toml_text: &str) -> std::collections::HashMap<String, HighlightPattern> {
     let mut highlights: std::collections::HashMap<String, HighlightPattern> =
-        toml::from_str(&contents).expect("failed to parse VELLUM_BENCH_HIGHLIGHTS as highlights toml");
+        toml::from_str(toml_text).expect("failed to parse highlights toml");
     // Mirror app startup: compile regexes once at load
     Config::compile_highlight_patterns(&mut highlights);
-    Some((highlights, path))
+    highlights
 }
 
 fn bench_config() -> (Config, String) {
     let mut config = Config::default();
 
-    if let Some((highlights, path)) = load_bench_highlights() {
+    // Optional override: VELLUM_BENCH_HIGHLIGHTS=<highlights.toml>. Runs with
+    // different highlight sets are NOT comparable - output labels the set used.
+    if let Ok(path) = std::env::var("VELLUM_BENCH_HIGHLIGHTS") {
+        let contents =
+            std::fs::read_to_string(&path).expect("failed to read VELLUM_BENCH_HIGHLIGHTS file");
+        let highlights = parse_highlights(&contents);
         let label = format!("{} patterns from {}", highlights.len(), path);
         config.highlights = highlights;
         return (config, label);
     }
 
-    // 2 color highlights matching common words
-    let mut h1 = bench_highlight("You");
-    h1.fg = Some("#ff0000".to_string());
-    config.highlights.insert("bench_color_you".to_string(), h1);
-    let mut h2 = bench_highlight("disk");
-    h2.fg = Some("#00ff00".to_string());
-    config.highlights.insert("bench_color_disk".to_string(), h2);
-
-    // 2 fast_parse redirects
-    let mut r1 = bench_highlight("You feel|You sense");
-    r1.fast_parse = true;
-    r1.redirect_to = Some("thoughts".to_string());
-    r1.redirect_mode = RedirectMode::RedirectCopy;
-    config.highlights.insert("bench_redirect_feel".to_string(), r1);
-    let mut r2 = bench_highlight("roundtime|Roundtime");
-    r2.fast_parse = true;
-    r2.redirect_to = Some("speech".to_string());
-    r2.redirect_mode = RedirectMode::RedirectCopy;
-    config.highlights.insert("bench_redirect_rt".to_string(), r2);
-
-    // 2 squelches (patterns unlikely to match much, but exercise the matcher)
-    let mut s1 = bench_highlight("ZZBENCHSQUELCHZZ");
-    s1.fast_parse = true;
-    s1.squelch = true;
-    config.highlights.insert("bench_squelch_1".to_string(), s1);
-    let mut s2 = bench_highlight("YYBENCHSQUELCHYY");
-    s2.fast_parse = true;
-    s2.squelch = true;
-    config.highlights.insert("bench_squelch_2".to_string(), s2);
-
-    (config, "6 frozen synthetic patterns (default)".to_string())
+    let highlights = parse_highlights(FROZEN_HIGHLIGHTS);
+    let label = format!(
+        "{} frozen realistic patterns (fixtures/bench_highlights.toml)",
+        highlights.len()
+    );
+    config.highlights = highlights;
+    (config, label)
 }
 
 fn bench_ui_state(mp: &mut MessageProcessor) -> UiState {
