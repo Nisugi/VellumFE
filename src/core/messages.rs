@@ -563,14 +563,6 @@ impl MessageProcessor {
                     self.current_stream.as_str()
                 };
 
-                // Debug: log perception stream text elements
-                if effective_stream == "percWindow" {
-                    tracing::debug!(
-                        "Text element on percWindow stream: '{}'",
-                        if content.len() > 50 { format!("{}...", &content[..50]) } else { content.to_string() }
-                    );
-                }
-
                 // Special handling for inline Spells stream - accumulate segments into line buffer
                 // Spells are sent once at login with inline <stream id="Spells"> tags
                 // We accumulate segments until the </stream> tag, then flush to buffer
@@ -659,16 +651,6 @@ impl MessageProcessor {
                     ParserSpanType::Speech => DataSpanType::Speech,
                     ParserSpanType::System => DataSpanType::Normal, // system echoes treated as normal for data layer
                 };
-
-                // Debug: Check for "GSj" artifact pattern in any text
-                if content.contains("GSj") {
-                    tracing::warn!(
-                        "[ARTIFACT] Found 'GSj' in text='{}' span_type={:?} stream='{}'",
-                        content,
-                        data_span_type,
-                        stream
-                    );
-                }
 
                 self.current_segments.push(TextSegment {
                     text: content.clone(),
@@ -2161,30 +2143,12 @@ impl MessageProcessor {
         ui_state: &mut UiState,
         mut tts_manager: Option<&mut crate::tts::TtsManager>,
     ) {
-        // Debug: log perception stream flushes
-        if self.current_stream == "percWindow" {
-            tracing::debug!(
-                "flush_current_stream_with_tts called for percWindow, segments.len={}",
-                self.current_segments.len()
-            );
-        }
-
         // Concatenate all segments to get full line text for squelch checking
         let full_text: String = self
             .current_segments
             .iter()
             .map(|seg| seg.text.as_str())
             .collect();
-
-        // Debug: Check for "GSj" artifact in flushed lines
-        if full_text.contains("GSj") {
-            tracing::warn!(
-                "[ARTIFACT_FLUSH] Found 'GSj' in line='{}' stream='{}' segments={}",
-                if full_text.len() > 100 { format!("{}...", &full_text[..100]) } else { full_text.clone() },
-                self.current_stream,
-                self.current_segments.len()
-            );
-        }
 
         // Skip leading blank lines - only keep interior blanks (after content starts)
         // This preserves formatting blank lines within output blocks like BOUNTY
