@@ -415,22 +415,23 @@ impl XmlParser {
             // Check for paired tags first (manually check for each type)
             let mut found_paired = false;
 
-            for tag_name in &[
-                "prompt",
-                "spell",
-                "left",
-                "right",
-                "compass",
-                "openDialog",
-                "dialogData",
-                "component",
-                "compDef",
-                "inv",
-            ] {
-                let start_pattern = format!("<{}", tag_name);
-                let end_pattern = format!("</{}>", tag_name);
+            // Static start/end patterns - building these with format! allocated
+            // 2 Strings x 10 tags per loop iteration in the hottest parse loop
+            const PAIRED_TAGS: [(&str, &str); 10] = [
+                ("<prompt", "</prompt>"),
+                ("<spell", "</spell>"),
+                ("<left", "</left>"),
+                ("<right", "</right>"),
+                ("<compass", "</compass>"),
+                ("<openDialog", "</openDialog>"),
+                ("<dialogData", "</dialogData>"),
+                ("<component", "</component>"),
+                ("<compDef", "</compDef>"),
+                ("<inv", "</inv>"),
+            ];
 
-                if let Some(tag_start) = remaining.find(&start_pattern) {
+            for (start_pattern, end_pattern) in PAIRED_TAGS {
+                if let Some(tag_start) = remaining.find(start_pattern) {
                     // Make sure this is the earliest match
                     if remaining.find('<').is_some_and(|pos| pos < tag_start) {
                         continue;
