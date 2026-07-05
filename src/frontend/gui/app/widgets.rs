@@ -425,7 +425,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         hand_prefix: &str,
         item: &Option<String>,
-        _link: &Option<LinkData>,
+        link: &Option<LinkData>,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -452,6 +452,14 @@ impl VellumGuiApp {
         let icon_gap = 4.0;
         let handle_gutter_width = 12.0;
 
+        // Held items carry server link data; render them clickable like other links.
+        let item_link = if item_text == empty_text {
+            None
+        } else {
+            link.as_ref()
+        };
+
+        let mut clicked_link = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_sized(
@@ -460,11 +468,32 @@ impl VellumGuiApp {
             );
             ui.add_space(icon_gap);
             let text_width = (ui.available_width() - handle_gutter_width).max(1.0);
-            ui.add_sized([text_width, row_height], egui::Label::new(display_text).truncate());
+            if let Some(link_data) = item_link {
+                let response = ui
+                    .add_sized(
+                        [text_width, row_height],
+                        egui::Label::new(display_text)
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() {
+                    clicked_link = Some(Self::gui_link_click_from_response(
+                        &response,
+                        ui,
+                        link_data.clone(),
+                    ));
+                }
+            } else {
+                ui.add_sized(
+                    [text_width, row_height],
+                    egui::Label::new(display_text).truncate(),
+                );
+            }
             ui.add_space(handle_gutter_width);
         });
 
-        None
+        clicked_link
     }
 
     pub(super) fn render_room_entities(ui: &mut egui::Ui, label: &str, values: &[String]) {
