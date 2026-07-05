@@ -5,14 +5,19 @@
 //!
 //! # Modules
 //!
-//! - `app` - Milestone 1 GUI runtime and egui application shell
+//! - `app` - GUI runtime: shell zones, docking, detached viewports, popup
+//!   menus, link dispatch, keybind handling, widget rendering, layout save
 //! - `tab_id` - Stable identity model for tabs (TabKey, TabId)
 //! - `persistence` - Layout file schema and migration
 //!
-//! # Status
+//! # Architecture
 //!
-//! - Milestone 0 (Contracts/Schema): Complete
-//! - Milestone 1 (GUI skeleton): In progress
+//! The GUI is a native `eframe::App` driven by the egui event loop; it
+//! deliberately does not implement the `Frontend` trait (that trait models a
+//! frontend polled/rendered by an app-owned loop, which eframe inverts). The
+//! shared contract with the TUI is `AppCore` + `UiState` + the config layer.
+//!
+//! See docs/GUI_AUDIT.md for the feature-parity roadmap.
 
 pub mod app;
 pub mod persistence;

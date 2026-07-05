@@ -1637,11 +1637,8 @@ impl VellumGuiApp {
         suppress_macro_dispatch: bool,
     ) -> Option<GlobalDispatchTarget> {
         if !suppress_macro_dispatch {
-            if let Some(KeyBindAction::Macro(_)) = keybind_map.get(&key_event) {
-                return keybind_map
-                    .get(&key_event)
-                    .cloned()
-                    .map(GlobalDispatchTarget::Macro);
+            if let Some(binding @ KeyBindAction::Macro(_)) = keybind_map.get(&key_event) {
+                return Some(GlobalDispatchTarget::Macro(binding.clone()));
             }
         }
 
@@ -2191,15 +2188,15 @@ impl VellumGuiApp {
     }
 
     fn render_popup_menus(&mut self, ctx: &egui::Context) {
-        let main = self.app_core.ui_state.popup_menu.clone();
-        let submenu = self.app_core.ui_state.submenu.clone();
-        let nested = self.app_core.ui_state.nested_submenu.clone();
-        let deep = self.app_core.ui_state.deep_submenu.clone();
+        let main = self.app_core.ui_state.popup_menu.as_ref();
+        let submenu = self.app_core.ui_state.submenu.as_ref();
+        let nested = self.app_core.ui_state.nested_submenu.as_ref();
+        let deep = self.app_core.ui_state.deep_submenu.as_ref();
 
         let mut clicked_command: Option<GuiMenuCommand> = None;
         let mut menu_rects: Vec<Rect> = Vec::new();
 
-        if let Some(menu) = &main {
+        if let Some(menu) = main {
             let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
             clicked_command = command;
             if let Some(rect) = rect {
@@ -2207,7 +2204,7 @@ impl VellumGuiApp {
             }
         }
         if clicked_command.is_none() {
-            if let Some(menu) = &submenu {
+            if let Some(menu) = submenu {
                 let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu);
                 clicked_command = command;
                 if let Some(rect) = rect {
@@ -2216,7 +2213,7 @@ impl VellumGuiApp {
             }
         }
         if clicked_command.is_none() {
-            if let Some(menu) = &nested {
+            if let Some(menu) = nested {
                 let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu);
                 clicked_command = command;
                 if let Some(rect) = rect {
@@ -2225,7 +2222,7 @@ impl VellumGuiApp {
             }
         }
         if clicked_command.is_none() {
-            if let Some(menu) = &deep {
+            if let Some(menu) = deep {
                 let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu);
                 clicked_command = command;
                 if let Some(rect) = rect {
