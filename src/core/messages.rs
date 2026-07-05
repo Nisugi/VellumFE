@@ -2407,7 +2407,14 @@ impl MessageProcessor {
             subscriber_names.len()
         );
 
-        for window_name in &subscriber_names {
+        // The line may be MOVED into the last subscriber instead of cloned,
+        // but only when the redirect-copy pass after this loop won't reuse it.
+        // line_slot is Some until (at most) the last iteration takes it.
+        let needed_later = should_send_to_original && self.current_stream != original_stream;
+        let mut line_slot = Some(line);
+
+        for (idx, window_name) in subscriber_names.iter().enumerate() {
+            let is_last = idx + 1 == subscriber_names.len();
             let Some(window) = ui_state.windows.get_mut(window_name) else {
                 continue;
             };
@@ -2416,22 +2423,51 @@ impl MessageProcessor {
                 WindowContent::Text(content) => {
                     // Subscription already verified by the index
                     {
+                        let is_compact_bounty = content.compact
+                            && self.current_stream.eq_ignore_ascii_case("bounty");
+                        // Move instead of clone when nothing after this add
+                        // needs the line (compact bounty keeps the clone path:
+                        // its parse-failure fallback and TTS-skip semantics
+                        // depend on the line surviving)
+                        let move_line = is_last
+                            && !needed_later
+                            && deferred_replacements.is_empty()
+                            && !is_compact_bounty;
+
+                        if move_line {
+                            // TTS reads the line - enqueue before moving it
+                            if !tts_handled {
+                                if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                    self.enqueue_tts(
+                                        tts_mgr,
+                                        window_name,
+                                        line_slot.as_ref().expect("line present until moved"),
+                                    );
+                                }
+                                tts_handled = true;
+                            }
+                            content.add_line(line_slot.take().expect("line moved at most once"));
+                            text_added_to_any_window = true;
+                            continue;
+                        }
+
+                        let src = line_slot.as_ref().expect("line present until moved");
                         // Apply window-specific replacements if any
                         let final_line = if deferred_replacements.is_empty() {
-                            line.clone()
+                            src.clone()
                         } else {
                             StyledLine {
                                 segments: super::highlight_engine::apply_deferred_for_window(
-                                    &line.segments,
+                                    &src.segments,
                                     &deferred_replacements,
                                     window_name,
                                 ),
-                                stream: line.stream.clone(),
+                                stream: src.stream.clone(),
                             }
                         };
 
                         // Check for compact bounty mode
-                        if content.compact && self.current_stream.eq_ignore_ascii_case("bounty") {
+                        if is_compact_bounty {
                             // Extract plain text from segments
                             let plain_text: String = final_line.segments.iter().map(|s| s.text.as_str()).collect();
                             if let Some(compact) = bounty_parser::parse_bounty(&plain_text) {
@@ -2440,9 +2476,9 @@ impl MessageProcessor {
                                 for text in compact.lines {
                                     content.add_line(StyledLine::from_text_with_stream(text, "bounty"));
                                 }
-                                added_here = true;
-                                let _ = added_here;
                                 // Skip normal add_line - we've handled this specially
+                                // (matches prior behavior: no TTS, no
+                                // text_added_to_any_window for compact bounty)
                                 continue;
                             }
                         }
@@ -2452,14 +2488,46 @@ impl MessageProcessor {
                     }
                 }
                 WindowContent::Inventory(content) => {
-                    content.add_line(line.clone());
+                    if is_last && !needed_later {
+                        if !tts_handled {
+                            if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                self.enqueue_tts(
+                                    tts_mgr,
+                                    window_name,
+                                    line_slot.as_ref().expect("line present until moved"),
+                                );
+                            }
+                            tts_handled = true;
+                        }
+                        content.add_line(line_slot.take().expect("line moved at most once"));
+                        text_added_to_any_window = true;
+                        continue;
+                    }
+                    content.add_line(line_slot.as_ref().expect("line present until moved").clone());
                     added_here = true;
                 }
                 WindowContent::Spells(content) => {
-                    content.add_line(line.clone());
+                    if is_last && !needed_later {
+                        if !tts_handled {
+                            if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                self.enqueue_tts(
+                                    tts_mgr,
+                                    window_name,
+                                    line_slot.as_ref().expect("line present until moved"),
+                                );
+                            }
+                            tts_handled = true;
+                        }
+                        content.add_line(line_slot.take().expect("line moved at most once"));
+                        text_added_to_any_window = true;
+                        continue;
+                    }
+                    content.add_line(line_slot.as_ref().expect("line present until moved").clone());
                     added_here = true;
                 }
                 WindowContent::TabbedText(tab_content) => {
+                    // Tabs may match multiple times, so this arm always clones
+                    let src = line_slot.as_ref().expect("line present until moved");
                     let active_tab_index = tab_content.active_tab_index;
                     for (tab_index, tab) in tab_content.tabs.iter_mut().enumerate() {
                         if tab
@@ -2471,11 +2539,11 @@ impl MessageProcessor {
                             // Apply window-specific replacements if any
                             // Check both parent window name and tab name
                             let final_line = if deferred_replacements.is_empty() {
-                                line.clone()
+                                src.clone()
                             } else {
                                 // Try window name first, then tab name
                                 let mut segments = super::highlight_engine::apply_deferred_for_window(
-                                    &line.segments,
+                                    &src.segments,
                                     &deferred_replacements,
                                     window_name,
                                 );
@@ -2487,7 +2555,7 @@ impl MessageProcessor {
                                 );
                                 StyledLine {
                                     segments,
-                                    stream: line.stream.clone(),
+                                    stream: src.stream.clone(),
                                 }
                             };
                             tab.content.add_line(final_line);
@@ -2506,16 +2574,23 @@ impl MessageProcessor {
                 text_added_to_any_window = true;
                 if let Some(tts_mgr) = tts_manager.as_deref_mut() {
                     if !tts_handled {
-                        self.enqueue_tts(tts_mgr, window_name, &line);
+                        self.enqueue_tts(
+                            tts_mgr,
+                            window_name,
+                            line_slot.as_ref().expect("line present until moved"),
+                        );
                         tts_handled = true; // Avoid multiple TTS calls for the same line
                     }
                 }
             }
         }
 
+
         // Fallback routing if no window handled the stream
         // Uses config.streams settings: drop_unsubscribed list and fallback window
         if !text_added_to_any_window {
+            // A move implies text was added, so the line is always present here
+            let line = line_slot.as_ref().expect("line present when nothing was added");
             match self.resolve_orphaned_stream(&self.current_stream) {
                 None => {
                     // Stream is in drop list - discard silently
@@ -2586,6 +2661,8 @@ impl MessageProcessor {
 
         // Handle redirect_copy mode: also send to original stream
         if should_send_to_original && self.current_stream != original_stream {
+            // needed_later excluded this case from the move above
+            let line = line_slot.as_ref().expect("redirect-copy line excluded from move");
             // Restore original stream and route line there too
             self.current_stream = original_stream.clone();
             let original_window_name = self.map_stream_to_window(&self.current_stream);
@@ -3596,6 +3673,82 @@ mod tests {
         processor.update_text_stream_subscribers(&ui_state);
 
         assert_eq!(processor.get_stream_subscribers("combat").len(), 1);
+    }
+
+    fn make_text_window(name: &str, streams: &[&str]) -> crate::data::window::WindowState {
+        let mut ws = crate::data::window::WindowState::new_text(name, 100);
+        if let WindowContent::Text(ref mut c) = ws.content {
+            c.streams = streams.iter().map(|s| s.to_string()).collect();
+        }
+        ws
+    }
+
+    fn push_test_segment(processor: &mut MessageProcessor, text: &str) {
+        processor.current_segments.push(TextSegment {
+            text: text.to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        });
+    }
+
+    fn text_line_count(ui_state: &UiState, window: &str) -> usize {
+        match &ui_state.windows.get(window).expect("window exists").content {
+            WindowContent::Text(c) => c.lines.len(),
+            _ => panic!("not a text window"),
+        }
+    }
+
+    #[test]
+    fn test_multi_subscriber_delivery() {
+        // Two windows subscribe the same stream: both must receive the line
+        // (the last subscriber receives it by move, the rest by clone)
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("alpha".to_string(), make_text_window("alpha", &["thoughts"]));
+        ui_state
+            .windows
+            .insert("beta".to_string(), make_text_window("beta", &["thoughts"]));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        processor.current_stream = "thoughts".to_string();
+        push_test_segment(&mut processor, "You hear the faint thoughts of someone.");
+        processor.flush_current_stream(&mut ui_state);
+
+        assert_eq!(text_line_count(&ui_state, "alpha"), 1);
+        assert_eq!(text_line_count(&ui_state, "beta"), 1);
+    }
+
+    #[test]
+    fn test_redirect_copy_delivers_to_target_and_original() {
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        let mut r = make_redirect_pattern("hear");
+        r.redirect_to = Some("alerts".to_string());
+        r.redirect_mode = crate::config::RedirectMode::RedirectCopy;
+        config.highlights.insert("copy_redirect".to_string(), r);
+
+        let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("main".to_string(), make_text_window("main", &["main"]));
+        ui_state
+            .windows
+            .insert("alerts".to_string(), make_text_window("alerts", &["alerts"]));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        processor.current_stream = "main".to_string();
+        push_test_segment(&mut processor, "You hear a noise.");
+        processor.flush_current_stream(&mut ui_state);
+
+        // RedirectCopy must deliver to the redirect target AND the original
+        assert_eq!(text_line_count(&ui_state, "alerts"), 1);
+        assert_eq!(text_line_count(&ui_state, "main"), 1);
     }
 
     #[test]
