@@ -15,6 +15,10 @@ pub struct MessageProcessor {
     /// Configuration (for presets, highlights, etc.)
     config: Config,
 
+    /// Prompt character -> resolved color, prebuilt from config.colors.prompt_colors
+    /// so prompt rendering doesn't linear-scan the config per character
+    prompt_color_map: std::collections::HashMap<char, String>,
+
     /// Parser for parsing XML content
     parser: crate::parser::XmlParser,
 
@@ -137,8 +141,11 @@ impl MessageProcessor {
         let mut highlight_engine = super::highlight_engine::CoreHighlightEngine::new(highlights);
         highlight_engine.set_replace_enabled(config.highlight_settings.replace_enabled);
 
+        let prompt_color_map = Self::build_prompt_color_map(&config);
+
         let mut processor = Self {
             config,
+            prompt_color_map,
             parser,
             highlight_engine,
             current_stream: String::from("main"),
@@ -174,6 +181,28 @@ impl MessageProcessor {
         processor
     }
 
+    /// Build the prompt character color map from config.
+    /// Only single-character entries can ever match (the renderer compares
+    /// one char at a time); first entry wins for duplicate characters.
+    fn build_prompt_color_map(config: &Config) -> std::collections::HashMap<char, String> {
+        let mut map = std::collections::HashMap::new();
+        for pc in &config.colors.prompt_colors {
+            let mut chars = pc.character.chars();
+            if let (Some(ch), None) = (chars.next(), chars.next()) {
+                if let Some(color) = pc.fg.as_ref().or(pc.color.as_ref()) {
+                    map.entry(ch).or_insert_with(|| color.clone());
+                }
+            }
+        }
+        map
+    }
+
+    /// Resolved color for a prompt character, if configured.
+    /// Used by the command echo path in AppCore::send_command.
+    pub fn prompt_char_color(&self, ch: char) -> Option<&str> {
+        self.prompt_color_map.get(&ch).map(String::as_str)
+    }
+
     /// Take buffered bounty data (raw text, compact lines) if any.
     /// Returns Some((raw_text, compact_lines)) and clears the buffer.
     pub fn take_bounty_buffer(&mut self) -> Option<(String, Vec<String>)> {
@@ -195,6 +224,7 @@ impl MessageProcessor {
             apply_start.elapsed()
         );
         self.config = config;
+        self.prompt_color_map = Self::build_prompt_color_map(&self.config);
 
         // Log loaded presets for debugging
         for (id, preset) in &self.config.colors.presets {
@@ -490,23 +520,14 @@ impl MessageProcessor {
 
                     // Render prompt with per-character coloring
                     for ch in text.chars() {
-                        let char_str = ch.to_string();
-
-                        // Find color for this character in prompt_colors config
                         let color = self
-                            .config
-                            .colors
-                            .prompt_colors
-                            .iter()
-                            .find(|pc| pc.character == char_str)
-                            .and_then(|pc| {
-                                // Prefer fg, fallback to color (legacy)
-                                pc.fg.as_ref().or(pc.color.as_ref()).cloned()
-                            })
+                            .prompt_color_map
+                            .get(&ch)
+                            .cloned()
                             .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
 
                         self.current_segments.push(TextSegment {
-                            text: char_str,
+                            text: ch.to_string(),
                             fg: Some(color),
                             bg: None,
                             bold: false,

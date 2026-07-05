@@ -43,23 +43,15 @@ impl AppCore {
                 self.game_state.last_prompt
             );
             for ch in self.game_state.last_prompt.chars() {
-                let char_str = ch.to_string();
-
-                // Find color for this character in prompt_colors config
+                // Prebuilt prompt color map (see MessageProcessor::build_prompt_color_map)
                 let color = self
-                    .config
-                    .colors
-                    .prompt_colors
-                    .iter()
-                    .find(|pc| pc.character == char_str)
-                    .and_then(|pc| {
-                        // Prefer fg, fallback to color (legacy)
-                        pc.fg.as_ref().or(pc.color.as_ref()).cloned()
-                    })
+                    .message_processor
+                    .prompt_char_color(ch)
+                    .map(str::to_string)
                     .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
 
                 segments.push(TextSegment {
-                    text: char_str,
+                    text: ch.to_string(),
                     fg: Some(color),
                     bg: None,
                     bold: false,
