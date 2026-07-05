@@ -297,6 +297,8 @@ pub struct VellumGuiApp {
     search_bar_needs_focus: bool,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
+    layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
+    layout_save_worker: Option<std::thread::JoinHandle<()>>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -372,6 +374,18 @@ impl VellumGuiApp {
         };
 
         let (layout_profile, layout_character) = Self::resolve_layout_ids(&app_core.config);
+
+        // Layout writer thread: disk I/O for debounced saves happens off the
+        // UI thread; writes stay sequential because one worker owns them.
+        let (layout_save_tx, layout_save_rx) = std::sync::mpsc::channel::<GuiLayoutFileV1>();
+        let worker_profile = layout_profile.clone();
+        let worker_character = layout_character.clone();
+        let layout_save_worker = std::thread::spawn(move || {
+            while let Ok(layout) = layout_save_rx.recv() {
+                Self::write_layout_now(&layout, &worker_profile, &worker_character);
+            }
+        });
+
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
         let ui_font = persisted_layout
             .as_ref()
@@ -490,6 +504,8 @@ impl VellumGuiApp {
             search_bar_needs_focus: false,
             command_input_id: None,
             repaint_ctx,
+            layout_save_tx: Some(layout_save_tx),
+            layout_save_worker: Some(layout_save_worker),
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1465,7 +1481,9 @@ impl VellumGuiApp {
         }
     }
 
-    fn save_layout_state(&mut self) {
+    /// Assemble the persistable layout snapshot. Returns None when the dock
+    /// snapshot fails to serialize (never persist a null layout).
+    fn build_layout_snapshot(&mut self) -> Option<GuiLayoutFileV1> {
         let mut layout = GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character);
 
         let mut hidden_tabs: Vec<TabKey> = self.hidden_tabs.iter().cloned().collect();
@@ -1519,7 +1537,7 @@ impl VellumGuiApp {
                 // Persisting a null snapshot would wipe the saved window layout;
                 // keep the existing file instead.
                 tracing::error!("Failed to serialize GUI dock layout; skipping save: {}", err);
-                return;
+                return None;
             }
         };
         if let Some(dock_state) = &mut self.dock_state {
@@ -1527,8 +1545,35 @@ impl VellumGuiApp {
                 Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds);
         }
         layout.touch();
+        Some(layout)
+    }
 
-        if let Err(err) = save_layout(&layout, &self.layout_profile, &self.layout_character) {
+    /// Persist the layout. Serialization happens here on the UI thread (it is
+    /// cheap once debounced); the disk I/O (backup copy + temp write + rename)
+    /// runs on the writer thread. Falls back to a synchronous write when the
+    /// worker is gone (shutdown path).
+    fn save_layout_state(&mut self) {
+        let Some(layout) = self.build_layout_snapshot() else {
+            return;
+        };
+        match &self.layout_save_tx {
+            Some(tx) => {
+                if let Err(send_error) = tx.send(layout) {
+                    Self::write_layout_now(
+                        &send_error.0,
+                        &self.layout_profile,
+                        &self.layout_character,
+                    );
+                }
+            }
+            None => {
+                Self::write_layout_now(&layout, &self.layout_profile, &self.layout_character)
+            }
+        }
+    }
+
+    fn write_layout_now(layout: &GuiLayoutFileV1, profile: &str, character: &str) {
+        if let Err(err) = save_layout(layout, profile, character) {
             tracing::warn!("Failed to save GUI layout: {}", err);
         }
     }
@@ -3961,8 +4006,14 @@ impl eframe::App for VellumGuiApp {
     }
 
     fn on_exit(&mut self) {
-        // Flush any debounced layout changes while the app is still intact,
-        // rather than during Drop teardown.
+        // Stop the async writer first (drop the sender, drain the queue) so
+        // the final synchronous save below can never interleave with a
+        // queued write.
+        self.layout_save_tx = None;
+        if let Some(worker) = self.layout_save_worker.take() {
+            let _ = worker.join();
+        }
+        // Flush any debounced layout changes while the app is still intact.
         self.save_layout_state();
     }
 }
