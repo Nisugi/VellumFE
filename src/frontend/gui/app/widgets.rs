@@ -496,6 +496,28 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
+        // Matches the TUI dashboard default of hiding inactive indicators.
+        let active: Vec<&(String, u8)> = indicators
+            .iter()
+            .filter(|(_, value)| *value > 0)
+            .collect();
+        if active.is_empty() {
+            ui.weak("No active status.");
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (id, value) in active {
+                let color = match value {
+                    1 => Color32::from_rgb(0x55, 0xb8, 0x6c),
+                    2 => Color32::from_rgb(0xff, 0x88, 0x00),
+                    _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                };
+                ui.label(RichText::new(id).color(color).strong());
+            }
+        });
+    }
+
     pub(super) fn render_room_entities(ui: &mut egui::Ui, label: &str, values: &[String]) {
         if values.is_empty() {
             return;
@@ -859,6 +881,10 @@ impl VellumGuiApp {
             }
             WindowContent::InjuryDoll(doll) => {
                 Self::render_injury_doll_grid(ui, &doll.injuries);
+                None
+            }
+            WindowContent::Dashboard { indicators } => {
+                Self::render_dashboard_content(ui, indicators);
                 None
             }
             _ => {
