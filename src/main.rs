@@ -79,10 +79,6 @@ struct Cli {
     #[arg(long, value_enum, requires = "direct")]
     game: Option<DirectGameArg>,
 
-    /// Enable clickable links in the interface
-    #[arg(long)]
-    links: bool,
-
     /// Disable sound system entirely (skip audio device initialization)
     #[arg(long)]
     nosound: bool,
@@ -308,9 +304,6 @@ fn main() -> Result<()> {
     if let Some(mode) = cli.color_mode {
         config.ui.color_mode = mode;
     }
-    // Note: --links flag is reserved for future clickable links feature
-    // Currently no-op but prevents argument errors
-    let _links_enabled = cli.links;
     // Store setup_palette flag for frontend to use after initialization
     let setup_palette = cli.setup_palette;
 
