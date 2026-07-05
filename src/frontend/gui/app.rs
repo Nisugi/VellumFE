@@ -15,7 +15,7 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, DockState, Surface, SurfaceIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
@@ -26,6 +26,9 @@ const MIN_VISIBLE_VIEWPORT_PX: f32 = 48.0;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
 const MIN_DOCKED_WINDOW_HEIGHT: f32 = 24.0;
+/// Idle delay before a dirty layout is flushed to disk. Saves are blocking
+/// on the UI thread, so writes must not happen per interaction.
+const LAYOUT_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 struct GuiTab {
@@ -282,6 +285,7 @@ pub struct VellumGuiApp {
     layout_profile: String,
     layout_character: String,
     layout_dirty: bool,
+    layout_dirty_since: Option<Instant>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -425,6 +429,7 @@ impl VellumGuiApp {
             layout_profile,
             layout_character,
             layout_dirty: false,
+            layout_dirty_since: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -3574,7 +3579,6 @@ impl eframe::App for VellumGuiApp {
         let mut zone_actions = GuiWindowActions::default();
         let mut closed_tabs = Vec::new();
         let mut detached_link_clicks = Vec::new();
-        let mut command_input_sent = false;
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
 
@@ -3739,7 +3743,6 @@ impl eframe::App for VellumGuiApp {
             let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if response.lost_focus() && pressed_enter {
                 self.submit_command();
-                command_input_sent = true;
                 response.request_focus();
             }
         });
@@ -3993,13 +3996,18 @@ impl eframe::App for VellumGuiApp {
         }
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
-        if ctx.input(|i| i.pointer.any_released()) || command_input_sent {
-            self.layout_dirty = true;
-        }
-
+        // Layout mutations mark `layout_dirty` at their call sites; debounce the
+        // blocking disk write until the layout has been stable for a while. Any
+        // still-pending save is flushed on shutdown.
         if self.layout_dirty {
-            self.save_layout_state();
             self.layout_dirty = false;
+            self.layout_dirty_since = Some(Instant::now());
+        }
+        if let Some(dirty_since) = self.layout_dirty_since {
+            if dirty_since.elapsed() >= LAYOUT_SAVE_DEBOUNCE {
+                self.save_layout_state();
+                self.layout_dirty_since = None;
+            }
         }
 
         ctx.request_repaint_after(Duration::from_millis(16));
