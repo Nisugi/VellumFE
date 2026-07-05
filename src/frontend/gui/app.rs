@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod theme;
 mod widgets;
 
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
@@ -279,6 +280,8 @@ pub struct VellumGuiApp {
     layout_character: String,
     layout_dirty: bool,
     layout_dirty_since: Option<Instant>,
+    applied_theme_id: Option<String>,
+    current_theme: crate::theme::AppTheme,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -423,6 +426,8 @@ impl VellumGuiApp {
             layout_character,
             layout_dirty: false,
             layout_dirty_since: None,
+            applied_theme_id: None,
+            current_theme: crate::theme::AppTheme::default(),
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1847,7 +1852,14 @@ impl VellumGuiApp {
 
         match self.app_core.send_command(command) {
             Ok(outbound) => {
-                if Self::should_send_to_network(&outbound) {
+                if outbound.starts_with("action:") {
+                    if !self.handle_action_string(&outbound) {
+                        self.app_core.add_system_message(&format!(
+                            "GUI action not implemented yet: {}",
+                            outbound
+                        ));
+                    }
+                } else if Self::should_send_to_network(&outbound) {
                     self.app_core
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
@@ -1863,6 +1875,21 @@ impl VellumGuiApp {
         if !self.app_core.running {
             self.close_requested = true;
         }
+    }
+
+    /// Dispatch an `action:*` string from a dot-command or menu item.
+    /// Returns false when the action has no GUI handler yet.
+    fn handle_action_string(&mut self, action: &str) -> bool {
+        if action == "action:windows" || action == "action:listwindows" {
+            let _ = self.app_core.send_command(".windows".to_string());
+            return true;
+        }
+        if let Some(name) = action.strip_prefix("action:settheme:") {
+            let name = name.to_string();
+            self.apply_theme_by_name(&name);
+            return true;
+        }
+        false
     }
 
     fn should_send_to_network(command: &str) -> bool {
@@ -2173,16 +2200,11 @@ impl VellumGuiApp {
             return;
         }
 
-        if command == "action:windows" || command == "action:listwindows" {
-            let _ = self.app_core.send_command(".windows".to_string());
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
-            return;
-        }
-
         if command.starts_with("action:") {
-            self.app_core
-                .add_system_message(&format!("GUI action not implemented yet: {}", command));
+            if !self.handle_action_string(&command) {
+                self.app_core
+                    .add_system_message(&format!("GUI action not implemented yet: {}", command));
+            }
             self.close_all_popup_menus();
             self.app_core.ui_state.input_mode = InputMode::Normal;
             return;
@@ -2877,6 +2899,7 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
+        self.apply_theme_if_changed(&ctx);
         self.pump_server_messages();
         self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();
@@ -2916,9 +2939,11 @@ impl eframe::App for VellumGuiApp {
                 ui.horizontal(|ui| {
                     ui.heading("VellumFE GUI");
                     let connection_text = if self.app_core.game_state.connected {
-                        RichText::new("Connected").color(Color32::from_rgb(0x3a, 0xc5, 0x6d))
+                        RichText::new("Connected")
+                            .color(theme::color32(self.current_theme.status_success))
                     } else {
-                        RichText::new("Disconnected").color(Color32::from_rgb(0xd9, 0x55, 0x55))
+                        RichText::new("Disconnected")
+                            .color(theme::color32(self.current_theme.status_error))
                     };
                     ui.separator();
                     ui.label(connection_text);

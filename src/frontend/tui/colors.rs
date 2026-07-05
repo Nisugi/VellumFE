@@ -1,4 +1,5 @@
 use crate::config::ColorMode;
+use crate::frontend::common::color::parse_color_flexible;
 use anyhow::Result;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -337,105 +338,6 @@ pub(crate) fn normalize_color(opt: &Option<String>) -> Option<String> {
             parse_color_flexible(trimmed).or_else(|| Some(trimmed.to_string()))
         }
     })
-}
-
-/// Parse a color string that can be:
-/// - A hex code: "#RRGGBB" or "RRGGBB"
-/// - A standard color name: "red", "blue", "green", etc.
-/// Returns the color as a hex string if successful
-pub fn parse_color_flexible(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed == "-" {
-        return None;
-    }
-
-    // Try hex code first
-    let hex_input = trimmed.trim_start_matches('#');
-    if hex_input.len() == 6 && hex_input.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Some(format!("#{}", hex_input.to_lowercase()));
-    }
-
-    // Try standard color names (case-insensitive)
-    let color_lower = trimmed.to_lowercase();
-    let rgb = match color_lower.as_str() {
-        // Basic ANSI colors
-        "black" => Some((0, 0, 0)),
-        "red" => Some((205, 0, 0)),
-        "green" => Some((0, 205, 0)),
-        "yellow" => Some((205, 205, 0)),
-        "blue" => Some((0, 0, 205)),
-        "magenta" | "purple" => Some((205, 0, 205)),
-        "cyan" => Some((0, 205, 205)),
-        "gray" | "grey" => Some((192, 192, 192)),
-        "white" => Some((255, 255, 255)),
-
-        // Light variants
-        "darkgray" | "darkgrey" | "dark_gray" | "dark_grey" => Some((128, 128, 128)),
-        "lightred" | "light_red" => Some((255, 102, 102)),
-        "lightgreen" | "light_green" | "lime" => Some((144, 238, 144)),
-        "lightyellow" | "light_yellow" => Some((255, 255, 102)),
-        "lightblue" | "light_blue" => Some((173, 216, 230)),
-        "lightmagenta" | "light_magenta" | "pink" => Some((255, 119, 255)),
-        "lightcyan" | "light_cyan" => Some((224, 255, 255)),
-
-        // Extended web colors
-        "orange" => Some((255, 165, 0)),
-        "brown" => Some((165, 42, 42)),
-        "maroon" => Some((128, 0, 0)),
-        "olive" => Some((128, 128, 0)),
-        "navy" => Some((0, 0, 128)),
-        "teal" => Some((0, 128, 128)),
-        "aqua" => Some((0, 255, 255)),
-        "fuchsia" => Some((255, 0, 255)),
-        "silver" => Some((192, 192, 192)),
-        "gold" => Some((255, 215, 0)),
-        "coral" => Some((255, 127, 80)),
-        "salmon" => Some((250, 128, 114)),
-        "violet" => Some((238, 130, 238)),
-        "indigo" => Some((75, 0, 130)),
-        "crimson" => Some((220, 20, 60)),
-        "turquoise" => Some((64, 224, 208)),
-        "tan" => Some((210, 180, 140)),
-        "khaki" => Some((240, 230, 140)),
-        "beige" => Some((245, 245, 220)),
-        "ivory" => Some((255, 255, 240)),
-        "azure" => Some((240, 255, 255)),
-        "lavender" => Some((230, 230, 250)),
-        "plum" => Some((221, 160, 221)),
-        "orchid" => Some((218, 112, 214)),
-        "peru" => Some((205, 133, 63)),
-        "sienna" => Some((160, 82, 45)),
-        "chocolate" => Some((210, 105, 30)),
-        "tomato" => Some((255, 99, 71)),
-        "firebrick" => Some((178, 34, 34)),
-        "darkred" | "dark_red" => Some((139, 0, 0)),
-        "darkgreen" | "dark_green" => Some((0, 100, 0)),
-        "darkblue" | "dark_blue" => Some((0, 0, 139)),
-        "darkcyan" | "dark_cyan" => Some((0, 139, 139)),
-        "darkmagenta" | "dark_magenta" => Some((139, 0, 139)),
-        "darkorange" | "dark_orange" => Some((255, 140, 0)),
-        "darkviolet" | "dark_violet" => Some((148, 0, 211)),
-        "deeppink" | "deep_pink" => Some((255, 20, 147)),
-        "deepskyblue" | "deep_sky_blue" => Some((0, 191, 255)),
-        "dodgerblue" | "dodger_blue" => Some((30, 144, 255)),
-        "forestgreen" | "forest_green" => Some((34, 139, 34)),
-        "hotpink" | "hot_pink" => Some((255, 105, 180)),
-        "limegreen" | "lime_green" => Some((50, 205, 50)),
-        "mediumblue" | "medium_blue" => Some((0, 0, 205)),
-        "mediumvioletred" | "medium_violet_red" => Some((199, 21, 133)),
-        "midnightblue" | "midnight_blue" => Some((25, 25, 112)),
-        "royalblue" | "royal_blue" => Some((65, 105, 225)),
-        "seagreen" | "sea_green" => Some((46, 139, 87)),
-        "skyblue" | "sky_blue" => Some((135, 206, 235)),
-        "slateblue" | "slate_blue" => Some((106, 90, 205)),
-        "slategray" | "slate_gray" | "slategrey" | "slate_grey" => Some((112, 128, 144)),
-        "springgreen" | "spring_green" => Some((0, 255, 127)),
-        "steelblue" | "steel_blue" => Some((70, 130, 180)),
-        "yellowgreen" | "yellow_green" => Some((154, 205, 50)),
-        _ => None,
-    };
-
-    rgb.map(|(r, g, b)| format!("#{:02x}{:02x}{:02x}", r, g, b))
 }
 
 /// Parse a color string to ratatui Color
