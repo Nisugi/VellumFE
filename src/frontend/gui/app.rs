@@ -152,26 +152,17 @@ impl ShellLayoutSnapshot {
     }
 }
 
+/// Per-frame interactions collected while rendering zone surfaces.
+/// Window management commands (move/hide/detach/etc.) do not flow through
+/// here; they are applied via `apply_window_menu_command`.
 #[derive(Default)]
 struct GuiWindowActions {
-    hidden_tabs: Vec<TabKey>,
-    detached_tabs: Vec<TabKey>,
-    moved_tabs: Vec<(TabKey, GuiShellZone)>,
-    move_up_in_zone: Vec<(TabKey, GuiShellZone)>,
-    move_down_in_zone: Vec<(TabKey, GuiShellZone)>,
-    toggle_title_tabs: Vec<TabKey>,
     link_clicks: Vec<GuiLinkClick>,
     window_menu_request: Option<GuiWindowMenuRequest>,
 }
 
 impl GuiWindowActions {
     fn merge(&mut self, other: GuiWindowActions) {
-        self.hidden_tabs.extend(other.hidden_tabs);
-        self.detached_tabs.extend(other.detached_tabs);
-        self.moved_tabs.extend(other.moved_tabs);
-        self.move_up_in_zone.extend(other.move_up_in_zone);
-        self.move_down_in_zone.extend(other.move_down_in_zone);
-        self.toggle_title_tabs.extend(other.toggle_title_tabs);
         self.link_clicks.extend(other.link_clicks);
         if let Some(request) = other.window_menu_request {
             self.window_menu_request = Some(request);
@@ -3969,24 +3960,6 @@ impl eframe::App for VellumGuiApp {
         }
         if let Some(drop_result) = zone_drop_result {
             self.apply_zone_drop(drop_result);
-        }
-        for (key, zone) in zone_actions.moved_tabs {
-            self.set_tab_zone(key, zone);
-        }
-        for (key, zone) in zone_actions.move_up_in_zone {
-            self.move_tab_within_zone(&key, zone, true);
-        }
-        for (key, zone) in zone_actions.move_down_in_zone {
-            self.move_tab_within_zone(&key, zone, false);
-        }
-        for key in zone_actions.toggle_title_tabs {
-            self.toggle_title_bar(key);
-        }
-        for key in zone_actions.hidden_tabs {
-            self.hide_tab(key);
-        }
-        for key in zone_actions.detached_tabs {
-            self.detach_tab(key);
         }
         if let Some(request) = zone_actions.window_menu_request {
             self.close_all_popup_menus();
