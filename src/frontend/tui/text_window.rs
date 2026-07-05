@@ -232,10 +232,10 @@ impl TextWindow {
         self.content_align = align;
     }
 
-    /// Update the window title
+    /// Update the window title. The title renders in the border and does not
+    /// affect the inner wrap width, so no rewrap is needed.
     pub fn set_title(&mut self, title: String) {
         self.title = title;
-        self.needs_rewrap = true;
     }
 
     pub fn set_title_position(&mut self, position: TitlePosition) {
