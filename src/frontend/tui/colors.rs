@@ -8,12 +8,26 @@ thread_local! {
     static GLOBAL_COLOR_MODE: Cell<ColorMode> = const { Cell::new(ColorMode::Direct) };
     // Palette lookup: hex color (lowercase, with #) → slot number
     static PALETTE_LOOKUP: RefCell<HashMap<String, u8>> = RefCell::new(HashMap::new());
+    // Memoized parse_color_to_ratatui results. Widget renderers call it per
+    // segment per frame with a bounded set of config-sourced color strings.
+    // Cleared whenever the mode or palette changes (both alter the mapping).
+    static COLOR_PARSE_CACHE: RefCell<HashMap<String, Option<ratatui::style::Color>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Leak backstop for the parse cache; config colors are a bounded set,
+/// so hitting this indicates pathological input (e.g. per-line unique colors)
+const COLOR_PARSE_CACHE_MAX: usize = 4096;
+
+fn clear_color_parse_cache() {
+    COLOR_PARSE_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 /// Set the global color mode for all color parsing
 /// Call this once at frontend startup with the config value
 pub fn set_global_color_mode(mode: ColorMode) {
     GLOBAL_COLOR_MODE.with(|m| m.set(mode));
+    clear_color_parse_cache();
     tracing::info!("Global color mode set to {:?}", mode);
 }
 
@@ -27,6 +41,8 @@ pub fn get_global_color_mode() -> ColorMode {
 /// This builds a HashMap from hex color → slot number for all palette colors
 /// that have a slot assignment. Call this once at startup when color_mode is Slot.
 pub fn init_palette_lookup(palette: &[crate::config::PaletteColor]) {
+    // Palette changes alter hex->slot resolution; cached parses are stale
+    clear_color_parse_cache();
     PALETTE_LOOKUP.with(|lookup| {
         let mut map = lookup.borrow_mut();
         map.clear();
@@ -425,8 +441,21 @@ pub fn parse_color_flexible(input: &str) -> Option<String> {
 /// Supports hex codes and standard color names
 /// Respects the global color mode setting
 pub fn parse_color_to_ratatui(input: &str) -> Option<ratatui::style::Color> {
-    // parse_hex_color now respects global color mode automatically
-    parse_color_flexible(input).and_then(|hex| parse_hex_color(&hex).ok())
+    // Memoized: renderers call this per segment per frame with a bounded set
+    // of config colors. None results are cached too (misses repeat as often).
+    if let Some(cached) = COLOR_PARSE_CACHE.with(|cache| cache.borrow().get(input).copied()) {
+        return cached;
+    }
+    // parse_hex_color respects the global color mode automatically
+    let parsed = parse_color_flexible(input).and_then(|hex| parse_hex_color(&hex).ok());
+    COLOR_PARSE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= COLOR_PARSE_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(input.to_string(), parsed);
+    });
+    parsed
 }
 
 /// Parse a color string to ratatui Color with color mode awareness
@@ -551,5 +580,24 @@ mod tests {
 
         let color = parse_color_to_ratatui("#ff0000");
         assert!(color.is_some());
+    }
+
+    #[test]
+    fn parse_color_cache_invalidated_by_mode_change() {
+        // thread_local state - force a known starting mode
+        set_global_color_mode(ColorMode::Direct);
+        let direct = parse_color_to_ratatui("#ff8040");
+        assert!(matches!(direct, Some(ratatui::style::Color::Rgb(0xff, 0x80, 0x40))));
+
+        // Same input parsed again from cache must still be Rgb
+        assert_eq!(parse_color_to_ratatui("#ff8040"), direct);
+
+        // Mode switch clears the cache: same input now resolves to Indexed
+        set_global_color_mode(ColorMode::Indexed);
+        let indexed = parse_color_to_ratatui("#ff8040");
+        assert!(matches!(indexed, Some(ratatui::style::Color::Indexed(_))));
+
+        // Restore for other tests on this thread
+        set_global_color_mode(ColorMode::Direct);
     }
 }
