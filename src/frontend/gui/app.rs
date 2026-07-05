@@ -4471,13 +4471,25 @@ mod tests {
             },
         ];
 
+        // x=130 is left of Room's center (170) but right of Compass's (50):
+        // insert before Room. A y-axis mixup would return None (y=30 is at
+        // both windows' center line), so this pins the axis choice too.
         let before = VellumGuiApp::zone_drop_insert_before(
+            super::GuiShellZone::Header,
+            Pos2::new(130.0, 30.0),
+            &window_rects,
+            &TabKey::TextMain,
+        );
+        assert_eq!(before, Some(TabKey::Room));
+
+        // Past the last window's center: append at end (None).
+        let after_last = VellumGuiApp::zone_drop_insert_before(
             super::GuiShellZone::Header,
             Pos2::new(180.0, 30.0),
             &window_rects,
             &TabKey::TextMain,
         );
-        assert_eq!(before, Some(TabKey::Room));
+        assert_eq!(after_last, None);
     }
 
     #[test]
@@ -4495,13 +4507,25 @@ mod tests {
             },
         ];
 
+        // y=100 is above Players' center (190) but below Targets' (60):
+        // insert before Players. An x-axis mixup would return Some(Targets)
+        // (x=80 is left of both centers), so this pins the axis choice too.
         let before = VellumGuiApp::zone_drop_insert_before(
+            super::GuiShellZone::LeftSidebar,
+            Pos2::new(80.0, 100.0),
+            &window_rects,
+            &TabKey::TextMain,
+        );
+        assert_eq!(before, Some(TabKey::Players));
+
+        // Past the last window's center: append at end (None).
+        let after_last = VellumGuiApp::zone_drop_insert_before(
             super::GuiShellZone::LeftSidebar,
             Pos2::new(80.0, 210.0),
             &window_rects,
             &TabKey::TextMain,
         );
-        assert_eq!(before, Some(TabKey::Players));
+        assert_eq!(after_last, None);
     }
 
     #[test]
