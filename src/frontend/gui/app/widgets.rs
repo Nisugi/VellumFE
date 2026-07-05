@@ -261,6 +261,31 @@ impl VellumGuiApp {
         );
     }
 
+    pub(super) fn render_indicator_content(
+        ui: &mut egui::Ui,
+        label: &str,
+        indicator: &crate::data::IndicatorData,
+    ) {
+        let text = if label.is_empty() {
+            &indicator.indicator_id
+        } else {
+            label
+        };
+        // TUI defaults: #00ff00 when active, #555555 when off.
+        let color = if indicator.active {
+            indicator
+                .color
+                .as_deref()
+                .and_then(parse_hex_color)
+                .unwrap_or(Color32::from_rgb(0x00, 0xff, 0x00))
+        } else {
+            Color32::from_rgb(0x55, 0x55, 0x55)
+        };
+        ui.centered_and_justified(|ui| {
+            ui.label(RichText::new(text).color(color).strong());
+        });
+    }
+
     pub(super) fn render_compass_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -726,6 +751,10 @@ impl VellumGuiApp {
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {
                 Self::render_countdown_content(app_core, ui, countdown);
+                None
+            }
+            WindowContent::Indicator(indicator) => {
+                Self::render_indicator_content(ui, &tab.id.title, indicator);
                 None
             }
             _ => {
