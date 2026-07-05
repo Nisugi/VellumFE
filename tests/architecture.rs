@@ -43,3 +43,23 @@ fn core_and_data_do_not_reference_frontend() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn config_root_stays_a_facade() {
+    // config.rs was split into focused submodules (templates, widgets,
+    // window_def, settings, layout, colors, paths, io). The root should
+    // hold only the Config struct, shared glue (embedded defaults, serde
+    // default fns, small enums), and the explicit pub use facade. If this
+    // fails, put new code in the matching src/config/ submodule instead.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/config.rs");
+    let lines = fs::read_to_string(&root)
+        .unwrap_or_else(|e| panic!("read {}: {}", root.display(), e))
+        .lines()
+        .count();
+    const MAX_CONFIG_ROOT_LINES: usize = 700;
+    assert!(
+        lines <= MAX_CONFIG_ROOT_LINES,
+        "src/config.rs has {lines} lines (limit {MAX_CONFIG_ROOT_LINES}). \
+         Move new types/impls into the appropriate src/config/ submodule."
+    );
+}
