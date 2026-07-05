@@ -288,6 +288,7 @@ pub struct VellumGuiApp {
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
+    colors_editor: Option<editors::ColorsEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -454,6 +455,7 @@ impl VellumGuiApp {
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
+            colors_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1957,6 +1959,26 @@ impl VellumGuiApp {
         if action == "action:addkeybind" {
             self.open_keybind_editor();
             self.open_keybind_form_new();
+            return true;
+        }
+        if action == "action:colors" {
+            self.open_colors_editor();
+            return true;
+        }
+        if action == "action:addcolor" {
+            self.open_palette_form_new();
+            return true;
+        }
+        if action == "action:uicolors" {
+            self.open_ui_colors_editor();
+            return true;
+        }
+        if action == "action:spellcolors" {
+            self.open_spell_colors_editor();
+            return true;
+        }
+        if action == "action:addspellcolor" {
+            self.open_spell_form_new();
             return true;
         }
         false

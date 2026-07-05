@@ -2,10 +2,12 @@
 //! colors). Editors are egui windows that buffer edits and apply them through
 //! the shared core config layer, so both frontends stay in sync.
 
+mod colors;
 mod highlights;
 mod keybinds;
 mod settings;
 
+pub(super) use colors::ColorsEditorState;
 pub(super) use highlights::HighlightEditorState;
 pub(super) use keybinds::KeybindEditorState;
 pub(super) use settings::SettingsEditorState;
@@ -18,5 +20,6 @@ impl VellumGuiApp {
         self.render_settings_editor(ctx);
         self.render_highlight_editor(ctx);
         self.render_keybind_editor(ctx);
+        self.render_colors_editor(ctx);
     }
 }
