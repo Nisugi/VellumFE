@@ -3,9 +3,11 @@
 //! the shared core config layer, so both frontends stay in sync.
 
 mod highlights;
+mod keybinds;
 mod settings;
 
 pub(super) use highlights::HighlightEditorState;
+pub(super) use keybinds::KeybindEditorState;
 pub(super) use settings::SettingsEditorState;
 
 use super::VellumGuiApp;
@@ -15,5 +17,6 @@ impl VellumGuiApp {
     pub(super) fn render_editors(&mut self, ctx: &eframe::egui::Context) {
         self.render_settings_editor(ctx);
         self.render_highlight_editor(ctx);
+        self.render_keybind_editor(ctx);
     }
 }

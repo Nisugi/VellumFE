@@ -287,6 +287,7 @@ pub struct VellumGuiApp {
     fonts_applied: bool,
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
+    keybind_editor: Option<editors::KeybindEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -452,6 +453,7 @@ impl VellumGuiApp {
             fonts_applied: false,
             settings_editor: None,
             highlight_editor: None,
+            keybind_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1946,6 +1948,15 @@ impl VellumGuiApp {
             } else {
                 self.open_highlight_editor(Some(&name));
             }
+            return true;
+        }
+        if action == "action:keybinds" {
+            self.open_keybind_editor();
+            return true;
+        }
+        if action == "action:addkeybind" {
+            self.open_keybind_editor();
+            self.open_keybind_form_new();
             return true;
         }
         false
