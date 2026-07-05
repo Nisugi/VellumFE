@@ -1926,6 +1926,44 @@ impl VellumGuiApp {
         }
     }
 
+    /// Add a window from a layout template (menu `__ADD__<template>` path).
+    /// The new window is picked up as a dock tab on the next frame by
+    /// refresh_available_tabs_if_needed.
+    fn add_window_from_template(&mut self, template: &str) {
+        match self.app_core.layout.add_window(template) {
+            Ok(_) => {
+                // Templates with auto-generated names (spacers, custom tabbed
+                // windows) end up as the last layout entry.
+                let window_def = self
+                    .app_core
+                    .layout
+                    .get_window(template)
+                    .cloned()
+                    .or_else(|| self.app_core.layout.windows.last().cloned());
+                if let Some(window_def) = window_def {
+                    let actual_name = window_def.name().to_string();
+                    self.app_core.add_new_window(
+                        &window_def,
+                        INITIAL_LAYOUT_WIDTH,
+                        INITIAL_LAYOUT_HEIGHT,
+                    );
+                    self.app_core.layout_modified_since_save = true;
+                    self.app_core
+                        .add_system_message(&format!("Window '{}' added.", actual_name));
+                } else {
+                    self.app_core.add_system_message(&format!(
+                        "Window '{}' added but its definition could not be retrieved.",
+                        template
+                    ));
+                }
+            }
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Failed to add window: {}", err));
+            }
+        }
+    }
+
     fn switch_tabbed_tab(&mut self, window_name: &str, index: usize) {
         if let Some(window) = self.app_core.ui_state.windows.get_mut(window_name) {
             if let WindowContent::TabbedText(tabbed) = &mut window.content {
@@ -2093,6 +2131,18 @@ impl VellumGuiApp {
             self.app_core.add_system_message(
                 "Terminal palette commands do not apply to the GUI; use .themes instead.",
             );
+            return true;
+        }
+        if action == "action:addwindow" {
+            let items = self.app_core.build_add_window_menu();
+            if items.is_empty() {
+                self.app_core
+                    .add_system_message("No window templates available to add.");
+            } else {
+                self.close_all_popup_menus();
+                self.app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (8, 4)));
+                self.app_core.ui_state.input_mode = InputMode::Menu;
+            }
             return true;
         }
         false
@@ -2425,6 +2475,60 @@ impl VellumGuiApp {
 
         if command == "__INDICATOR_EDITOR" {
             self.open_indicator_templates_editor();
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            return;
+        }
+
+        if let Some(category_str) = command.strip_prefix("__SUBMENU_ADD__") {
+            match crate::config::WidgetCategory::from_name(category_str) {
+                Some(category) => {
+                    let items = self.app_core.build_add_window_category_menu(&category);
+                    if items.is_empty() {
+                        self.app_core
+                            .add_system_message("No windows available in that category.");
+                    } else {
+                        self.open_child_menu_for_layer(menu_command.layer, items);
+                    }
+                }
+                None => {
+                    tracing::warn!("Unknown widget category in menu command: {}", category_str);
+                }
+            }
+            return;
+        }
+
+        if command == "__SUBMENU_INDICATORS" {
+            let templates = crate::config::Config::get_addable_templates_by_category(
+                &self.app_core.layout,
+                self.app_core.game_type(),
+            )
+            .get(&crate::config::WidgetCategory::Status)
+            .cloned()
+            .unwrap_or_default();
+            let items = self.app_core.build_indicator_add_menu(&templates);
+            if items.is_empty() {
+                self.app_core
+                    .add_system_message("No indicator templates available.");
+            } else {
+                self.open_child_menu_for_layer(menu_command.layer, items);
+            }
+            return;
+        }
+
+        if let Some(template) = command.strip_prefix("__ADD__") {
+            let template = template.to_string();
+            self.add_window_from_template(&template);
+            self.close_all_popup_menus();
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            return;
+        }
+
+        if command.strip_prefix("__ADD_CUSTOM__").is_some() {
+            self.app_core.add_system_message(
+                "Custom blank windows are not supported in the GUI yet; \
+                 use .addwindow <name> <type> <x> <y> <width> [height].",
+            );
             self.close_all_popup_menus();
             self.app_core.ui_state.input_mode = InputMode::Normal;
             return;

@@ -96,6 +96,22 @@ impl WidgetCategory {
         }
     }
 
+    /// Parse a category from its variant name (the Debug form used in
+    /// `__SUBMENU_ADD__*` menu commands).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "ActiveEffects" => Some(Self::ActiveEffects),
+            "Countdown" => Some(Self::Countdown),
+            "Entity" => Some(Self::Entity),
+            "Hand" => Some(Self::Hand),
+            "Other" => Some(Self::Other),
+            "ProgressBar" => Some(Self::ProgressBar),
+            "Status" => Some(Self::Status),
+            "TextWindow" => Some(Self::TextWindow),
+            _ => None,
+        }
+    }
+
     pub fn from_widget_type(widget_type: &str) -> Self {
         match widget_type {
             "countdown" => Self::Countdown,
