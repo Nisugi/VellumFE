@@ -1986,9 +1986,15 @@ impl VellumGuiApp {
             return;
         }
 
-        // Count matching lines across visible text windows (read-only pass
-        // before the window closure takes mutable borrows).
-        let query = self.app_core.ui_state.search_input.trim().to_lowercase();
+        // Count matching lines across visible text content, including the
+        // active tab of tabbed windows (read-only pass before the window
+        // closure takes mutable borrows).
+        let query = self
+            .app_core
+            .ui_state
+            .search_input
+            .trim()
+            .to_ascii_lowercase();
         let match_count = if query.is_empty() {
             0
         } else {
@@ -2000,13 +2006,17 @@ impl VellumGuiApp {
                     WindowContent::Text(content)
                     | WindowContent::Inventory(content)
                     | WindowContent::Spells(content) => Some(content),
+                    WindowContent::TabbedText(tabbed) => tabbed
+                        .tabs
+                        .get(tabbed.active_tab_index)
+                        .map(|tab| &tab.content),
                     _ => None,
                 })
                 .flat_map(|content| content.lines.iter())
                 .filter(|line| {
                     line.segments
                         .iter()
-                        .any(|segment| segment.text.to_lowercase().contains(&query))
+                        .any(|segment| segment.text.to_ascii_lowercase().contains(&query))
                 })
                 .count()
         };

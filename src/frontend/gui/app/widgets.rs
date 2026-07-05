@@ -12,6 +12,18 @@ impl VellumGuiApp {
         is_link: bool,
         search_match: bool,
     ) -> RichText {
+        Self::styled_rich_text(&segment.text, segment, visuals, is_link, search_match)
+    }
+
+    /// Build rich text with a segment's styling for an arbitrary slice of its
+    /// text (used to highlight exact search-match runs within a segment).
+    fn styled_rich_text(
+        text: &str,
+        segment: &TextSegment,
+        visuals: &egui::Visuals,
+        is_link: bool,
+        search_match: bool,
+    ) -> RichText {
         let foreground = segment
             .fg
             .as_deref()
@@ -33,7 +45,7 @@ impl VellumGuiApp {
                 .unwrap_or(Color32::TRANSPARENT)
         };
 
-        let mut rich = RichText::new(segment.text.as_str())
+        let mut rich = RichText::new(text)
             .size(DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 })
             .color(foreground)
             .background_color(background);
@@ -56,17 +68,43 @@ impl VellumGuiApp {
     /// True when the active search query matches this segment (case-insensitive).
     fn segment_matches_query(segment: &TextSegment, query_lower: Option<&str>) -> bool {
         query_lower
-            .is_some_and(|query| segment.text.to_lowercase().contains(query))
+            .is_some_and(|query| segment.text.to_ascii_lowercase().contains(query))
     }
 
     /// The active in-window search query (lowercased), if searching.
+    /// ASCII lowercasing keeps byte offsets identical to the source text so
+    /// match runs can slice it safely.
     pub(super) fn active_search_query(app_core: &AppCore) -> Option<String> {
         let query = app_core.ui_state.search_input.trim();
         if app_core.ui_state.input_mode == InputMode::Search && !query.is_empty() {
-            Some(query.to_lowercase())
+            Some(query.to_ascii_lowercase())
         } else {
             None
         }
+    }
+
+    /// Split text into (piece, is_match) runs for an ascii-lowercased query.
+    pub(super) fn split_search_runs<'t>(text: &'t str, query_lower: &str) -> Vec<(&'t str, bool)> {
+        let mut runs = Vec::new();
+        if query_lower.is_empty() {
+            runs.push((text, false));
+            return runs;
+        }
+        let lower = text.to_ascii_lowercase();
+        let mut pos = 0;
+        while let Some(found) = lower[pos..].find(query_lower) {
+            let start = pos + found;
+            let end = start + query_lower.len();
+            if start > pos {
+                runs.push((&text[pos..start], false));
+            }
+            runs.push((&text[start..end], true));
+            pos = end;
+        }
+        if pos < text.len() {
+            runs.push((&text[pos..], false));
+        }
+        runs
     }
 
     pub(super) fn render_styled_line(
@@ -90,9 +128,12 @@ impl VellumGuiApp {
 
                     let is_link = Self::segment_has_clickable_link(segment);
                     let search_match = Self::segment_matches_query(segment, search_query);
-                    let rich = Self::segment_to_rich_text(segment, visuals, is_link, search_match);
 
                     if is_link {
+                        // Links stay one clickable widget; highlight the whole
+                        // segment when it matches.
+                        let rich =
+                            Self::segment_to_rich_text(segment, visuals, is_link, search_match);
                         let response = ui
                             .add(egui::Label::new(rich).sense(egui::Sense::click()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -108,8 +149,16 @@ impl VellumGuiApp {
                                 });
                             }
                         }
+                    } else if search_match {
+                        // Highlight only the matched substrings.
+                        let query = search_query.unwrap_or_default();
+                        for (piece, is_match) in Self::split_search_runs(&segment.text, query) {
+                            ui.label(Self::styled_rich_text(
+                                piece, segment, visuals, false, is_match,
+                            ));
+                        }
                     } else {
-                        ui.label(rich);
+                        ui.label(Self::segment_to_rich_text(segment, visuals, false, false));
                     }
                 }
             });
@@ -1451,6 +1500,32 @@ mod tests {
     fn countdown_remaining_applies_server_offset() {
         // Server clock runs 5s ahead of local time.
         assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100), 5);
+    }
+
+    #[test]
+    fn split_search_runs_marks_exact_matches() {
+        let runs = VellumGuiApp::split_search_runs("Some walls, some shelves", "some");
+        assert_eq!(
+            runs,
+            vec![
+                ("Some", true),
+                (" walls, ", false),
+                ("some", true),
+                (" shelves", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_search_runs_no_match_returns_whole_text() {
+        let runs = VellumGuiApp::split_search_runs("nothing here", "xyz");
+        assert_eq!(runs, vec![("nothing here", false)]);
+    }
+
+    #[test]
+    fn split_search_runs_adjacent_matches() {
+        let runs = VellumGuiApp::split_search_runs("aaa", "a");
+        assert_eq!(runs, vec![("a", true), ("a", true), ("a", true)]);
     }
 
     #[test]
