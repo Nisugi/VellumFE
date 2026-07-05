@@ -395,13 +395,15 @@ async fn run_stream(
                     break;
                 }
                 Ok(_) => {
-                    let line = line.trim_end_matches(['\r', '\n']);
+                    let trimmed_len = line.trim_end_matches(['\r', '\n']).len();
+                    line.truncate(trimmed_len);
                     if let Some(logger) = &raw_logger {
-                        logger.log_line(line);
+                        logger.log_line(&line);
                     }
                     // Bounded send: blocks when the UI is behind, which stalls
-                    // the read loop and lets TCP flow control apply backpressure
-                    let _ = server_tx_clone.send(ServerMessage::Text(line.to_string())).await;
+                    // the read loop and lets TCP flow control apply backpressure.
+                    // The read buffer moves into the message; no re-allocation.
+                    let _ = server_tx_clone.send(ServerMessage::Text(line)).await;
                 }
                 Err(e) => {
                     error!("Error reading from server: {}", e);
