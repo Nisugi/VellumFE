@@ -292,6 +292,7 @@ pub struct VellumGuiApp {
     theme_browser: Option<editors::ThemeBrowserState>,
     theme_editor: Option<editors::ThemeEditorState>,
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
+    window_editor: Option<editors::WindowEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -462,6 +463,7 @@ impl VellumGuiApp {
             theme_browser: None,
             theme_editor: None,
             indicator_templates_editor: None,
+            window_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1994,6 +1996,15 @@ impl VellumGuiApp {
         if action == "action:edittheme" {
             let base = self.current_theme.clone();
             self.open_theme_editor(&base);
+            return true;
+        }
+        if let Some(name) = action.strip_prefix("action:editwindow") {
+            let name = name.strip_prefix(':').unwrap_or("").to_string();
+            if name.is_empty() {
+                self.open_window_editor(None);
+            } else {
+                self.open_window_editor(Some(&name));
+            }
             return true;
         }
         false

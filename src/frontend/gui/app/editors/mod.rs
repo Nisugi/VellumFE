@@ -8,6 +8,7 @@ mod indicators;
 mod keybinds;
 mod settings;
 mod themes;
+mod windows;
 
 pub(super) use colors::ColorsEditorState;
 pub(super) use highlights::HighlightEditorState;
@@ -15,6 +16,7 @@ pub(super) use indicators::IndicatorTemplatesEditorState;
 pub(super) use keybinds::KeybindEditorState;
 pub(super) use settings::SettingsEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
+pub(super) use windows::WindowEditorState;
 
 use super::{theme, VellumGuiApp};
 use eframe::egui;
@@ -29,6 +31,7 @@ impl VellumGuiApp {
         self.render_theme_browser(ctx);
         self.render_theme_editor(ctx);
         self.render_indicator_templates_editor(ctx);
+        self.render_window_editor(ctx);
     }
 }
 
