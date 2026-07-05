@@ -3,6 +3,15 @@ use super::performance_stats;
 use super::colors::{blend_colors_hex, color_to_hex_string, normalize_color, parse_hex_color};
 use std::char;
 
+/// Name -> WindowDef lookup for one sync pass. Sync functions previously
+/// linear-scanned layout.windows per window (O(N^2) in window count per
+/// dirty render); each function builds this map once instead.
+fn window_def_map(
+    layout: &crate::config::Layout,
+) -> std::collections::HashMap<&str, &crate::config::WindowDef> {
+    layout.windows.iter().map(|wd| (wd.name(), wd)).collect()
+}
+
 fn decode_icon(icon_str: &str) -> Option<String> {
     let trimmed = icon_str.trim();
     if trimmed.is_empty() {
@@ -31,6 +40,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Resolve "links" preset color for Link spans that don't have a color from the server
         let link_preset_color = app_core
             .config
@@ -44,7 +54,7 @@ impl TuiFrontend {
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Text(text_content) = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create TextWindow for this window
                 let text_window = self.widget_manager.text_windows.entry(name.clone()).or_insert_with(|| {
@@ -205,7 +215,7 @@ impl TuiFrontend {
                 // For now, this is handled by user input events that modify both layers
             } else if let crate::data::WindowContent::Room(_room_content) = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create RoomWindow for this window
                 if !self.widget_manager.room_windows.contains_key(name) {
@@ -251,6 +261,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if !matches!(
                 window.content,
@@ -259,7 +270,7 @@ impl TuiFrontend {
                 continue;
             }
 
-            let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+            let window_def = window_defs.get(name.as_str()).copied();
             let (base_config, cmd_data) = match window_def {
                 Some(crate::config::WindowDef::CommandInput { base, data }) => {
                     (Some(base.clone()), Some(data.clone()))
@@ -348,6 +359,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find inventory windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             // Check for both Inventory and Text content types
@@ -364,7 +376,7 @@ impl TuiFrontend {
 
             if let Some(text_content) = text_content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create InventoryWindow for this window
                 if !self.widget_manager.inventory_windows.contains_key(name) {
@@ -434,6 +446,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find spells windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             // Check for Spells content type
@@ -444,7 +457,7 @@ impl TuiFrontend {
 
             if let Some(text_content) = text_content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create SpellsWindow for this window
                 if !self.widget_manager.spells_windows.contains_key(name) {
@@ -531,11 +544,12 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find progress bar windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Progress(progress_data) = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create ProgressBar for this window
                 if !self.widget_manager.progress_bars.contains_key(name) {
@@ -656,11 +670,12 @@ impl TuiFrontend {
 
     /// Sync countdown data - create/configure countdown widgets
     pub(crate) fn sync_countdowns(&mut self, app_core: &crate::core::AppCore, theme: &crate::theme::AppTheme) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find countdown windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Countdown(countdown_data) = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create Countdown for this window
                 if !self.widget_manager.countdowns.contains_key(name) {
@@ -734,11 +749,12 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find active effects windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::ActiveEffects(effects_content) = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create ActiveEffects for this window
                 if !self.widget_manager.active_effects_windows.contains_key(name) {
@@ -816,6 +832,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find all Spacer windows in the UI state (Empty content + Spacer widget type)
         for (name, window) in &app_core.ui_state.windows {
             if window.widget_type == crate::data::WidgetType::Spacer {
@@ -829,7 +846,7 @@ impl TuiFrontend {
                 if let Some(spacer_widget) = self.widget_manager.spacer_widgets.get_mut(name) {
                     // Apply window configuration from layout
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         spacer_widget.set_background_color(colors.background.clone());
@@ -847,6 +864,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if window.widget_type != crate::data::WidgetType::Quickbar {
                 continue;
@@ -858,7 +876,7 @@ impl TuiFrontend {
             }
 
             if let Some(quickbar_widget) = self.widget_manager.quickbar_widgets.get_mut(name) {
-                let window_def = app_core.layout.windows.iter().find(|w| w.name() == name);
+                let window_def = window_defs.get(name.as_str()).copied();
                 let active_id = app_core
                     .ui_state
                     .active_quickbar_id
@@ -911,6 +929,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find all Indicator windows in the UI state
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Indicator(indicator_data) = &window.content {
@@ -927,7 +946,7 @@ impl TuiFrontend {
 
                     // Apply window configuration from layout
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         indicator_widget.set_border_config(
@@ -979,6 +998,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Targets = &window.content {
                 // Ensure widget exists
@@ -1005,7 +1025,7 @@ impl TuiFrontend {
                     );
 
                     // Get window definition for configuration
-                    let window_def = app_core.layout.windows.iter().find(|w| w.name() == name);
+                    let window_def = window_defs.get(name.as_str()).copied();
 
                     // Get widget width from window definition
                     let widget_width = window_def
@@ -1104,6 +1124,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Resolve "links" preset color, falling back to theme.link_color
         let link_color = app_core
             .config
@@ -1165,7 +1186,7 @@ impl TuiFrontend {
 
                     // Apply configuration
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1205,6 +1226,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if matches!(window.content, crate::data::WindowContent::Players) {
                 // Ensure widget exists
@@ -1226,7 +1248,7 @@ impl TuiFrontend {
 
                     // Apply configuration (borders, colors, title)
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1261,6 +1283,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if matches!(window.content, crate::data::WindowContent::Items) {
                 // Ensure widget exists
@@ -1279,7 +1302,7 @@ impl TuiFrontend {
 
                     // Apply configuration (borders, colors, title)
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1314,6 +1337,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Dashboard { indicators } = &window.content {
                 // Ensure widget exists
@@ -1330,7 +1354,7 @@ impl TuiFrontend {
 
                     // Apply configuration
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1380,6 +1404,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Resolve "links" preset color for Link spans that don't have a color from the server
         let link_preset_color = app_core
             .config
@@ -1393,7 +1418,7 @@ impl TuiFrontend {
         // Note: Highlights are now applied in core (MessageProcessor)
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::TabbedText(tabbed_content) = &window.content {
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Ensure widget exists - create if needed
                 if !self.widget_manager.tabbed_text_windows.contains_key(name) {
@@ -1560,6 +1585,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Compass(compass_data) = &window.content {
                 // Ensure widget exists
@@ -1574,7 +1600,7 @@ impl TuiFrontend {
 
                     // Apply configuration
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1622,6 +1648,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::InjuryDoll(injury_data) = &window.content {
                 // Ensure widget exists
@@ -1639,7 +1666,7 @@ impl TuiFrontend {
 
                     // Apply configuration
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         widget.set_border_config(
@@ -1698,6 +1725,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         use crate::data::WindowContent;
 
         for (name, window) in &app_core.ui_state.windows {
@@ -1705,7 +1733,7 @@ impl TuiFrontend {
                 continue;
             }
 
-            let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+            let window_def = window_defs.get(name.as_str()).copied();
             let (mut base, mut perf_data) = match window_def {
                 Some(crate::config::WindowDef::Performance { base, data }) => (Some(base.clone()), Some(data.clone())),
                 Some(def) => (Some(def.base().clone()), None),
@@ -1778,6 +1806,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find all Hand windows in the UI state
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Hand { item, link } = &window.content {
@@ -1803,7 +1832,7 @@ impl TuiFrontend {
 
                     // Apply window configuration from layout
                     if let Some(window_def) =
-                        app_core.layout.windows.iter().find(|w| w.name() == name)
+                        window_defs.get(name.as_str()).copied()
                     {
                         let colors = resolve_window_colors(window_def.base(), theme);
                         hand_widget.set_border_config(
@@ -2041,6 +2070,7 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         // Find perception windows in ui_state
         for (name, window) in &app_core.ui_state.windows {
             // Check for Perception content type
@@ -2051,7 +2081,7 @@ impl TuiFrontend {
 
             if let Some(perc_data) = perc_data {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get or create PerceptionWindow for this window
                 if !self.widget_manager.perception_windows.contains_key(name) {
@@ -2154,10 +2184,11 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::Experience = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get align config from WindowDef
                 let align = if let Some(crate::config::WindowDef::Experience { data, .. }) =
@@ -2208,10 +2239,11 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in &app_core.ui_state.windows {
             if let crate::data::WindowContent::GS4Experience = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get align config from WindowDef
                 let align = if let Some(crate::config::WindowDef::GS4Experience { data, .. }) =
@@ -2290,10 +2322,11 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in app_core.ui_state.windows.iter() {
             if let crate::data::WindowContent::Encumbrance = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get align, show_label, and color settings from WindowDef
                 let (align, show_label, color_light, color_moderate, color_heavy, color_critical) =
@@ -2389,10 +2422,11 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in app_core.ui_state.windows.iter() {
             if let crate::data::WindowContent::MiniVitals = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get display options, bar colors, and bar order from WindowDef
                 let (numbers_only, current_only, health_color, mana_color, stamina_color, spirit_color, bar_order) =
@@ -2490,10 +2524,11 @@ impl TuiFrontend {
         app_core: &crate::core::AppCore,
         theme: &crate::theme::AppTheme,
     ) {
+        let window_defs = window_def_map(&app_core.layout);
         for (name, window) in app_core.ui_state.windows.iter() {
             if let crate::data::WindowContent::Betrayer = &window.content {
                 // Look up the WindowDef from layout to get config
-                let window_def = app_core.layout.windows.iter().find(|wd| wd.name() == *name);
+                let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get options from WindowDef
                 let (show_items, bar_color) =
