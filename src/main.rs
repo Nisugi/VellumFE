@@ -171,18 +171,18 @@ fn main() -> Result<()> {
     // TUI apps can't log to stdout, so we write to a file in the config directory (~/.vellum-fe/)
     let log_dir = config::Config::base_dir()?;
     std::fs::create_dir_all(&log_dir)?;
-    let log_path = log_dir.join("vellum-fe.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
+    // Non-blocking appender: log writes go to a dedicated thread instead of
+    // doing a syscall on the caller's thread. The guard must stay alive for
+    // the duration of main so buffered lines flush on exit.
+    let file_appender = tracing_appender::rolling::never(&log_dir, "vellum-fe.log");
+    let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_writer(std::sync::Mutex::new(log_file))
+        .with_writer(non_blocking)
         .with_ansi(false) // No color codes in log file
         .init();
 
