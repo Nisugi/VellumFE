@@ -4020,6 +4020,12 @@ impl eframe::App for VellumGuiApp {
 
         ctx.request_repaint_after(Duration::from_millis(16));
     }
+
+    fn on_exit(&mut self) {
+        // Flush any debounced layout changes while the app is still intact,
+        // rather than during Drop teardown.
+        self.save_layout_state();
+    }
 }
 
 impl Drop for VellumGuiApp {
@@ -4027,8 +4033,6 @@ impl Drop for VellumGuiApp {
         if let Some(handle) = self.network_handle.take() {
             handle.abort();
         }
-
-        self.save_layout_state();
     }
 }
 
