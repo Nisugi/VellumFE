@@ -135,8 +135,13 @@ impl VellumGuiApp {
                         let rich =
                             Self::segment_to_rich_text(segment, visuals, is_link, search_match);
                         let response = ui
-                            .add(egui::Label::new(rich).sense(egui::Sense::click()))
+                            .add(egui::Label::new(rich).sense(egui::Sense::click_and_drag()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if let Some(link_data) = &segment.link_data {
+                            if let Some(drop) = Self::handle_link_dnd(ui, &response, link_data) {
+                                clicked_link.get_or_insert(drop);
+                            }
+                        }
                         if response.clicked() && clicked_link.is_none() {
                             if let Some(link_data) = segment.link_data.clone() {
                                 let pointer_pos = response
@@ -546,9 +551,14 @@ impl VellumGuiApp {
                         [text_width, row_height],
                         egui::Label::new(display_text)
                             .truncate()
-                            .sense(egui::Sense::click()),
+                            .sense(egui::Sense::click_and_drag()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
+                // Drag source only: releases over hand windows resolve at the
+                // window level to `left`/`right`, never onto the held item.
+                if Self::link_is_draggable(link_data) && Self::link_drag_modifier_down(ui) {
+                    response.dnd_set_drag_payload(link_data.clone());
+                }
                 if response.clicked() {
                     clicked_link = Some(Self::gui_link_click_from_response(
                         &response,
@@ -727,19 +737,26 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show(ui, |ui| {
                 for object in objects {
+                    let object_link = LinkData {
+                        exist_id: object.id.clone(),
+                        noun: object.noun.clone().unwrap_or_default(),
+                        text: object.name.clone(),
+                        coord: None,
+                    };
                     let response = ui
-                        .add(egui::Label::new(object.name.as_str()).sense(egui::Sense::click()))
+                        .add(
+                            egui::Label::new(object.name.as_str())
+                                .sense(egui::Sense::click_and_drag()),
+                        )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if let Some(drop) = Self::handle_link_dnd(ui, &response, &object_link) {
+                        clicked_link.get_or_insert(drop);
+                    }
                     if response.clicked() && clicked_link.is_none() {
                         clicked_link = Some(Self::gui_link_click_from_response(
                             &response,
                             ui,
-                            LinkData {
-                                exist_id: object.id.clone(),
-                                noun: object.noun.clone().unwrap_or_default(),
-                                text: object.name.clone(),
-                                coord: None,
-                            },
+                            object_link,
                         ));
                     }
                 }
@@ -779,6 +796,57 @@ impl VellumGuiApp {
     /// Sentinel exist_id used to route quickbar switching through the
     /// link-click channel (content renderers only get `&AppCore`).
     pub(super) const QUICKBAR_SWITCH_SENTINEL: &'static str = "_quickbar_switch_";
+
+    /// Sentinel exist_id for an item dropped onto another link;
+    /// noun is "<dragged_exist_id>|<target_exist_id>".
+    pub(super) const LINK_DROP_SENTINEL: &'static str = "_link_drop_";
+
+    /// egui temp-data key holding the configured item-drag modifier.
+    pub(super) fn drag_modifier_data_id() -> egui::Id {
+        egui::Id::new("vellum_drag_modifier")
+    }
+
+    /// True while the configured item-drag modifier (default Ctrl) is held.
+    fn link_drag_modifier_down(ui: &egui::Ui) -> bool {
+        let required: egui::Modifiers = ui
+            .ctx()
+            .data(|data| data.get_temp(Self::drag_modifier_data_id()))
+            .unwrap_or(egui::Modifiers::CTRL);
+        ui.input(|input| input.modifiers.contains(required))
+    }
+
+    /// Only real game entities can be dragged (not command/sentinel links).
+    fn link_is_draggable(link: &LinkData) -> bool {
+        !link.exist_id.trim().is_empty() && !link.exist_id.starts_with('_')
+    }
+
+    /// Shared drag-source + drop-target handling for a link widget.
+    /// Returns a drop event when another item was released onto this link.
+    fn handle_link_dnd(
+        ui: &egui::Ui,
+        response: &egui::Response,
+        link_data: &LinkData,
+    ) -> Option<GuiLinkClick> {
+        if Self::link_is_draggable(link_data) && Self::link_drag_modifier_down(ui) {
+            response.dnd_set_drag_payload(link_data.clone());
+        }
+        if Self::link_is_draggable(link_data) {
+            if let Some(dragged) = response.dnd_release_payload::<LinkData>() {
+                if dragged.exist_id != link_data.exist_id {
+                    return Some(GuiLinkClick {
+                        link_data: LinkData {
+                            exist_id: Self::LINK_DROP_SENTINEL.to_string(),
+                            noun: format!("{}|{}", dragged.exist_id, link_data.exist_id),
+                            text: String::new(),
+                            coord: None,
+                        },
+                        click_pos: (0, 0),
+                    });
+                }
+            }
+        }
+        None
+    }
 
     /// Sentinel exist_id for switching the active tab of a tabbedtext window;
     /// noun is "<window_name>|<tab_index>".

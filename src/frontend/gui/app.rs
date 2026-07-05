@@ -2057,6 +2057,103 @@ impl VellumGuiApp {
         }
     }
 
+    fn drag_modifier_from_config(key: &str) -> egui::Modifiers {
+        match key.trim().to_ascii_lowercase().as_str() {
+            "alt" => egui::Modifiers::ALT,
+            "shift" => egui::Modifiers::SHIFT,
+            _ => egui::Modifiers::CTRL,
+        }
+    }
+
+    /// Item drag-and-drop: floating hint while dragging, and window-level
+    /// drop resolution mirroring the TUI `_drag` protocol. Link-level drop
+    /// targets consume the payload during rendering, so this fallback only
+    /// fires for drops on window bodies or empty space.
+    fn handle_link_drag_drop(
+        &mut self,
+        ctx: &egui::Context,
+        zone_window_rects: &[GuiZoneWindowRect],
+    ) {
+        if !egui::DragAndDrop::has_any_payload(ctx) {
+            return;
+        }
+        let pointer = ctx.input(|input| {
+            input
+                .pointer
+                .interact_pos()
+                .or_else(|| input.pointer.latest_pos())
+        });
+
+        if let (Some(payload), Some(pointer_pos)) =
+            (egui::DragAndDrop::payload::<LinkData>(ctx), pointer)
+        {
+            let name = if payload.text.trim().is_empty() {
+                payload.noun.clone()
+            } else {
+                payload.text.clone()
+            };
+            egui::Area::new(egui::Id::new("gui_link_drag_hint"))
+                .order(egui::Order::Tooltip)
+                .fixed_pos(pointer_pos + Vec2::new(14.0, 14.0))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    ui.label(format!("Dragging: {}", name));
+                });
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+
+        if !ctx.input(|input| input.pointer.any_released()) {
+            return;
+        }
+        let Some(payload) = egui::DragAndDrop::take_payload::<LinkData>(ctx) else {
+            return;
+        };
+        let Some(pointer_pos) = pointer else {
+            return;
+        };
+
+        // Later-rendered windows draw on top; prefer them for the hit test.
+        let mut target: Option<String> = None;
+        for entry in zone_window_rects.iter().rev() {
+            if !entry.rect.contains(pointer_pos) {
+                continue;
+            }
+            let Some(window_name) = self
+                .available_tabs
+                .get(&entry.tab_key)
+                .map(|tab| tab.window_name.clone())
+            else {
+                continue;
+            };
+            let Some(window) = self.app_core.ui_state.windows.get(&window_name) else {
+                continue;
+            };
+            let name_lower = window_name.to_ascii_lowercase();
+            target = Some(match &window.content {
+                WindowContent::Hand { .. } if name_lower.contains("left") => "left".to_string(),
+                WindowContent::Hand { .. } if name_lower.contains("right") => "right".to_string(),
+                WindowContent::Inventory(_) => "wear".to_string(),
+                WindowContent::Container { container_title } => {
+                    match self
+                        .app_core
+                        .game_state
+                        .container_cache
+                        .find_by_title(container_title)
+                    {
+                        Some(container) => format!("#{}", container.id),
+                        None => "drop".to_string(),
+                    }
+                }
+                _ => "drop".to_string(),
+            });
+            break;
+        }
+
+        let target = target.unwrap_or_else(|| "drop".to_string());
+        let command = format!("_drag #{} {}", payload.exist_id, target);
+        self.dispatch_raw_command(command);
+    }
+
     /// Add a window from a layout template (menu `__ADD__<template>` path).
     /// The new window is picked up as a dock tab on the next frame by
     /// refresh_available_tabs_if_needed.
@@ -2355,6 +2452,15 @@ impl VellumGuiApp {
                 if let Ok(index) = index.parse::<usize>() {
                     let window_name = window_name.to_string();
                     self.switch_tabbed_tab(&window_name, index);
+                }
+            }
+            return;
+        }
+        if click.link_data.exist_id == Self::LINK_DROP_SENTINEL {
+            if let Some((dragged, target)) = click.link_data.noun.split_once('|') {
+                if !dragged.is_empty() && !target.is_empty() && dragged != target {
+                    let command = format!("_drag #{} #{}", dragged, target);
+                    self.dispatch_raw_command(command);
                 }
             }
             return;
@@ -3363,6 +3469,13 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
+        // Publish the configured item-drag modifier for link renderers.
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                Self::drag_modifier_data_id(),
+                Self::drag_modifier_from_config(&self.app_core.config.ui.drag_modifier_key),
+            );
+        });
         if !self.fonts_applied {
             self.fonts_applied = true;
             if let Some(fonts) = theme::font_definitions_from_ref(&self.ui_font) {
@@ -3771,6 +3884,7 @@ impl eframe::App for VellumGuiApp {
 
         let zone_drop_result =
             self.render_zone_drop_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
+        self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
         for key in visibility_toggles {
             if self.hidden_tabs.contains(&key) {
