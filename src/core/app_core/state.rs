@@ -998,6 +998,7 @@ impl AppCore {
                 WidgetType::Perception => WindowContent::Perception(PerceptionData {
                     entries: Vec::new(),
                     last_update: 0,
+                    generation: 0,
                 }),
                 WidgetType::Experience => WindowContent::Experience,
                 WidgetType::GS4Experience => WindowContent::GS4Experience,
@@ -1233,6 +1234,7 @@ impl AppCore {
             WidgetType::Perception => WindowContent::Perception(PerceptionData {
                 entries: Vec::new(),
                 last_update: 0,
+                generation: 0,
             }),
             WidgetType::Performance => {
                 if let crate::config::WindowDef::Performance { data, .. } = window_def {
@@ -2395,6 +2397,7 @@ impl AppCore {
             WidgetType::Perception => WindowContent::Perception(PerceptionData {
                 entries: Vec::new(),
                 last_update: 0,
+                generation: 0,
             }),
             WidgetType::CommandInput => WindowContent::CommandInput {
                 text: String::new(),

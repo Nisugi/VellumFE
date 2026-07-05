@@ -517,6 +517,9 @@ pub enum PerceptionFormat {
 pub struct PerceptionData {
     pub entries: Vec<PerceptionEntry>, // Sorted by weight
     pub last_update: i64,              // Unix timestamp
+    /// Bumped on every entries change; sync skips unchanged reprocessing
+    /// (last_update is whole-second and can miss same-second updates)
+    pub generation: u64,
 }
 
 #[cfg(test)]

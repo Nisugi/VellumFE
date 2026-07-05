@@ -448,6 +448,7 @@ impl MessageProcessor {
                         if let WindowContent::Perception(ref mut data) = window.content {
                             data.entries.clear();
                             data.last_update = chrono::Utc::now().timestamp();
+                            data.generation = data.generation.wrapping_add(1);
                         }
                     }
                     tracing::debug!("ClearStream percWindow - cleared buffer and window");
@@ -2926,10 +2927,11 @@ impl MessageProcessor {
         // Update all perception windows
         let mut updated_count = 0;
         for window in ui_state.windows.values_mut() {
-            if matches!(window.content, WindowContent::Perception(_)) {
+            if let WindowContent::Perception(ref old) = window.content {
                 window.content = WindowContent::Perception(PerceptionData {
                     entries: entries.clone(),
                     last_update: chrono::Utc::now().timestamp(),
+                    generation: old.generation.wrapping_add(1),
                 });
                 updated_count += 1;
             }

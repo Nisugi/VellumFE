@@ -2142,6 +2142,18 @@ impl TuiFrontend {
                     tracing::debug!("Created PerceptionWindow widget for '{}'", name);
                 }
 
+                // Entries reprocessing (abbreviations, replacements, sort)
+                // and config application only need to run when the data
+                // generation moved or the config snapshot changed.
+                let last_synced = self
+                    .widget_manager
+                    .last_synced_generation
+                    .get(name)
+                    .copied();
+                if !self.config_sync_needed && last_synced == Some(perc_data.generation) {
+                    continue;
+                }
+
                 // Update configuration and content from WindowDef if present
                 if let Some(perception_window) = self.widget_manager.perception_windows.get_mut(name) {
                     if let Some(def) = window_def {
@@ -2219,6 +2231,10 @@ impl TuiFrontend {
 
                     perception_window.set_entries(processed_entries);
                 }
+
+                self.widget_manager
+                    .last_synced_generation
+                    .insert(name.clone(), perc_data.generation);
             }
         }
     }
