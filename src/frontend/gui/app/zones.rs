@@ -337,7 +337,8 @@ impl VellumGuiApp {
                 ))
             })
             .collect();
-        tabs.sort_by_key(|(y, x, title, _)| (*y, *x, title.clone()));
+        // sort_by_key would clone the title String on every comparison.
+        tabs.sort_by(|a, b| (a.0, a.1, a.2.as_str()).cmp(&(b.0, b.1, b.2.as_str())));
         tabs.into_iter().map(|(_, _, _, tab)| tab).collect()
     }
 
@@ -602,11 +603,8 @@ impl VellumGuiApp {
                 let mut clicked_link = None;
                 let mut resize_delta_y = 0.0f32;
                 let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
-                let window_id = egui::Id::new(format!(
-                    "gui_zone_{}_window_{}",
-                    zone.id_fragment(),
-                    tab.id.key.short_id()
-                ));
+                let window_id =
+                    egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
                 if let Some(inner) = egui::Window::new(tab.id.title.clone())
                     .id(window_id)
                     .fixed_pos(slot_rect.min)
@@ -626,7 +624,7 @@ impl VellumGuiApp {
                     )
                     .constrain_to(root_rect)
                     .show(ctx, |ui| {
-                        ui.push_id(tab.id.key.short_id(), |ui| {
+                        ui.push_id(&tab.id.key, |ui| {
                             let clicked = Self::render_window_content(&self.app_core, ui, &tab);
                             ui.separator();
                             let handle_response = ui.allocate_response(
@@ -775,11 +773,8 @@ impl VellumGuiApp {
                     .hand_resize_tab
                     .as_ref()
                     .is_some_and(|key| key == &tab.id.key);
-            let window_id = egui::Id::new(format!(
-                "gui_zone_{}_window_{}",
-                zone.id_fragment(),
-                tab.id.key.short_id()
-            ));
+            let window_id =
+                egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
             let docked_window_frame = egui::Frame::window(ctx.global_style().as_ref())
                 .outer_margin(egui::Margin::ZERO)
                 .shadow(egui::epaint::Shadow::NONE);
@@ -818,7 +813,7 @@ impl VellumGuiApp {
                 window_builder.default_pos(initial_rect.min)
             };
             if let Some(inner) = window_builder.show(ctx, |ui| {
-                    ui.push_id(tab.id.key.short_id(), |ui| {
+                    ui.push_id(&tab.id.key, |ui| {
                         Self::render_window_content(&self.app_core, ui, &tab)
                     })
                     .inner
