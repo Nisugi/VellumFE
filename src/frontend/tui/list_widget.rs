@@ -411,17 +411,10 @@ impl ListWidget {
                                         wrapped_lines.push(std::mem::take(&mut current_line));
                                         current_width = 0;
                                     }
-                                    Self::append_to_line(
+                                    Self::append_char_to_line(
                                         &mut current_line,
-                                        TextSegment {
-                                            text: word_ch.to_string(),
-                                            fg: word_seg.fg.clone(),
-                                            bg: word_seg.bg.clone(),
-                                            bold: word_seg.bold,
-                                            mono: false,
-                                            span_type: word_seg.span_type,
-                                            link_data: word_seg.link_data.clone(),
-                                        },
+                                        word_ch,
+                                        &word_seg,
                                     );
                                     current_width += 1;
                                 }
@@ -439,34 +432,12 @@ impl ListWidget {
                         // Don't add whitespace at start of new line
                         continue;
                     }
-                    Self::append_to_line(
-                        &mut current_line,
-                        TextSegment {
-                            text: ch.to_string(),
-                            fg: segment.fg.clone(),
-                            bg: segment.bg.clone(),
-                            bold: segment.bold,
-                            mono: false,
-                            span_type: segment.span_type,
-                            link_data: segment.link_data.clone(),
-                        },
-                    );
+                    Self::append_char_to_line(&mut current_line, ch, &segment);
                     current_width += 1;
                 } else {
                     // Non-whitespace character - add to word buffer
                     in_word = true;
-                    Self::append_to_buffer(
-                        &mut word_buffer,
-                        TextSegment {
-                            text: ch.to_string(),
-                            fg: segment.fg.clone(),
-                            bg: segment.bg.clone(),
-                            bold: segment.bold,
-                            mono: false,
-                            span_type: segment.span_type,
-                            link_data: segment.link_data.clone(),
-                        },
-                    );
+                    Self::append_char_to_line(&mut word_buffer, ch, &segment);
                     word_buffer_len += 1;
                 }
             }
@@ -495,18 +466,7 @@ impl ListWidget {
                             wrapped_lines.push(std::mem::take(&mut current_line));
                             current_width = 0;
                         }
-                        Self::append_to_line(
-                            &mut current_line,
-                            TextSegment {
-                                text: word_ch.to_string(),
-                                fg: word_seg.fg.clone(),
-                                bg: word_seg.bg.clone(),
-                                bold: word_seg.bold,
-                                mono: false,
-                                span_type: word_seg.span_type,
-                                link_data: word_seg.link_data.clone(),
-                            },
-                        );
+                        Self::append_char_to_line(&mut current_line, word_ch, &word_seg);
                         current_width += 1;
                     }
                 }
@@ -545,20 +505,30 @@ impl ListWidget {
         line.push(segment);
     }
 
-    /// Helper to append a segment to a buffer, merging with last segment if style matches
-    fn append_to_buffer(buffer: &mut Vec<TextSegment>, segment: TextSegment) {
-        if let Some(last_seg) = buffer.last_mut() {
-            if last_seg.fg == segment.fg
-                && last_seg.bg == segment.bg
-                && last_seg.bold == segment.bold
-                && last_seg.span_type == segment.span_type
-                && last_seg.link_data == segment.link_data
+    /// Append one character, merging with the last segment when its style
+    /// matches `template`. The merge path (overwhelmingly common) performs no
+    /// allocation; only a new segment clones the template's colors and link.
+    fn append_char_to_line(line: &mut Vec<TextSegment>, ch: char, template: &TextSegment) {
+        if let Some(last_seg) = line.last_mut() {
+            if last_seg.fg == template.fg
+                && last_seg.bg == template.bg
+                && last_seg.bold == template.bold
+                && last_seg.span_type == template.span_type
+                && last_seg.link_data == template.link_data
             {
-                last_seg.text.push_str(&segment.text);
+                last_seg.text.push(ch);
                 return;
             }
         }
-        buffer.push(segment);
+        line.push(TextSegment {
+            text: ch.to_string(),
+            fg: template.fg.clone(),
+            bg: template.bg.clone(),
+            bold: template.bold,
+            mono: false,
+            span_type: template.span_type,
+            link_data: template.link_data.clone(),
+        });
     }
 
     /// Parse a hex color string to ratatui Color
