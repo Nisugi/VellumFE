@@ -496,6 +496,55 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    pub(super) fn render_gs4_experience_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let exp = &app_core.game_state.gs4_experience;
+        if exp.level_text.is_empty() && exp.mind_state_text.is_empty() && exp.next_level_text.is_empty() {
+            ui.weak("No experience data yet.");
+            return;
+        }
+
+        if !exp.level_text.is_empty() {
+            ui.label(RichText::new(&exp.level_text).strong());
+        }
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        if !exp.mind_state_text.is_empty() {
+            ui.add_sized(
+                [ui.available_width().max(40.0), bar_height],
+                egui::ProgressBar::new(exp.mind_state_value.min(100) as f32 / 100.0)
+                    .text(format!("Mind: {}", exp.mind_state_text))
+                    .fill(Color32::from_rgb(0x47, 0x84, 0xd9)),
+            );
+        }
+        if !exp.next_level_text.is_empty() {
+            ui.add_sized(
+                [ui.available_width().max(40.0), bar_height],
+                egui::ProgressBar::new(exp.next_level_value.min(100) as f32 / 100.0)
+                    .text(format!("Next: {}", exp.next_level_text))
+                    .fill(Color32::from_rgb(0x55, 0xb8, 0x6c)),
+            );
+        }
+    }
+
+    pub(super) fn render_dr_experience_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let fields = app_core.game_state.dr_experience.fields_with_values();
+        if fields.is_empty() {
+            ui.weak("No experience data yet.");
+            return;
+        }
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("dr_experience_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for (name, value) in fields {
+                    ui.label(RichText::new(format!("{}: {}", name, value)).monospace());
+                }
+            });
+    }
+
     pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
@@ -885,6 +934,14 @@ impl VellumGuiApp {
             }
             WindowContent::Dashboard { indicators } => {
                 Self::render_dashboard_content(ui, indicators);
+                None
+            }
+            WindowContent::GS4Experience => {
+                Self::render_gs4_experience_content(app_core, ui);
+                None
+            }
+            WindowContent::Experience => {
+                Self::render_dr_experience_content(app_core, ui);
                 None
             }
             _ => {
