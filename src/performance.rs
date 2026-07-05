@@ -406,16 +406,20 @@ impl PerformanceStats {
             return;
         }
 
-        // Refresh CPU first so usage values are updated
+        // Refresh global CPU usage plus our own process only - refreshing
+        // ProcessRefreshKind::everything() enumerated every process on the
+        // machine once per second
         self.sysinfo.refresh_specifics(
-            RefreshKind::new()
-                .with_cpu(CpuRefreshKind::everything())
-                .with_processes(ProcessRefreshKind::everything()),
+            RefreshKind::new().with_cpu(CpuRefreshKind::new().with_cpu_usage()),
         );
 
         self.system_cpu_percent = self.sysinfo.global_cpu_info().cpu_usage();
 
         if let Some(pid) = self.sysinfo_pid {
+            self.sysinfo.refresh_process_specifics(
+                pid,
+                ProcessRefreshKind::new().with_cpu().with_memory(),
+            );
             if let Some(proc) = self.sysinfo.process(pid) {
                 self.process_cpu_percent = proc.cpu_usage();
                 self.process_rss_bytes = proc.memory() * 1024; // KiB -> bytes
