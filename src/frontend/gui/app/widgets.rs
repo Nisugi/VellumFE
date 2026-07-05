@@ -10,6 +10,7 @@ impl VellumGuiApp {
         segment: &TextSegment,
         visuals: &egui::Visuals,
         is_link: bool,
+        search_match: bool,
     ) -> RichText {
         let foreground = segment
             .fg
@@ -22,11 +23,15 @@ impl VellumGuiApp {
                     visuals.text_color()
                 }
             });
-        let background = segment
-            .bg
-            .as_deref()
-            .and_then(parse_hex_color)
-            .unwrap_or(Color32::TRANSPARENT);
+        let background = if search_match {
+            visuals.selection.bg_fill
+        } else {
+            segment
+                .bg
+                .as_deref()
+                .and_then(parse_hex_color)
+                .unwrap_or(Color32::TRANSPARENT)
+        };
 
         let mut rich = RichText::new(segment.text.as_str())
             .size(DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 })
@@ -48,10 +53,27 @@ impl VellumGuiApp {
         segment.link_data.is_some()
     }
 
+    /// True when the active search query matches this segment (case-insensitive).
+    fn segment_matches_query(segment: &TextSegment, query_lower: Option<&str>) -> bool {
+        query_lower
+            .is_some_and(|query| segment.text.to_lowercase().contains(query))
+    }
+
+    /// The active in-window search query (lowercased), if searching.
+    pub(super) fn active_search_query(app_core: &AppCore) -> Option<String> {
+        let query = app_core.ui_state.search_input.trim();
+        if app_core.ui_state.input_mode == InputMode::Search && !query.is_empty() {
+            Some(query.to_lowercase())
+        } else {
+            None
+        }
+    }
+
     pub(super) fn render_styled_line(
         ui: &mut egui::Ui,
         line: &StyledLine,
         visuals: &egui::Visuals,
+        search_query: Option<&str>,
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
 
@@ -67,7 +89,8 @@ impl VellumGuiApp {
                     }
 
                     let is_link = Self::segment_has_clickable_link(segment);
-                    let rich = Self::segment_to_rich_text(segment, visuals, is_link);
+                    let search_match = Self::segment_matches_query(segment, search_query);
+                    let rich = Self::segment_to_rich_text(segment, visuals, is_link, search_match);
 
                     if is_link {
                         let response = ui
@@ -1220,6 +1243,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         content: &TextContent,
         scroll_id: &str,
+        search_query: Option<&str>,
     ) -> Option<GuiLinkClick> {
         let visuals = ui.visuals().clone();
         let mut clicked_link = None;
@@ -1234,7 +1258,9 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show(ui, |ui| {
                 for line in content.lines.iter().skip(start) {
-                    if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
+                    if let Some(link) =
+                        Self::render_styled_line(ui, line, &visuals, search_query)
+                    {
                         clicked_link = Some(link);
                     }
                 }
@@ -1258,7 +1284,7 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show(ui, |ui| {
                 for line in lines {
-                    if let Some(link) = Self::render_styled_line(ui, line, &visuals) {
+                    if let Some(link) = Self::render_styled_line(ui, line, &visuals, None) {
                         clicked_link = Some(link);
                     }
                 }
@@ -1281,7 +1307,8 @@ impl VellumGuiApp {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
             | WindowContent::Spells(content) => {
-                Self::render_text_content(ui, content, &tab.window_name)
+                let query = Self::active_search_query(app_core);
+                Self::render_text_content(ui, content, &tab.window_name, query.as_deref())
             }
             WindowContent::Progress(_) | WindowContent::MiniVitals => {
                 Self::render_vitals_content(app_core, ui);
@@ -1302,9 +1329,13 @@ impl VellumGuiApp {
                 let mut clicked_link =
                     Self::render_tabbed_text_tab_strip(ui, &tab.window_name, tabbed);
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
-                    if let Some(link) =
-                        Self::render_text_content(ui, &active.content, &tab.window_name)
-                    {
+                    let query = Self::active_search_query(app_core);
+                    if let Some(link) = Self::render_text_content(
+                        ui,
+                        &active.content,
+                        &tab.window_name,
+                        query.as_deref(),
+                    ) {
                         clicked_link.get_or_insert(link);
                     }
                 } else {

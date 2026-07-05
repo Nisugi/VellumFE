@@ -294,6 +294,7 @@ pub struct VellumGuiApp {
     theme_editor: Option<editors::ThemeEditorState>,
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
+    search_bar_needs_focus: bool,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -465,6 +466,7 @@ impl VellumGuiApp {
             theme_editor: None,
             indicator_templates_editor: None,
             window_editor: None,
+            search_bar_needs_focus: false,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1728,7 +1730,10 @@ impl VellumGuiApp {
     }
 
     fn should_suppress_macro_dispatch(&self) -> bool {
-        self.app_core.ui_state.input_mode == InputMode::KeybindForm
+        matches!(
+            self.app_core.ui_state.input_mode,
+            InputMode::KeybindForm | InputMode::Search
+        )
     }
 
     fn execute_global_dispatch_target(&mut self, target: GlobalDispatchTarget) {
@@ -1769,6 +1774,7 @@ impl VellumGuiApp {
             }
             AppShortcut::StartSearch => {
                 self.app_core.start_search_mode();
+                self.search_bar_needs_focus = true;
             }
             AppShortcut::CloseWindow => self.handle_close_window_shortcut(),
         }
@@ -1924,6 +1930,72 @@ impl VellumGuiApp {
 
         if !self.app_core.running {
             self.close_requested = true;
+        }
+    }
+
+    /// Floating search bar shown while in Search mode (Ctrl+F). Matching
+    /// segments highlight via the theme selection color in text windows.
+    fn render_search_bar(&mut self, ctx: &egui::Context) {
+        if self.app_core.ui_state.input_mode != InputMode::Search {
+            return;
+        }
+
+        // Count matching lines across visible text windows (read-only pass
+        // before the window closure takes mutable borrows).
+        let query = self.app_core.ui_state.search_input.trim().to_lowercase();
+        let match_count = if query.is_empty() {
+            0
+        } else {
+            self.app_core
+                .ui_state
+                .windows
+                .values()
+                .filter_map(|window| match &window.content {
+                    WindowContent::Text(content)
+                    | WindowContent::Inventory(content)
+                    | WindowContent::Spells(content) => Some(content),
+                    _ => None,
+                })
+                .flat_map(|content| content.lines.iter())
+                .filter(|line| {
+                    line.segments
+                        .iter()
+                        .any(|segment| segment.text.to_lowercase().contains(&query))
+                })
+                .count()
+        };
+
+        let mut close = false;
+        egui::Window::new("gui_search_bar")
+            .id(egui::Id::new("gui_search_bar"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 36.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Find:");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.app_core.ui_state.search_input)
+                            .desired_width(200.0),
+                    );
+                    if self.search_bar_needs_focus {
+                        response.request_focus();
+                        self.search_bar_needs_focus = false;
+                    }
+                    if query.is_empty() {
+                        ui.weak("type to highlight matches");
+                    } else {
+                        ui.weak(format!("{} matching lines", match_count));
+                    }
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+
+        if close {
+            self.app_core.clear_search_mode();
         }
     }
 
@@ -3673,6 +3745,7 @@ impl eframe::App for VellumGuiApp {
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);
+        self.render_search_bar(&ctx);
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.
