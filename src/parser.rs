@@ -632,9 +632,7 @@ impl XmlParser {
         } else if tag.starts_with("<compass") {
             self.handle_compass(tag, elements);
         } else if tag.starts_with("<dialogData ") {
-            // Call both handlers to cover all dialogData processing
             self.handle_dialog_data(tag, elements);
-            self.handle_dialogdata(tag, elements);
         } else if tag.starts_with("<openDialog ") {
             self.handle_open_dialog(tag, elements);
         } else if tag.starts_with("<closeDialog ") {
@@ -897,11 +895,102 @@ impl XmlParser {
         // <dialogData id='injuries'><image id='head' name='Injury2' .../></dialogData>
         // <dialogData id='injuries' clear='t'></dialogData>
         // <dialogData id='MiniBounty' clear='t'></dialogData>
+        // <dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100' .../></dialogData>
+        // <dialogData id='encum'>...<label id='encumblurb' value='You are not encumbered...' .../></dialogData>
 
         let tag_head = match tag.find('>') {
             Some(idx) => &tag[..idx],
             None => tag,
         };
+        let specialized = self.handle_dialog_data_specialized(tag, tag_head, elements);
+
+        // Shared extraction below runs for every dialogData exactly once
+        // (previously a second handler re-parsed the same tag, emitting
+        // duplicate ProgressBar elements for e.g. every minivitals update).
+
+        // BetrayerPanel publishes blood points inside a label; emit it as a
+        // ProgressBar so the existing progress plumbing carries it.
+        if tag.contains("id='BetrayerPanel'") || tag.contains("id=\"BetrayerPanel\"") {
+            if let Some(bp_start) = tag.find("Blood Points:") {
+                // Extract the number after "Blood Points: " (skip the colon and space = 14 chars)
+                let after_bp = &tag[bp_start + 14..].trim_start();
+                // Find the end of the number (first non-digit)
+                let num_str = match after_bp.find(|c: char| !c.is_ascii_digit()) {
+                    Some(end) => &after_bp[..end],
+                    None => after_bp,
+                };
+                if let Ok(value) = num_str.parse::<u32>() {
+                    elements.push(ParsedElement::ProgressBar {
+                        id: "lblBPs".to_string(),
+                        value,
+                        max: 100,
+                        text: format!("Blood Points: {}", value),
+                    });
+                }
+            }
+        }
+
+        // Extract progressBar tags (minivitals, expr, encum, stance, effect
+        // durations, ...). Progress windows match on progress_id, so every
+        // bar is forwarded even inside specialized dialogs.
+        if tag.contains("<progressBar ") {
+            let mut remaining = tag;
+            while let Some(pb_start) = remaining.find("<progressBar ") {
+                if let Some(pb_end) = remaining[pb_start..].find("/>") {
+                    let pb_tag = &remaining[pb_start..pb_start + pb_end + 2];
+                    self.handle_progressbar(pb_tag, elements);
+                    remaining = &remaining[pb_start + pb_end + 2..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Extract label elements (encumbrance blurb, experience level, ...)
+        if tag.contains("<label ") {
+            let mut remaining = tag;
+            while let Some(label_start) = remaining.find("<label ") {
+                if let Some(label_end) = remaining[label_start..].find("/>") {
+                    let label_tag = &remaining[label_start..label_start + label_end + 2];
+                    if let Some(id) = Self::extract_attribute(label_tag, "id") {
+                        if let Some(value) = Self::extract_attribute(label_tag, "value") {
+                            elements.push(ParsedElement::Label { id, value });
+                        }
+                    }
+                    remaining = &remaining[label_start + label_end + 2..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Extract dropDownBox tags (combat targets). These only appear in
+        // generic dialogs; specialized dialogs never carried one.
+        // <dialogData id='combat'><dropDownBox id='dDBTarget' .../></dialogData>
+        if !specialized && tag.contains("<dropDownBox ") {
+            if let Some(db_start) = tag.find("<dropDownBox ") {
+                // Find the end of the dropDownBox tag (self-closing with />)
+                if let Some(db_end) = tag[db_start..].find("/>") {
+                    let db_tag = &tag[db_start..db_start + db_end + 2];
+                    tracing::debug!(
+                        "Parser: Found dropDownBox inside dialogData: {}",
+                        &db_tag[..db_tag.len().min(80)]
+                    );
+                    self.handle_dropdown(db_tag, elements);
+                }
+            }
+        }
+    }
+
+    /// Specialized dialogData handling (buttons, fields, quickbars, injuries,
+    /// active effects, ...). Returns true when a specialized branch consumed
+    /// the dialog; the caller still runs the shared progressBar/label pass.
+    fn handle_dialog_data_specialized(
+        &mut self,
+        tag: &str,
+        tag_head: &str,
+        elements: &mut Vec<ParsedElement>,
+    ) -> bool {
         if tag.contains("<cmdButton") || tag.contains("<closeButton") || tag.contains("<radio") {
             if let Some(id) = Self::extract_dialog_data_id(tag_head) {
                 if !Self::is_quickbar_id(&id) {
@@ -913,7 +1002,7 @@ impl XmlParser {
                         .unwrap_or(false);
                     let buttons = Self::parse_dialog_buttons(tag);
                     elements.push(ParsedElement::DialogButtons { id, clear, buttons });
-                    return;
+                    return true;
                 }
             }
         }
@@ -934,7 +1023,7 @@ impl XmlParser {
                             fields,
                             labels,
                         });
-                        return;
+                        return true;
                     }
                 }
             }
@@ -949,7 +1038,7 @@ impl XmlParser {
                     .unwrap_or(false);
                 let entries = Self::parse_quickbar_entries(tag);
                 elements.push(ParsedElement::QuickbarEntries { id, clear, entries });
-                return;
+                return true;
             }
             if id == "BetrayerPanel" {
                 let clear = Self::extract_attribute(tag_head, "clear")
@@ -961,7 +1050,7 @@ impl XmlParser {
                 let (_, labels) = Self::parse_dialog_fields(tag);
                 if clear || !labels.is_empty() {
                     elements.push(ParsedElement::DialogLabelList { id, clear, labels });
-                    return;
+                    return true;
                 }
             }
             // Check for clear='t' attribute - emit ClearDialogData for generic windows
@@ -1021,7 +1110,7 @@ impl XmlParser {
                                 name: part.to_string(), // name == id means cleared
                             });
                         }
-                        return;
+                        return true;
                     }
                 }
 
@@ -1046,7 +1135,7 @@ impl XmlParser {
                     }
                 }
                 // tracing::debug!("Parsed {} injury image(s)", count);
-                return;
+                return true;
             }
 
             // Handle injuries popup dialogData for OTHER players (id="injuries-PLAYERID")
@@ -1066,7 +1155,7 @@ impl XmlParser {
                         injuries: vec![],
                         clear: true,
                     });
-                    return;
+                    return true;
                 }
 
                 // Extract all <image> tags for injuries
@@ -1096,7 +1185,7 @@ impl XmlParser {
                         clear: false,
                     });
                 }
-                return;
+                return true;
             }
 
             // Handle Active Effects (Active Spells, Buffs, Debuffs, Cooldowns)
@@ -1115,7 +1204,7 @@ impl XmlParser {
                     if clear == "t" {
                         // tracing::debug!("Clearing active effects for category: {}", category);
                         elements.push(ParsedElement::ClearActiveEffects { category });
-                        return;
+                        return true;
                     }
                 }
 
@@ -1151,39 +1240,11 @@ impl XmlParser {
                     }
                 }
                 // tracing::debug!("Parsed {} active effect(s) for category {}", count, id);
-                return;
+                return true;
             }
         }
 
-        // Extract progressBar tags from within dialogData (for minivitals, etc.)
-        if tag.contains("<progressBar ") {
-            let mut remaining = tag;
-            while let Some(pb_start) = remaining.find("<progressBar ") {
-                if let Some(pb_end) = remaining[pb_start..].find("/>") {
-                    let pb_tag = &remaining[pb_start..pb_start + pb_end + 2];
-                    self.handle_progressbar(pb_tag, elements);
-                    remaining = &remaining[pb_start + pb_end + 2..];
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Extract dropDownBox tags from within dialogData (for combat targets)
-        // <dialogData id='combat'><dropDownBox id='dDBTarget' .../></dialogData>
-        if tag.contains("<dropDownBox ") {
-            if let Some(db_start) = tag.find("<dropDownBox ") {
-                // Find the end of the dropDownBox tag (self-closing with />)
-                if let Some(db_end) = tag[db_start..].find("/>") {
-                    let db_tag = &tag[db_start..db_start + db_end + 2];
-                    tracing::debug!(
-                        "Parser: Found dropDownBox inside dialogData: {}",
-                        &db_tag[..db_tag.len().min(80)]
-                    );
-                    self.handle_dropdown(db_tag, elements);
-                }
-            }
-        }
+        false
     }
 
     fn handle_open_dialog(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
@@ -1818,79 +1879,6 @@ impl XmlParser {
         if let Some(id) = Self::extract_attribute(tag, "id") {
             let subtitle = Self::extract_attribute(tag, "subtitle");
             elements.push(ParsedElement::StreamWindow { id, subtitle });
-        }
-    }
-
-    fn handle_dialogdata(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
-        // <dialogData id='BetrayerPanel'><label id='lblBPs' value='Blood Points: 100' ...
-        // Extract blood points if present - emit as ProgressBar for consistency
-        if tag.contains("id='BetrayerPanel'") || tag.contains("id=\"BetrayerPanel\"") {
-            // Look for Blood Points label
-            if let Some(bp_start) = tag.find("Blood Points:") {
-                // Extract the number after "Blood Points: " (skip the colon and space = 14 chars)
-                let after_bp = &tag[bp_start + 14..].trim_start();
-                // Find the end of the number (first non-digit)
-                if let Some(end) = after_bp.find(|c: char| !c.is_ascii_digit()) {
-                    let num_str = &after_bp[..end];
-                    if let Ok(value) = num_str.parse::<u32>() {
-                        // Emit as ProgressBar so we can reuse the existing handler
-                        elements.push(ParsedElement::ProgressBar {
-                            id: "lblBPs".to_string(),
-                            value,
-                            max: 100,
-                            text: format!("Blood Points: {}", value),
-                        });
-                    }
-                } else {
-                    // All remaining characters are digits
-                    if let Ok(value) = after_bp.parse::<u32>() {
-                        // Emit as ProgressBar so we can reuse the existing handler
-                        elements.push(ParsedElement::ProgressBar {
-                            id: "lblBPs".to_string(),
-                            value,
-                            max: 100,
-                            text: format!("Blood Points: {}", value),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Extract progressBar elements from dialogData
-        // <dialogData id='minivitals'><progressBar id='mana' value='100' text='mana 414/414' ...
-        if tag.contains("<progressBar ") {
-            // Find all progressBar tags within this dialogData
-            let mut remaining = tag;
-            while let Some(pb_start) = remaining.find("<progressBar ") {
-                if let Some(pb_end) = remaining[pb_start..].find("/>") {
-                    let pb_tag = &remaining[pb_start..pb_start + pb_end + 2];
-                    self.handle_progressbar(pb_tag, elements);
-                    remaining = &remaining[pb_start + pb_end + 2..];
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Extract label elements from dialogData
-        // <dialogData id='encum'>...<label id='encumblurb' value='You are not encumbered...' ...
-        if tag.contains("<label ") {
-            // Find all label tags within this dialogData
-            let mut remaining = tag;
-            while let Some(label_start) = remaining.find("<label ") {
-                if let Some(label_end) = remaining[label_start..].find("/>") {
-                    let label_tag = &remaining[label_start..label_start + label_end + 2];
-                    // Extract id and value attributes
-                    if let Some(id) = Self::extract_attribute(label_tag, "id") {
-                        if let Some(value) = Self::extract_attribute(label_tag, "value") {
-                            elements.push(ParsedElement::Label { id, value });
-                        }
-                    }
-                    remaining = &remaining[label_start + label_end + 2..];
-                } else {
-                    break;
-                }
-            }
         }
     }
 
@@ -3110,23 +3098,42 @@ mod tests {
         let elements = parser.parse_line("<dialogData id='minivitals'><progressBar id='mana' value='100' text='mana 414/414' left='76.7%' top='0%' width='23.3%' height='100%'/></dialogData>");
 
         let pb_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::ProgressBar { .. })).collect();
-        assert!(pb_elements.len() >= 1, "Should have at least one ProgressBar");
+        // Exactly one: the dialogData handler must not double-parse bars.
+        assert_eq!(pb_elements.len(), 1, "Each progressBar should be emitted exactly once");
 
-        // Find the mana progressbar
-        let mana_pb = pb_elements.iter().find(|e| {
-            if let ParsedElement::ProgressBar { id, .. } = e {
-                id == "mana"
-            } else {
-                false
-            }
-        });
+        let ParsedElement::ProgressBar { id, value, max, .. } = pb_elements[0] else {
+            panic!("Expected ProgressBar element, got {:?}", pb_elements[0]);
+        };
+        assert_eq!(id, "mana");
+        assert_eq!(*value, 414);
+        assert_eq!(*max, 414);
+    }
 
-        assert!(mana_pb.is_some(), "Should have mana ProgressBar");
-        if let Some(ParsedElement::ProgressBar { id, value, max, .. }) = mana_pb {
-            assert_eq!(id, "mana");
-            assert_eq!(*value, 414);
-            assert_eq!(*max, 414);
-        }
+    #[test]
+    fn test_effects_dialogdata_emits_effect_and_duration_bar_once() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<dialogData id='Buffs'><progressBar id='115' value='74' text='Fasthr&#39;s Reward' time='03:06:54'/></dialogData>",
+        );
+
+        // The effect itself feeds the active-effects windows...
+        let effects: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::ActiveEffect { .. }))
+            .collect();
+        assert_eq!(effects.len(), 1, "Should emit exactly one ActiveEffect");
+
+        // ...and the duration bar is still published once for user-configured
+        // progress widgets keyed on the spell id.
+        let bars: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::ProgressBar { .. }))
+            .collect();
+        assert_eq!(bars.len(), 1, "Effect duration bar should be emitted exactly once");
+        let ParsedElement::ProgressBar { id, .. } = bars[0] else {
+            panic!("Expected ProgressBar element");
+        };
+        assert_eq!(id, "115");
     }
 
     // ==================== CastTime Parsing ====================
