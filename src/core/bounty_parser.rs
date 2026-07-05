@@ -16,7 +16,11 @@ pub struct CompactBounty {
 impl CompactBounty {
     fn new(lines: Vec<&str>) -> Self {
         Self {
-            lines: lines.into_iter().filter(|s| !s.is_empty()).map(String::from).collect(),
+            lines: lines
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
         }
     }
 
@@ -114,9 +118,8 @@ static RE_ESCORT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // Status patterns
-static RE_NO_TASK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"You are not currently assigned a task\.").unwrap()
-});
+static RE_NO_TASK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"You are not currently assigned a task\.").unwrap());
 
 static RE_TURN_IN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You have succeeded in your task and can return to the Adventurer's Guild to receive your reward\.").unwrap()
@@ -134,12 +137,12 @@ static RE_VISIT_GUARD_CREATURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"It appears they have a creature problem they'd like you to solve").unwrap()
 });
 
-static RE_VISIT_GUARD_RESCUE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"urgently needs our help in some matter").unwrap()
-});
+static RE_VISIT_GUARD_RESCUE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"urgently needs our help in some matter").unwrap());
 
 static RE_VISIT_GUARD_HEIRLOOM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"It appears they need your help in tracking down some kind of lost heirloom").unwrap()
+    Regex::new(r"It appears they need your help in tracking down some kind of lost heirloom")
+        .unwrap()
 });
 
 static RE_VISIT_FURRIER: LazyLock<Regex> = LazyLock::new(|| {
@@ -154,17 +157,15 @@ static RE_VISIT_GEMSHOP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"The local gem dealer, .*, has an order to fill and wants our help\..*?Head over there and see what you can do\.").unwrap()
 });
 
-static RE_REPORT_SUCCESS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"You succeeded in your task and should report back to").unwrap()
-});
+static RE_REPORT_SUCCESS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"You succeeded in your task and should report back to").unwrap());
 
 static RE_RETURN_HEIRLOOM: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"You have located (?:a|an|the|some)? .* and should bring it back to").unwrap()
 });
 
-static RE_RETURN_CHILD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"You have made contact with the child").unwrap()
-});
+static RE_RETURN_CHILD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"You have made contact with the child").unwrap());
 
 static RE_FAILED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"The child you were tasked to rescue is gone and your task is failed\.|You have failed in your task\.  Return to the Adventurer's Guild for further instructions\.").unwrap()
@@ -184,7 +185,11 @@ pub fn parse_bounty(text: &str) -> Option<CompactBounty> {
     if let Some(caps) = RE_RESCUE_CHILD.captures(text) {
         let target = shorten_creature_name(&caps["target"]);
         let area = caps["area"].to_string();
-        return Some(CompactBounty::new(vec!["Rescue Child Task", &target, &area]));
+        return Some(CompactBounty::new(vec![
+            "Rescue Child Task",
+            &target,
+            &area,
+        ]));
     }
 
     // Skinning Task
@@ -192,7 +197,11 @@ pub fn parse_bounty(text: &str) -> Option<CompactBounty> {
         let count = &caps["count"];
         let skin = &caps["skin"];
         let quality = &caps["quality"];
-        let quality_short = if quality.len() > 4 { &quality[..4] } else { quality };
+        let quality_short = if quality.len() > 4 {
+            &quality[..4]
+        } else {
+            quality
+        };
         let target = shorten_creature_name(&caps["target"]);
         let skin_line = format!("{} {} ({})", count, skin, quality_short);
         return Some(CompactBounty::from_strings(vec![
@@ -370,7 +379,10 @@ pub fn parse_bounty(text: &str) -> Option<CompactBounty> {
     if let Some(caps) = RE_VISIT_FORAGER.captures(text) {
         let person = caps["person"].to_string();
         let title = format!("Visit {}", capitalize_first(&person));
-        return Some(CompactBounty::from_strings(vec![title, "Foraging Bounty".to_string()]));
+        return Some(CompactBounty::from_strings(vec![
+            title,
+            "Foraging Bounty".to_string(),
+        ]));
     }
 
     if RE_VISIT_GEMSHOP.is_match(text) {

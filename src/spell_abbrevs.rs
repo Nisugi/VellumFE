@@ -54,10 +54,12 @@ pub fn abbreviate_spells(text: &str) -> String {
 
     // Use Aho-Corasick's replace_all_with for efficient multi-pattern replacement
     let mut result = String::with_capacity(text.len());
-    matcher.ac.replace_all_with(text, &mut result, |mat, _, dst| {
-        dst.push_str(&matcher.replacements[mat.pattern().as_usize()]);
-        true
-    });
+    matcher
+        .ac
+        .replace_all_with(text, &mut result, |mat, _, dst| {
+            dst.push_str(&matcher.replacements[mat.pattern().as_usize()]);
+            true
+        });
     result
 }
 

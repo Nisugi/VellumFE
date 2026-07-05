@@ -123,10 +123,8 @@ impl ContainerWindow {
                     let tag = &content[a_start_abs..=tag_end_abs];
 
                     // Extract attributes
-                    let exist_id = Self::extract_attribute(tag, "exist")
-                        .unwrap_or_default();
-                    let noun = Self::extract_attribute(tag, "noun")
-                        .unwrap_or_default();
+                    let exist_id = Self::extract_attribute(tag, "exist").unwrap_or_default();
+                    let noun = Self::extract_attribute(tag, "noun").unwrap_or_default();
 
                     // Find closing </a>
                     if let Some(close_start) = content[tag_end_abs + 1..].find("</a>") {
@@ -144,7 +142,10 @@ impl ContainerWindow {
                         // Add link segment - use theme link color or default to cyan
                         segments.push(TextSegment {
                             text: link_text.to_string(),
-                            fg: self.link_color.clone().or_else(|| Some("#00FFFF".to_string())),
+                            fg: self
+                                .link_color
+                                .clone()
+                                .or_else(|| Some("#00FFFF".to_string())),
                             bg: None,
                             bold: false,
                             mono: false,
@@ -254,7 +255,8 @@ impl ContainerWindow {
 
     /// Set border configuration
     pub fn set_border_config(&mut self, show_border: bool, border_color: Option<String>) {
-        self.widget.set_border_config(show_border, None, border_color);
+        self.widget
+            .set_border_config(show_border, None, border_color);
     }
 
     pub fn set_text_color(&mut self, color: Option<String>) {
@@ -315,7 +317,8 @@ impl ContainerWindow {
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -326,7 +329,8 @@ impl ContainerWindow {
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 
@@ -482,7 +486,8 @@ mod tests {
     #[test]
     fn test_parse_container_item_with_link() {
         let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
-        let segments = cw.parse_container_item(r#"a <a exist="123" noun="sword">gleaming sword</a>"#);
+        let segments =
+            cw.parse_container_item(r#"a <a exist="123" noun="sword">gleaming sword</a>"#);
 
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "a ");

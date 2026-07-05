@@ -3,9 +3,9 @@
 //! Provides filtering, scrolling, and drag handling so it behaves like the
 //! other management popups.
 
+use crate::config::PaletteColor;
 use crate::frontend::tui::colors::parse_color_to_ratatui;
 use crate::frontend::tui::crossterm_bridge;
-use crate::config::PaletteColor;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -63,10 +63,8 @@ impl ColorPaletteBrowser {
         let mut entries: Vec<PaletteColorEntry> = Vec::new();
 
         // Build set of character color names for quick lookup
-        let char_names: std::collections::HashSet<_> = character_colors
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect();
+        let char_names: std::collections::HashSet<_> =
+            character_colors.iter().map(|c| c.name.as_str()).collect();
 
         // Add global colors (mark as is_global = true), skip if overridden
         for color in global_colors {
@@ -106,7 +104,8 @@ impl ColorPaletteBrowser {
     fn from_entries(mut entries: Vec<PaletteColorEntry>) -> Self {
         // Sort by category, then by name
         entries.sort_by(|a, b| {
-            a.color.category
+            a.color
+                .category
                 .cmp(&b.color.category)
                 .then_with(|| a.color.name.cmp(&b.color.name))
         });
@@ -443,7 +442,8 @@ impl ColorPaletteBrowser {
         }
 
         // Draw border
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
         self.draw_border(popup_area, buf, border_style);
 
         // Draw title
@@ -552,7 +552,9 @@ impl ColorPaletteBrowser {
                         let y = list_area.y + render_row as u16;
                         let header = format!("═══ {} ═══", color.category.to_uppercase());
                         let header_style = Style::default()
-                            .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                            .fg(crossterm_bridge::to_ratatui_color(
+                                theme.browser_item_focused,
+                            ))
                             .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                             .add_modifier(Modifier::BOLD);
 
@@ -588,7 +590,9 @@ impl ColorPaletteBrowser {
                 let y = list_area.y + render_row as u16;
                 let header = format!("═══ {} ═══", color.category.to_uppercase());
                 let header_style = Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    ))
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                     .add_modifier(Modifier::BOLD);
 
@@ -620,13 +624,18 @@ impl ColorPaletteBrowser {
             let scope_indicator = if entry.is_global { "[G]" } else { "[C]" };
             let fav_char = if color.favorite { '*' } else { ' ' };
             let slot_str = color.slot.map_or(String::new(), |s| format!(" [{}]", s));
-            let content = format!(" {} {}  {:<18} {}{}", scope_indicator, fav_char, color.name, color.color, slot_str);
+            let content = format!(
+                " {} {}  {:<18} {}{}",
+                scope_indicator, fav_char, color.name, color.color, slot_str
+            );
             // Parse the color for preview
             let preview_color = Self::parse_hex_color(&color.color).unwrap_or(Color::White);
 
             let style = if is_selected {
                 Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    ))
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                     .add_modifier(Modifier::BOLD)
             } else {
@@ -740,10 +749,8 @@ impl ColorPaletteBrowser {
         self.entries.clear();
 
         // Build set of character color names for quick lookup
-        let char_names: std::collections::HashSet<_> = character_colors
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect();
+        let char_names: std::collections::HashSet<_> =
+            character_colors.iter().map(|c| c.name.as_str()).collect();
 
         // Add global colors (mark as is_global = true), skip if overridden
         for color in global_colors {
@@ -765,7 +772,8 @@ impl ColorPaletteBrowser {
 
         // Sort by category, then by name
         self.entries.sort_by(|a, b| {
-            a.color.category
+            a.color
+                .category
                 .cmp(&b.color.category)
                 .then_with(|| a.color.name.cmp(&b.color.name))
         });

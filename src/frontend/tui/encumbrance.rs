@@ -256,8 +256,8 @@ impl Encumbrance {
                 "(No encumbrance data)",
                 Style::default().fg(Color::DarkGray),
             ));
-            let placeholder_text = ratatui::widgets::Paragraph::new(placeholder)
-                .alignment(self.align);
+            let placeholder_text =
+                ratatui::widgets::Paragraph::new(placeholder).alignment(self.align);
             placeholder_text.render(inner, buf);
             return;
         }

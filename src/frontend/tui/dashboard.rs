@@ -285,7 +285,9 @@ impl Dashboard {
         for ind in indicators {
             let icon_width = ind.icon.chars().count();
             let extra_spacing = if current_row.is_empty() { 0 } else { spacing };
-            if !current_row.is_empty() && current_width + extra_spacing + icon_width > available_width {
+            if !current_row.is_empty()
+                && current_width + extra_spacing + icon_width > available_width
+            {
                 rows.push(current_row);
                 current_row = Vec::new();
                 current_width = 0;
@@ -315,8 +317,7 @@ impl Dashboard {
                 + (row.len().saturating_sub(1)) * spacing;
             let mut x = self.calculate_horizontal_offset(row_width, area.width as usize, area.x);
             for ind in row {
-                let color_index =
-                    (ind.value as usize).min(ind.colors.len().saturating_sub(1));
+                let color_index = (ind.value as usize).min(ind.colors.len().saturating_sub(1));
                 let color = Self::parse_color(&ind.colors[color_index]);
                 for ch in ind.icon.chars() {
                     if x >= area.right() {
@@ -464,8 +465,16 @@ mod tests {
     fn test_hide_inactive_filters_out() {
         let mut dashboard = Dashboard::new("Stance", DashboardLayout::Horizontal);
         dashboard.set_border_config(false, None, None);
-        dashboard.add_indicator("off".to_string(), "A".to_string(), vec!["#000000".to_string()]);
-        dashboard.add_indicator("on".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "off".to_string(),
+            "A".to_string(),
+            vec!["#000000".to_string()],
+        );
+        dashboard.add_indicator(
+            "on".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
         dashboard.set_indicator_value("on", 1);
 
         let area = Rect::new(0, 0, 5, 1);
@@ -490,8 +499,16 @@ mod tests {
         dashboard.set_border_config(false, None, None);
         dashboard.set_content_align(Some("center".to_string()));
         dashboard.set_hide_inactive(false);
-        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 7, 1);
         let mut buf = Buffer::empty(area);
@@ -507,9 +524,21 @@ mod tests {
         dashboard.set_border_config(false, None, None);
         dashboard.set_hide_inactive(false);
         dashboard.set_spacing(1);
-        dashboard.add_indicator("a".to_string(), "AA".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "BB".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("c".to_string(), "C".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "AA".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "BB".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "c".to_string(),
+            "C".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 3, 5);
         let mut buf = Buffer::empty(area);
@@ -537,10 +566,26 @@ mod tests {
         let mut dashboard = Dashboard::new("Stance", DashboardLayout::Grid { rows: 2, cols: 2 });
         dashboard.set_border_config(false, None, None);
         dashboard.set_hide_inactive(false);
-        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("c".to_string(), "C".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("d".to_string(), "D".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "c".to_string(),
+            "C".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "d".to_string(),
+            "D".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 4, 2);
         let mut buf = Buffer::empty(area);
@@ -582,8 +627,16 @@ mod tests {
         dashboard.set_hide_inactive(false);
         dashboard.set_spacing(1);
         dashboard.set_content_align(Some("center".to_string()));
-        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "BB".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "BB".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 3, 3);
         let mut buf = Buffer::empty(area);
@@ -601,8 +654,16 @@ mod tests {
         dashboard.set_hide_inactive(false);
         dashboard.set_spacing(1);
         dashboard.set_content_align(Some("right".to_string()));
-        dashboard.add_indicator("a".to_string(), "AA".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "AA".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 3, 3);
         let mut buf = Buffer::empty(area);
@@ -620,8 +681,16 @@ mod tests {
         dashboard.set_hide_inactive(false);
         dashboard.set_content_align(Some("center".to_string()));
         dashboard.set_spacing(0);
-        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 3, 5);
         let mut buf = Buffer::empty(area);
@@ -638,8 +707,16 @@ mod tests {
         dashboard.set_hide_inactive(false);
         dashboard.set_content_align(Some("bottom".to_string()));
         dashboard.set_spacing(0);
-        dashboard.add_indicator("a".to_string(), "A".to_string(), vec!["#ffffff".to_string()]);
-        dashboard.add_indicator("b".to_string(), "B".to_string(), vec!["#ffffff".to_string()]);
+        dashboard.add_indicator(
+            "a".to_string(),
+            "A".to_string(),
+            vec!["#ffffff".to_string()],
+        );
+        dashboard.add_indicator(
+            "b".to_string(),
+            "B".to_string(),
+            vec!["#ffffff".to_string()],
+        );
 
         let area = Rect::new(0, 0, 3, 5);
         let mut buf = Buffer::empty(area);

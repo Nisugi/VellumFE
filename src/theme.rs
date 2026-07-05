@@ -247,7 +247,9 @@ impl ColorFilter {
     pub fn description(&self) -> &'static str {
         match self {
             ColorFilter::None => "No color transformation applied",
-            ColorFilter::Grayscale => "Convert all colors to grayscale (for achromatopsia or testing)",
+            ColorFilter::Grayscale => {
+                "Convert all colors to grayscale (for achromatopsia or testing)"
+            }
             ColorFilter::DeuteranopiaSimulation => "Simulate how colors appear with deuteranopia",
             ColorFilter::ProtanopiaSimulation => "Simulate how colors appear with protanopia",
             ColorFilter::TritanopiaSimulation => "Simulate how colors appear with tritanopia",
@@ -265,7 +267,9 @@ impl ColorFilter {
             ColorFilter::ProtanopiaSimulation => Self::apply_protanopia(color),
             ColorFilter::TritanopiaSimulation => Self::apply_tritanopia(color),
             ColorFilter::Sepia => Self::apply_sepia(color),
-            ColorFilter::BlueLightFilter(intensity) => Self::apply_blue_light_filter(color, *intensity),
+            ColorFilter::BlueLightFilter(intensity) => {
+                Self::apply_blue_light_filter(color, *intensity)
+            }
         }
     }
 
@@ -410,7 +414,6 @@ impl ThemeVariant {
         let luminance = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0;
 
         // If luminance > 0.5, make it lighter; otherwise make it darker
-        
 
         if luminance > 0.5 {
             // Light color - boost towards white
@@ -455,11 +458,7 @@ impl ThemeVariant {
         } else if is_greenish {
             // Green -> Blue (safe alternative)
             let intensity = (luminance / 255.0).clamp(0.0, 1.0);
-            Color::rgb(
-                0,
-                (191.0 * intensity) as u8,
-                (255.0 * intensity) as u8,
-            )
+            Color::rgb(0, (191.0 * intensity) as u8, (255.0 * intensity) as u8)
         } else if is_bluish {
             // Blue stays blue (safe)
             color
@@ -587,11 +586,27 @@ impl AppTheme {
 
         // Update description to reflect contrast adjustment
         if multiplier > 1.0 {
-            theme.name = format!("{} (+{}% contrast)", self.name, ((multiplier - 1.0) * 100.0) as i32);
-            theme.description = format!("{} - Boosted contrast by {}%", self.description, ((multiplier - 1.0) * 100.0) as i32);
+            theme.name = format!(
+                "{} (+{}% contrast)",
+                self.name,
+                ((multiplier - 1.0) * 100.0) as i32
+            );
+            theme.description = format!(
+                "{} - Boosted contrast by {}%",
+                self.description,
+                ((multiplier - 1.0) * 100.0) as i32
+            );
         } else {
-            theme.name = format!("{} ({}% contrast)", self.name, ((1.0 - multiplier) * 100.0) as i32);
-            theme.description = format!("{} - Reduced contrast by {}%", self.description, ((1.0 - multiplier) * 100.0) as i32);
+            theme.name = format!(
+                "{} ({}% contrast)",
+                self.name,
+                ((1.0 - multiplier) * 100.0) as i32
+            );
+            theme.description = format!(
+                "{} - Reduced contrast by {}%",
+                self.description,
+                ((1.0 - multiplier) * 100.0) as i32
+            );
         }
 
         // Helper function to boost contrast between a color and a reference
@@ -623,19 +638,24 @@ impl AppTheme {
         theme.text_selected = boost_contrast(theme.text_selected, bg_ref);
 
         // Apply to browser items
-        theme.browser_item_normal = boost_contrast(theme.browser_item_normal, theme.browser_background);
-        theme.browser_item_focused = boost_contrast(theme.browser_item_focused, theme.browser_background);
-        theme.browser_item_selected = boost_contrast(theme.browser_item_selected, theme.browser_background);
+        theme.browser_item_normal =
+            boost_contrast(theme.browser_item_normal, theme.browser_background);
+        theme.browser_item_focused =
+            boost_contrast(theme.browser_item_focused, theme.browser_background);
+        theme.browser_item_selected =
+            boost_contrast(theme.browser_item_selected, theme.browser_background);
 
         // Apply to form elements
         theme.form_label = boost_contrast(theme.form_label, theme.browser_background);
-        theme.form_label_focused = boost_contrast(theme.form_label_focused, theme.browser_background);
+        theme.form_label_focused =
+            boost_contrast(theme.form_label_focused, theme.browser_background);
         theme.form_field_text = boost_contrast(theme.form_field_text, theme.form_field_background);
 
         // Apply to editor elements
         theme.editor_text = boost_contrast(theme.editor_text, theme.editor_background);
         theme.editor_label = boost_contrast(theme.editor_label, theme.editor_background);
-        theme.editor_label_focused = boost_contrast(theme.editor_label_focused, theme.editor_background);
+        theme.editor_label_focused =
+            boost_contrast(theme.editor_label_focused, theme.editor_background);
 
         // Apply to menu items
         theme.menu_item_normal = boost_contrast(theme.menu_item_normal, theme.menu_background);
@@ -668,8 +688,13 @@ impl AppTheme {
     /// let theme = ThemePresets::ocean_depths();
     /// let adjusted = theme.with_variant_and_contrast(ThemeVariant::HighContrast, 1.3);
     /// ```
-    pub fn with_variant_and_contrast(&self, variant: ThemeVariant, contrast_multiplier: f32) -> AppTheme {
-        self.with_variant(variant).with_contrast_boost(contrast_multiplier)
+    pub fn with_variant_and_contrast(
+        &self,
+        variant: ThemeVariant,
+        contrast_multiplier: f32,
+    ) -> AppTheme {
+        self.with_variant(variant)
+            .with_contrast_boost(contrast_multiplier)
     }
 
     /// Apply a color filter to the theme for real-time color transformation
@@ -842,7 +867,10 @@ impl ThemePresets {
         themes.insert("autumn-harvest".to_string(), Self::autumn_harvest());
 
         // Accessibility themes
-        themes.insert("high-contrast-light".to_string(), Self::high_contrast_light());
+        themes.insert(
+            "high-contrast-light".to_string(),
+            Self::high_contrast_light(),
+        );
         themes.insert("high-contrast-dark".to_string(), Self::high_contrast_dark());
         themes.insert("deuteranopia".to_string(), Self::deuteranopia_friendly());
         themes.insert("protanopia".to_string(), Self::protanopia_friendly());
@@ -2912,7 +2940,8 @@ impl ThemePresets {
     pub fn high_contrast_light() -> AppTheme {
         let mut theme = AppTheme {
             name: "High Contrast Light".to_string(),
-            description: "Maximum contrast on white background for low vision (WCAG AAA)".to_string(),
+            description: "Maximum contrast on white background for low vision (WCAG AAA)"
+                .to_string(),
 
             window_border: Color::rgb(0, 0, 0),
             window_border_focused: Color::rgb(0, 0, 255),
@@ -2990,7 +3019,8 @@ impl ThemePresets {
     pub fn high_contrast_dark() -> AppTheme {
         let mut theme = AppTheme {
             name: "High Contrast Dark".to_string(),
-            description: "Maximum contrast on black background for low vision (WCAG AAA)".to_string(),
+            description: "Maximum contrast on black background for low vision (WCAG AAA)"
+                .to_string(),
 
             window_border: Color::rgb(255, 255, 255),
             window_border_focused: Color::rgb(255, 255, 0),
@@ -3107,9 +3137,9 @@ impl ThemePresets {
             form_label_focused: Color::rgb(255, 215, 0),
             form_field_background: Color::rgb(37, 37, 64),
             form_field_text: Color::rgb(168, 216, 255),
-            form_checkbox_checked: Color::rgb(0, 191, 255),  // Blue instead of green
+            form_checkbox_checked: Color::rgb(0, 191, 255), // Blue instead of green
             form_checkbox_unchecked: Color::rgb(106, 120, 140),
-            form_error: Color::rgb(255, 20, 147),  // Pink instead of red
+            form_error: Color::rgb(255, 20, 147), // Pink instead of red
 
             menu_border: Color::rgb(91, 143, 201),
             menu_background: Color::rgb(26, 26, 46),
@@ -3119,9 +3149,9 @@ impl ThemePresets {
             menu_separator: Color::rgb(91, 143, 201),
 
             status_info: Color::rgb(0, 191, 255),
-            status_success: Color::rgb(0, 191, 255),  // Blue instead of green
+            status_success: Color::rgb(0, 191, 255), // Blue instead of green
             status_warning: Color::rgb(255, 165, 0),
-            status_error: Color::rgb(255, 20, 147),  // Pink instead of red
+            status_error: Color::rgb(255, 20, 147), // Pink instead of red
             status_background: Color::rgb(26, 26, 46),
 
             button_normal: Color::rgb(91, 143, 201),
@@ -3185,9 +3215,9 @@ impl ThemePresets {
             form_label_focused: Color::rgb(255, 204, 0),
             form_field_background: Color::rgb(42, 42, 42),
             form_field_text: Color::rgb(173, 216, 230),
-            form_checkbox_checked: Color::rgb(0, 206, 209),  // Turquoise instead of green
+            form_checkbox_checked: Color::rgb(0, 206, 209), // Turquoise instead of green
             form_checkbox_unchecked: Color::rgb(96, 96, 96),
-            form_error: Color::rgb(218, 112, 214),  // Orchid instead of red
+            form_error: Color::rgb(218, 112, 214), // Orchid instead of red
 
             menu_border: Color::rgb(100, 149, 237),
             menu_background: Color::rgb(31, 31, 31),
@@ -3197,9 +3227,9 @@ impl ThemePresets {
             menu_separator: Color::rgb(100, 149, 237),
 
             status_info: Color::rgb(30, 144, 255),
-            status_success: Color::rgb(0, 206, 209),  // Turquoise instead of green
+            status_success: Color::rgb(0, 206, 209), // Turquoise instead of green
             status_warning: Color::rgb(255, 140, 0),
-            status_error: Color::rgb(218, 112, 214),  // Orchid instead of red
+            status_error: Color::rgb(218, 112, 214), // Orchid instead of red
             status_background: Color::rgb(31, 31, 31),
 
             button_normal: Color::rgb(100, 149, 237),
@@ -3276,7 +3306,7 @@ impl ThemePresets {
 
             status_info: Color::rgb(255, 105, 180),
             status_success: Color::rgb(0, 250, 154),
-            status_warning: Color::rgb(255, 20, 147),  // Pink instead of yellow
+            status_warning: Color::rgb(255, 20, 147), // Pink instead of yellow
             status_error: Color::rgb(220, 20, 60),
             status_background: Color::rgb(26, 26, 26),
 
@@ -3577,7 +3607,7 @@ impl ThemePresets {
             form_field_text: Color::rgb(204, 204, 204),
             form_checkbox_checked: Color::rgb(86, 156, 214),
             form_checkbox_unchecked: Color::rgb(96, 96, 96),
-            form_error: Color::rgb(206, 145, 120),  // Only critical errors get different color
+            form_error: Color::rgb(206, 145, 120), // Only critical errors get different color
 
             menu_border: Color::rgb(64, 64, 64),
             menu_background: Color::rgb(30, 30, 30),
@@ -3587,8 +3617,8 @@ impl ThemePresets {
             menu_separator: Color::rgb(64, 64, 64),
 
             status_info: Color::rgb(86, 156, 214),
-            status_success: Color::rgb(86, 156, 214),  // Same color - minimal distraction
-            status_warning: Color::rgb(86, 156, 214),  // Same color - minimal distraction
+            status_success: Color::rgb(86, 156, 214), // Same color - minimal distraction
+            status_warning: Color::rgb(86, 156, 214), // Same color - minimal distraction
             status_error: Color::rgb(206, 145, 120),  // Only errors get different color
             status_background: Color::rgb(30, 30, 30),
 
@@ -3615,7 +3645,8 @@ impl ThemePresets {
     pub fn reduced_motion() -> AppTheme {
         let mut theme = AppTheme {
             name: "Reduced Motion".to_string(),
-            description: "Subtle colors to minimize visual stress and motion sensitivity".to_string(),
+            description: "Subtle colors to minimize visual stress and motion sensitivity"
+                .to_string(),
 
             window_border: Color::rgb(90, 93, 97),
             window_border_focused: Color::rgb(126, 163, 204),

@@ -82,14 +82,20 @@ macro_rules! sync_simple_widget {
             theme: &crate::theme::AppTheme,
         ) {
             for (name, window) in &app_core.ui_state.windows {
-                if matches!(window.content, $content_variant) && window.widget_type == $widget_type {
+                if matches!(window.content, $content_variant) && window.widget_type == $widget_type
+                {
                     // Create widget if needed
                     if !self.widget_manager.$storage_field.contains_key(name) {
                         let mut widget = <$widget_path>::new(name);
-                        let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
+                        let highlights: Vec<_> =
+                            app_core.config.highlights.values().cloned().collect();
                         widget.set_highlights(highlights);
-                        widget.set_replace_enabled(app_core.config.highlight_settings.replace_enabled);
-                        self.widget_manager.$storage_field.insert(name.clone(), widget);
+                        widget.set_replace_enabled(
+                            app_core.config.highlight_settings.replace_enabled,
+                        );
+                        self.widget_manager
+                            .$storage_field
+                            .insert(name.clone(), widget);
                     }
 
                     // Update widget
@@ -103,7 +109,9 @@ macro_rules! sync_simple_widget {
                                 template.border.style.clone(),
                                 template.border.color.clone(),
                             );
-                            widget.set_title(template.title.clone().unwrap_or_else(|| name.to_string()));
+                            widget.set_title(
+                                template.title.clone().unwrap_or_else(|| name.to_string()),
+                            );
                         }
                     }
                 }

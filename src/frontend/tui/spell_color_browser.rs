@@ -3,8 +3,8 @@
 //! Shows color previews, associated spell IDs, and integrates with the shared
 //! widget traits for navigation/deletion.
 
-use crate::frontend::tui::crossterm_bridge;
 use crate::config::SpellColorRange;
+use crate::frontend::tui::crossterm_bridge;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -133,13 +133,20 @@ impl SpellColorBrowser {
         for row in popup_row..popup_row + popup_height {
             for col in popup_col..popup_col + popup_width {
                 if col < area.width && row < area.height {
-                    buf.set_string(col, row, " ", Style::default().bg(crossterm_bridge::to_ratatui_color(theme.browser_background)));
+                    buf.set_string(
+                        col,
+                        row,
+                        " ",
+                        Style::default()
+                            .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+                    );
                 }
             }
         }
 
         // Draw border
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
 
         // Top border
         let top = format!("┌{}┐", "─".repeat(popup_width as usize - 2));
@@ -228,7 +235,9 @@ impl SpellColorBrowser {
     ) {
         let base_style = if is_selected {
             Style::default()
-                .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                .fg(crossterm_bridge::to_ratatui_color(
+                    theme.browser_item_focused,
+                ))
                 .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -249,7 +258,9 @@ impl SpellColorBrowser {
                 col,
                 y,
                 "███",
-                Style::default().fg(color).bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+                Style::default()
+                    .fg(color)
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
             );
         } else {
             buf.set_string(col, y, " - ", base_style);
@@ -267,7 +278,9 @@ impl SpellColorBrowser {
                 col,
                 y,
                 "███",
-                Style::default().fg(color).bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+                Style::default()
+                    .fg(color)
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
             );
         } else {
             buf.set_string(col, y, " - ", base_style);

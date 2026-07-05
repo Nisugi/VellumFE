@@ -1,16 +1,20 @@
-use super::persistence::{load_layout, save_layout, GuiLayoutFileV1};
+use super::persistence::{load_layout, save_layout, GuiLayoutFileV1, ViewportState};
 use super::{TabId, TabKey};
-use crate::config::Config;
+use crate::config::{AppKeybinds, Config, KeyBindAction};
 use crate::core::AppCore;
 use crate::data::{
-    SpanType, StyledLine, TabbedTextContent, TextContent, WidgetType, WindowContent, WindowState,
+    InputMode, SpanType, StyledLine, TabbedTextContent, TextContent, WidgetType, WindowContent,
+    WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
-use eframe::egui::{Color32, FontFamily, FontId, RichText, TextFormat, ViewportBuilder};
-use egui_dock::{DockArea, DockState, TabViewer};
+use eframe::egui::{
+    Color32, FontFamily, FontId, Pos2, Rect, RichText, TextFormat, Vec2, ViewportBuilder,
+};
+use egui_dock::tab_viewer::OnCloseResponse;
+use egui_dock::{DockArea, DockState, Surface, SurfaceIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -20,6 +24,9 @@ const INITIAL_LAYOUT_WIDTH: u16 = 160;
 const INITIAL_LAYOUT_HEIGHT: u16 = 50;
 const MAX_RENDERED_LINES: usize = 2000;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
+const MIN_VISIBLE_VIEWPORT_PX: f32 = 48.0;
+const MIN_VIEWPORT_WIDTH: f32 = 180.0;
+const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
 
 #[derive(Clone, Debug)]
 struct GuiTab {
@@ -30,6 +37,27 @@ struct GuiTab {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct DockStateSnapshot {
     visible_tabs: Vec<TabKey>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppShortcut {
+    Quit,
+    StartSearch,
+    CloseWindow,
+}
+
+#[derive(Clone, Debug)]
+enum GlobalDispatchTarget {
+    Macro(KeyBindAction),
+    Shortcut(AppShortcut),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GuiKeyPress {
+    key_event: crate::frontend::common::KeyEvent,
+    logical_key: egui::Key,
+    physical_key: Option<egui::Key>,
+    modifiers: egui::Modifiers,
 }
 
 pub struct VellumGuiApp {
@@ -46,6 +74,8 @@ pub struct VellumGuiApp {
     layout_profile: String,
     layout_character: String,
     layout_dirty: bool,
+    pending_detached_viewports: Vec<ViewportState>,
+    last_monitor_bounds: Option<[f32; 4]>,
 }
 
 impl VellumGuiApp {
@@ -98,13 +128,37 @@ impl VellumGuiApp {
             .as_ref()
             .and_then(|layout| Self::dock_snapshot_from_layout(layout));
 
-        let visible_tabs =
-            Self::build_visible_tabs(&available_tabs, &hidden_tabs, snapshot.as_ref());
-        let dock_state = if visible_tabs.is_empty() {
+        let detached_viewports = persisted_layout
+            .as_ref()
+            .map(|layout| {
+                Self::detached_viewports_from_layout(layout, &available_tabs, &hidden_tabs)
+            })
+            .unwrap_or_default();
+        let detached_tab_keys: HashSet<TabKey> = detached_viewports
+            .iter()
+            .map(|viewport| viewport.tab.clone())
+            .collect();
+
+        let visible_tabs = Self::build_visible_tabs(
+            &available_tabs,
+            &hidden_tabs,
+            &detached_tab_keys,
+            snapshot.as_ref(),
+        );
+        let mut dock_state = if visible_tabs.is_empty() && detached_viewports.is_empty() {
             None
         } else {
             Some(DockState::new(visible_tabs))
         };
+        if let Some(dock_state) = &mut dock_state {
+            let initial_bounds = [0.0, 0.0, initial_width.max(1.0), initial_height.max(1.0)];
+            Self::attach_detached_windows(
+                dock_state,
+                &available_tabs,
+                &detached_viewports,
+                Some(initial_bounds),
+            );
+        }
 
         Ok(Self {
             app_core,
@@ -120,6 +174,8 @@ impl VellumGuiApp {
             layout_profile,
             layout_character,
             layout_dirty: false,
+            pending_detached_viewports: detached_viewports,
+            last_monitor_bounds: None,
         })
     }
 
@@ -247,6 +303,7 @@ impl VellumGuiApp {
     fn build_visible_tabs(
         available_tabs: &HashMap<TabKey, GuiTab>,
         hidden_tabs: &HashSet<TabKey>,
+        detached_tabs: &HashSet<TabKey>,
         snapshot: Option<&DockStateSnapshot>,
     ) -> Vec<GuiTab> {
         let mut visible = Vec::new();
@@ -254,7 +311,7 @@ impl VellumGuiApp {
 
         if let Some(snapshot) = snapshot {
             for key in &snapshot.visible_tabs {
-                if hidden_tabs.contains(key) {
+                if hidden_tabs.contains(key) || detached_tabs.contains(key) {
                     continue;
                 }
                 if let Some(tab) = available_tabs.get(key) {
@@ -267,7 +324,7 @@ impl VellumGuiApp {
         let mut fallback_tabs: Vec<GuiTab> = available_tabs
             .iter()
             .filter_map(|(key, tab)| {
-                if hidden_tabs.contains(key) || seen.contains(key) {
+                if hidden_tabs.contains(key) || detached_tabs.contains(key) || seen.contains(key) {
                     None
                 } else {
                     Some(tab.clone())
@@ -280,7 +337,42 @@ impl VellumGuiApp {
         visible
     }
 
-    fn default_visible_tab_keys(&self) -> Vec<TabKey> {
+    fn detached_viewports_from_layout(
+        layout: &GuiLayoutFileV1,
+        available_tabs: &HashMap<TabKey, GuiTab>,
+        hidden_tabs: &HashSet<TabKey>,
+    ) -> Vec<ViewportState> {
+        let mut entries: Vec<(&String, &ViewportState)> =
+            layout.detached_viewports.iter().collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let mut detached = Vec::new();
+        let mut seen = HashSet::new();
+        for (_, state) in entries {
+            if hidden_tabs.contains(&state.tab) || !available_tabs.contains_key(&state.tab) {
+                continue;
+            }
+            if seen.insert(state.tab.clone()) {
+                detached.push(state.clone());
+            }
+        }
+        detached
+    }
+
+    fn current_main_surface_tab_keys(&self) -> Vec<TabKey> {
+        if let Some(dock_state) = &self.dock_state {
+            let mut visible = Vec::new();
+            let mut seen = HashSet::new();
+            for ((surface, _), tab) in dock_state.iter_all_tabs() {
+                if surface.is_main() && seen.insert(tab.id.key.clone()) {
+                    visible.push(tab.id.key.clone());
+                }
+            }
+            if !visible.is_empty() {
+                return visible;
+            }
+        }
+
         let mut visible: Vec<(String, TabKey)> = self
             .available_tabs
             .iter()
@@ -296,12 +388,149 @@ impl VellumGuiApp {
         visible.into_iter().map(|(_, key)| key).collect()
     }
 
+    fn collect_detached_tab_keys(dock_state: &DockState<GuiTab>) -> HashSet<TabKey> {
+        let mut detached = HashSet::new();
+        for ((surface, _), tab) in dock_state.iter_all_tabs() {
+            if !surface.is_main() {
+                detached.insert(tab.id.key.clone());
+            }
+        }
+        detached
+    }
+
+    fn sanitize_viewport_state(
+        state: &ViewportState,
+        monitor_bounds: Option<[f32; 4]>,
+    ) -> ViewportState {
+        let mut viewport = state.clone();
+        viewport.outer_size_px[0] = viewport.outer_size_px[0].max(MIN_VIEWPORT_WIDTH);
+        viewport.outer_size_px[1] = viewport.outer_size_px[1].max(MIN_VIEWPORT_HEIGHT);
+        if let Some(bounds) = monitor_bounds {
+            viewport.clamp_to_bounds(bounds, MIN_VISIBLE_VIEWPORT_PX);
+        }
+        viewport
+    }
+
+    fn apply_viewport_to_surface(
+        dock_state: &mut DockState<GuiTab>,
+        surface: SurfaceIndex,
+        viewport: &ViewportState,
+        monitor_bounds: Option<[f32; 4]>,
+    ) {
+        let viewport = Self::sanitize_viewport_state(viewport, monitor_bounds);
+        if let Some(window_state) = dock_state.get_window_state_mut(surface) {
+            window_state
+                .set_position(Pos2::new(
+                    viewport.outer_pos_px[0],
+                    viewport.outer_pos_px[1],
+                ))
+                .set_size(Vec2::new(
+                    viewport.outer_size_px[0],
+                    viewport.outer_size_px[1],
+                ));
+        }
+    }
+
+    fn attach_detached_windows(
+        dock_state: &mut DockState<GuiTab>,
+        available_tabs: &HashMap<TabKey, GuiTab>,
+        detached_viewports: &[ViewportState],
+        monitor_bounds: Option<[f32; 4]>,
+    ) {
+        let mut attached = HashSet::new();
+        for viewport in detached_viewports {
+            if !attached.insert(viewport.tab.clone()) {
+                continue;
+            }
+            let Some(tab) = available_tabs.get(&viewport.tab).cloned() else {
+                continue;
+            };
+            let surface = dock_state.add_window(vec![tab]);
+            Self::apply_viewport_to_surface(dock_state, surface, viewport, monitor_bounds);
+        }
+    }
+
+    fn collect_detached_viewports_for_save(
+        dock_state: &mut DockState<GuiTab>,
+        monitor_bounds: Option<[f32; 4]>,
+    ) -> HashMap<String, ViewportState> {
+        let mut detached = HashMap::new();
+        let surface_count = dock_state.surfaces_count();
+
+        for raw_index in 1..surface_count {
+            let surface = SurfaceIndex(raw_index);
+            let tabs: Vec<TabKey> = match dock_state.get_surface(surface) {
+                Some(Surface::Window(tree, _)) => tree
+                    .iter()
+                    .flat_map(|node| node.iter_tabs())
+                    .map(|tab| tab.id.key.clone())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if tabs.is_empty() {
+                continue;
+            }
+
+            let rect = dock_state
+                .get_window_state(surface)
+                .map(|state| state.rect())
+                .unwrap_or(Rect::NOTHING);
+            let fallback = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(600.0, 400.0));
+            let safe_rect =
+                if rect.is_finite() && rect.width().is_finite() && rect.height().is_finite() {
+                    rect
+                } else {
+                    fallback
+                };
+
+            for tab_key in tabs {
+                let mut viewport = ViewportState::new(
+                    tab_key.clone(),
+                    [safe_rect.min.x, safe_rect.min.y],
+                    [safe_rect.width(), safe_rect.height()],
+                );
+                if let Some(bounds) = monitor_bounds {
+                    viewport.clamp_to_bounds(bounds, MIN_VISIBLE_VIEWPORT_PX);
+                }
+                let id = format!("vp_surface{}_{}", raw_index, tab_key.short_id());
+                detached.insert(id, viewport);
+            }
+        }
+
+        detached
+    }
+
     fn rebuild_dock_state(&mut self) {
-        let visible_tabs = Self::build_visible_tabs(&self.available_tabs, &self.hidden_tabs, None);
-        self.dock_state = if visible_tabs.is_empty() {
+        let detached_viewports = self
+            .dock_state
+            .as_mut()
+            .map(|dock_state| {
+                Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds)
+            })
+            .unwrap_or_default();
+        let detached_viewports: Vec<ViewportState> = detached_viewports.into_values().collect();
+        let detached_keys: HashSet<TabKey> = detached_viewports
+            .iter()
+            .map(|viewport| viewport.tab.clone())
+            .collect();
+
+        let visible_tabs = Self::build_visible_tabs(
+            &self.available_tabs,
+            &self.hidden_tabs,
+            &detached_keys,
+            None,
+        );
+        self.dock_state = if visible_tabs.is_empty() && detached_viewports.is_empty() {
             None
         } else {
-            Some(DockState::new(visible_tabs))
+            let mut dock_state = DockState::new(visible_tabs);
+            Self::attach_detached_windows(
+                &mut dock_state,
+                &self.available_tabs,
+                &detached_viewports,
+                self.last_monitor_bounds,
+            );
+            Some(dock_state)
         };
     }
 
@@ -350,6 +579,80 @@ impl VellumGuiApp {
         entries
     }
 
+    fn monitor_bounds_from_ctx(ctx: &egui::Context) -> [f32; 4] {
+        ctx.input(|input| {
+            if let (Some(outer_rect), Some(monitor_size)) =
+                (input.viewport().outer_rect, input.viewport().monitor_size)
+            {
+                [
+                    outer_rect.min.x,
+                    outer_rect.min.y,
+                    monitor_size.x.max(1.0),
+                    monitor_size.y.max(1.0),
+                ]
+            } else {
+                let screen = input.screen_rect();
+                [screen.min.x, screen.min.y, screen.width(), screen.height()]
+            }
+        })
+    }
+
+    fn apply_pending_detached_viewports(&mut self, monitor_bounds: [f32; 4]) {
+        if self.pending_detached_viewports.is_empty() {
+            return;
+        }
+        if let Some(dock_state) = &mut self.dock_state {
+            for viewport in &self.pending_detached_viewports {
+                let mut target_surface = None;
+                for ((surface, _), tab) in dock_state.iter_all_tabs() {
+                    if !surface.is_main() && tab.id.key == viewport.tab {
+                        target_surface = Some(surface);
+                        break;
+                    }
+                }
+                if let Some(surface) = target_surface {
+                    Self::apply_viewport_to_surface(
+                        dock_state,
+                        surface,
+                        viewport,
+                        Some(monitor_bounds),
+                    );
+                }
+            }
+        }
+        self.pending_detached_viewports.clear();
+        self.layout_dirty = true;
+    }
+
+    fn hide_removed_detached_tabs(&mut self, detached_before_frame: &HashSet<TabKey>) {
+        if detached_before_frame.is_empty() {
+            return;
+        }
+
+        let detached_after_frame = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .unwrap_or_default();
+        let all_tabs_after: HashSet<TabKey> = self
+            .dock_state
+            .as_ref()
+            .map(|dock_state| {
+                dock_state
+                    .iter_all_tabs()
+                    .map(|(_, tab)| tab.id.key.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for key in detached_before_frame {
+            if detached_after_frame.contains(key) || all_tabs_after.contains(key) {
+                continue;
+            }
+            self.hide_tab(key.clone());
+        }
+    }
+
     fn save_layout_state(&mut self) {
         let mut layout = GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character);
 
@@ -358,9 +661,14 @@ impl VellumGuiApp {
         layout.hidden_tabs = hidden_tabs;
 
         let snapshot = DockStateSnapshot {
-            visible_tabs: self.default_visible_tab_keys(),
+            visible_tabs: self.current_main_surface_tab_keys(),
         };
         layout.dock_state_json = serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null);
+        if let Some(dock_state) = &mut self.dock_state {
+            layout.detached_viewports =
+                Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds);
+        }
+        layout.touch();
 
         if let Err(err) = save_layout(&layout, &self.layout_profile, &self.layout_character) {
             tracing::warn!("Failed to save GUI layout: {}", err);
@@ -390,6 +698,294 @@ impl VellumGuiApp {
                 }
             }
         }
+    }
+
+    fn handle_global_input(&mut self, ctx: &egui::Context) {
+        let key_presses = Self::collect_pressed_key_events(ctx);
+        if key_presses.is_empty() {
+            return;
+        }
+
+        let suppress_macro_dispatch = self.should_suppress_macro_dispatch();
+        let mut consumed_keyboard_input = false;
+
+        for key_press in key_presses {
+            let target = Self::resolve_global_dispatch_target(
+                key_press.key_event,
+                &self.app_core.keybind_map,
+                &self.app_core.config.app_keybinds,
+                suppress_macro_dispatch,
+            );
+            let Some(target) = target else {
+                continue;
+            };
+
+            consumed_keyboard_input = true;
+            self.execute_global_dispatch_target(target);
+
+            ctx.input_mut(|input| {
+                input.consume_key(key_press.modifiers, key_press.logical_key);
+                if let Some(physical_key) = key_press.physical_key {
+                    input.consume_key(key_press.modifiers, physical_key);
+                }
+            });
+        }
+
+        if consumed_keyboard_input {
+            // Remove keyboard/text events so focused text widgets don't also process consumed keys.
+            ctx.input_mut(|input| {
+                input.raw.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                    )
+                });
+            });
+        }
+    }
+
+    fn collect_pressed_key_events(ctx: &egui::Context) -> Vec<GuiKeyPress> {
+        ctx.input(|input| {
+            input
+                .raw
+                .events
+                .iter()
+                .filter_map(|event| {
+                    let egui::Event::Key {
+                        key,
+                        physical_key,
+                        pressed,
+                        repeat,
+                        modifiers,
+                    } = event
+                    else {
+                        return None;
+                    };
+
+                    if !pressed || *repeat {
+                        return None;
+                    }
+
+                    let source_key = physical_key.unwrap_or(*key);
+                    let key_event = Self::egui_key_to_frontend_event(source_key, *modifiers)?;
+                    Some(GuiKeyPress {
+                        key_event,
+                        logical_key: *key,
+                        physical_key: *physical_key,
+                        modifiers: *modifiers,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn resolve_global_dispatch_target(
+        key_event: crate::frontend::common::KeyEvent,
+        keybind_map: &HashMap<crate::frontend::common::KeyEvent, KeyBindAction>,
+        app_keybinds: &AppKeybinds,
+        suppress_macro_dispatch: bool,
+    ) -> Option<GlobalDispatchTarget> {
+        if !suppress_macro_dispatch {
+            if let Some(KeyBindAction::Macro(_)) = keybind_map.get(&key_event) {
+                return keybind_map
+                    .get(&key_event)
+                    .cloned()
+                    .map(GlobalDispatchTarget::Macro);
+            }
+        }
+
+        Self::app_shortcut_for_key(key_event, app_keybinds).map(GlobalDispatchTarget::Shortcut)
+    }
+
+    fn app_shortcut_for_key(
+        key_event: crate::frontend::common::KeyEvent,
+        app_keybinds: &AppKeybinds,
+    ) -> Option<AppShortcut> {
+        if Self::binding_matches_key_event(&app_keybinds.quit, key_event) {
+            return Some(AppShortcut::Quit);
+        }
+        if Self::binding_matches_key_event(&app_keybinds.start_search, key_event) {
+            return Some(AppShortcut::StartSearch);
+        }
+        if Self::binding_matches_key_event(&app_keybinds.close_window, key_event) {
+            return Some(AppShortcut::CloseWindow);
+        }
+        None
+    }
+
+    fn binding_matches_key_event(
+        binding: &str,
+        key_event: crate::frontend::common::KeyEvent,
+    ) -> bool {
+        crate::config::parse_key_string(binding)
+            .map(|(code, modifiers)| crate::frontend::common::KeyEvent::new(code, modifiers))
+            .is_some_and(|candidate| candidate == key_event)
+    }
+
+    fn should_suppress_macro_dispatch(&self) -> bool {
+        self.app_core.ui_state.input_mode == InputMode::KeybindForm
+    }
+
+    fn execute_global_dispatch_target(&mut self, target: GlobalDispatchTarget) {
+        match target {
+            GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action),
+            GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
+        }
+    }
+
+    fn execute_macro_keybind(&mut self, action: &KeyBindAction) {
+        match self.app_core.execute_keybind_action(action) {
+            Ok(commands) => {
+                for outbound in commands {
+                    if Self::should_send_to_network(&outbound) {
+                        self.app_core
+                            .perf_stats
+                            .record_bytes_sent((outbound.len() + 1) as u64);
+                        let _ = self.command_tx.send(outbound);
+                    }
+                }
+            }
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Keybind error: {}", err));
+            }
+        }
+
+        if !self.app_core.running {
+            self.close_requested = true;
+        }
+    }
+
+    fn execute_app_shortcut(&mut self, shortcut: AppShortcut) {
+        match shortcut {
+            AppShortcut::Quit => {
+                self.app_core.quit();
+                self.close_requested = true;
+            }
+            AppShortcut::StartSearch => {
+                self.app_core.start_search_mode();
+            }
+            AppShortcut::CloseWindow => self.handle_close_window_shortcut(),
+        }
+    }
+
+    fn handle_close_window_shortcut(&mut self) {
+        if self.app_core.ui_state.input_mode == InputMode::Search {
+            self.app_core.clear_search_mode();
+            return;
+        }
+
+        if !matches!(self.app_core.ui_state.input_mode, InputMode::Normal) {
+            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.app_core.ui_state.popup_menu = None;
+            self.app_core.ui_state.submenu = None;
+            self.app_core.ui_state.nested_submenu = None;
+            self.app_core.ui_state.deep_submenu = None;
+            self.app_core.ui_state.active_dialog = None;
+            self.app_core.needs_render = true;
+        }
+    }
+
+    fn egui_key_to_frontend_event(
+        key: egui::Key,
+        modifiers: egui::Modifiers,
+    ) -> Option<crate::frontend::common::KeyEvent> {
+        let code = Self::egui_key_to_frontend_code(key, modifiers)?;
+        let modifiers = Self::egui_modifiers_to_frontend(modifiers);
+        Some(crate::frontend::common::KeyEvent::new(code, modifiers))
+    }
+
+    fn egui_modifiers_to_frontend(
+        modifiers: egui::Modifiers,
+    ) -> crate::frontend::common::KeyModifiers {
+        crate::frontend::common::KeyModifiers {
+            ctrl: modifiers.ctrl || modifiers.command,
+            shift: modifiers.shift,
+            alt: modifiers.alt,
+        }
+    }
+
+    fn egui_key_to_frontend_code(
+        key: egui::Key,
+        modifiers: egui::Modifiers,
+    ) -> Option<crate::frontend::common::KeyCode> {
+        let code = match key {
+            egui::Key::ArrowDown => crate::frontend::common::KeyCode::Down,
+            egui::Key::ArrowLeft => crate::frontend::common::KeyCode::Left,
+            egui::Key::ArrowRight => crate::frontend::common::KeyCode::Right,
+            egui::Key::ArrowUp => crate::frontend::common::KeyCode::Up,
+            egui::Key::Escape => crate::frontend::common::KeyCode::Esc,
+            egui::Key::Tab => {
+                if modifiers.shift {
+                    crate::frontend::common::KeyCode::BackTab
+                } else {
+                    crate::frontend::common::KeyCode::Tab
+                }
+            }
+            egui::Key::Backspace => crate::frontend::common::KeyCode::Backspace,
+            egui::Key::Enter => crate::frontend::common::KeyCode::Enter,
+            egui::Key::Space => crate::frontend::common::KeyCode::Char(' '),
+            egui::Key::Insert => crate::frontend::common::KeyCode::Insert,
+            egui::Key::Delete => crate::frontend::common::KeyCode::Delete,
+            egui::Key::Home => crate::frontend::common::KeyCode::Home,
+            egui::Key::End => crate::frontend::common::KeyCode::End,
+            egui::Key::PageUp => crate::frontend::common::KeyCode::PageUp,
+            egui::Key::PageDown => crate::frontend::common::KeyCode::PageDown,
+            egui::Key::Num0 => crate::frontend::common::KeyCode::Keypad0,
+            egui::Key::Num1 => crate::frontend::common::KeyCode::Keypad1,
+            egui::Key::Num2 => crate::frontend::common::KeyCode::Keypad2,
+            egui::Key::Num3 => crate::frontend::common::KeyCode::Keypad3,
+            egui::Key::Num4 => crate::frontend::common::KeyCode::Keypad4,
+            egui::Key::Num5 => crate::frontend::common::KeyCode::Keypad5,
+            egui::Key::Num6 => crate::frontend::common::KeyCode::Keypad6,
+            egui::Key::Num7 => crate::frontend::common::KeyCode::Keypad7,
+            egui::Key::Num8 => crate::frontend::common::KeyCode::Keypad8,
+            egui::Key::Num9 => crate::frontend::common::KeyCode::Keypad9,
+            egui::Key::A => crate::frontend::common::KeyCode::Char('a'),
+            egui::Key::B => crate::frontend::common::KeyCode::Char('b'),
+            egui::Key::C => crate::frontend::common::KeyCode::Char('c'),
+            egui::Key::D => crate::frontend::common::KeyCode::Char('d'),
+            egui::Key::E => crate::frontend::common::KeyCode::Char('e'),
+            egui::Key::F => crate::frontend::common::KeyCode::Char('f'),
+            egui::Key::G => crate::frontend::common::KeyCode::Char('g'),
+            egui::Key::H => crate::frontend::common::KeyCode::Char('h'),
+            egui::Key::I => crate::frontend::common::KeyCode::Char('i'),
+            egui::Key::J => crate::frontend::common::KeyCode::Char('j'),
+            egui::Key::K => crate::frontend::common::KeyCode::Char('k'),
+            egui::Key::L => crate::frontend::common::KeyCode::Char('l'),
+            egui::Key::M => crate::frontend::common::KeyCode::Char('m'),
+            egui::Key::N => crate::frontend::common::KeyCode::Char('n'),
+            egui::Key::O => crate::frontend::common::KeyCode::Char('o'),
+            egui::Key::P => crate::frontend::common::KeyCode::Char('p'),
+            egui::Key::Q => crate::frontend::common::KeyCode::Char('q'),
+            egui::Key::R => crate::frontend::common::KeyCode::Char('r'),
+            egui::Key::S => crate::frontend::common::KeyCode::Char('s'),
+            egui::Key::T => crate::frontend::common::KeyCode::Char('t'),
+            egui::Key::U => crate::frontend::common::KeyCode::Char('u'),
+            egui::Key::V => crate::frontend::common::KeyCode::Char('v'),
+            egui::Key::W => crate::frontend::common::KeyCode::Char('w'),
+            egui::Key::X => crate::frontend::common::KeyCode::Char('x'),
+            egui::Key::Y => crate::frontend::common::KeyCode::Char('y'),
+            egui::Key::Z => crate::frontend::common::KeyCode::Char('z'),
+            egui::Key::F1 => crate::frontend::common::KeyCode::F(1),
+            egui::Key::F2 => crate::frontend::common::KeyCode::F(2),
+            egui::Key::F3 => crate::frontend::common::KeyCode::F(3),
+            egui::Key::F4 => crate::frontend::common::KeyCode::F(4),
+            egui::Key::F5 => crate::frontend::common::KeyCode::F(5),
+            egui::Key::F6 => crate::frontend::common::KeyCode::F(6),
+            egui::Key::F7 => crate::frontend::common::KeyCode::F(7),
+            egui::Key::F8 => crate::frontend::common::KeyCode::F(8),
+            egui::Key::F9 => crate::frontend::common::KeyCode::F(9),
+            egui::Key::F10 => crate::frontend::common::KeyCode::F(10),
+            egui::Key::F11 => crate::frontend::common::KeyCode::F(11),
+            egui::Key::F12 => crate::frontend::common::KeyCode::F(12),
+            _ => return None,
+        };
+        Some(code)
     }
 
     fn submit_command(&mut self) {
@@ -562,20 +1158,31 @@ impl TabViewer for GuiDockTabViewer<'_> {
         tab.id.title.clone().into()
     }
 
-    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+    fn is_closeable(&self, _tab: &Self::Tab) -> bool {
         true
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
         self.closed_tabs.push(tab.id.key.clone());
-        true
+        OnCloseResponse::Close
     }
 }
 
 impl eframe::App for VellumGuiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.pump_server_messages();
         self.refresh_available_tabs_if_needed();
+        let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);
+        self.last_monitor_bounds = Some(monitor_bounds);
+        self.apply_pending_detached_viewports(monitor_bounds);
+
+        if self.close_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        self.handle_global_input(&ctx);
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -584,7 +1191,7 @@ impl eframe::App for VellumGuiApp {
 
         let mut restore_key: Option<TabKey> = None;
 
-        egui::TopBottomPanel::top("gui_header").show(ctx, |ui| {
+        egui::TopBottomPanel::top("gui_header").show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("VellumFE GUI");
                 let connection_text = if self.app_core.game_state.connected {
@@ -616,8 +1223,13 @@ impl eframe::App for VellumGuiApp {
             self.restore_tab(key);
         }
 
+        let detached_before_frame = self
+            .dock_state
+            .as_ref()
+            .map(Self::collect_detached_tab_keys)
+            .unwrap_or_default();
         let mut closed_tabs = Vec::new();
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             if let Some(dock_state) = &mut self.dock_state {
                 let mut viewer = GuiDockTabViewer::new(&self.app_core);
                 DockArea::new(dock_state).show_inside(ui, &mut viewer);
@@ -631,8 +1243,9 @@ impl eframe::App for VellumGuiApp {
         for key in closed_tabs {
             self.hide_tab(key);
         }
+        self.hide_removed_detached_tabs(&detached_before_frame);
 
-        egui::TopBottomPanel::bottom("gui_command_input").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.command_input)
                     .hint_text("Enter command...")
@@ -645,6 +1258,9 @@ impl eframe::App for VellumGuiApp {
                 response.request_focus();
             }
         });
+        if ctx.input(|i| i.pointer.any_released()) {
+            self.layout_dirty = true;
+        }
 
         if self.layout_dirty {
             self.save_layout_state();
@@ -661,9 +1277,7 @@ impl Drop for VellumGuiApp {
             handle.abort();
         }
 
-        if self.layout_dirty {
-            self.save_layout_state();
-        }
+        self.save_layout_state();
     }
 }
 
@@ -703,10 +1317,15 @@ fn parse_hex_color(input: &str) -> Option<Color32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hex_color, DockStateSnapshot, VellumGuiApp};
-    use crate::config::Config;
-    use crate::frontend::gui::TabKey;
-    use eframe::egui::Color32;
+    use super::{
+        parse_hex_color, AppShortcut, DockStateSnapshot, GlobalDispatchTarget, GuiTab, VellumGuiApp,
+    };
+    use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction};
+    use crate::frontend::common::{KeyCode, KeyEvent, KeyModifiers};
+    use crate::frontend::gui::{GuiLayoutFileV1, TabId, TabKey, ViewportState};
+    use eframe::egui::{Color32, Pos2, Vec2};
+    use egui_dock::DockState;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn test_parse_hex_color_with_hash() {
@@ -752,5 +1371,169 @@ mod tests {
         assert_eq!(parsed.visible_tabs.len(), 2);
         assert_eq!(parsed.visible_tabs[0], TabKey::TextMain);
         assert_eq!(parsed.visible_tabs[1], TabKey::Vitals);
+    }
+
+    #[test]
+    fn test_detached_viewports_from_layout_filters_invalid_entries() {
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Vitals,
+            GuiTab {
+                id: TabId::new(TabKey::Vitals),
+                window_name: "vitals".to_string(),
+            },
+        );
+        available_tabs.insert(
+            TabKey::Room,
+            GuiTab {
+                id: TabId::new(TabKey::Room),
+                window_name: "room".to_string(),
+            },
+        );
+
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.detached_viewports.insert(
+            "b_vitals".to_string(),
+            ViewportState::new(TabKey::Vitals, [100.0, 100.0], [400.0, 300.0]),
+        );
+        layout.detached_viewports.insert(
+            "a_vitals".to_string(),
+            ViewportState::new(TabKey::Vitals, [200.0, 200.0], [500.0, 400.0]),
+        );
+        layout.detached_viewports.insert(
+            "room_hidden".to_string(),
+            ViewportState::new(TabKey::Room, [100.0, 100.0], [400.0, 300.0]),
+        );
+        layout.detached_viewports.insert(
+            "missing_tab".to_string(),
+            ViewportState::new(TabKey::Compass, [100.0, 100.0], [400.0, 300.0]),
+        );
+
+        let hidden_tabs = HashSet::from([TabKey::Room]);
+        let detached =
+            VellumGuiApp::detached_viewports_from_layout(&layout, &available_tabs, &hidden_tabs);
+
+        assert_eq!(detached.len(), 1);
+        assert_eq!(detached[0].tab, TabKey::Vitals);
+        assert_eq!(detached[0].outer_pos_px, [200.0, 200.0]);
+    }
+
+    #[test]
+    fn test_sanitize_viewport_state_clamps_and_enforces_min_size() {
+        let viewport = ViewportState::new(TabKey::Vitals, [-500.0, -500.0], [20.0, 30.0]);
+        let sanitized =
+            VellumGuiApp::sanitize_viewport_state(&viewport, Some([0.0, 0.0, 1920.0, 1080.0]));
+
+        assert!(sanitized.outer_size_px[0] >= super::MIN_VIEWPORT_WIDTH);
+        assert!(sanitized.outer_size_px[1] >= super::MIN_VIEWPORT_HEIGHT);
+
+        let min_x = 0.0 - sanitized.outer_size_px[0] + super::MIN_VISIBLE_VIEWPORT_PX;
+        let max_x = 1920.0 - super::MIN_VISIBLE_VIEWPORT_PX;
+        let min_y = 0.0 - sanitized.outer_size_px[1] + super::MIN_VISIBLE_VIEWPORT_PX;
+        let max_y = 1080.0 - super::MIN_VISIBLE_VIEWPORT_PX;
+        assert!(sanitized.outer_pos_px[0] >= min_x - 0.01);
+        assert!(sanitized.outer_pos_px[0] <= max_x + 0.01);
+        assert!(sanitized.outer_pos_px[1] >= min_y - 0.01);
+        assert!(sanitized.outer_pos_px[1] <= max_y + 0.01);
+    }
+
+    #[test]
+    fn test_collect_detached_viewports_for_save_includes_window_tabs() {
+        let mut dock_state = DockState::new(vec![GuiTab {
+            id: TabId::new(TabKey::TextMain),
+            window_name: "main".to_string(),
+        }]);
+        let detached_surface = dock_state.add_window(vec![GuiTab {
+            id: TabId::new(TabKey::Vitals),
+            window_name: "vitals".to_string(),
+        }]);
+        dock_state
+            .get_window_state_mut(detached_surface)
+            .expect("detached surface should have a window state")
+            .set_position(Pos2::new(250.0, 120.0))
+            .set_size(Vec2::new(640.0, 480.0));
+
+        let detached = VellumGuiApp::collect_detached_viewports_for_save(&mut dock_state, None);
+        assert_eq!(detached.len(), 1);
+        let saved = detached.values().next().expect("detached viewport entry");
+        assert_eq!(saved.tab, TabKey::Vitals);
+        // `egui_dock::WindowState` reports `Rect::NOTHING` until first rendered frame,
+        // so collection falls back to a safe default rectangle in headless unit tests.
+        assert_eq!(saved.outer_pos_px, [100.0, 100.0]);
+        assert_eq!(saved.outer_size_px, [600.0, 400.0]);
+    }
+
+    #[test]
+    fn test_global_dispatch_prefers_macro_over_shortcut() {
+        let key_event = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CTRL);
+        let mut keybind_map = HashMap::new();
+        keybind_map.insert(
+            key_event,
+            KeyBindAction::Macro(MacroAction {
+                macro_text: "look\r".to_string(),
+            }),
+        );
+
+        let target = VellumGuiApp::resolve_global_dispatch_target(
+            key_event,
+            &keybind_map,
+            &AppKeybinds::default(),
+            false,
+        );
+        assert!(matches!(target, Some(GlobalDispatchTarget::Macro(_))));
+    }
+
+    #[test]
+    fn test_global_dispatch_uses_shortcut_when_macro_capture_active() {
+        let key_event = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CTRL);
+        let mut keybind_map = HashMap::new();
+        keybind_map.insert(
+            key_event,
+            KeyBindAction::Macro(MacroAction {
+                macro_text: "look\r".to_string(),
+            }),
+        );
+
+        let target = VellumGuiApp::resolve_global_dispatch_target(
+            key_event,
+            &keybind_map,
+            &AppKeybinds::default(),
+            true,
+        );
+        assert!(matches!(
+            target,
+            Some(GlobalDispatchTarget::Shortcut(AppShortcut::StartSearch))
+        ));
+    }
+
+    #[test]
+    fn test_global_dispatch_suppresses_macro_without_shortcut() {
+        let key_event = KeyEvent::new(KeyCode::Keypad1, KeyModifiers::NONE);
+        let mut keybind_map = HashMap::new();
+        keybind_map.insert(
+            key_event,
+            KeyBindAction::Macro(MacroAction {
+                macro_text: "sw\r".to_string(),
+            }),
+        );
+
+        let target = VellumGuiApp::resolve_global_dispatch_target(
+            key_event,
+            &keybind_map,
+            &AppKeybinds::default(),
+            true,
+        );
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn test_egui_num_key_maps_to_keypad_event() {
+        let event = VellumGuiApp::egui_key_to_frontend_event(
+            eframe::egui::Key::Num1,
+            eframe::egui::Modifiers::default(),
+        )
+        .expect("Num1 should map to a frontend key event");
+        assert_eq!(event.code, KeyCode::Keypad1);
+        assert_eq!(event.modifiers, KeyModifiers::NONE);
     }
 }

@@ -34,9 +34,9 @@ pub enum WidgetType {
     InjuryDoll,
     Hand,
     ActiveEffects,
-    Targets,  // New component-based (default)
+    Targets, // New component-based (default)
     Players,
-    Items,    // Room objects (non-creatures)
+    Items, // Room objects (non-creatures)
     Spells,
     Spacer,
     Performance,
@@ -76,7 +76,7 @@ impl WidgetType {
             "dashboard" => Some(WidgetType::Dashboard),
             "hand" => Some(WidgetType::Hand),
             "active_effects" => Some(WidgetType::ActiveEffects),
-            "targets" => Some(WidgetType::Targets),  // Component-based (default)
+            "targets" => Some(WidgetType::Targets), // Component-based (default)
             "players" => Some(WidgetType::Players),
             "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
@@ -96,10 +96,32 @@ impl WidgetType {
 
     /// List of valid widget type names for help messages
     pub const VALID_TYPES: &'static [&'static str] = &[
-        "text", "tabbedtext", "progress", "countdown", "compass", "injury_doll",
-        "indicator", "room", "inventory", "command_input", "dashboard", "hand",
-        "active_effects", "targets", "players", "spells",
-        "perception", "performance", "spacer", "container", "experience", "gs4_experience", "encum", "quickbar", "minivitals", "betrayer",
+        "text",
+        "tabbedtext",
+        "progress",
+        "countdown",
+        "compass",
+        "injury_doll",
+        "indicator",
+        "room",
+        "inventory",
+        "command_input",
+        "dashboard",
+        "hand",
+        "active_effects",
+        "targets",
+        "players",
+        "spells",
+        "perception",
+        "performance",
+        "spacer",
+        "container",
+        "experience",
+        "gs4_experience",
+        "encum",
+        "quickbar",
+        "minivitals",
+        "betrayer",
     ];
 }
 

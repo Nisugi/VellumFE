@@ -4,7 +4,6 @@
 ///! - Widget caches (HashMaps of widget instances)
 ///! - Sync methods (updating widgets from AppCore state)
 ///! - Widget initialization and updates
-
 use std::collections::HashMap;
 
 /// Widget manager handles all widget caches and synchronization

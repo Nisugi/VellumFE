@@ -3,8 +3,8 @@
 //! Used by the spell color browser/editor to input ranges, preview swatches,
 //! and persist the chosen palette.
 
-use crate::frontend::tui::crossterm_bridge;
 use crate::config::SpellColorRange;
+use crate::frontend::tui::crossterm_bridge;
 use crossterm::event::KeyEvent;
 use ratatui::{
     buffer::Buffer,
@@ -140,7 +140,10 @@ impl SpellColorFormWidget {
     }
 
     /// Handle MenuAction (called from mod.rs input routing)
-    pub fn handle_action(&mut self, action: crate::core::menu_actions::MenuAction) -> Option<SpellColorFormResult> {
+    pub fn handle_action(
+        &mut self,
+        action: crate::core::menu_actions::MenuAction,
+    ) -> Option<SpellColorFormResult> {
         use crate::core::menu_actions::MenuAction;
 
         match action {
@@ -171,7 +174,7 @@ impl SpellColorFormWidget {
                     None
                 }
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -268,7 +271,13 @@ impl SpellColorFormWidget {
         for row in popup_row..popup_row + popup_height {
             for col in popup_col..popup_col + popup_width {
                 if col < area.width && row < area.height {
-                    buf.set_string(col, row, " ", Style::default().bg(crossterm_bridge::to_ratatui_color(theme.browser_background)));
+                    buf.set_string(
+                        col,
+                        row,
+                        " ",
+                        Style::default()
+                            .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+                    );
                 }
             }
         }
@@ -279,7 +288,8 @@ impl SpellColorFormWidget {
             FormMode::Edit(_) => " Edit Spell Color ",
         };
 
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
 
         // Top border
         let top = format!("┌{}┐", "─".repeat(popup_width as usize - 2));
@@ -415,7 +425,9 @@ impl SpellColorFormWidget {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
         textarea.set_style(base_style);
         textarea.set_cursor_style(
             Style::default()
@@ -464,7 +476,9 @@ impl SpellColorFormWidget {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
         textarea.set_style(base_style);
         textarea.set_cursor_style(
             Style::default()

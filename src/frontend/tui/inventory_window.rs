@@ -105,7 +105,8 @@ impl InventoryWindow {
 
     /// Set border configuration
     pub fn set_border_config(&mut self, show_border: bool, border_color: Option<String>) {
-        self.widget.set_border_config(show_border, None, border_color);
+        self.widget
+            .set_border_config(show_border, None, border_color);
     }
 
     pub fn set_text_color(&mut self, color: Option<String>) {
@@ -125,7 +126,7 @@ impl InventoryWindow {
         self.widget.render(area, buf);
     }
 
-pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
+    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
         // For now, just call regular render - theme colors will be applied in future update
         self.render(area, buf);
     }
@@ -137,7 +138,8 @@ pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::th
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -148,7 +150,8 @@ pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::th
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 
@@ -213,4 +216,3 @@ mod tests {
         assert_eq!(inv.get_start_line(), 1);
     }
 }
-

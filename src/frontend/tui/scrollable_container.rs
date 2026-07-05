@@ -3,9 +3,9 @@
 //! Provides ordering, optional alternate text, and per-row progress bars, which
 //! makes it a handy building block for several specialized widgets.
 
+use super::progress_bar::ProgressBar;
 use crate::data::LinkData;
 use crate::frontend::tui::crossterm_bridge;
-use super::progress_bar::ProgressBar;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -525,7 +525,13 @@ impl ScrollableContainer {
                 let start = start_col.min(line_len);
                 let end = end_col.min(line_len);
                 if start < end {
-                    result.push_str(&line_text.chars().skip(start).take(end - start).collect::<String>());
+                    result.push_str(
+                        &line_text
+                            .chars()
+                            .skip(start)
+                            .take(end - start)
+                            .collect::<String>(),
+                    );
                 }
             } else if line_idx == start_line {
                 // First line of multi-line selection

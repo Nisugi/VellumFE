@@ -794,9 +794,18 @@ mod tests {
         assert_eq!(converted.text_primary.g, original.text_primary.g);
         assert_eq!(converted.text_primary.b, original.text_primary.b);
 
-        assert_eq!(converted.background_primary.r, original.background_primary.r);
-        assert_eq!(converted.background_primary.g, original.background_primary.g);
-        assert_eq!(converted.background_primary.b, original.background_primary.b);
+        assert_eq!(
+            converted.background_primary.r,
+            original.background_primary.r
+        );
+        assert_eq!(
+            converted.background_primary.g,
+            original.background_primary.g
+        );
+        assert_eq!(
+            converted.background_primary.b,
+            original.background_primary.b
+        );
     }
 
     #[test]

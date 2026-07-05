@@ -39,10 +39,8 @@ impl ThemeBrowser {
             custom_themes.keys().cloned().collect();
 
         // Merge and sort all themes
-        let mut themes: Vec<(String, AppTheme)> = builtin_themes
-            .into_iter()
-            .chain(custom_themes)
-            .collect();
+        let mut themes: Vec<(String, AppTheme)> =
+            builtin_themes.into_iter().chain(custom_themes).collect();
         themes.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Find the index of the active theme

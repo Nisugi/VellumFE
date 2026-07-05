@@ -179,14 +179,20 @@ impl Targets {
             if should_filter {
                 tracing::debug!(
                     "Filtering creature: name='{}', noun={:?}, status={:?}, is_body_part={}",
-                    creature.name, creature.noun, creature.status, is_body_part
+                    creature.name,
+                    creature.noun,
+                    creature.status,
+                    is_body_part
                 );
                 continue;
             }
 
             tracing::debug!(
                 "Processing creature: name='{}', noun={:?}, id='{}', status={:?}",
-                creature.name, creature.noun, creature.id, creature.status
+                creature.name,
+                creature.noun,
+                creature.id,
+                creature.status
             );
 
             // Check if this is the current target (compare by ID, not name)
@@ -200,7 +206,8 @@ impl Targets {
             // Build display text with status based on configuration
             // Always look up abbreviation in config; fallback to truncating to 3 chars
             let status_text = creature.status.as_ref().map(|s| {
-                let abbreviated = config.status_abbrev
+                let abbreviated = config
+                    .status_abbrev
                     .get(&s.to_lowercase())
                     .cloned()
                     .unwrap_or_else(|| {
@@ -221,10 +228,16 @@ impl Targets {
                 let full_len = creature.name.len() + status_len + 1; // +1 for space
                 if full_len > available_width {
                     // Use noun instead (either from parser or fallback to last word)
-                    creature.noun.as_ref()
+                    creature
+                        .noun
+                        .as_ref()
                         .map(|n| n.clone())
                         .or_else(|| {
-                            creature.name.split_whitespace().last().map(|s| s.to_string())
+                            creature
+                                .name
+                                .split_whitespace()
+                                .last()
+                                .map(|s| s.to_string())
                         })
                         .unwrap_or_else(|| creature.name.clone())
                 } else {
@@ -237,8 +250,8 @@ impl Targets {
 
             // Build final display name with status positioned according to config
             // Per-window setting overrides global config if set
-            let effective_status_position = per_window_status_position
-                .unwrap_or(config.status_position.as_str());
+            let effective_status_position =
+                per_window_status_position.unwrap_or(config.status_position.as_str());
             let display_name = if let Some(ref status) = status_text {
                 if effective_status_position == "start" {
                     format!("{} {}", status, base_name)
@@ -255,10 +268,16 @@ impl Targets {
             // - noun: Use parsed noun or fallback to last word
             // - text: full creature name
             let exist_id = creature.id.trim_start_matches('#').to_string();
-            let link_noun = creature.noun.as_ref()
+            let link_noun = creature
+                .noun
+                .as_ref()
                 .map(|n| n.clone())
                 .or_else(|| {
-                    creature.name.split_whitespace().last().map(|s| s.to_string())
+                    creature
+                        .name
+                        .split_whitespace()
+                        .last()
+                        .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| creature.name.clone());
             let link_data = Some(LinkData {
@@ -289,7 +308,8 @@ impl Targets {
             // Add to widget with link data for click handling
             // NOTE: This is the critical fix - ListWidget doesn't have ProgressBar's
             // ensure_contrast() logic, so item_text_color is preserved exactly!
-            self.widget.add_simple_line(display_name, item_text_color, link_data);
+            self.widget
+                .add_simple_line(display_name, item_text_color, link_data);
 
             self.count += 1;
         }
@@ -430,7 +450,8 @@ impl Targets {
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -441,7 +462,8 @@ impl Targets {
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 

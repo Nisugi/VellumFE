@@ -393,10 +393,7 @@ mod tests {
         state.value = 100;
         state.text = "Blood Points: 100".to_string();
         // Mix of active (with '!') and inactive items
-        state.items = vec![
-            "!active item".to_string(),
-            "inactive item".to_string(),
-        ];
+        state.items = vec!["!active item".to_string(), "inactive item".to_string()];
 
         betrayer.update_from_state(&state);
         assert_eq!(betrayer.items.len(), 2);

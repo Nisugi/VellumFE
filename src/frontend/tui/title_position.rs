@@ -105,9 +105,7 @@ pub fn render_block_with_title(
                 None
             },
         ),
-        TitlePosition::BottomLeft
-        | TitlePosition::BottomCenter
-        | TitlePosition::BottomRight => (
+        TitlePosition::BottomLeft | TitlePosition::BottomCenter | TitlePosition::BottomRight => (
             area.y.saturating_add(area.height.saturating_sub(1)),
             if border_sides.bottom {
                 Some(match border_type {
@@ -147,9 +145,11 @@ pub fn render_block_with_title(
     for (idx, ch) in title_chars.into_iter().enumerate() {
         let x = start_x + idx as u16;
         if x < area.x + area.width {
-            buf[(x, title_y)]
-                .set_char(ch)
-                .set_style(Style::default().fg(border_color).add_modifier(border_style.add_modifier));
+            buf[(x, title_y)].set_char(ch).set_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(border_style.add_modifier),
+            );
         }
     }
 

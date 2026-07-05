@@ -134,7 +134,11 @@ impl ProgressBar {
         let Some(bg) = bg else { return text };
         let l_text = Self::luminance(text);
         let l_bg = Self::luminance(bg);
-        let (max, min) = if l_text > l_bg { (l_text, l_bg) } else { (l_bg, l_text) };
+        let (max, min) = if l_text > l_bg {
+            (l_text, l_bg)
+        } else {
+            (l_bg, l_text)
+        };
         let contrast = (max + 0.05) / (min + 0.05);
 
         if contrast >= 3.0 {

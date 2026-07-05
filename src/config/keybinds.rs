@@ -102,8 +102,8 @@ pub enum KeyAction {
     CursorEnd,
     CursorBackspace,
     CursorDelete,
-    CursorDeleteWord,  // Delete from cursor to end of word
-    CursorClearLine,   // Clear entire command line
+    CursorDeleteWord, // Delete from cursor to end of word
+    CursorClearLine,  // Clear entire command line
 
     // History actions
     PreviousCommand,
@@ -117,8 +117,8 @@ pub enum KeyAction {
     ScrollCurrentWindowDownOne,
     ScrollCurrentWindowUpPage,
     ScrollCurrentWindowDownPage,
-    ScrollCurrentWindowHome,  // Scroll to top of window
-    ScrollCurrentWindowEnd,   // Scroll to bottom of window
+    ScrollCurrentWindowHome, // Scroll to top of window
+    ScrollCurrentWindowEnd,  // Scroll to bottom of window
 
     // Search actions (already implemented)
     StartSearch,
@@ -127,18 +127,18 @@ pub enum KeyAction {
     ClearSearch,
 
     // Tab navigation (for TabbedText widgets)
-    NextTab,           // Switch to next tab
-    PrevTab,           // Switch to previous tab
-    NextUnreadTab,     // Jump to next tab with unread messages
+    NextTab,       // Switch to next tab
+    PrevTab,       // Switch to previous tab
+    NextUnreadTab, // Jump to next tab with unread messages
 
     // Clipboard actions
-    Copy,              // Copy selected text to clipboard
-    Paste,             // Paste from clipboard
-    SelectAll,         // Select all text in command input
+    Copy,      // Copy selected text to clipboard
+    Paste,     // Paste from clipboard
+    SelectAll, // Select all text in command input
 
     // System toggles
-    TogglePerformanceStats,  // Show/hide performance overlay
-    ToggleSounds,            // Enable/disable sound system
+    TogglePerformanceStats, // Show/hide performance overlay
+    ToggleSounds,           // Enable/disable sound system
 
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
@@ -352,15 +352,25 @@ impl MenuKeybinds {
         let key_lower = key_str.to_lowercase();
 
         // DEBUG: Log what we're resolving
-        tracing::debug!("🔍 resolve_action: key_str='{}', context={:?}", key_str, context);
-        tracing::debug!("   Config values: navigate_up='{}', navigate_down='{}', select='{}', cancel='{}'",
-                       self.navigate_up, self.navigate_down, self.select, self.cancel);
+        tracing::debug!(
+            "🔍 resolve_action: key_str='{}', context={:?}",
+            key_str,
+            context
+        );
+        tracing::debug!(
+            "   Config values: navigate_up='{}', navigate_down='{}', select='{}', cancel='{}'",
+            self.navigate_up,
+            self.navigate_down,
+            self.select,
+            self.cancel
+        );
 
         // Special handling for BackTab (Shift+Tab)
         if matches!(key.code, KeyCode::BackTab)
-            && (key_lower == self.previous_field.to_lowercase() || key_lower == "shift+tab") {
-                return MenuAction::PreviousField;
-            }
+            && (key_lower == self.previous_field.to_lowercase() || key_lower == "shift+tab")
+        {
+            return MenuAction::PreviousField;
+        }
 
         // Context-specific bindings first (override general bindings)
         match context {
@@ -654,12 +664,14 @@ impl Config {
             .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
 
         // Parse the entire TOML file to get the [user] section
-        let toml_value: toml::Value = toml::from_str(&contents)
-            .context("Failed to parse common keybinds TOML")?;
+        let toml_value: toml::Value =
+            toml::from_str(&contents).context("Failed to parse common keybinds TOML")?;
 
         // Extract [user] section if it exists
         if let Some(user_section) = toml_value.get("user") {
-            let keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+            let keybinds: HashMap<String, KeyBindAction> = user_section
+                .clone()
+                .try_into()
                 .context("Failed to parse [user] section from common keybinds")?;
             Ok(keybinds)
         } else {
@@ -681,12 +693,14 @@ impl Config {
                 fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
 
             // Parse the entire TOML file to get the [user] section
-            let toml_value: toml::Value = toml::from_str(&contents)
-                .context("Failed to parse keybinds.toml")?;
+            let toml_value: toml::Value =
+                toml::from_str(&contents).context("Failed to parse keybinds.toml")?;
 
             // Extract [user] section if it exists
             if let Some(user_section) = toml_value.get("user") {
-                let character_keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+                let character_keybinds: HashMap<String, KeyBindAction> = user_section
+                    .clone()
+                    .try_into()
                     .context("Failed to parse [user] section")?;
                 // Character keybinds override global (HashMap::extend)
                 keybinds.extend(character_keybinds);
@@ -701,7 +715,9 @@ impl Config {
 
     /// Load only character-specific keybinds (not merged with global)
     /// Returns: HashMap of character keybinds, or empty if file doesn't exist
-    pub fn load_character_keybinds_only(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+    pub fn load_character_keybinds_only(
+        character: Option<&str>,
+    ) -> Result<HashMap<String, KeyBindAction>> {
         let keybinds_path = Self::keybinds_path(character)?;
 
         if !keybinds_path.exists() {
@@ -712,12 +728,14 @@ impl Config {
             .with_context(|| format!("Failed to read character keybinds: {:?}", keybinds_path))?;
 
         // Parse the entire TOML file to get the [user] section
-        let toml_value: toml::Value = toml::from_str(&contents)
-            .context("Failed to parse character keybinds TOML")?;
+        let toml_value: toml::Value =
+            toml::from_str(&contents).context("Failed to parse character keybinds TOML")?;
 
         // Extract [user] section if it exists
         if let Some(user_section) = toml_value.get("user") {
-            let keybinds: HashMap<String, KeyBindAction> = user_section.clone().try_into()
+            let keybinds: HashMap<String, KeyBindAction> = user_section
+                .clone()
+                .try_into()
                 .context("Failed to parse [user] section from character keybinds")?;
             Ok(keybinds)
         } else {
@@ -789,8 +807,8 @@ impl Config {
         }
 
         // Write back to file
-        let contents = toml::to_string_pretty(&toml_table)
-            .context("Failed to serialize keybinds")?;
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
         fs::write(&path, contents)
             .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
 
@@ -840,8 +858,8 @@ impl Config {
         if let Some(toml::Value::Table(user_table)) = toml_table.get_mut("user") {
             if user_table.remove(key).is_some() {
                 // Write back to file
-                let contents = toml::to_string_pretty(&toml_table)
-                    .context("Failed to serialize keybinds")?;
+                let contents =
+                    toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
                 fs::write(&path, contents)
                     .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
 
@@ -875,31 +893,48 @@ impl Config {
         if keybinds.quit.is_empty() {
             tracing::warn!("Global keybind 'quit' is empty - application may be difficult to exit");
         } else if parse_key_string(&keybinds.quit).is_none() {
-            tracing::warn!("Global keybind 'quit' has invalid value: '{}' - using default 'ctrl+c'", keybinds.quit);
+            tracing::warn!(
+                "Global keybind 'quit' has invalid value: '{}' - using default 'ctrl+c'",
+                keybinds.quit
+            );
         }
 
         if keybinds.start_search.is_empty() {
             tracing::warn!("Global keybind 'start_search' is empty - search feature disabled");
         } else if parse_key_string(&keybinds.start_search).is_none() {
-            tracing::warn!("Global keybind 'start_search' has invalid value: '{}'", keybinds.start_search);
+            tracing::warn!(
+                "Global keybind 'start_search' has invalid value: '{}'",
+                keybinds.start_search
+            );
         }
 
         if keybinds.close_window.is_empty() {
-            tracing::warn!("Global keybind 'close_window' is empty - may not be able to close dialogs");
+            tracing::warn!(
+                "Global keybind 'close_window' is empty - may not be able to close dialogs"
+            );
         } else if parse_key_string(&keybinds.close_window).is_none() {
-            tracing::warn!("Global keybind 'close_window' has invalid value: '{}'", keybinds.close_window);
+            tracing::warn!(
+                "Global keybind 'close_window' has invalid value: '{}'",
+                keybinds.close_window
+            );
         }
 
         if keybinds.next_search_match.is_empty() {
             tracing::debug!("Global keybind 'next_search_match' is empty");
         } else if parse_key_string(&keybinds.next_search_match).is_none() {
-            tracing::warn!("Global keybind 'next_search_match' has invalid value: '{}'", keybinds.next_search_match);
+            tracing::warn!(
+                "Global keybind 'next_search_match' has invalid value: '{}'",
+                keybinds.next_search_match
+            );
         }
 
         if keybinds.prev_search_match.is_empty() {
             tracing::debug!("Global keybind 'prev_search_match' is empty");
         } else if parse_key_string(&keybinds.prev_search_match).is_none() {
-            tracing::warn!("Global keybind 'prev_search_match' has invalid value: '{}'", keybinds.prev_search_match);
+            tracing::warn!(
+                "Global keybind 'prev_search_match' has invalid value: '{}'",
+                keybinds.prev_search_match
+            );
         }
     }
 
@@ -915,18 +950,22 @@ impl Config {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
 
-        let toml_value: toml::Value = toml::from_str(&contents)
-            .context("Failed to parse common keybinds TOML")?;
+        let toml_value: toml::Value =
+            toml::from_str(&contents).context("Failed to parse common keybinds TOML")?;
 
         // Try [app] section first
         if let Some(app_section) = toml_value.get("app") {
-            let app_keybinds: AppKeybinds = app_section.clone().try_into()
+            let app_keybinds: AppKeybinds = app_section
+                .clone()
+                .try_into()
                 .context("Failed to parse [app] section from common keybinds")?;
             Ok(app_keybinds)
         } else if let Some(global_section) = toml_value.get("global") {
             // Backward compatibility
             tracing::warn!("Using deprecated [global] section in global keybinds.toml - please rename to [app]");
-            let app_keybinds: AppKeybinds = global_section.clone().try_into()
+            let app_keybinds: AppKeybinds = global_section
+                .clone()
+                .try_into()
                 .context("Failed to parse [global] section from common keybinds")?;
             Ok(app_keybinds)
         } else {
@@ -944,18 +983,24 @@ impl Config {
             let contents =
                 fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
 
-            let toml_value: toml::Value = toml::from_str(&contents)
-                .context("Failed to parse keybinds.toml")?;
+            let toml_value: toml::Value =
+                toml::from_str(&contents).context("Failed to parse keybinds.toml")?;
 
             // Check if character file has [app] or [global] section
             if let Some(app_section) = toml_value.get("app") {
-                let app_keybinds: AppKeybinds = app_section.clone().try_into()
+                let app_keybinds: AppKeybinds = app_section
+                    .clone()
+                    .try_into()
                     .context("Failed to parse [app] section")?;
                 Self::validate_app_keybinds(&app_keybinds);
                 return Ok(app_keybinds);
             } else if let Some(global_section) = toml_value.get("global") {
-                tracing::warn!("Using deprecated [global] section in keybinds.toml - please rename to [app]");
-                let app_keybinds: AppKeybinds = global_section.clone().try_into()
+                tracing::warn!(
+                    "Using deprecated [global] section in keybinds.toml - please rename to [app]"
+                );
+                let app_keybinds: AppKeybinds = global_section
+                    .clone()
+                    .try_into()
                     .context("Failed to parse [global] section")?;
                 Self::validate_app_keybinds(&app_keybinds);
                 return Ok(app_keybinds);
@@ -981,11 +1026,13 @@ impl Config {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read common keybinds: {:?}", path))?;
 
-        let toml_value: toml::Value = toml::from_str(&contents)
-            .context("Failed to parse common keybinds TOML")?;
+        let toml_value: toml::Value =
+            toml::from_str(&contents).context("Failed to parse common keybinds TOML")?;
 
         if let Some(menu_section) = toml_value.get("menu") {
-            let menu_keybinds: MenuKeybinds = menu_section.clone().try_into()
+            let menu_keybinds: MenuKeybinds = menu_section
+                .clone()
+                .try_into()
                 .context("Failed to parse [menu] section from common keybinds")?;
             Ok(menu_keybinds)
         } else {
@@ -1004,13 +1051,15 @@ impl Config {
             let contents =
                 fs::read_to_string(&keybinds_path).context("Failed to read keybinds.toml")?;
 
-            let toml_value: toml::Value = toml::from_str(&contents)
-                .context("Failed to parse keybinds.toml")?;
+            let toml_value: toml::Value =
+                toml::from_str(&contents).context("Failed to parse keybinds.toml")?;
 
             // Check if character file has [menu] section
             if let Some(menu_section) = toml_value.get("menu") {
                 tracing::debug!("Found [menu] section in character keybinds");
-                let menu_keybinds: MenuKeybinds = menu_section.clone().try_into()
+                let menu_keybinds: MenuKeybinds = menu_section
+                    .clone()
+                    .try_into()
                     .context("Failed to parse [menu] section")?;
                 return Ok(menu_keybinds);
             }
@@ -1346,7 +1395,10 @@ mod tests {
     fn test_parse_key_string_numpad_operators() {
         assert_eq!(parse_key_string("num_+").unwrap().0, KeyCode::KeypadPlus);
         assert_eq!(parse_key_string("num_-").unwrap().0, KeyCode::KeypadMinus);
-        assert_eq!(parse_key_string("num_*").unwrap().0, KeyCode::KeypadMultiply);
+        assert_eq!(
+            parse_key_string("num_*").unwrap().0,
+            KeyCode::KeypadMultiply
+        );
         assert_eq!(parse_key_string("num_/").unwrap().0, KeyCode::KeypadDivide);
         assert_eq!(parse_key_string("num_.").unwrap().0, KeyCode::KeypadPeriod);
     }
@@ -1459,87 +1511,201 @@ mod tests {
 
     #[test]
     fn test_key_action_from_str_command_input() {
-        assert_eq!(KeyAction::from_str("send_command"), Some(KeyAction::SendCommand));
-        assert_eq!(KeyAction::from_str("cursor_left"), Some(KeyAction::CursorLeft));
-        assert_eq!(KeyAction::from_str("cursor_right"), Some(KeyAction::CursorRight));
-        assert_eq!(KeyAction::from_str("cursor_home"), Some(KeyAction::CursorHome));
-        assert_eq!(KeyAction::from_str("cursor_end"), Some(KeyAction::CursorEnd));
-        assert_eq!(KeyAction::from_str("cursor_backspace"), Some(KeyAction::CursorBackspace));
-        assert_eq!(KeyAction::from_str("cursor_delete"), Some(KeyAction::CursorDelete));
+        assert_eq!(
+            KeyAction::from_str("send_command"),
+            Some(KeyAction::SendCommand)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_left"),
+            Some(KeyAction::CursorLeft)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_right"),
+            Some(KeyAction::CursorRight)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_home"),
+            Some(KeyAction::CursorHome)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_end"),
+            Some(KeyAction::CursorEnd)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_backspace"),
+            Some(KeyAction::CursorBackspace)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_delete"),
+            Some(KeyAction::CursorDelete)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_word_movement() {
-        assert_eq!(KeyAction::from_str("cursor_word_left"), Some(KeyAction::CursorWordLeft));
-        assert_eq!(KeyAction::from_str("cursor_word_right"), Some(KeyAction::CursorWordRight));
-        assert_eq!(KeyAction::from_str("cursor_delete_word"), Some(KeyAction::CursorDeleteWord));
-        assert_eq!(KeyAction::from_str("cursor_clear_line"), Some(KeyAction::CursorClearLine));
+        assert_eq!(
+            KeyAction::from_str("cursor_word_left"),
+            Some(KeyAction::CursorWordLeft)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_word_right"),
+            Some(KeyAction::CursorWordRight)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_delete_word"),
+            Some(KeyAction::CursorDeleteWord)
+        );
+        assert_eq!(
+            KeyAction::from_str("cursor_clear_line"),
+            Some(KeyAction::CursorClearLine)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_history() {
-        assert_eq!(KeyAction::from_str("previous_command"), Some(KeyAction::PreviousCommand));
-        assert_eq!(KeyAction::from_str("next_command"), Some(KeyAction::NextCommand));
-        assert_eq!(KeyAction::from_str("send_last_command"), Some(KeyAction::SendLastCommand));
-        assert_eq!(KeyAction::from_str("send_second_last_command"), Some(KeyAction::SendSecondLastCommand));
+        assert_eq!(
+            KeyAction::from_str("previous_command"),
+            Some(KeyAction::PreviousCommand)
+        );
+        assert_eq!(
+            KeyAction::from_str("next_command"),
+            Some(KeyAction::NextCommand)
+        );
+        assert_eq!(
+            KeyAction::from_str("send_last_command"),
+            Some(KeyAction::SendLastCommand)
+        );
+        assert_eq!(
+            KeyAction::from_str("send_second_last_command"),
+            Some(KeyAction::SendSecondLastCommand)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_window() {
-        assert_eq!(KeyAction::from_str("switch_current_window"), Some(KeyAction::SwitchCurrentWindow));
-        assert_eq!(KeyAction::from_str("scroll_current_window_up_one"), Some(KeyAction::ScrollCurrentWindowUpOne));
-        assert_eq!(KeyAction::from_str("scroll_current_window_down_one"), Some(KeyAction::ScrollCurrentWindowDownOne));
-        assert_eq!(KeyAction::from_str("scroll_current_window_up_page"), Some(KeyAction::ScrollCurrentWindowUpPage));
-        assert_eq!(KeyAction::from_str("scroll_current_window_down_page"), Some(KeyAction::ScrollCurrentWindowDownPage));
-        assert_eq!(KeyAction::from_str("scroll_current_window_home"), Some(KeyAction::ScrollCurrentWindowHome));
-        assert_eq!(KeyAction::from_str("scroll_current_window_end"), Some(KeyAction::ScrollCurrentWindowEnd));
+        assert_eq!(
+            KeyAction::from_str("switch_current_window"),
+            Some(KeyAction::SwitchCurrentWindow)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_up_one"),
+            Some(KeyAction::ScrollCurrentWindowUpOne)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_down_one"),
+            Some(KeyAction::ScrollCurrentWindowDownOne)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_up_page"),
+            Some(KeyAction::ScrollCurrentWindowUpPage)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_down_page"),
+            Some(KeyAction::ScrollCurrentWindowDownPage)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_home"),
+            Some(KeyAction::ScrollCurrentWindowHome)
+        );
+        assert_eq!(
+            KeyAction::from_str("scroll_current_window_end"),
+            Some(KeyAction::ScrollCurrentWindowEnd)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_search() {
-        assert_eq!(KeyAction::from_str("start_search"), Some(KeyAction::StartSearch));
-        assert_eq!(KeyAction::from_str("next_search_match"), Some(KeyAction::NextSearchMatch));
-        assert_eq!(KeyAction::from_str("prev_search_match"), Some(KeyAction::PrevSearchMatch));
-        assert_eq!(KeyAction::from_str("clear_search"), Some(KeyAction::ClearSearch));
+        assert_eq!(
+            KeyAction::from_str("start_search"),
+            Some(KeyAction::StartSearch)
+        );
+        assert_eq!(
+            KeyAction::from_str("next_search_match"),
+            Some(KeyAction::NextSearchMatch)
+        );
+        assert_eq!(
+            KeyAction::from_str("prev_search_match"),
+            Some(KeyAction::PrevSearchMatch)
+        );
+        assert_eq!(
+            KeyAction::from_str("clear_search"),
+            Some(KeyAction::ClearSearch)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_tabs() {
         assert_eq!(KeyAction::from_str("next_tab"), Some(KeyAction::NextTab));
         assert_eq!(KeyAction::from_str("prev_tab"), Some(KeyAction::PrevTab));
-        assert_eq!(KeyAction::from_str("next_unread_tab"), Some(KeyAction::NextUnreadTab));
+        assert_eq!(
+            KeyAction::from_str("next_unread_tab"),
+            Some(KeyAction::NextUnreadTab)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_clipboard() {
         assert_eq!(KeyAction::from_str("copy"), Some(KeyAction::Copy));
         assert_eq!(KeyAction::from_str("paste"), Some(KeyAction::Paste));
-        assert_eq!(KeyAction::from_str("select_all"), Some(KeyAction::SelectAll));
+        assert_eq!(
+            KeyAction::from_str("select_all"),
+            Some(KeyAction::SelectAll)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_toggles() {
-        assert_eq!(KeyAction::from_str("toggle_performance_stats"), Some(KeyAction::TogglePerformanceStats));
-        assert_eq!(KeyAction::from_str("toggle_sounds"), Some(KeyAction::ToggleSounds));
+        assert_eq!(
+            KeyAction::from_str("toggle_performance_stats"),
+            Some(KeyAction::TogglePerformanceStats)
+        );
+        assert_eq!(
+            KeyAction::from_str("toggle_sounds"),
+            Some(KeyAction::ToggleSounds)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_tts() {
         assert_eq!(KeyAction::from_str("tts_next"), Some(KeyAction::TtsNext));
-        assert_eq!(KeyAction::from_str("tts_previous"), Some(KeyAction::TtsPrevious));
-        assert_eq!(KeyAction::from_str("tts_next_unread"), Some(KeyAction::TtsNextUnread));
+        assert_eq!(
+            KeyAction::from_str("tts_previous"),
+            Some(KeyAction::TtsPrevious)
+        );
+        assert_eq!(
+            KeyAction::from_str("tts_next_unread"),
+            Some(KeyAction::TtsNextUnread)
+        );
         assert_eq!(KeyAction::from_str("tts_stop"), Some(KeyAction::TtsStop));
-        assert_eq!(KeyAction::from_str("tts_mute_toggle"), Some(KeyAction::TtsMuteToggle));
-        assert_eq!(KeyAction::from_str("tts_increase_rate"), Some(KeyAction::TtsIncreaseRate));
-        assert_eq!(KeyAction::from_str("tts_decrease_rate"), Some(KeyAction::TtsDecreaseRate));
-        assert_eq!(KeyAction::from_str("tts_increase_volume"), Some(KeyAction::TtsIncreaseVolume));
-        assert_eq!(KeyAction::from_str("tts_decrease_volume"), Some(KeyAction::TtsDecreaseVolume));
+        assert_eq!(
+            KeyAction::from_str("tts_mute_toggle"),
+            Some(KeyAction::TtsMuteToggle)
+        );
+        assert_eq!(
+            KeyAction::from_str("tts_increase_rate"),
+            Some(KeyAction::TtsIncreaseRate)
+        );
+        assert_eq!(
+            KeyAction::from_str("tts_decrease_rate"),
+            Some(KeyAction::TtsDecreaseRate)
+        );
+        assert_eq!(
+            KeyAction::from_str("tts_increase_volume"),
+            Some(KeyAction::TtsIncreaseVolume)
+        );
+        assert_eq!(
+            KeyAction::from_str("tts_decrease_volume"),
+            Some(KeyAction::TtsDecreaseVolume)
+        );
     }
 
     #[test]
     fn test_key_action_from_str_legacy() {
         // Legacy alias
-        assert_eq!(KeyAction::from_str("tts_pause_resume"), Some(KeyAction::TtsStop));
+        assert_eq!(
+            KeyAction::from_str("tts_pause_resume"),
+            Some(KeyAction::TtsStop)
+        );
     }
 
     #[test]

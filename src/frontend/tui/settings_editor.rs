@@ -301,7 +301,8 @@ impl SettingsEditor {
 
     /// Get the key and is_global of the selected setting
     pub fn get_selected_key_and_scope(&self) -> Option<(String, bool)> {
-        self.get_selected().map(|item| (item.key.clone(), item.is_global))
+        self.get_selected()
+            .map(|item| (item.key.clone(), item.is_global))
     }
 
     /// Get an iterator over all settings items
@@ -712,7 +713,8 @@ impl SettingsEditor {
         }
 
         // Draw border
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
         self.draw_border(popup_area, buf, border_style);
 
         // Draw title

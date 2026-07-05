@@ -170,7 +170,10 @@ impl ColorForm {
     }
 
     /// Handle MenuAction (called from mod.rs input routing)
-    pub fn handle_action(&mut self, action: crate::core::menu_actions::MenuAction) -> Option<FormAction> {
+    pub fn handle_action(
+        &mut self,
+        action: crate::core::menu_actions::MenuAction,
+    ) -> Option<FormAction> {
         use crate::core::menu_actions::MenuAction;
 
         match action {
@@ -198,7 +201,7 @@ impl ColorForm {
                 // Ctrl+S - save the form
                 self.save_internal()
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -438,13 +441,20 @@ impl ColorForm {
         for row in self.popup_y..self.popup_y + popup_height {
             for col in self.popup_x..self.popup_x + popup_width {
                 if col < area.width && row < area.height {
-                    buf.set_string(col, row, " ", Style::default().bg(crossterm_bridge::to_ratatui_color(theme.browser_background)));
+                    buf.set_string(
+                        col,
+                        row,
+                        " ",
+                        Style::default()
+                            .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+                    );
                 }
             }
         }
 
         // Draw border
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
 
         // Top border
         let top = format!("┌{}┐", "─".repeat(popup_width as usize - 2));
@@ -600,7 +610,9 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
         let focused_style = Style::default()
             .fg(crossterm_bridge::to_ratatui_color(theme.browser_background))
             .bg(crossterm_bridge::to_ratatui_color(theme.form_label_focused))
@@ -657,7 +669,9 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
         let focused_style = Style::default()
             .fg(crossterm_bridge::to_ratatui_color(theme.browser_background))
             .bg(crossterm_bridge::to_ratatui_color(theme.form_label_focused))
@@ -726,7 +740,9 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
 
         let val_text = if value { "[✓]" } else { "[ ]" };
         buf.set_string(x + 10, y, val_text, base_style);
@@ -760,7 +776,9 @@ impl ColorForm {
         let label_para = Paragraph::new(Line::from(label_span));
         RatatuiWidget::render(label_para, label_area, buf);
 
-        let base_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label)).bg(textarea_bg);
+        let base_style = Style::default()
+            .fg(crossterm_bridge::to_ratatui_color(theme.form_label))
+            .bg(textarea_bg);
         let selected_style = Style::default()
             .fg(Color::Green)
             .bg(textarea_bg)
@@ -770,10 +788,46 @@ impl ColorForm {
         let global_indicator = if is_global { "[●]" } else { "[ ]" };
         let char_indicator = if is_global { "[ ]" } else { "[●]" };
 
-        buf.set_string(x + 10, y, global_indicator, if is_global { selected_style } else { base_style });
-        buf.set_string(x + 14, y, "Global  ", if is_global { selected_style } else { base_style });
-        buf.set_string(x + 22, y, char_indicator, if !is_global { selected_style } else { base_style });
-        buf.set_string(x + 26, y, "Character", if !is_global { selected_style } else { base_style });
+        buf.set_string(
+            x + 10,
+            y,
+            global_indicator,
+            if is_global {
+                selected_style
+            } else {
+                base_style
+            },
+        );
+        buf.set_string(
+            x + 14,
+            y,
+            "Global  ",
+            if is_global {
+                selected_style
+            } else {
+                base_style
+            },
+        );
+        buf.set_string(
+            x + 22,
+            y,
+            char_indicator,
+            if !is_global {
+                selected_style
+            } else {
+                base_style
+            },
+        );
+        buf.set_string(
+            x + 26,
+            y,
+            "Character",
+            if !is_global {
+                selected_style
+            } else {
+                base_style
+            },
+        );
     }
 
     /// Parse hex color string to ratatui Color

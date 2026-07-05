@@ -287,7 +287,10 @@ impl ThemeEditor {
     }
 
     /// Handle MenuAction (called from mod.rs input routing)
-    pub fn handle_action(&mut self, action: crate::core::menu_actions::MenuAction) -> Option<ThemeEditorResult> {
+    pub fn handle_action(
+        &mut self,
+        action: crate::core::menu_actions::MenuAction,
+    ) -> Option<ThemeEditorResult> {
         use crate::core::menu_actions::MenuAction;
 
         match action {
@@ -305,7 +308,7 @@ impl ThemeEditor {
                 // Ctrl+S - save theme
                 Some(ThemeEditorResult::Save(self.collect_theme_data()))
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -316,12 +319,14 @@ impl ThemeEditor {
         // Set name and description
         data.name = self
             .name
-            .lines().first()
+            .lines()
+            .first()
             .map(|s| s.to_string())
             .unwrap_or_default();
         data.description = self
             .description
-            .lines().first()
+            .lines()
+            .first()
             .map(|s| s.to_string())
             .unwrap_or_default();
 
@@ -330,7 +335,8 @@ impl ThemeEditor {
             for field in &section.fields {
                 let value = field
                     .textarea
-                    .lines().first()
+                    .lines()
+                    .first()
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
@@ -476,7 +482,9 @@ impl ThemeEditor {
                 if col < area.width && row < area.height {
                     buf[(col, row)]
                         .set_char(' ')
-                        .set_bg(crossterm_bridge::to_ratatui_color(theme.form_field_background));
+                        .set_bg(crossterm_bridge::to_ratatui_color(
+                            theme.form_field_background,
+                        ));
                 }
             }
         }
@@ -588,7 +596,8 @@ impl ThemeEditor {
                 // Get value from textarea
                 let value = field
                     .textarea
-                    .lines().first()
+                    .lines()
+                    .first()
                     .map(|s| s.as_str())
                     .unwrap_or("");
 
@@ -596,7 +605,9 @@ impl ThemeEditor {
                 let value_style = if is_focused {
                     Style::default()
                         .fg(crossterm_bridge::to_ratatui_color(theme.form_field_text))
-                        .bg(crossterm_bridge::to_ratatui_color(theme.form_field_background))
+                        .bg(crossterm_bridge::to_ratatui_color(
+                            theme.form_field_background,
+                        ))
                 } else {
                     Style::default().fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
                 };
@@ -645,7 +656,8 @@ impl ThemeEditor {
         buf: &mut Buffer,
         theme: &crate::theme::AppTheme,
     ) {
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_border));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_border));
 
         // Top
         buf[(x, y)].set_char('┌').set_style(border_style);
@@ -706,9 +718,13 @@ impl ThemeEditor {
         textarea.set_style(
             Style::default()
                 .fg(crossterm_bridge::to_ratatui_color(theme.form_field_text))
-                .bg(crossterm_bridge::to_ratatui_color(theme.form_field_background)),
+                .bg(crossterm_bridge::to_ratatui_color(
+                    theme.form_field_background,
+                )),
         );
-        textarea.set_cursor_style(Style::default().bg(crossterm_bridge::to_ratatui_color(theme.editor_cursor)));
+        textarea.set_cursor_style(
+            Style::default().bg(crossterm_bridge::to_ratatui_color(theme.editor_cursor)),
+        );
         RatatuiWidget::render(&*textarea, input_area, buf);
     }
 }

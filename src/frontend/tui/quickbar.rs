@@ -66,12 +66,16 @@ impl Quickbar {
 
     pub fn set_entries(&mut self, entries: Vec<QuickbarEntry>) {
         self.entries = entries;
-        self.selectable_count = 1
-            + self
-                .entries
-                .iter()
-                .filter(|e| matches!(e, QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }))
-                .count();
+        self.selectable_count = 1 + self
+            .entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }
+                )
+            })
+            .count();
         self.visible_selectable_count = self.selectable_count;
         if self.selected_index >= self.selectable_count {
             self.selected_index = self.selectable_count.saturating_sub(1);
@@ -100,7 +104,10 @@ impl Quickbar {
 
         let mut selectable_index = 0;
         for entry in &self.entries {
-            if !matches!(entry, QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }) {
+            if !matches!(
+                entry,
+                QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }
+            ) {
                 continue;
             }
             selectable_index += 1;
@@ -135,7 +142,10 @@ impl Quickbar {
                 }
                 if let Some(entry_index) = item.entry_index {
                     if let Some(entry) = self.entries.get(entry_index) {
-                        if matches!(entry, QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }) {
+                        if matches!(
+                            entry,
+                            QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }
+                        ) {
                             return Some(Self::entry_action(entry));
                         }
                     }
@@ -255,7 +265,9 @@ impl Quickbar {
         let row_y = inner.y;
         for item in &self.rendered_items {
             let is_selected = focused
-                && item.selectable_index.is_some_and(|idx| idx == self.selected_index);
+                && item
+                    .selectable_index
+                    .is_some_and(|idx| idx == self.selected_index);
             let style = self.item_style(is_selected);
             let label = if item.is_switcher {
                 ">>"
@@ -310,8 +322,15 @@ impl Quickbar {
                 break;
             }
 
-            let is_selectable = matches!(entry, QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. });
-            let item_selectable = if is_selectable { Some(selectable_index) } else { None };
+            let is_selectable = matches!(
+                entry,
+                QuickbarEntry::Link { .. } | QuickbarEntry::MenuLink { .. }
+            );
+            let item_selectable = if is_selectable {
+                Some(selectable_index)
+            } else {
+                None
+            };
             if is_selectable {
                 selectable_index += 1;
             }
@@ -344,15 +363,11 @@ impl Quickbar {
 
     fn entry_action(entry: &QuickbarEntry) -> QuickbarAction {
         match entry {
-            QuickbarEntry::Link { cmd, .. } => {
-                QuickbarAction::ExecuteCommand(format!("{}\n", cmd))
-            }
-            QuickbarEntry::MenuLink { exist, noun, .. } => {
-                QuickbarAction::MenuRequest {
-                    exist: exist.clone(),
-                    noun: noun.clone(),
-                }
-            }
+            QuickbarEntry::Link { cmd, .. } => QuickbarAction::ExecuteCommand(format!("{}\n", cmd)),
+            QuickbarEntry::MenuLink { exist, noun, .. } => QuickbarAction::MenuRequest {
+                exist: exist.clone(),
+                noun: noun.clone(),
+            },
             QuickbarEntry::Label { .. } => QuickbarAction::OpenSwitcher,
             QuickbarEntry::Separator => QuickbarAction::OpenSwitcher,
         }
@@ -380,15 +395,7 @@ impl Quickbar {
         style
     }
 
-    fn render_text(
-        &self,
-        buf: &mut Buffer,
-        x: u16,
-        y: u16,
-        text: &str,
-        style: Style,
-        max_x: u16,
-    ) {
+    fn render_text(&self, buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_x: u16) {
         let mut cursor = x;
         for ch in text.chars() {
             if cursor >= max_x {

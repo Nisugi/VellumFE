@@ -3,9 +3,12 @@
 //! Responsible for buffering, wrapping, highlighting, search, and selection
 //! logic in a way that mirrors Profanity/Vellum's behavior.
 
-use crate::frontend::tui::{crossterm_bridge, title_position::{self, TitlePosition}};
-use crate::data::{LinkData, SpanType};  // Use types from data module
 use crate::config::TimestampPosition;
+use crate::data::{LinkData, SpanType}; // Use types from data module
+use crate::frontend::tui::{
+    crossterm_bridge,
+    title_position::{self, TitlePosition},
+};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -13,7 +16,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, Paragraph, Widget},
 };
-use regex::Regex;  // Add back Regex import for SearchState
+use regex::Regex; // Add back Regex import for SearchState
 use std::collections::VecDeque;
 
 #[derive(Clone)]
@@ -172,7 +175,7 @@ impl TextWindow {
             links_enabled: true,           // Links enabled by default
             current_line_stream: String::new(), // No stream set yet
             wordwrap: true,
-            frozen_for_selection: false,   // Not frozen by default
+            frozen_for_selection: false, // Not frozen by default
             pending_logical_lines: VecDeque::new(),
             pending_wrapped_lines: VecDeque::new(),
         }
@@ -428,8 +431,12 @@ impl TextWindow {
                 }
                 TimestampPosition::End => {
                     let timestamp = Self::format_timestamp_end();
-                    self.current_line_spans
-                        .push((timestamp, timestamp_style, SpanType::Normal, None));
+                    self.current_line_spans.push((
+                        timestamp,
+                        timestamp_style,
+                        SpanType::Normal,
+                        None,
+                    ));
                 }
             }
         }
@@ -1439,7 +1446,11 @@ mod tests {
             fg: None,
             bg: None,
             bold: false,
-            span_type: if link.is_some() { SpanType::Link } else { SpanType::Normal },
+            span_type: if link.is_some() {
+                SpanType::Link
+            } else {
+                SpanType::Normal
+            },
             link_data: link,
         }
     }
@@ -1601,7 +1612,9 @@ impl TextWindow {
 
         if focused {
             border_style = border_style
-                .fg(crossterm_bridge::to_ratatui_color(theme.window_border_focused))
+                .fg(crossterm_bridge::to_ratatui_color(
+                    theme.window_border_focused,
+                ))
                 .add_modifier(Modifier::BOLD);
         }
 

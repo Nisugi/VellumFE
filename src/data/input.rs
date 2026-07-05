@@ -507,7 +507,10 @@ mod tests {
     #[test]
     fn test_mouse_event_kind_scroll() {
         assert!(matches!(MouseEventKind::ScrollUp, MouseEventKind::ScrollUp));
-        assert!(matches!(MouseEventKind::ScrollDown, MouseEventKind::ScrollDown));
+        assert!(matches!(
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollDown
+        ));
     }
 
     // ===========================================
@@ -524,7 +527,10 @@ mod tests {
         );
         assert_eq!(event.column, 10);
         assert_eq!(event.row, 20);
-        assert!(matches!(event.kind, MouseEventKind::Down(MouseButton::Left)));
+        assert!(matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Left)
+        ));
     }
 
     #[test]
@@ -671,7 +677,12 @@ mod tests {
 
     #[test]
     fn test_mouse_event_max_position() {
-        let event = MouseEvent::new(MouseEventKind::Moved, u16::MAX, u16::MAX, KeyModifiers::NONE);
+        let event = MouseEvent::new(
+            MouseEventKind::Moved,
+            u16::MAX,
+            u16::MAX,
+            KeyModifiers::NONE,
+        );
         assert_eq!(event.column, u16::MAX);
         assert_eq!(event.row, u16::MAX);
     }

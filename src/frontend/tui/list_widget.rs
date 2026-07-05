@@ -817,7 +817,13 @@ impl ListWidget {
                 let start = start_col.min(line_len);
                 let end = end_col.min(line_len);
                 if start < end {
-                    result.push_str(&line_text.chars().skip(start).take(end - start).collect::<String>());
+                    result.push_str(
+                        &line_text
+                            .chars()
+                            .skip(start)
+                            .take(end - start)
+                            .collect::<String>(),
+                    );
                 }
             } else if line_idx == start_line {
                 // First line of multi-line selection

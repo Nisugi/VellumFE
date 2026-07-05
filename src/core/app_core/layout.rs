@@ -216,17 +216,8 @@ impl AppCore {
                 "indicator" => {
                     static_both.insert(base.name.clone());
                 }
-                "progress"
-                | "countdown"
-                | "hands"
-                | "hand"
-                | "left"
-                | "right"
-                | "spell"
-                | "lefthand"
-                | "righthand"
-                | "spellhand"
-                | "command_input" => {
+                "progress" | "countdown" | "hands" | "hand" | "left" | "right" | "spell"
+                | "lefthand" | "righthand" | "spellhand" | "command_input" => {
                     static_height.insert(base.name.clone());
                 }
                 _ => {}
@@ -235,22 +226,22 @@ impl AppCore {
 
         // Snapshot baseline row positions BEFORE any resizing
         // This ensures width distribution uses original row groupings
-        let baseline_rows: Vec<(String, u16, u16)> = if let Some(ref baseline) = self.baseline_layout
-        {
-            baseline
-                .windows
-                .iter()
-                .filter(|w| w.base().visible)
-                .map(|w| (w.name().to_string(), w.base().row, w.base().rows))
-                .collect()
-        } else {
-            self.layout
-                .windows
-                .iter()
-                .filter(|w| w.base().visible)
-                .map(|w| (w.base().name.clone(), w.base().row, w.base().rows))
-                .collect()
-        };
+        let baseline_rows: Vec<(String, u16, u16)> =
+            if let Some(ref baseline) = self.baseline_layout {
+                baseline
+                    .windows
+                    .iter()
+                    .filter(|w| w.base().visible)
+                    .map(|w| (w.name().to_string(), w.base().row, w.base().rows))
+                    .collect()
+            } else {
+                self.layout
+                    .windows
+                    .iter()
+                    .filter(|w| w.base().visible)
+                    .map(|w| (w.base().name.clone(), w.base().row, w.base().rows))
+                    .collect()
+            };
 
         // Apply VellumFE's proportional distribution algorithm
         self.apply_height_resize(height_delta, &static_both, &static_height);
@@ -395,14 +386,20 @@ impl AppCore {
                 continue;
             }
 
-            tracing::debug!("Column {}: {} windows present", current_col, windows_at_col.len());
+            tracing::debug!(
+                "Column {}: {} windows present",
+                current_col,
+                windows_at_col.len()
+            );
 
             // Calculate total scalable height (only windows that can actually grow)
             // Skip static windows AND windows already at max_rows
             let mut total_scalable_height = 0u16;
             for window_name in &windows_at_col {
                 // Skip if static
-                if static_both.contains(window_name.as_str()) || static_height.contains(window_name.as_str()) {
+                if static_both.contains(window_name.as_str())
+                    || static_height.contains(window_name.as_str())
+                {
                     continue;
                 }
 
@@ -411,10 +408,8 @@ impl AppCore {
                 if let Some(w) = window_def {
                     let base = w.base();
                     if let Some(max_rows) = base.max_rows {
-                        let (_, current_rows) = baseline_rows
-                            .get(window_name)
-                            .copied()
-                            .unwrap_or((0, 0));
+                        let (_, current_rows) =
+                            baseline_rows.get(window_name).copied().unwrap_or((0, 0));
                         if current_rows >= max_rows {
                             // Window is at max, can't grow - don't count it
                             continue;
@@ -423,10 +418,7 @@ impl AppCore {
                 }
 
                 // Get window height (only windows that can grow)
-                let (_, base_rows) = baseline_rows
-                    .get(window_name)
-                    .copied()
-                    .unwrap_or((0, 0));
+                let (_, base_rows) = baseline_rows.get(window_name).copied().unwrap_or((0, 0));
                 total_scalable_height += base_rows;
             }
 
@@ -434,14 +426,20 @@ impl AppCore {
                 continue;
             }
 
-            tracing::debug!("  Total scalable height at column {}: {}", current_col, total_scalable_height);
+            tracing::debug!(
+                "  Total scalable height at column {}: {}",
+                current_col,
+                total_scalable_height
+            );
 
             // Distribute height_delta proportionally
             let mut col_height_deltas: HashMap<String, i32> = HashMap::new();
             let mut distributed: i32 = 0;
             for window_name in &windows_at_col {
                 // Handle static windows
-                if static_both.contains(window_name.as_str()) || static_height.contains(window_name.as_str()) {
+                if static_both.contains(window_name.as_str())
+                    || static_height.contains(window_name.as_str())
+                {
                     col_height_deltas.insert(window_name.clone(), 0);
                     continue;
                 }
@@ -451,10 +449,8 @@ impl AppCore {
                 if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
                     let base = w.base();
                     if let Some(max_rows) = base.max_rows {
-                        let (_, current_rows) = baseline_rows
-                            .get(window_name)
-                            .copied()
-                            .unwrap_or((0, 0));
+                        let (_, current_rows) =
+                            baseline_rows.get(window_name).copied().unwrap_or((0, 0));
                         if current_rows >= max_rows {
                             at_max = true;
                         }
@@ -494,7 +490,9 @@ impl AppCore {
             if leftover != 0 {
                 // Sort by row (top to bottom)
                 windows_at_col.sort_by_key(|name| {
-                    self.layout.windows.iter()
+                    self.layout
+                        .windows
+                        .iter()
                         .find(|w| w.name() == name)
                         .map(|w| w.base().row)
                         .unwrap_or(0)
@@ -506,7 +504,8 @@ impl AppCore {
                     let name = &windows_at_col[idx % windows_at_col.len()];
 
                     // Skip static windows
-                    if static_both.contains(name.as_str()) || static_height.contains(name.as_str()) {
+                    if static_both.contains(name.as_str()) || static_height.contains(name.as_str())
+                    {
                         idx += 1;
                         continue;
                     }
@@ -516,10 +515,8 @@ impl AppCore {
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
                         let base = w.base();
                         if let Some(max_rows) = base.max_rows {
-                            let (_, current_rows) = baseline_rows
-                                .get(name)
-                                .copied()
-                                .unwrap_or((0, 0));
+                            let (_, current_rows) =
+                                baseline_rows.get(name).copied().unwrap_or((0, 0));
                             if current_rows >= max_rows {
                                 at_max = true;
                             }
@@ -573,7 +570,10 @@ impl AppCore {
                     windows_at_col_with_meta[idx].clone();
                 let assigned_delta = *col_height_deltas.get(&window_name).unwrap_or(&0);
 
-                let window_def = self.layout.windows.iter()
+                let window_def = self
+                    .layout
+                    .windows
+                    .iter()
                     .find(|w| w.name() == window_name)
                     .expect("window in metadata must exist in layout");
                 let base = window_def.base();
@@ -597,7 +597,12 @@ impl AppCore {
                 let used_delta = new_rows as i32 - original_rows as i32;
                 let mut remainder = assigned_delta - used_delta;
 
-                if let Some(w) = self.layout.windows.iter_mut().find(|w| w.name() == window_name) {
+                if let Some(w) = self
+                    .layout
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.name() == window_name)
+                {
                     let base = w.base_mut();
                     base.row = current_row;
                     base.rows = new_rows;
@@ -605,7 +610,13 @@ impl AppCore {
 
                     tracing::debug!(
                         "  Col {}: {} row {} -> {}, rows {} -> {} (delta={})",
-                        current_col, window_name, original_row, current_row, original_rows, new_rows, assigned_delta
+                        current_col,
+                        window_name,
+                        original_row,
+                        current_row,
+                        original_rows,
+                        new_rows,
+                        assigned_delta
                     );
                 }
 
@@ -708,7 +719,11 @@ impl AppCore {
                 continue;
             }
 
-            tracing::debug!("Row {}: {} windows present", current_row, windows_at_row.len());
+            tracing::debug!(
+                "Row {}: {} windows present",
+                current_row,
+                windows_at_row.len()
+            );
 
             // Calculate total scalable width (only windows that can actually grow)
             // Skip static windows AND windows already at max_cols
@@ -724,10 +739,8 @@ impl AppCore {
                 if let Some(w) = window_def {
                     let base = w.base();
                     if let Some(max_cols) = base.max_cols {
-                        let (_, current_cols) = baseline_cols
-                            .get(window_name)
-                            .copied()
-                            .unwrap_or((0, 0));
+                        let (_, current_cols) =
+                            baseline_cols.get(window_name).copied().unwrap_or((0, 0));
                         if current_cols >= max_cols {
                             // Window is at max, can't grow - don't count it
                             continue;
@@ -736,10 +749,7 @@ impl AppCore {
                 }
 
                 // Get window width (only windows that can grow)
-                let (_, base_cols) = baseline_cols
-                    .get(window_name)
-                    .copied()
-                    .unwrap_or((0, 0));
+                let (_, base_cols) = baseline_cols.get(window_name).copied().unwrap_or((0, 0));
                 total_scalable_width += base_cols;
             }
 
@@ -747,7 +757,11 @@ impl AppCore {
                 continue;
             }
 
-            tracing::debug!("  Total scalable width at row {}: {}", current_row, total_scalable_width);
+            tracing::debug!(
+                "  Total scalable width at row {}: {}",
+                current_row,
+                total_scalable_width
+            );
 
             // Distribute width_delta proportionally
             let mut row_width_deltas: HashMap<String, i32> = HashMap::new();
@@ -764,10 +778,8 @@ impl AppCore {
                 if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
                     let base = w.base();
                     if let Some(max_cols) = base.max_cols {
-                        let (_, current_cols) = baseline_cols
-                            .get(window_name)
-                            .copied()
-                            .unwrap_or((0, 0));
+                        let (_, current_cols) =
+                            baseline_cols.get(window_name).copied().unwrap_or((0, 0));
                         if current_cols >= max_cols {
                             at_max = true;
                         }
@@ -807,7 +819,9 @@ impl AppCore {
             if leftover != 0 {
                 // Sort by column (left to right)
                 windows_at_row.sort_by_key(|name| {
-                    self.layout.windows.iter()
+                    self.layout
+                        .windows
+                        .iter()
                         .find(|w| w.name() == name)
                         .map(|w| w.base().col)
                         .unwrap_or(0)
@@ -829,10 +843,8 @@ impl AppCore {
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
                         let base = w.base();
                         if let Some(max_cols) = base.max_cols {
-                            let (_, current_cols) = baseline_cols
-                                .get(name)
-                                .copied()
-                                .unwrap_or((0, 0));
+                            let (_, current_cols) =
+                                baseline_cols.get(name).copied().unwrap_or((0, 0));
                             if current_cols >= max_cols {
                                 at_max = true;
                             }
@@ -886,7 +898,10 @@ impl AppCore {
                     windows_at_row_with_meta[idx].clone();
                 let assigned_delta = *row_width_deltas.get(&window_name).unwrap_or(&0);
 
-                let window_def = self.layout.windows.iter()
+                let window_def = self
+                    .layout
+                    .windows
+                    .iter()
                     .find(|w| w.name() == window_name)
                     .expect("window in metadata must exist in layout");
                 let base = window_def.base();
@@ -910,7 +925,12 @@ impl AppCore {
                 let used_delta = new_cols as i32 - original_cols as i32;
                 let mut remainder = assigned_delta - used_delta;
 
-                if let Some(w) = self.layout.windows.iter_mut().find(|w| w.name() == window_name) {
+                if let Some(w) = self
+                    .layout
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.name() == window_name)
+                {
                     let base = w.base_mut();
                     base.col = current_col_pos;
                     base.cols = new_cols;
@@ -918,7 +938,13 @@ impl AppCore {
 
                     tracing::debug!(
                         "  Row {}: {} col {} -> {}, cols {} -> {} (delta={})",
-                        current_row, window_name, original_col, current_col_pos, original_cols, new_cols, assigned_delta
+                        current_row,
+                        window_name,
+                        original_col,
+                        current_col_pos,
+                        original_cols,
+                        new_cols,
+                        assigned_delta
                     );
                 }
 

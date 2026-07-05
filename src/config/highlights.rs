@@ -77,7 +77,7 @@ pub struct EventPattern {
 #[derive(Default)]
 pub enum EventAction {
     #[default]
-    Set,       // Set state/timer (e.g., start stun countdown)
+    Set, // Set state/timer (e.g., start stun countdown)
     Clear,     // Clear state/timer (e.g., recover from stun)
     Increment, // Add to existing value (future use)
 }
@@ -110,8 +110,8 @@ impl Config {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read common highlights: {:?}", path))?;
 
-        let highlights: HashMap<String, HighlightPattern> = toml::from_str(&contents)
-            .context("Failed to parse common highlights TOML")?;
+        let highlights: HashMap<String, HighlightPattern> =
+            toml::from_str(&contents).context("Failed to parse common highlights TOML")?;
 
         Ok(highlights)
     }
@@ -187,8 +187,8 @@ impl Config {
 
         // Write back to file
         let path = Self::common_highlights_path()?;
-        let toml = toml::to_string_pretty(&highlights)
-            .context("Failed to serialize common highlights")?;
+        let toml =
+            toml::to_string_pretty(&highlights).context("Failed to serialize common highlights")?;
 
         fs::write(&path, toml)
             .with_context(|| format!("Failed to write common highlights: {:?}", path))?;
@@ -202,8 +202,8 @@ impl Config {
         highlights.remove(name);
 
         let path = Self::common_highlights_path()?;
-        let toml = toml::to_string_pretty(&highlights)
-            .context("Failed to serialize common highlights")?;
+        let toml =
+            toml::to_string_pretty(&highlights).context("Failed to serialize common highlights")?;
 
         fs::write(&path, toml)
             .with_context(|| format!("Failed to write common highlights: {:?}", path))?;

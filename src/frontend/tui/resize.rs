@@ -82,7 +82,11 @@ mod tests {
         let mut debouncer = ResizeDebouncer::new(100);
         let result = debouncer.check_resize(80, 24);
 
-        assert_eq!(result, Some((80, 24)), "First resize should be processed immediately");
+        assert_eq!(
+            result,
+            Some((80, 24)),
+            "First resize should be processed immediately"
+        );
     }
 
     #[test]
@@ -133,7 +137,10 @@ mod tests {
 
         // Immediately calling check_pending should return None (not enough time elapsed)
         let result = debouncer.check_pending();
-        assert_eq!(result, None, "check_pending should return None when debounce period not elapsed");
+        assert_eq!(
+            result, None,
+            "check_pending should return None when debounce period not elapsed"
+        );
     }
 
     #[test]
@@ -147,7 +154,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(15));
 
         let result = debouncer.check_pending();
-        assert_eq!(result, Some((90, 30)), "Pending resize should be processed after debounce period");
+        assert_eq!(
+            result,
+            Some((90, 30)),
+            "Pending resize should be processed after debounce period"
+        );
 
         // After processing, pending should be cleared
         assert_eq!(debouncer.pending_size, None);
@@ -165,6 +176,10 @@ mod tests {
 
         // New resize should be processed immediately
         let result = debouncer.check_resize(100, 35);
-        assert_eq!(result, Some((100, 35)), "Resize after debounce period should be processed immediately");
+        assert_eq!(
+            result,
+            Some((100, 35)),
+            "Resize after debounce period should be processed immediately"
+        );
     }
 }

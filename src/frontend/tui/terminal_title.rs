@@ -30,7 +30,11 @@ impl TerminalTitleManager {
 
     /// Update the terminal title if game state has changed.
     /// Returns true if the title was updated.
-    pub fn update<W: Write>(&mut self, app_core: &AppCore, writer: &mut W) -> std::io::Result<bool> {
+    pub fn update<W: Write>(
+        &mut self,
+        app_core: &AppCore,
+        writer: &mut W,
+    ) -> std::io::Result<bool> {
         let new_title = self.render_template(app_core);
 
         if new_title == self.last_title {
@@ -49,15 +53,9 @@ impl TerminalTitleManager {
     fn render_template(&self, app_core: &AppCore) -> String {
         let game_state = &app_core.game_state;
 
-        let character = game_state
-            .character_name
-            .as_deref()
-            .unwrap_or("");
+        let character = game_state.character_name.as_deref().unwrap_or("");
 
-        let room = game_state
-            .room_name
-            .as_deref()
-            .unwrap_or("");
+        let room = game_state.room_name.as_deref().unwrap_or("");
 
         let health = game_state.vitals.health;
         let mana = game_state.vitals.mana;

@@ -68,7 +68,7 @@ pub fn handle_menu_action(
                 crate::frontend::tui::window_editor::WindowEditor::new_with_layout(
                     window_def,
                     &app_core.layout,
-                )
+                ),
             );
             app_core.ui_state.input_mode = InputMode::WindowEditor;
         } else {
@@ -148,15 +148,18 @@ pub fn handle_menu_action(
             }
             "action:highlights" => {
                 // Open highlight browser with source tracking
-                let global_highlights = crate::config::Config::load_common_highlights().unwrap_or_default();
+                let global_highlights =
+                    crate::config::Config::load_common_highlights().unwrap_or_default();
                 let character_highlights = crate::config::Config::load_character_highlights_only(
-                    app_core.config.character.as_deref()
-                ).unwrap_or_default();
-                frontend.highlight_browser =
-                    Some(crate::frontend::tui::highlight_browser::HighlightBrowser::new_with_source(
+                    app_core.config.character.as_deref(),
+                )
+                .unwrap_or_default();
+                frontend.highlight_browser = Some(
+                    crate::frontend::tui::highlight_browser::HighlightBrowser::new_with_source(
                         &global_highlights,
                         &character_highlights,
-                    ));
+                    ),
+                );
                 // Close menus so focus goes to the browser
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::HighlightBrowser;
@@ -172,11 +175,12 @@ pub fn handle_menu_action(
             "action:keybinds" => {
                 // Open keybind browser with source tracking ([G]/[C] indicators)
                 // Load global and character keybinds separately to show their origin
-                let global_keybinds = crate::config::Config::load_common_keybinds()
-                    .unwrap_or_default();
+                let global_keybinds =
+                    crate::config::Config::load_common_keybinds().unwrap_or_default();
                 let character_keybinds = crate::config::Config::load_character_keybinds_only(
-                    app_core.config.character.as_deref()
-                ).unwrap_or_default();
+                    app_core.config.character.as_deref(),
+                )
+                .unwrap_or_default();
 
                 frontend.keybind_browser = Some(
                     crate::frontend::tui::keybind_browser::KeybindBrowser::new_with_source(
@@ -190,9 +194,8 @@ pub fn handle_menu_action(
             }
             "action:addkeybind" => {
                 // Open keybind form for creating new keybind
-                frontend.keybind_form = Some(
-                    crate::frontend::tui::keybind_form::KeybindFormWidget::new()
-                );
+                frontend.keybind_form =
+                    Some(crate::frontend::tui::keybind_form::KeybindFormWidget::new());
                 // Close menus so only the form remains
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::KeybindForm;
@@ -204,7 +207,7 @@ pub fn handle_menu_action(
                     Err(_) => Vec::new(),
                 };
                 let character_colors = match crate::config::ColorConfig::load_character_colors_only(
-                    app_core.config.character.as_deref()
+                    app_core.config.character.as_deref(),
                 ) {
                     Ok(c) => c.color_palette,
                     Err(_) => Vec::new(),
@@ -220,26 +223,28 @@ pub fn handle_menu_action(
             }
             "action:addcolor" => {
                 // Open color form for creating new palette color
-                frontend.color_form = Some(
-                    crate::frontend::tui::color_form::ColorForm::new_create()
-                );
+                frontend.color_form =
+                    Some(crate::frontend::tui::color_form::ColorForm::new_create());
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::ColorForm;
             }
             "action:uicolors" => {
                 // Open UI colors browser
                 frontend.uicolors_browser = Some(
-                    crate::frontend::tui::uicolors_browser::UIColorsBrowser::new(&app_core.config.colors),
+                    crate::frontend::tui::uicolors_browser::UIColorsBrowser::new(
+                        &app_core.config.colors,
+                    ),
                 );
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::UIColorsBrowser;
             }
             "action:spellcolors" => {
                 // Open spell colors browser
-                frontend.spell_color_browser =
-                    Some(crate::frontend::tui::spell_color_browser::SpellColorBrowser::new(
+                frontend.spell_color_browser = Some(
+                    crate::frontend::tui::spell_color_browser::SpellColorBrowser::new(
                         &app_core.config.colors.spell_colors,
-                    ));
+                    ),
+                );
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::SpellColorsBrowser;
             }
@@ -254,8 +259,11 @@ pub fn handle_menu_action(
                 // Open settings editor with source tracking
                 // Check if character-specific config exists to determine setting sources
                 let character_config_exists = crate::config::Config::load_character_config_only(
-                    app_core.config.character.as_deref()
-                ).ok().flatten().is_some();
+                    app_core.config.character.as_deref(),
+                )
+                .ok()
+                .flatten()
+                .is_some();
 
                 let settings_items = menu_builders::build_settings_items_with_source(
                     &app_core.config,
@@ -269,12 +277,11 @@ pub fn handle_menu_action(
             }
             "action:themes" => {
                 // Open theme browser (includes built-in and custom themes)
-                frontend.theme_browser = Some(
-                    crate::frontend::tui::theme_browser::ThemeBrowser::new(
+                frontend.theme_browser =
+                    Some(crate::frontend::tui::theme_browser::ThemeBrowser::new(
                         app_core.config.active_theme.clone(),
                         app_core.config.character.as_deref(),
-                    )
-                );
+                    ));
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::ThemeBrowser;
             }
@@ -289,7 +296,7 @@ pub fn handle_menu_action(
                 // Open theme editor with current theme
                 let current_theme = app_core.config.get_theme();
                 frontend.theme_editor = Some(
-                    crate::frontend::tui::theme_editor::ThemeEditor::new_edit(&current_theme)
+                    crate::frontend::tui::theme_editor::ThemeEditor::new_edit(&current_theme),
                 );
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::ThemeEditor;
@@ -338,10 +345,17 @@ pub fn handle_menu_action(
                 if let Err(e) = frontend.execute_setpalette(app_core) {
                     app_core.add_system_message(&format!("Failed to set palette: {}", e));
                 } else {
-                    let count = app_core.config.colors.color_palette.iter()
+                    let count = app_core
+                        .config
+                        .colors
+                        .color_palette
+                        .iter()
                         .filter(|c| c.slot.is_some())
                         .count();
-                    app_core.add_system_message(&format!("Loaded {} colors into terminal palette", count));
+                    app_core.add_system_message(&format!(
+                        "Loaded {} colors into terminal palette",
+                        count
+                    ));
                 }
                 app_core.needs_render = true;
             }

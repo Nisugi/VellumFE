@@ -15,7 +15,13 @@ pub fn run(
 ) -> Result<()> {
     // Use tokio runtime for async network I/O
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async_run(config, character, direct, setup_palette, login_key))
+    runtime.block_on(async_run(
+        config,
+        character,
+        direct,
+        setup_palette,
+        login_key,
+    ))
 }
 
 /// Async TUI main loop with network support
@@ -157,8 +163,15 @@ async fn async_run(
             let host_clone = host.clone();
             let login_key_clone = login_key.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    LichConnection::start(&host_clone, port, login_key_clone, server_tx, command_rx, raw_logger).await
+                if let Err(e) = LichConnection::start(
+                    &host_clone,
+                    port,
+                    login_key_clone,
+                    server_tx,
+                    command_rx,
+                    raw_logger,
+                )
+                .await
                 {
                     tracing::error!(error = ?e, "Network connection error");
                 }
@@ -170,9 +183,8 @@ async fn async_run(
     let mut last_countdown_update = std::time::Instant::now();
 
     // Create terminal title manager (if template is configured)
-    let mut title_manager = super::terminal_title::TerminalTitleManager::new(
-        app_core.config.ui.terminal_title.clone()
-    );
+    let mut title_manager =
+        super::terminal_title::TerminalTitleManager::new(app_core.config.ui.terminal_title.clone());
 
     // Main event loop
     while app_core.running {
@@ -199,7 +211,9 @@ async fn async_run(
                     )?;
 
                     if let Some(cmd) = command {
-                        app_core.perf_stats.record_bytes_sent((cmd.len() + 1) as u64);
+                        app_core
+                            .perf_stats
+                            .record_bytes_sent((cmd.len() + 1) as u64);
                         let _ = command_tx.send(cmd);
                     }
 
@@ -207,7 +221,10 @@ async fn async_run(
                         continue;
                     }
                 }
-                crate::frontend::FrontendEvent::Key { code: _code, modifiers: _modifiers } => {
+                crate::frontend::FrontendEvent::Key {
+                    code: _code,
+                    modifiers: _modifiers,
+                } => {
                     // Key events are handled in handle_event()
                     // No early intercepts - let the 3-layer routing handle everything
                 }
@@ -215,7 +232,9 @@ async fn async_run(
             }
 
             if let Some(command) = handle_event(&mut app_core, &mut frontend, event)? {
-                app_core.perf_stats.record_bytes_sent((command.len() + 1) as u64);
+                app_core
+                    .perf_stats
+                    .record_bytes_sent((command.len() + 1) as u64);
                 let _ = command_tx.send(command);
             }
 

@@ -34,11 +34,7 @@ pub fn load(character: Option<&str>) -> Option<SessionCache> {
     match toml::from_str(&contents) {
         Ok(cache) => Some(cache),
         Err(err) => {
-            tracing::warn!(
-                "Failed to parse session cache at {:?}: {}",
-                path,
-                err
-            );
+            tracing::warn!("Failed to parse session cache at {:?}: {}", path, err);
             None
         }
     }

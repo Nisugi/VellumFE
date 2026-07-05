@@ -139,10 +139,7 @@ impl PerformanceStatsWidget {
                     for y in area.y..area.y.saturating_add(area.height) {
                         for x in area.x..area.x.saturating_add(area.width) {
                             if x < buf.area().width && y < buf.area().height {
-                                buf[(x, y)]
-                                    .set_char(' ')
-                                    .set_bg(color)
-                                    .set_fg(Color::Reset);
+                                buf[(x, y)].set_char(' ').set_bg(color).set_fg(Color::Reset);
                             }
                         }
                     }
@@ -201,7 +198,10 @@ impl PerformanceStatsWidget {
         if self.show_fps {
             lines.push(Line::from(vec![
                 Span::styled("FPS: ", Style::default().fg(label_color)),
-                Span::styled(format!("{:.1}", stats.fps()), Style::default().fg(value_color)),
+                Span::styled(
+                    format!("{:.1}", stats.fps()),
+                    Style::default().fg(value_color),
+                ),
             ]));
         }
         // Frame/Jitter/Spikes are more meaningful for a fixed-rate GUI; omit in TUI to avoid noisy idle values.
@@ -209,7 +209,11 @@ impl PerformanceStatsWidget {
             lines.push(Line::from(vec![
                 Span::styled("Render: ", Style::default().fg(label_color)),
                 Span::styled(
-                    format!("{:.2}ms (max {:.2})", stats.avg_render_time_ms(), stats.max_render_time_ms()),
+                    format!(
+                        "{:.2}ms (max {:.2})",
+                        stats.avg_render_time_ms(),
+                        stats.max_render_time_ms()
+                    ),
                     Style::default().fg(value_color),
                 ),
             ]));
@@ -305,14 +309,22 @@ impl PerformanceStatsWidget {
             lines.push(Line::from(vec![
                 Span::styled("CPU: ", Style::default().fg(label_color)),
                 Span::styled(
-                    format!("{:.1}% (sys {:.1}%)", stats.process_cpu_percent(), stats.system_cpu_percent()),
+                    format!(
+                        "{:.1}% (sys {:.1}%)",
+                        stats.process_cpu_percent(),
+                        stats.system_cpu_percent()
+                    ),
                     Style::default().fg(value_color),
                 ),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("RSS: ", Style::default().fg(label_color)),
                 Span::styled(
-                    format!("{:.1} MB (virt {:.1} MB)", stats.process_rss_mb(), stats.process_virt_mb()),
+                    format!(
+                        "{:.1} MB (virt {:.1} MB)",
+                        stats.process_rss_mb(),
+                        stats.process_virt_mb()
+                    ),
                     Style::default().fg(value_color),
                 ),
             ]));

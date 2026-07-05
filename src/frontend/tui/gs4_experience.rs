@@ -251,13 +251,16 @@ impl GS4Experience {
         }
 
         // If no data, show placeholder
-        if self.level_text.is_empty() && self.mind_text.is_empty() && self.next_level_text.is_empty() {
+        if self.level_text.is_empty()
+            && self.mind_text.is_empty()
+            && self.next_level_text.is_empty()
+        {
             let placeholder = Line::from(Span::styled(
                 "(No experience data)",
                 Style::default().fg(Color::DarkGray),
             ));
-            let placeholder_text = ratatui::widgets::Paragraph::new(placeholder)
-                .alignment(self.align);
+            let placeholder_text =
+                ratatui::widgets::Paragraph::new(placeholder).alignment(self.align);
             placeholder_text.render(inner, buf);
             return;
         }
@@ -289,19 +292,34 @@ impl GS4Experience {
                 width: inner.width,
                 height: 1,
             };
-            self.render_bar(bar_area, buf, self.mind_value, &self.mind_text, Some(self.mind_bar_color));
+            self.render_bar(
+                bar_area,
+                buf,
+                self.mind_value,
+                &self.mind_text,
+                Some(self.mind_bar_color),
+            );
             current_y += 1;
         }
 
         // Row 3: Exp progress bar (if show_exp_bar enabled)
-        if self.show_exp_bar && current_y < inner.y + inner.height && !self.next_level_text.is_empty() {
+        if self.show_exp_bar
+            && current_y < inner.y + inner.height
+            && !self.next_level_text.is_empty()
+        {
             let bar_area = Rect {
                 x: inner.x,
                 y: current_y,
                 width: inner.width,
                 height: 1,
             };
-            self.render_bar(bar_area, buf, self.next_level_value, &self.next_level_text, self.exp_bar_color);
+            self.render_bar(
+                bar_area,
+                buf,
+                self.next_level_value,
+                &self.next_level_text,
+                self.exp_bar_color,
+            );
         }
     }
 }

@@ -3,82 +3,85 @@
 //! This module implements the Frontend trait for terminal rendering.
 
 mod active_effects;
-pub mod crossterm_bridge;
-pub mod textarea_bridge;
+mod betrayer;
 pub mod color_form;
 pub mod color_palette_browser;
 mod color_picker;
 mod colors;
-mod command_line;
-mod input;
 mod command_input;
+mod command_line;
 mod compass;
+mod container_window;
 mod countdown;
+pub mod crossterm_bridge;
 mod dashboard;
 mod dialog;
+mod encumbrance;
+mod experience;
 mod frontend_impl;
+mod gs4_experience;
 mod hand;
 pub mod highlight_browser;
 pub mod highlight_form;
 mod highlight_utils;
-pub mod indicator_template_editor;
 mod indicator;
+pub mod indicator_template_editor;
 mod injury_doll;
+mod input;
+mod input_handlers;
 mod inventory_window;
+mod items;
 pub mod keybind_browser;
-mod list_widget;
 pub mod keybind_form;
+mod list_widget;
 pub mod menu_actions;
 pub mod menu_builders;
+mod minivitals;
 mod perception;
 mod performance_stats;
 mod players;
 mod popup_menu;
 mod progress_bar;
 mod quickbar;
+mod resize;
 mod room_window;
 mod room_window_ops;
-mod search;
-mod sync;
-mod sync_macros;
+mod runtime;
 mod scrollable_container;
+mod search;
 pub mod settings_editor;
 mod spacer;
 pub mod spell_color_browser;
 pub mod spell_color_form;
 mod spells_window;
+mod sync;
+mod sync_macros;
 mod tabbed_text_window;
-mod title_position;
 mod targets;
-mod items;
-mod experience;
-mod gs4_experience;
-mod encumbrance;
-mod minivitals;
-mod betrayer;
 mod terminal_title;
 mod text_window;
-mod container_window;
-mod runtime;
+pub mod textarea_bridge;
 pub mod theme_browser;
-pub mod theme_editor;
 mod theme_cache;
-mod resize;
+pub mod theme_editor;
+mod title_position;
 pub mod uicolors_browser;
-pub mod window_editor;
 mod widget_manager;
-mod input_handlers;
+pub mod window_editor;
 
 pub use colors::resolve_window_colors;
 pub use runtime::run;
 pub mod widget_traits;
+use anyhow::Result;
+use crossterm::{
+    execute,
+    terminal::{enable_raw_mode, EnterAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use resize::ResizeDebouncer;
+use std::io;
 use theme_cache::ThemeCache;
 use widget_manager::WidgetManager;
-use resize::ResizeDebouncer;
-use anyhow::Result;
-use crossterm::{execute, terminal::{enable_raw_mode, EnterAlternateScreen}};
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
 
 pub struct TuiFrontend {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -313,7 +316,11 @@ impl TuiFrontend {
         }
 
         // Try active_effects widget
-        if let Some(active_effects) = self.widget_manager.active_effects_windows.get_mut(window_name) {
+        if let Some(active_effects) = self
+            .widget_manager
+            .active_effects_windows
+            .get_mut(window_name)
+        {
             if lines > 0 {
                 active_effects.scroll_up(lines as usize);
             } else if lines < 0 {
@@ -387,10 +394,7 @@ impl TuiFrontend {
                         u8::from_str_radix(&hex[4..6], 16),
                     ) {
                         // OSC 4 format: ESC]4;<slot>;rgb:<rr>/<gg>/<bb>BEL
-                        let seq = format!(
-                            "\x1b]4;{};rgb:{:02x}/{:02x}/{:02x}\x07",
-                            slot, r, g, b
-                        );
+                        let seq = format!("\x1b]4;{};rgb:{:02x}/{:02x}/{:02x}\x07", slot, r, g, b);
                         backend.write_all(seq.as_bytes())?;
                         count += 1;
                     }

@@ -202,9 +202,7 @@ impl TabbedTextWindow {
         mouse_row: u16,
     ) -> bool {
         let tab_bar = self.tab_bar_rect(window_rect);
-        if mouse_col < tab_bar.x
-            || mouse_col >= tab_bar.x + tab_bar.width
-            || mouse_row != tab_bar.y
+        if mouse_col < tab_bar.x || mouse_col >= tab_bar.x + tab_bar.width || mouse_row != tab_bar.y
         {
             return false;
         }
@@ -228,7 +226,7 @@ impl TabbedTextWindow {
         let mut window = TextWindow::new(&name, max_lines);
         window.set_show_timestamps(show_timestamps);
         window.set_border_config(false, None, None); // Tabs don't have their own borders
-        // Hide per-tab title; the tab bar already shows the tab label
+                                                     // Hide per-tab title; the tab bar already shows the tab label
         window.set_title(String::new());
         window.set_background_color(self.background_color.clone());
         window.set_text_color(self.content_text_color.clone());
@@ -380,17 +378,23 @@ impl TabbedTextWindow {
                 x: window_rect.x + border_offset,
                 y: window_rect.y + border_offset + tab_bar_height + separator_offset,
                 width: window_rect.width.saturating_sub(2 * border_offset),
-                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
+                height: window_rect
+                    .height
+                    .saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
             },
             TabBarPosition::Bottom => Rect {
                 x: window_rect.x + border_offset,
                 y: window_rect.y + border_offset,
                 width: window_rect.width.saturating_sub(2 * border_offset),
-                height: window_rect.height.saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
+                height: window_rect
+                    .height
+                    .saturating_sub(2 * border_offset + tab_bar_height + separator_offset),
             },
         };
 
-        active_tab.window.mouse_to_text_coords(mouse_col, mouse_row, inner_rect)
+        active_tab
+            .window
+            .mouse_to_text_coords(mouse_col, mouse_row, inner_rect)
     }
 
     /// Extract text from a selection range (delegated to active tab)
@@ -402,7 +406,9 @@ impl TabbedTextWindow {
         end_col: usize,
     ) -> String {
         if let Some(active_tab) = self.tabs.get(self.active_tab_index) {
-            active_tab.window.extract_selection_text(start_line, start_col, end_line, end_col)
+            active_tab
+                .window
+                .extract_selection_text(start_line, start_col, end_line, end_col)
         } else {
             String::new()
         }
@@ -759,7 +765,9 @@ impl TabbedTextWindow {
 
         if focused {
             border_style = border_style
-                .fg(crossterm_bridge::to_ratatui_color(theme.window_border_focused))
+                .fg(crossterm_bridge::to_ratatui_color(
+                    theme.window_border_focused,
+                ))
                 .add_modifier(Modifier::BOLD);
         }
 
@@ -1162,7 +1170,13 @@ mod tests {
         let names = window.get_tab_names();
         let active = window.get_active_tab_index();
         assert_eq!(names[active], "Other");
-        assert_eq!(names, vec!["Other".to_string(), "Main".to_string(), "Thoughts".to_string()]);
+        assert_eq!(
+            names,
+            vec![
+                "Other".to_string(),
+                "Main".to_string(),
+                "Thoughts".to_string()
+            ]
+        );
     }
 }
-

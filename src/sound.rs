@@ -217,9 +217,10 @@ impl SoundPlayer {
 /// 1. Place sound files in defaults/sounds/ directory
 /// 2. Uncomment and add entries like:
 ///    ("beep.wav", include_bytes!("../defaults/sounds/beep.wav")),
-const DEFAULT_SOUNDS: &[(&str, &[u8])] = &[
-    ("wizard_music.mp3", include_bytes!("../defaults/globals/sounds/wizard_music.mp3")),
-];
+const DEFAULT_SOUNDS: &[(&str, &[u8])] = &[(
+    "wizard_music.mp3",
+    include_bytes!("../defaults/globals/sounds/wizard_music.mp3"),
+)];
 
 /// Create shared sounds directory if it doesn't exist and extract default sounds
 pub fn ensure_sounds_directory() -> Result<PathBuf> {

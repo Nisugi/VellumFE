@@ -1,7 +1,7 @@
+use crate::config::ColorMode;
 use anyhow::Result;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use crate::config::ColorMode;
 
 // Global color mode - thread-local so it's set once at startup and used everywhere
 thread_local! {
@@ -60,7 +60,10 @@ pub fn init_palette_lookup(palette: &[crate::config::PaletteColor]) {
             }
         }
 
-        tracing::info!("Initialized palette lookup with {} color mappings", map.len());
+        tracing::info!(
+            "Initialized palette lookup with {} color mappings",
+            map.len()
+        );
     });
 }
 
@@ -73,9 +76,7 @@ fn lookup_hex_to_slot(hex: &str) -> Option<u8> {
         format!("#{}", hex.to_lowercase())
     };
 
-    PALETTE_LOOKUP.with(|lookup| {
-        lookup.borrow().get(&normalized).copied()
-    })
+    PALETTE_LOOKUP.with(|lookup| lookup.borrow().get(&normalized).copied())
 }
 
 /// Convert raw RGB values to ratatui Color
@@ -229,22 +230,22 @@ fn rgb_to_ansi_slot(r: u8, g: u8, b: u8) -> Option<u8> {
     // Standard ANSI color definitions (as used in parse_color_flexible)
     // These are the RGB values we convert color names to
     const ANSI_COLORS: [(u8, u8, u8, u8); 16] = [
-        (0, 0, 0, 0),         // black
-        (205, 0, 0, 1),       // red
-        (0, 205, 0, 2),       // green
-        (205, 205, 0, 3),     // yellow
-        (0, 0, 205, 4),       // blue
-        (205, 0, 205, 5),     // magenta
-        (0, 205, 205, 6),     // cyan
-        (192, 192, 192, 7),   // gray/white (normal)
-        (128, 128, 128, 8),   // dark gray (bright black)
-        (255, 0, 0, 9),       // bright red
-        (0, 255, 0, 10),      // bright green
-        (255, 255, 0, 11),    // bright yellow
-        (0, 0, 255, 12),      // bright blue
-        (255, 0, 255, 13),    // bright magenta
-        (0, 255, 255, 14),    // bright cyan
-        (255, 255, 255, 15),  // bright white
+        (0, 0, 0, 0),        // black
+        (205, 0, 0, 1),      // red
+        (0, 205, 0, 2),      // green
+        (205, 205, 0, 3),    // yellow
+        (0, 0, 205, 4),      // blue
+        (205, 0, 205, 5),    // magenta
+        (0, 205, 205, 6),    // cyan
+        (192, 192, 192, 7),  // gray/white (normal)
+        (128, 128, 128, 8),  // dark gray (bright black)
+        (255, 0, 0, 9),      // bright red
+        (0, 255, 0, 10),     // bright green
+        (255, 255, 0, 11),   // bright yellow
+        (0, 0, 255, 12),     // bright blue
+        (255, 0, 255, 13),   // bright magenta
+        (0, 255, 255, 14),   // bright cyan
+        (255, 255, 255, 15), // bright white
     ];
 
     // Exact match check
@@ -461,7 +462,10 @@ pub fn parse_color_to_ratatui(input: &str) -> Option<ratatui::style::Color> {
 /// Parse a color string to ratatui Color with color mode awareness
 /// In Direct mode: returns Color::Rgb for true color terminals
 /// In Slot mode: returns Color::Indexed for 256-color terminals (like macOS Terminal.app)
-pub fn parse_color_to_ratatui_with_mode(input: &str, mode: ColorMode) -> Option<ratatui::style::Color> {
+pub fn parse_color_to_ratatui_with_mode(
+    input: &str,
+    mode: ColorMode,
+) -> Option<ratatui::style::Color> {
     parse_color_flexible(input).and_then(|hex| parse_hex_color_with_mode(&hex, mode).ok())
 }
 
@@ -500,22 +504,13 @@ mod tests {
 
     #[test]
     fn parse_color_flexible_hex_with_hash() {
-        assert_eq!(
-            parse_color_flexible("#ff0000"),
-            Some("#ff0000".to_string())
-        );
-        assert_eq!(
-            parse_color_flexible("#00FF00"),
-            Some("#00ff00".to_string())
-        );
+        assert_eq!(parse_color_flexible("#ff0000"), Some("#ff0000".to_string()));
+        assert_eq!(parse_color_flexible("#00FF00"), Some("#00ff00".to_string()));
     }
 
     #[test]
     fn parse_color_flexible_hex_without_hash() {
-        assert_eq!(
-            parse_color_flexible("ff0000"),
-            Some("#ff0000".to_string())
-        );
+        assert_eq!(parse_color_flexible("ff0000"), Some("#ff0000".to_string()));
     }
 
     #[test]

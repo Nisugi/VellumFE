@@ -27,11 +27,17 @@ pub fn run_migration(options: &MigrateOptions) -> Result<MigrationResult> {
 
     // Ensure source exists
     if !options.src.exists() {
-        return Err(anyhow!("Source directory does not exist: {}", options.src.display()));
+        return Err(anyhow!(
+            "Source directory does not exist: {}",
+            options.src.display()
+        ));
     }
 
     if !options.src.is_dir() {
-        return Err(anyhow!("Source path is not a directory: {}", options.src.display()));
+        return Err(anyhow!(
+            "Source path is not a directory: {}",
+            options.src.display()
+        ));
     }
 
     // Create output directory
@@ -55,7 +61,10 @@ pub fn run_migration(options: &MigrateOptions) -> Result<MigrationResult> {
         // Skip files that look like current VellumFE layouts already
         if is_current_layout(&path) {
             if options.verbose {
-                println!("  Skipping (already current format): {}", path.file_name().unwrap_or_default().to_string_lossy());
+                println!(
+                    "  Skipping (already current format): {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                );
             }
             result.skipped += 1;
             continue;
@@ -68,7 +77,11 @@ pub fn run_migration(options: &MigrateOptions) -> Result<MigrationResult> {
             }
             Err(e) => {
                 if options.verbose {
-                    eprintln!("  Warning: {}: {}", path.file_name().unwrap_or_default().to_string_lossy(), e);
+                    eprintln!(
+                        "  Warning: {}: {}",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        e
+                    );
                 }
                 result.failed += 1;
                 result.errors.push(format!("{}: {}", path.display(), e));
@@ -103,8 +116,8 @@ fn is_current_layout(path: &Path) -> bool {
     if let Ok(content) = fs::read_to_string(path) {
         // Current layouts use [[windows]] array syntax with typed variants
         // Old formats use different structure
-        content.contains("[[windows]]") &&
-        (content.contains("[windows.data]") || content.contains("[windows.base]"))
+        content.contains("[[windows]]")
+            && (content.contains("[windows.data]") || content.contains("[windows.base]"))
     } else {
         false
     }
@@ -163,7 +176,11 @@ fn process_file(path: &Path, out_dir: &Path, dry_run: bool, verbose: bool) -> Re
     }
 
     if verbose {
-        let action = if dry_run { "Would convert" } else { "Converted" };
+        let action = if dry_run {
+            "Would convert"
+        } else {
+            "Converted"
+        };
         println!(
             "  {} {} ({} windows{})",
             action,
@@ -208,7 +225,10 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
     let mapping = map_widget_type(&widget_type, &name, table)?;
     if mapping.skip {
         if verbose {
-            eprintln!("    Skipping unsupported widget '{}' ({})", name, widget_type);
+            eprintln!(
+                "    Skipping unsupported widget '{}' ({})",
+                name, widget_type
+            );
         }
         return Ok(None);
     }
@@ -229,7 +249,10 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
             };
             if let Some(fb) = fallback {
                 if verbose {
-                    eprintln!("    Using fallback template '{}' for '{}'", fb, template_name);
+                    eprintln!(
+                        "    Using fallback template '{}' for '{}'",
+                        fb, template_name
+                    );
                 }
                 Config::get_window_template(fb)
             } else {
@@ -342,10 +365,18 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                     .iter()
                     .filter_map(|t| {
                         let t = t.as_table()?;
-                        let name = get_str(t, "name").ok().flatten().unwrap_or_else(|| "tab".to_string());
-                        let streams = get_vec_str(t, "streams").ok().flatten().unwrap_or_else(|| {
-                            get_str(t, "stream").ok().flatten().map(|s| vec![s]).unwrap_or_default()
-                        });
+                        let name = get_str(t, "name")
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| "tab".to_string());
+                        let streams =
+                            get_vec_str(t, "streams").ok().flatten().unwrap_or_else(|| {
+                                get_str(t, "stream")
+                                    .ok()
+                                    .flatten()
+                                    .map(|s| vec![s])
+                                    .unwrap_or_default()
+                            });
                         let show_timestamps = get_bool(t, "show_timestamps").ok().flatten();
                         let ignore_activity = get_bool(t, "ignore_activity").ok().flatten();
                         Some(TabbedTextTab {
@@ -577,8 +608,12 @@ fn map_widget_type(widget_type: &str, name: &str, table: &toml::value::Table) ->
         }),
         "entity" => {
             // Decide targets vs players based on streams or name
-            let streams = get_vec_str(table, "streams").unwrap_or(None).unwrap_or_default();
-            let template = if streams.iter().any(|s| s.contains("player")) || name.to_lowercase().contains("player") {
+            let streams = get_vec_str(table, "streams")
+                .unwrap_or(None)
+                .unwrap_or_default();
+            let template = if streams.iter().any(|s| s.contains("player"))
+                || name.to_lowercase().contains("player")
+            {
                 "players".to_string()
             } else {
                 "targets".to_string()
@@ -642,7 +677,10 @@ fn map_widget_type(widget_type: &str, name: &str, table: &toml::value::Table) ->
 
 // Helper functions for extracting values from TOML tables
 fn get_str(table: &toml::value::Table, key: &str) -> Result<Option<String>> {
-    Ok(table.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()))
+    Ok(table
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
 }
 
 fn get_bool(table: &toml::value::Table, key: &str) -> Result<Option<bool>> {
@@ -650,11 +688,17 @@ fn get_bool(table: &toml::value::Table, key: &str) -> Result<Option<bool>> {
 }
 
 fn get_u16(table: &toml::value::Table, key: &str) -> Result<Option<u16>> {
-    Ok(table.get(key).and_then(|v| v.as_integer()).and_then(|i| u16::try_from(i).ok()))
+    Ok(table
+        .get(key)
+        .and_then(|v| v.as_integer())
+        .and_then(|i| u16::try_from(i).ok()))
 }
 
 fn get_usize(table: &toml::value::Table, key: &str) -> Result<Option<usize>> {
-    Ok(table.get(key).and_then(|v| v.as_integer()).and_then(|i| usize::try_from(i).ok()))
+    Ok(table
+        .get(key)
+        .and_then(|v| v.as_integer())
+        .and_then(|i| usize::try_from(i).ok()))
 }
 
 fn get_vec_str(table: &toml::value::Table, key: &str) -> Result<Option<Vec<String>>> {
@@ -668,7 +712,10 @@ fn get_vec_str(table: &toml::value::Table, key: &str) -> Result<Option<Vec<Strin
 }
 
 fn get_char(table: &toml::value::Table, key: &str) -> Result<Option<char>> {
-    Ok(table.get(key).and_then(|v| v.as_str()).and_then(|s| s.chars().next()))
+    Ok(table
+        .get(key)
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.chars().next()))
 }
 
 fn parse_border_sides(arr: &[Value]) -> BorderSides {
@@ -887,10 +934,7 @@ col = 0
 
     #[test]
     fn test_parse_border_sides_invalid_values() {
-        let arr = vec![
-            Value::String("invalid".to_string()),
-            Value::Integer(123),
-        ];
+        let arr = vec![Value::String("invalid".to_string()), Value::Integer(123)];
         let result = parse_border_sides(&arr);
         assert!(!result.top);
         assert!(!result.bottom);

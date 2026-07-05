@@ -91,7 +91,12 @@ impl AppCore {
                         WindowContent::TabbedText(ref mut tabbed_content) => {
                             // Find tab(s) subscribed to "main" stream and add the line
                             for tab in tabbed_content.tabs.iter_mut() {
-                                if tab.definition.streams.iter().any(|s| s.eq_ignore_ascii_case("main")) {
+                                if tab
+                                    .definition
+                                    .streams
+                                    .iter()
+                                    .any(|s| s.eq_ignore_ascii_case("main"))
+                                {
                                     tab.content.add_line(styled_line.clone());
                                     tracing::info!(
                                         "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
@@ -273,9 +278,8 @@ impl AppCore {
                             ));
                         }
                     }
-                    Err(e) => {
-                        self.add_system_message(&format!("Failed to list highlight profiles: {}", e))
-                    }
+                    Err(e) => self
+                        .add_system_message(&format!("Failed to list highlight profiles: {}", e)),
                 }
             }
 
@@ -290,10 +294,7 @@ impl AppCore {
                 let name = parts.get(1).unwrap_or(&"default");
                 match self.config.save_keybinds_as(name) {
                     Ok(path) => {
-                        self.add_system_message(&format!(
-                            "Keybinds saved to: {}",
-                            path.display()
-                        ));
+                        self.add_system_message(&format!("Keybinds saved to: {}", path.display()));
                     }
                     Err(e) => {
                         self.add_system_message(&format!("Failed to save keybinds: {}", e));
@@ -306,7 +307,10 @@ impl AppCore {
                         Ok(keybinds) => {
                             self.config.keybinds = keybinds;
                             self.rebuild_keybind_map();
-                            self.add_system_message(&format!("Keybinds loaded from profile: {}", name));
+                            self.add_system_message(&format!(
+                                "Keybinds loaded from profile: {}",
+                                name
+                            ));
                         }
                         Err(e) => {
                             self.add_system_message(&format!("Failed to load keybinds: {}", e));
@@ -426,8 +430,13 @@ impl AppCore {
                         "colors" => self.reload_colors(),
                         "layout" => self.reload_layout(),
                         _ => {
-                            self.add_system_message(&format!("Unknown reload category: {}", parts[1]));
-                            self.add_system_message("Usage: .reload [highlights|keybinds|settings|colors|layout]");
+                            self.add_system_message(&format!(
+                                "Unknown reload category: {}",
+                                parts[1]
+                            ));
+                            self.add_system_message(
+                                "Usage: .reload [highlights|keybinds|settings|colors|layout]",
+                            );
                             self.add_system_message("       .reload (reload everything)");
                         }
                     }
@@ -831,37 +840,55 @@ mod tests {
     #[test]
     fn test_action_highlights() {
         let (cmd, args) = parse_dot_command(".highlights");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:highlights".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:highlights".to_string())
+        );
     }
 
     #[test]
     fn test_action_highlights_alias() {
         let (cmd, args) = parse_dot_command(".hl");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:highlights".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:highlights".to_string())
+        );
     }
 
     #[test]
     fn test_action_keybinds() {
         let (cmd, args) = parse_dot_command(".keybinds");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:keybinds".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:keybinds".to_string())
+        );
     }
 
     #[test]
     fn test_action_colors() {
         let (cmd, args) = parse_dot_command(".colors");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:colors".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:colors".to_string())
+        );
     }
 
     #[test]
     fn test_action_themes() {
         let (cmd, args) = parse_dot_command(".themes");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:themes".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:themes".to_string())
+        );
     }
 
     #[test]
     fn test_action_settheme_with_name() {
         let (cmd, args) = parse_dot_command(".settheme dark");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:settheme:dark".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:settheme:dark".to_string())
+        );
     }
 
     #[test]
@@ -873,49 +900,73 @@ mod tests {
     #[test]
     fn test_action_editwindow_with_name() {
         let (cmd, args) = parse_dot_command(".editwindow main");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:editwindow:main".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:editwindow:main".to_string())
+        );
     }
 
     #[test]
     fn test_action_editwindow_without_name() {
         let (cmd, args) = parse_dot_command(".editwindow");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:editwindow".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:editwindow".to_string())
+        );
     }
 
     #[test]
     fn test_action_hidewindow_with_name() {
         let (cmd, args) = parse_dot_command(".hidewindow main");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:hidewindow:main".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:hidewindow:main".to_string())
+        );
     }
 
     #[test]
     fn test_action_hidewindow_without_name() {
         let (cmd, args) = parse_dot_command(".hidewindow");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:hidewindow".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:hidewindow".to_string())
+        );
     }
 
     #[test]
     fn test_action_hidewin_alias() {
         let (cmd, args) = parse_dot_command(".hidewin chat");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:hidewindow:chat".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:hidewindow:chat".to_string())
+        );
     }
 
     #[test]
     fn test_action_edithighlight_with_name() {
         let (cmd, args) = parse_dot_command(".edithighlight combat");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:edithighlight:combat".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:edithighlight:combat".to_string())
+        );
     }
 
     #[test]
     fn test_action_edithighlight_without_name() {
         let (cmd, args) = parse_dot_command(".edithighlight");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:edithighlight".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:edithighlight".to_string())
+        );
     }
 
     #[test]
     fn test_action_addwindow_no_args_opens_picker() {
         let (cmd, args) = parse_dot_command(".addwindow");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:addwindow".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:addwindow".to_string())
+        );
     }
 
     #[test]
@@ -928,31 +979,46 @@ mod tests {
     #[test]
     fn test_action_settings() {
         let (cmd, args) = parse_dot_command(".settings");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:settings".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:settings".to_string())
+        );
     }
 
     #[test]
     fn test_action_nexttab() {
         let (cmd, args) = parse_dot_command(".nexttab");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:nexttab".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:nexttab".to_string())
+        );
     }
 
     #[test]
     fn test_action_prevtab() {
         let (cmd, args) = parse_dot_command(".prevtab");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:prevtab".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:prevtab".to_string())
+        );
     }
 
     #[test]
     fn test_action_nextunread() {
         let (cmd, args) = parse_dot_command(".nextunread");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:nextunread".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:nextunread".to_string())
+        );
     }
 
     #[test]
     fn test_action_gonew() {
         let (cmd, args) = parse_dot_command(".gonew");
-        assert_eq!(get_expected_action(&cmd, &args), Some("action:nextunread".to_string()));
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:nextunread".to_string())
+        );
     }
 
     // ========== Addwindow argument parsing tests ==========
@@ -961,12 +1027,12 @@ mod tests {
     fn test_addwindow_parses_coordinates() {
         let (_, args) = parse_dot_command(".addwindow test text 10 20 80 24");
         assert_eq!(args.len(), 6);
-        assert_eq!(args[0], "test");      // name
-        assert_eq!(args[1], "text");      // type
-        assert_eq!(args[2], "10");        // x
-        assert_eq!(args[3], "20");        // y
-        assert_eq!(args[4], "80");        // width
-        assert_eq!(args[5], "24");        // height
+        assert_eq!(args[0], "test"); // name
+        assert_eq!(args[1], "text"); // type
+        assert_eq!(args[2], "10"); // x
+        assert_eq!(args[3], "20"); // y
+        assert_eq!(args[4], "80"); // width
+        assert_eq!(args[5], "24"); // height
     }
 
     #[test]

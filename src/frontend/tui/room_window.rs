@@ -640,7 +640,10 @@ impl RoomWindow {
                         style = style.bg(color);
                     }
                 }
-                Line::from(Span::styled(self.title.clone(), style.add_modifier(Modifier::BOLD)))
+                Line::from(Span::styled(
+                    self.title.clone(),
+                    style.add_modifier(Modifier::BOLD),
+                ))
             } else {
                 Line::from(self.title.as_str())
             };
@@ -797,7 +800,13 @@ impl RoomWindow {
                 let start = start_col.min(line_len);
                 let end = end_col.min(line_len);
                 if start < end {
-                    result.push_str(&line_text.chars().skip(start).take(end - start).collect::<String>());
+                    result.push_str(
+                        &line_text
+                            .chars()
+                            .skip(start)
+                            .take(end - start)
+                            .collect::<String>(),
+                    );
                 }
             } else if line_idx == start_line {
                 // First line of multi-line selection

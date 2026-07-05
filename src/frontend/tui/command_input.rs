@@ -3,12 +3,12 @@
 //! Handles multi-byte cursoring, cut/copy selection, history persistence, and
 //! autocomplete for both dot-commands and window names.
 
+use crate::config::BorderSides;
+use crate::frontend::common::CommandInputModel;
 use crate::frontend::tui::{
     crossterm_bridge,
     title_position::{self, TitlePosition},
 };
-use crate::config::BorderSides;
-use crate::frontend::common::CommandInputModel;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -30,11 +30,11 @@ pub struct CommandInput {
     title: String,
     title_position: TitlePosition,
     background_color: Option<String>,
-    text_color: Option<String>,         // Input text color
-    cursor_fg_color: Option<String>,    // Cursor foreground color
-    cursor_bg_color: Option<String>,    // Cursor background color
-    prompt_icon: Option<String>,        // Optional prompt icon shown before input
-    prompt_icon_color: Option<String>,  // Color for prompt icon
+    text_color: Option<String>,        // Input text color
+    cursor_fg_color: Option<String>,   // Cursor foreground color
+    cursor_bg_color: Option<String>,   // Cursor background color
+    prompt_icon: Option<String>,       // Optional prompt icon shown before input
+    prompt_icon_color: Option<String>, // Color for prompt icon
 }
 
 impl CommandInput {
@@ -198,7 +198,11 @@ impl CommandInput {
         // Check if border_style is "none" - that should disable borders too
         let border_is_none = self.border_style.as_ref().is_some_and(|s| s == "none");
         let show_border = self.show_border && !border_is_none;
-        let title_text = if self.show_title { title } else { String::new() };
+        let title_text = if self.show_title {
+            title
+        } else {
+            String::new()
+        };
 
         let borders = crossterm_bridge::to_ratatui_borders(&self.border_sides);
         let border_type = match self.border_style.as_deref() {
@@ -267,13 +271,14 @@ impl CommandInput {
             .as_ref()
             .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::White);
-        let icon_text = self
-            .prompt_icon
-            .as_ref()
-            .and_then(|s| {
-                let t = s.trim();
-                if t.is_empty() { None } else { Some(t) }
-            });
+        let icon_text = self.prompt_icon.as_ref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        });
         if let Some(icon) = icon_text {
             let max_icon_width = inner.width as usize;
             if max_icon_width > 0 {
@@ -553,7 +558,10 @@ impl CommandInput {
             }
         }
 
-        tracing::debug!("Loaded {} commands from history", self.model.history().len());
+        tracing::debug!(
+            "Loaded {} commands from history",
+            self.model.history().len()
+        );
         Ok(())
     }
 

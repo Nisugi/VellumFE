@@ -24,19 +24,13 @@ pub enum DialogRowArea {
         button_idx: usize,
     },
     /// Field without paired button - editable field only
-    FieldOnly {
-        field_area: Rect,
-        field_idx: usize,
-    },
+    FieldOnly { field_area: Rect, field_idx: usize },
     /// Multiple links grouped on one row
     LinkGroup {
         button_areas: Vec<(Rect, usize)>, // (area, button_idx)
     },
     /// Single button centered on its own row
-    SingleButton {
-        area: Rect,
-        button_idx: usize,
-    },
+    SingleButton { area: Rect, button_idx: usize },
 }
 
 pub struct DialogLayout {
@@ -119,15 +113,15 @@ fn field_input_box(value: &str) -> String {
 fn strip_field_suffix(field_id: &str) -> String {
     // Common suffixes in dialog field IDs (case-insensitive, already lowercase input)
     const SUFFIXES: &[&str] = &[
-        "sb",        // SpinBox
-        "amount",    // Amount field
-        "input",     // Input field
-        "field",     // Generic field
-        "value",     // Value field
-        "text",      // Text field
-        "edit",      // Edit field
-        "box",       // Box suffix
-        "entry",     // Entry field
+        "sb",     // SpinBox
+        "amount", // Amount field
+        "input",  // Input field
+        "field",  // Generic field
+        "value",  // Value field
+        "text",   // Text field
+        "edit",   // Edit field
+        "box",    // Box suffix
+        "entry",  // Entry field
     ];
 
     let mut result = field_id.to_string();
@@ -330,7 +324,12 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
         (x, y)
     };
 
-    let area = Rect { x, y, width, height };
+    let area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
 
     // Title bar area (top border line)
     let title_bar_area = Rect {
@@ -528,13 +527,8 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
         } else {
             // Flush any pending link group
             if !link_group.is_empty() && current_y < y.saturating_add(height.saturating_sub(1)) {
-                let button_areas = compute_link_group_areas(
-                    dialog,
-                    &link_group,
-                    inner_x,
-                    current_y,
-                    inner_width,
-                );
+                let button_areas =
+                    compute_link_group_areas(dialog, &link_group, inner_x, current_y, inner_width);
                 row_areas.push(DialogRowArea::LinkGroup { button_areas });
                 link_group.clear();
                 current_y += 1;
@@ -562,13 +556,8 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
 
     // Flush remaining link group
     if !link_group.is_empty() && current_y < y.saturating_add(height.saturating_sub(1)) {
-        let button_areas = compute_link_group_areas(
-            dialog,
-            &link_group,
-            inner_x,
-            current_y,
-            inner_width,
-        );
+        let button_areas =
+            compute_link_group_areas(dialog, &link_group, inner_x, current_y, inner_width);
         row_areas.push(DialogRowArea::LinkGroup { button_areas });
     }
 
@@ -629,7 +618,11 @@ fn compute_link_group_areas(
 pub fn hit_test_button(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
     for row_area in &layout.row_areas {
         match row_area {
-            DialogRowArea::FieldWithButton { button_area, button_idx, .. } => {
+            DialogRowArea::FieldWithButton {
+                button_area,
+                button_idx,
+                ..
+            } => {
                 if x >= button_area.x
                     && x < button_area.x.saturating_add(button_area.width)
                     && y >= button_area.y
@@ -667,7 +660,11 @@ pub fn hit_test_button(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
 pub fn hit_test_field(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
     for row_area in &layout.row_areas {
         match row_area {
-            DialogRowArea::FieldWithButton { field_area, field_idx, .. } => {
+            DialogRowArea::FieldWithButton {
+                field_area,
+                field_idx,
+                ..
+            } => {
                 if x >= field_area.x
                     && x < field_area.x.saturating_add(field_area.width)
                     && y >= field_area.y
@@ -676,7 +673,10 @@ pub fn hit_test_field(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
                     return Some(*field_idx);
                 }
             }
-            DialogRowArea::FieldOnly { field_area, field_idx } => {
+            DialogRowArea::FieldOnly {
+                field_area,
+                field_idx,
+            } => {
                 if x >= field_area.x
                     && x < field_area.x.saturating_add(field_area.width)
                     && y >= field_area.y
@@ -694,15 +694,17 @@ pub fn hit_test_field(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
 /// Test if a mouse position is on the dialog title bar (for dragging)
 pub fn hit_test_title_bar(layout: &DialogLayout, x: u16, y: u16) -> bool {
     let area = &layout.title_bar_area;
-    x >= area.x
-        && x < area.x.saturating_add(area.width)
-        && y == area.y
+    x >= area.x && x < area.x.saturating_add(area.width) && y == area.y
 }
 
 /// Test if a mouse position is on a resize handle.
 /// Returns the resize operation type if on a handle, None otherwise.
 /// Resize handles are the edges and corners of the dialog.
-pub fn hit_test_resize_handle(layout: &DialogLayout, x: u16, y: u16) -> Option<DialogDragOperation> {
+pub fn hit_test_resize_handle(
+    layout: &DialogLayout,
+    x: u16,
+    y: u16,
+) -> Option<DialogDragOperation> {
     let area = &layout.area;
     let left = area.x;
     let right = area.x.saturating_add(area.width.saturating_sub(1));
@@ -754,10 +756,7 @@ enum DialogRow<'a> {
     /// Progress bar
     ProgressBar(&'a crate::data::DialogProgressBar),
     /// Field with its paired button on the same row
-    FieldWithButton {
-        field_idx: usize,
-        button_idx: usize,
-    },
+    FieldWithButton { field_idx: usize, button_idx: usize },
     /// Field without a paired button (rendered alone)
     FieldOnly(usize),
     /// Multiple links grouped on the same row
@@ -789,7 +788,10 @@ fn build_dialog_rows(dialog: &DialogState) -> Vec<DialogRow<'_>> {
         // Try explicit enter_button first
         if let Some(ref enter_button_id) = field.enter_button {
             if let Some(button_idx) = dialog.buttons.iter().position(|b| &b.id == enter_button_id) {
-                rows.push(DialogRow::FieldWithButton { field_idx, button_idx });
+                rows.push(DialogRow::FieldWithButton {
+                    field_idx,
+                    button_idx,
+                });
                 used_buttons.insert(button_idx);
                 continue;
             }
@@ -818,7 +820,10 @@ fn build_dialog_rows(dialog: &DialogState) -> Vec<DialogRow<'_>> {
                 || field_id_lower.starts_with(&button_id_lower)
                 || button_id_lower.starts_with(&field_id_base)
             {
-                rows.push(DialogRow::FieldWithButton { field_idx, button_idx });
+                rows.push(DialogRow::FieldWithButton {
+                    field_idx,
+                    button_idx,
+                });
                 used_buttons.insert(button_idx);
                 paired = true;
                 break;
@@ -921,21 +926,33 @@ pub fn render_dialog(
                 lines.push(line);
             }
 
-            DialogRow::FieldWithButton { field_idx, button_idx } => {
+            DialogRow::FieldWithButton {
+                field_idx,
+                button_idx,
+            } => {
                 // Field + button on same row: "  [    1,000]  Deposit  " with fixed padding
                 let is_focused = dialog.focused_field == Some(*field_idx);
-                let field_style = if is_focused { selected_style } else { normal_style };
+                let field_style = if is_focused {
+                    selected_style
+                } else {
+                    normal_style
+                };
 
                 let value = field_formatted_value(dialog, *field_idx);
                 let input_box = field_input_box(&value);
 
                 let button = &dialog.buttons[*button_idx];
                 let button_selected = *button_idx == dialog.selected;
-                let button_style = if button_selected { selected_style } else { normal_style };
+                let button_style = if button_selected {
+                    selected_style
+                } else {
+                    normal_style
+                };
                 let button_text = display_label(button);
 
                 // Pad button text to max width so all FieldWithButton rows align
-                let padded_button = format!("{:<width$}", button_text, width = max_field_button_width);
+                let padded_button =
+                    format!("{:<width$}", button_text, width = max_field_button_width);
 
                 // Fixed padding of 2 on left side
                 let line = Line::from(vec![
@@ -969,7 +986,11 @@ pub fn render_dialog(
 
                     let button = &dialog.buttons[btn_idx];
                     let button_selected = btn_idx == dialog.selected;
-                    let button_style = if button_selected { selected_style } else { normal_style };
+                    let button_style = if button_selected {
+                        selected_style
+                    } else {
+                        normal_style
+                    };
                     spans.push(Span::styled(display_label(button), button_style));
 
                     if i < button_indices.len() - 1 {
@@ -985,7 +1006,11 @@ pub fn render_dialog(
                 // Centered single button (typically Close)
                 let button = &dialog.buttons[*button_idx];
                 let button_selected = *button_idx == dialog.selected;
-                let button_style = if button_selected { selected_style } else { normal_style };
+                let button_style = if button_selected {
+                    selected_style
+                } else {
+                    normal_style
+                };
                 let button_text = display_label(button);
 
                 let padding = inner_width.saturating_sub(button_text.len()) / 2;
@@ -1001,7 +1026,11 @@ pub fn render_dialog(
             DialogRow::FieldOnly(field_idx) => {
                 // Field without a paired button - render field alone with fixed padding
                 let is_focused = dialog.focused_field == Some(*field_idx);
-                let field_style = if is_focused { selected_style } else { normal_style };
+                let field_style = if is_focused {
+                    selected_style
+                } else {
+                    normal_style
+                };
 
                 let value = field_formatted_value(dialog, *field_idx);
                 let input_box = field_input_box(&value);
@@ -1049,10 +1078,12 @@ fn render_progress_bar_line(
     let unfilled_char = '░';
 
     // Use theme colors
-    let filled_style = Style::default()
-        .fg(crossterm_bridge::to_ratatui_color(theme.background_selected));
-    let unfilled_style = Style::default()
-        .fg(crossterm_bridge::to_ratatui_color(theme.background_secondary));
+    let filled_style = Style::default().fg(crossterm_bridge::to_ratatui_color(
+        theme.background_selected,
+    ));
+    let unfilled_style = Style::default().fg(crossterm_bridge::to_ratatui_color(
+        theme.background_secondary,
+    ));
 
     // Build the line with text overlaid on the bar
     // Center the text over the bar
@@ -1077,7 +1108,9 @@ fn render_progress_bar_line(
             let style = if is_filled {
                 Style::default()
                     .fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
-                    .bg(crossterm_bridge::to_ratatui_color(theme.background_selected))
+                    .bg(crossterm_bridge::to_ratatui_color(
+                        theme.background_selected,
+                    ))
             } else {
                 Style::default()
                     .fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
@@ -1101,7 +1134,10 @@ fn render_progress_bar_line(
                 }
             } else {
                 // Collect consecutive unfilled chars
-                let count = text_start.saturating_sub(pos).max(1).min(bar_width.saturating_sub(pos));
+                let count = text_start
+                    .saturating_sub(pos)
+                    .max(1)
+                    .min(bar_width.saturating_sub(pos));
                 if count > 0 && pos < text_start {
                     let s: String = std::iter::repeat(unfilled_char).take(count).collect();
                     spans.push(Span::styled(s, unfilled_style));

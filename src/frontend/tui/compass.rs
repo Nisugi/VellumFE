@@ -241,10 +241,7 @@ mod tests {
         let mut compass = Compass::new("Compass");
         compass.set_border_config(false, None, None);
         compass.set_transparent_background(true);
-        compass.set_colors(
-            Some("#ff0000".to_string()),
-            Some("#00ff00".to_string()),
-        );
+        compass.set_colors(Some("#ff0000".to_string()), Some("#00ff00".to_string()));
         compass.set_directions(vec!["north".to_string(), "out".to_string()]);
 
         let area = Rect::new(0, 0, 7, 3);

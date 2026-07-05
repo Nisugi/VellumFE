@@ -144,7 +144,12 @@ impl KeybindFormWidget {
         }
     }
 
-    pub fn new_edit(key_combo: String, action_type: KeybindActionType, value: String, is_global: bool) -> Self {
+    pub fn new_edit(
+        key_combo: String,
+        action_type: KeybindActionType,
+        value: String,
+        is_global: bool,
+    ) -> Self {
         let mut form = Self::new();
         form.key_combo.insert_str(&key_combo);
         form.action_type = action_type.clone();
@@ -168,10 +173,7 @@ impl KeybindFormWidget {
         form
     }
 
-    pub fn handle_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-    ) -> Option<KeybindFormResult> {
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<KeybindFormResult> {
         // Note: All navigation keys (Tab, Shift+Tab, Esc, Space, Up, Down, Ctrl+S, Ctrl+D, Ctrl+A)
         // are now routed via MenuAction in mod.rs. This method only handles text input.
 
@@ -195,7 +197,10 @@ impl KeybindFormWidget {
     }
 
     /// Handle MenuAction (called from mod.rs input routing)
-    pub fn handle_action(&mut self, action: crate::core::menu_actions::MenuAction) -> Option<KeybindFormResult> {
+    pub fn handle_action(
+        &mut self,
+        action: crate::core::menu_actions::MenuAction,
+    ) -> Option<KeybindFormResult> {
         use crate::core::menu_actions::MenuAction;
 
         match action {
@@ -255,7 +260,7 @@ impl KeybindFormWidget {
                     None
                 }
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -434,7 +439,8 @@ impl KeybindFormWidget {
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    buf[(x + col, y + row)]
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                 }
             }
         }
@@ -482,7 +488,8 @@ impl KeybindFormWidget {
         buf: &mut Buffer,
         theme: &crate::theme::AppTheme,
     ) {
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
 
         // Top border
         buf[(x, y)].set_char('┌').set_style(border_style);
@@ -536,11 +543,13 @@ impl KeybindFormWidget {
         };
 
         // Row 2: Type (radio buttons) - Fields 0 and 1
-        let type_label_color = crossterm_bridge::to_ratatui_color(if self.focused_field == 0 || self.focused_field == 1  {
-            theme.form_label_focused
-        } else {
-            theme.form_label
-        });
+        let type_label_color = crossterm_bridge::to_ratatui_color(
+            if self.focused_field == 0 || self.focused_field == 1 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            },
+        );
         let type_label = "Type:";
         for (i, ch) in type_label.chars().enumerate() {
             buf[(x + 2 + i as u16, current_y)]
@@ -551,7 +560,7 @@ impl KeybindFormWidget {
 
         // Action radio button (Field 0)
         let action_selected = self.action_type == KeybindActionType::Action;
-        let action_color = crossterm_bridge::to_ratatui_color(if self.focused_field == 0  {
+        let action_color = crossterm_bridge::to_ratatui_color(if self.focused_field == 0 {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -570,7 +579,7 @@ impl KeybindFormWidget {
 
         // Macro radio button (Field 1)
         let macro_selected = self.action_type == KeybindActionType::Macro;
-        let macro_color = crossterm_bridge::to_ratatui_color(if self.focused_field == 1  {
+        let macro_color = crossterm_bridge::to_ratatui_color(if self.focused_field == 1 {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -643,11 +652,12 @@ impl KeybindFormWidget {
         current_y += 1;
 
         // Row: Scope (radio buttons) - Fields 4 and 5
-        let scope_label_color = crossterm_bridge::to_ratatui_color(if focused_field == 4 || focused_field == 5  {
-            theme.form_label_focused
-        } else {
-            theme.form_label
-        });
+        let scope_label_color =
+            crossterm_bridge::to_ratatui_color(if focused_field == 4 || focused_field == 5 {
+                theme.form_label_focused
+            } else {
+                theme.form_label
+            });
         let scope_label = "Scope:";
         for (i, ch) in scope_label.chars().enumerate() {
             buf[(x + 2 + i as u16, current_y)]
@@ -657,7 +667,7 @@ impl KeybindFormWidget {
         }
 
         // Global radio button (Field 4)
-        let global_color = crossterm_bridge::to_ratatui_color(if focused_field == 4  {
+        let global_color = crossterm_bridge::to_ratatui_color(if focused_field == 4 {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -675,7 +685,7 @@ impl KeybindFormWidget {
         }
 
         // Character radio button (Field 5)
-        let char_color = crossterm_bridge::to_ratatui_color(if focused_field == 5  {
+        let char_color = crossterm_bridge::to_ratatui_color(if focused_field == 5 {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -708,7 +718,7 @@ impl KeybindFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let focused = _focused_field == field_id;
-        let label_color = crossterm_bridge::to_ratatui_color(if focused  {
+        let label_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -758,7 +768,7 @@ impl KeybindFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let focused = self.focused_field == 3;
-        let label_color = crossterm_bridge::to_ratatui_color(if focused  {
+        let label_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -777,7 +787,7 @@ impl KeybindFormWidget {
         let current_value = AVAILABLE_ACTIONS[self.action_dropdown_index];
 
         // Render current value (highlight if focused, no background)
-        let value_color = crossterm_bridge::to_ratatui_color(if focused  {
+        let value_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
             theme.text_disabled
@@ -791,7 +801,13 @@ impl KeybindFormWidget {
     }
 
     /// Handle mouse events for the form
-    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> KeybindFormMouseAction {
+    pub fn handle_mouse(
+        &mut self,
+        col: u16,
+        row: u16,
+        pressed: bool,
+        terminal_area: Rect,
+    ) -> KeybindFormMouseAction {
         let popup_width: u16 = 52;
         let popup_height: u16 = 10;
 

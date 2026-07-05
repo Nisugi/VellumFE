@@ -90,7 +90,9 @@ impl TuiFrontend {
     ) -> Option<String> {
         // Check text windows first
         if let Some(text_window) = self.widget_manager.text_windows.get(window_name) {
-            return Some(text_window.extract_selection_text(start_line, start_col, end_line, end_col));
+            return Some(
+                text_window.extract_selection_text(start_line, start_col, end_line, end_col),
+            );
         }
 
         // Check tabbed text windows
@@ -110,7 +112,9 @@ impl TuiFrontend {
 
         // Check container windows
         if let Some(container) = self.widget_manager.container_widgets.get(window_name) {
-            return Some(container.extract_selection_text(start_line, start_col, end_line, end_col));
+            return Some(
+                container.extract_selection_text(start_line, start_col, end_line, end_col),
+            );
         }
 
         // Check spells windows
@@ -222,4 +226,3 @@ impl TuiFrontend {
         None
     }
 }
-

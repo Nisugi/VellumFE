@@ -2,7 +2,6 @@
 ///!
 ///! This module provides a simple cache for the currently active theme,
 ///! reducing overhead in the hot rendering path.
-
 use crate::theme::AppTheme;
 
 /// Theme cache to avoid repeated HashMap lookups and clones during rendering

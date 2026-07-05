@@ -229,6 +229,7 @@ impl GuiLayoutFileV1 {
     pub fn get_tab_settings(&self, key: &TabKey) -> Option<&TabSettings> {
         self.tab_settings
             .iter()
+            .rev()
             .find(|e| &e.key == key)
             .map(|e| &e.settings)
     }
@@ -276,15 +277,27 @@ impl std::fmt::Display for LayoutError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LayoutError::UnknownVersion(v) => {
-                write!(f, "Unknown schema version {} (current is {})", v, CURRENT_SCHEMA_VERSION)
+                write!(
+                    f,
+                    "Unknown schema version {} (current is {})",
+                    v, CURRENT_SCHEMA_VERSION
+                )
             }
             LayoutError::FutureVersion(v) => {
-                write!(f, "Future schema version {} (current is {}) - please upgrade VellumFE", v, CURRENT_SCHEMA_VERSION)
+                write!(
+                    f,
+                    "Future schema version {} (current is {}) - please upgrade VellumFE",
+                    v, CURRENT_SCHEMA_VERSION
+                )
             }
             LayoutError::ParseError(e) => write!(f, "Failed to parse layout file: {}", e),
             LayoutError::IoError(e) => write!(f, "IO error: {}", e),
             LayoutError::MigrationFailed { from, to, reason } => {
-                write!(f, "Migration failed from version {} to {}: {}", from, to, reason)
+                write!(
+                    f,
+                    "Migration failed from version {} to {}: {}",
+                    from, to, reason
+                )
             }
         }
     }
@@ -418,13 +431,23 @@ pub fn save_layout(layout: &GuiLayoutFileV1, profile: &str, character: &str) -> 
     }
 
     // Serialize layout
-    let content =
-        serde_json::to_string_pretty(layout).context("Failed to serialize layout")?;
+    let content = serde_json::to_string_pretty(layout).context("Failed to serialize layout")?;
 
     // Write to temp file then rename (atomic on most filesystems)
     let temp_path = dir.join("layout_v1.tmp.json");
     std::fs::write(&temp_path, &content).context("Failed to write temp layout file")?;
-    std::fs::rename(&temp_path, &path).context("Failed to rename temp to final")?;
+    if let Err(rename_err) = std::fs::rename(&temp_path, &path) {
+        // Windows does not allow renaming over an existing file.
+        // If replacement is needed, remove existing destination and retry.
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .context("Failed to remove existing layout file before rename")?;
+            std::fs::rename(&temp_path, &path)
+                .context("Failed to rename temp to final after replacing existing file")?;
+        } else {
+            return Err(rename_err).context("Failed to rename temp to final");
+        }
+    }
 
     tracing::debug!("Saved layout to {:?}", path);
     Ok(())
@@ -566,6 +589,38 @@ mod tests {
         assert_eq!(parsed.hidden_tabs[0], TabKey::Compass);
         assert!(parsed.get_tab_settings(&TabKey::Vitals).is_some());
         assert!(parsed.detached_viewports.contains_key("vp_1"));
+    }
+
+    #[test]
+    fn test_get_tab_settings_prefers_latest_duplicate() {
+        let mut layout = GuiLayoutFileV1::new("prime", "Guildenstern");
+        layout.tab_settings.push(TabSettingsEntry {
+            key: TabKey::Vitals,
+            settings: TabSettings {
+                wrap_text: true,
+                ..Default::default()
+            },
+        });
+        layout.tab_settings.push(TabSettingsEntry {
+            key: TabKey::Vitals,
+            settings: TabSettings {
+                wrap_text: false,
+                ..Default::default()
+            },
+        });
+
+        // Latest duplicate should win.
+        let settings = layout
+            .get_tab_settings(&TabKey::Vitals)
+            .expect("vitals settings should exist");
+        assert!(!settings.wrap_text);
+
+        // HashMap conversion should match get_tab_settings semantics.
+        let map = layout.tab_settings_map();
+        let mapped = map
+            .get(&TabKey::Vitals)
+            .expect("vitals map entry should exist");
+        assert!(!mapped.wrap_text);
     }
 
     #[test]

@@ -642,7 +642,10 @@ mod tests {
     fn test_drag_operation_equality() {
         assert_eq!(DragOperation::Move, DragOperation::Move);
         assert_ne!(DragOperation::Move, DragOperation::ResizeRight);
-        assert_ne!(DragOperation::ResizeBottom, DragOperation::ResizeBottomRight);
+        assert_ne!(
+            DragOperation::ResizeBottom,
+            DragOperation::ResizeBottomRight
+        );
     }
 
     #[test]

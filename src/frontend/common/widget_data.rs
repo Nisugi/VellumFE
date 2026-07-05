@@ -93,11 +93,7 @@ impl ProgressBarData {
         self
     }
 
-    pub fn with_colors(
-        mut self,
-        bar_fill: Option<String>,
-        bar_background: Option<String>,
-    ) -> Self {
+    pub fn with_colors(mut self, bar_fill: Option<String>, bar_background: Option<String>) -> Self {
         self.bar_fill_color = bar_fill;
         self.bar_background_color = bar_background;
         self
@@ -123,7 +119,7 @@ impl IndicatorData {
             active,
             border: BorderConfig::default(),
             off_color: "#555555".to_string(), // Dark gray
-            on_color: "#00ff00".to_string(),   // Green
+            on_color: "#00ff00".to_string(),  // Green
             background_color: None,
             transparent_background: false,
         }
@@ -152,12 +148,7 @@ pub struct CountdownData {
 
 impl CountdownData {
     /// Create countdown data from remaining seconds and available width
-    pub fn new(
-        label: String,
-        remaining_seconds: u32,
-        available_width: u16,
-        icon: char,
-    ) -> Self {
+    pub fn new(label: String, remaining_seconds: u32, available_width: u16, icon: char) -> Self {
         // Right-align the number so it doesn't shift when going from 10->9
         // Format: " 9 " or "10 " (always 3 chars)
         let display_text = format!("{:>2} ", remaining_seconds);
@@ -436,7 +427,7 @@ mod tests {
     fn test_indicator_default_colors() {
         let data = IndicatorData::new("Test".to_string(), false);
         assert_eq!(data.off_color, "#555555"); // Dark gray
-        assert_eq!(data.on_color, "#00ff00");   // Green
+        assert_eq!(data.on_color, "#00ff00"); // Green
     }
 
     #[test]
@@ -568,7 +559,11 @@ mod tests {
 
     #[test]
     fn test_hand_data_right() {
-        let data = HandData::new("Right Hand".to_string(), HandType::Right, "shield".to_string());
+        let data = HandData::new(
+            "Right Hand".to_string(),
+            HandType::Right,
+            "shield".to_string(),
+        );
         assert_eq!(data.hand_type, HandType::Right);
         assert_eq!(data.icon, "R:");
     }
@@ -590,7 +585,11 @@ mod tests {
     #[test]
     fn test_hand_data_short_content_unchanged() {
         let short_content = "short item";
-        let data = HandData::new("Hand".to_string(), HandType::Left, short_content.to_string());
+        let data = HandData::new(
+            "Hand".to_string(),
+            HandType::Left,
+            short_content.to_string(),
+        );
         assert_eq!(data.content, "short item");
     }
 
@@ -677,4 +676,3 @@ mod tests {
         assert!(debug_str.contains("Stun"));
     }
 }
-

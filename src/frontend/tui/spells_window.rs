@@ -48,7 +48,8 @@ impl SpellsWindow {
         span_type: SpanType,
         link_data: Option<LinkData>,
     ) {
-        self.widget.add_text(text, fg, bg, bold, span_type, link_data);
+        self.widget
+            .add_text(text, fg, bg, bold, span_type, link_data);
     }
 
     /// Finish current line and add to buffer (no wrapping - spells content is pre-formatted)
@@ -89,7 +90,8 @@ impl SpellsWindow {
         border_style: Option<String>,
         border_color: Option<String>,
     ) {
-        self.widget.set_border_config(show_border, border_style, border_color);
+        self.widget
+            .set_border_config(show_border, border_style, border_color);
     }
 
     pub fn set_title(&mut self, title: String) {
@@ -119,7 +121,7 @@ impl SpellsWindow {
         self.widget.render(area, buf);
     }
 
-pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
+    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
         // For now, just call regular render - theme colors will be applied in future update
         self.render(area, buf);
     }
@@ -131,7 +133,8 @@ pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::th
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -142,7 +145,8 @@ pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::th
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 
@@ -251,4 +255,3 @@ mod tests {
         assert_eq!(clicked.text, "Fireball");
     }
 }
-

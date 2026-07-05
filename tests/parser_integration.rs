@@ -52,34 +52,32 @@ mod session_start {
         );
 
         // Check for main window
-        let has_main = stream_windows.iter().any(|e| {
-            matches!(e, ParsedElement::StreamWindow { id, .. } if id == "main")
-        });
+        let has_main = stream_windows
+            .iter()
+            .any(|e| matches!(e, ParsedElement::StreamWindow { id, .. } if id == "main"));
         assert!(has_main, "Should have main stream window");
 
         // Check for room window
-        let has_room = stream_windows.iter().any(|e| {
-            matches!(e, ParsedElement::StreamWindow { id, .. } if id == "room")
-        });
+        let has_room = stream_windows
+            .iter()
+            .any(|e| matches!(e, ParsedElement::StreamWindow { id, .. } if id == "room"));
         assert!(has_room, "Should have room stream window");
     }
 
     #[test]
     fn test_extracts_room_components() {
         let elements = parse_xml(SESSION_XML);
-        let components = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::Component { .. })
-        });
+        let components = find_elements(&elements, |e| matches!(e, ParsedElement::Component { .. }));
 
         // Should have room desc, room objs, room exits components
-        let has_room_desc = components.iter().any(|e| {
-            matches!(e, ParsedElement::Component { id, .. } if id == "room desc")
-        });
+        let has_room_desc = components
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Component { id, .. } if id == "room desc"));
         assert!(has_room_desc, "Should have room desc component");
 
-        let has_room_exits = components.iter().any(|e| {
-            matches!(e, ParsedElement::Component { id, .. } if id == "room exits")
-        });
+        let has_room_exits = components
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Component { id, .. } if id == "room exits"));
         assert!(has_room_exits, "Should have room exits component");
     }
 
@@ -90,11 +88,14 @@ mod session_start {
             matches!(e, ParsedElement::ClearStream { .. })
         });
 
-        assert!(!clear_streams.is_empty(), "Should have clear stream elements");
+        assert!(
+            !clear_streams.is_empty(),
+            "Should have clear stream elements"
+        );
 
-        let has_room_clear = clear_streams.iter().any(|e| {
-            matches!(e, ParsedElement::ClearStream { id } if id == "room")
-        });
+        let has_room_clear = clear_streams
+            .iter()
+            .any(|e| matches!(e, ParsedElement::ClearStream { id } if id == "room"));
         assert!(has_room_clear, "Should clear room stream");
     }
 
@@ -102,9 +103,7 @@ mod session_start {
     fn test_extracts_stream_push_pop() {
         let elements = parse_xml(SESSION_XML);
 
-        let pushes = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::StreamPush { .. })
-        });
+        let pushes = find_elements(&elements, |e| matches!(e, ParsedElement::StreamPush { .. }));
         let pops = find_elements(&elements, |e| matches!(e, ParsedElement::StreamPop));
 
         assert!(!pushes.is_empty(), "Should have stream pushes");
@@ -141,9 +140,9 @@ mod vitals_indicators {
         );
 
         // Check for standing indicator (parser converts visible='y' to active=true)
-        let standing = indicators.iter().find(|e| {
-            matches!(e, ParsedElement::StatusIndicator { id, .. } if id == "STANDING")
-        });
+        let standing = indicators
+            .iter()
+            .find(|e| matches!(e, ParsedElement::StatusIndicator { id, .. } if id == "STANDING"));
 
         // If standing indicator exists, check it's active
         if let Some(ParsedElement::StatusIndicator { active, .. }) = standing {
@@ -157,9 +156,7 @@ mod vitals_indicators {
         let elements = parse_xml(VITALS_XML);
 
         // Check left hand
-        let left_hands = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::LeftHand { .. })
-        });
+        let left_hands = find_elements(&elements, |e| matches!(e, ParsedElement::LeftHand { .. }));
         assert!(!left_hands.is_empty(), "Should have left hand element");
 
         if let Some(ParsedElement::LeftHand { item, .. }) = left_hands.first() {
@@ -171,9 +168,8 @@ mod vitals_indicators {
         }
 
         // Check right hand
-        let right_hands = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::RightHand { .. })
-        });
+        let right_hands =
+            find_elements(&elements, |e| matches!(e, ParsedElement::RightHand { .. }));
         assert!(!right_hands.is_empty(), "Should have right hand element");
 
         if let Some(ParsedElement::RightHand { item, .. }) = right_hands.first() {
@@ -212,9 +208,9 @@ mod vitals_indicators {
         );
 
         // Check health bar
-        let health = progress_bars.iter().find(|e| {
-            matches!(e, ParsedElement::ProgressBar { id, .. } if id == "health")
-        });
+        let health = progress_bars
+            .iter()
+            .find(|e| matches!(e, ParsedElement::ProgressBar { id, .. } if id == "health"));
         assert!(health.is_some(), "Should have health progress bar");
 
         if let Some(ParsedElement::ProgressBar { value, max, .. }) = health {
@@ -223,9 +219,9 @@ mod vitals_indicators {
         }
 
         // Check mana bar
-        let mana = progress_bars.iter().find(|e| {
-            matches!(e, ParsedElement::ProgressBar { id, .. } if id == "mana")
-        });
+        let mana = progress_bars
+            .iter()
+            .find(|e| matches!(e, ParsedElement::ProgressBar { id, .. } if id == "mana"));
         assert!(mana.is_some(), "Should have mana progress bar");
 
         if let Some(ParsedElement::ProgressBar { value, max, .. }) = mana {
@@ -351,10 +347,22 @@ mod room_navigation {
             assert!(directions.contains(&"w".to_string()), "Should have west");
 
             // Verify intercardinal directions
-            assert!(directions.contains(&"ne".to_string()), "Should have northeast");
-            assert!(directions.contains(&"nw".to_string()), "Should have northwest");
-            assert!(directions.contains(&"se".to_string()), "Should have southeast");
-            assert!(directions.contains(&"sw".to_string()), "Should have southwest");
+            assert!(
+                directions.contains(&"ne".to_string()),
+                "Should have northeast"
+            );
+            assert!(
+                directions.contains(&"nw".to_string()),
+                "Should have northwest"
+            );
+            assert!(
+                directions.contains(&"se".to_string()),
+                "Should have southeast"
+            );
+            assert!(
+                directions.contains(&"sw".to_string()),
+                "Should have southwest"
+            );
         }
     }
 
@@ -374,9 +382,10 @@ mod room_navigation {
     #[test]
     fn test_extracts_room_subtitle() {
         let elements = parse_xml(ROOM_XML);
-        let stream_windows = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::StreamWindow { id, .. } if id == "room")
-        });
+        let stream_windows = find_elements(
+            &elements,
+            |e| matches!(e, ParsedElement::StreamWindow { id, .. } if id == "room"),
+        );
 
         assert!(!stream_windows.is_empty(), "Should have room stream window");
 
@@ -420,9 +429,7 @@ mod combat_roundtime {
     #[test]
     fn test_extracts_roundtime() {
         let elements = parse_xml(COMBAT_XML);
-        let roundtimes = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::RoundTime { .. })
-        });
+        let roundtimes = find_elements(&elements, |e| matches!(e, ParsedElement::RoundTime { .. }));
 
         assert!(!roundtimes.is_empty(), "Should have roundtime element");
 
@@ -456,20 +463,26 @@ mod combat_roundtime {
         assert!(prompts.len() >= 2, "Should have multiple prompts");
 
         // Check for casting prompt (C>)
-        let has_casting_prompt = prompts.iter().any(|e| {
-            matches!(e, ParsedElement::Prompt { text, .. } if text == "C>")
-        });
+        let has_casting_prompt = prompts
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Prompt { text, .. } if text == "C>"));
         // Prompts may be normalized to just >, so check for either
-        let has_roundtime_prompt = prompts.iter().any(|e| {
-            matches!(e, ParsedElement::Prompt { text, .. } if text == "R>" || text == ">")
-        });
+        let has_roundtime_prompt = prompts.iter().any(
+            |e| matches!(e, ParsedElement::Prompt { text, .. } if text == "R>" || text == ">"),
+        );
 
         assert!(
-            has_casting_prompt || prompts.iter().any(|e| matches!(e, ParsedElement::Prompt { .. })),
+            has_casting_prompt
+                || prompts
+                    .iter()
+                    .any(|e| matches!(e, ParsedElement::Prompt { .. })),
             "Should have some form of prompt"
         );
         assert!(
-            has_roundtime_prompt || prompts.iter().any(|e| matches!(e, ParsedElement::Prompt { .. })),
+            has_roundtime_prompt
+                || prompts
+                    .iter()
+                    .any(|e| matches!(e, ParsedElement::Prompt { .. })),
             "Should have some form of prompt"
         );
     }
@@ -482,9 +495,9 @@ mod combat_roundtime {
         });
 
         // Parser strips "Icon" prefix, so look for "HIDDEN" not "IconHIDDEN"
-        let hidden = indicators.iter().find(|e| {
-            matches!(e, ParsedElement::StatusIndicator { id, .. } if id == "HIDDEN")
-        });
+        let hidden = indicators
+            .iter()
+            .find(|e| matches!(e, ParsedElement::StatusIndicator { id, .. } if id == "HIDDEN"));
 
         // If we found a HIDDEN indicator, check it's active
         if let Some(ParsedElement::StatusIndicator { active, .. }) = hidden {
@@ -496,9 +509,10 @@ mod combat_roundtime {
     #[test]
     fn test_extracts_reduced_vitals_after_combat() {
         let elements = parse_xml(COMBAT_XML);
-        let progress_bars = find_elements(&elements, |e| {
-            matches!(e, ParsedElement::ProgressBar { id, .. } if id == "health" || id == "mana" || id == "stamina")
-        });
+        let progress_bars = find_elements(
+            &elements,
+            |e| matches!(e, ParsedElement::ProgressBar { id, .. } if id == "health" || id == "mana" || id == "stamina"),
+        );
 
         // Should have multiple updates showing reduced vitals
         assert!(!progress_bars.is_empty(), "Should have vital progress bars");
@@ -512,9 +526,9 @@ mod combat_roundtime {
         assert!(!mana_bars.is_empty(), "Should have mana updates");
 
         // At least one mana bar should show reduced mana
-        let has_reduced_mana = mana_bars.iter().any(|e| {
-            matches!(e, ParsedElement::ProgressBar { value, max, .. } if *value < *max)
-        });
+        let has_reduced_mana = mana_bars
+            .iter()
+            .any(|e| matches!(e, ParsedElement::ProgressBar { value, max, .. } if *value < *max));
         assert!(has_reduced_mana, "Should show reduced mana from casting");
     }
 }
@@ -527,7 +541,10 @@ mod edge_cases {
     #[test]
     fn test_empty_input() {
         let elements = parse_xml("");
-        assert!(elements.is_empty(), "Empty input should produce no elements");
+        assert!(
+            elements.is_empty(),
+            "Empty input should produce no elements"
+        );
     }
 
     #[test]
@@ -577,9 +594,9 @@ mod edge_cases {
             .filter(|e| matches!(e, ParsedElement::Text { .. }))
             .collect();
 
-        let has_unicode = text_elements.iter().any(|e| {
-            matches!(e, ParsedElement::Text { content, .. } if content.contains("★"))
-        });
+        let has_unicode = text_elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Text { content, .. } if content.contains("★")));
         assert!(has_unicode, "Should preserve unicode characters");
     }
 
@@ -616,9 +633,9 @@ mod parser_state {
         let _elem3 = parser.parse_line(xml3);
 
         // Text parsed while in room stream should be tagged with room stream
-        let room_text = elem2.iter().any(|e| {
-            matches!(e, ParsedElement::Text { stream, .. } if stream == "room")
-        });
+        let room_text = elem2
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Text { stream, .. } if stream == "room"));
 
         // Note: This depends on parser implementation - may need adjustment
         // based on how parser tracks current stream
@@ -647,9 +664,9 @@ mod parser_state {
         let _ = parser.parse_line("<indicator id='test' visible='y'><unclosed>");
         let elements = parser.parse_line("<prompt time='1'>></prompt>");
 
-        let has_prompt = elements.iter().any(|e| {
-            matches!(e, ParsedElement::Prompt { time, text } if time == "1" && text == ">")
-        });
+        let has_prompt = elements.iter().any(
+            |e| matches!(e, ParsedElement::Prompt { time, text } if time == "1" && text == ">"),
+        );
         assert!(has_prompt, "Prompt should parse after malformed chunk");
     }
 
@@ -661,9 +678,9 @@ mod parser_state {
         let speech_text: String = elements
             .iter()
             .filter_map(|e| match e {
-                ParsedElement::Text { content, stream, .. } if stream == "speech" => {
-                    Some(content.as_str())
-                }
+                ParsedElement::Text {
+                    content, stream, ..
+                } if stream == "speech" => Some(content.as_str()),
                 _ => None,
             })
             .collect();
@@ -687,7 +704,10 @@ mod parser_state {
         let has_main_text = elements.iter().any(|e| {
             matches!(e, ParsedElement::Text { content, stream, .. } if stream == "main" && content.contains("Main text"))
         });
-        assert!(has_main_text, "Text after popStream should be in main stream");
+        assert!(
+            has_main_text,
+            "Text after popStream should be in main stream"
+        );
     }
 
     #[test]

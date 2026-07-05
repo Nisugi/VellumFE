@@ -304,8 +304,14 @@ mod tests {
 
     #[test]
     fn test_cursor_move_paragraph() {
-        assert!(matches!(CursorMove::ParagraphBack, CursorMove::ParagraphBack));
-        assert!(matches!(CursorMove::ParagraphForward, CursorMove::ParagraphForward));
+        assert!(matches!(
+            CursorMove::ParagraphBack,
+            CursorMove::ParagraphBack
+        ));
+        assert!(matches!(
+            CursorMove::ParagraphForward,
+            CursorMove::ParagraphForward
+        ));
     }
 
     #[test]
@@ -640,7 +646,10 @@ mod tests {
         let mut input = MockTextInput::with_text("hello");
         let result = handle_text_input_key(&mut input, KeyCode::Delete, KeyModifiers::NONE);
         assert!(result);
-        assert_eq!(input.last_operation, Some("delete_forward_char".to_string()));
+        assert_eq!(
+            input.last_operation,
+            Some("delete_forward_char".to_string())
+        );
     }
 
     #[test]
@@ -668,7 +677,10 @@ mod tests {
         let mut input = MockTextInput::with_text("hello");
         let result = handle_text_input_key(&mut input, KeyCode::Char('u'), KeyModifiers::CTRL);
         assert!(result);
-        assert_eq!(input.last_operation, Some("delete_line_by_head".to_string()));
+        assert_eq!(
+            input.last_operation,
+            Some("delete_line_by_head".to_string())
+        );
     }
 
     #[test]

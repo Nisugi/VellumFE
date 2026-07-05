@@ -204,9 +204,7 @@ impl HighlightBrowser {
         let mut selected_display_row = 0;
 
         for (idx, entry) in filtered.iter().enumerate() {
-            let entry_category = entry
-                .category.as_deref()
-                .unwrap_or("Uncategorized");
+            let entry_category = entry.category.as_deref().unwrap_or("Uncategorized");
 
             // Add category header row if category changes
             if last_category != Some(entry_category) {
@@ -415,7 +413,8 @@ impl HighlightBrowser {
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    buf[(x + col, y + row)]
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                 }
             }
         }
@@ -457,9 +456,7 @@ impl HighlightBrowser {
         let visible_end = visible_start + list_height;
 
         for (idx, entry) in filtered.iter().enumerate() {
-            let entry_category = entry
-                .category.as_deref()
-                .unwrap_or("Uncategorized");
+            let entry_category = entry.category.as_deref().unwrap_or("Uncategorized");
 
             // Check if we need a category header
             if last_category != Some(entry_category) {
@@ -471,7 +468,9 @@ impl HighlightBrowser {
                         let current_y = list_y + render_row as u16;
                         let header_text = format!(" ═══ {} ═══", entry_category.to_uppercase());
                         let header_style = ratatui::style::Style::default()
-                            .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused)) // Gold
+                            .fg(crossterm_bridge::to_ratatui_color(
+                                theme.browser_item_focused,
+                            )) // Gold
                             .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                             .add_modifier(Modifier::BOLD);
 
@@ -485,9 +484,9 @@ impl HighlightBrowser {
 
                         // Fill rest of line with spaces
                         for i in header_text.len()..(width - 2) as usize {
-                            buf[(x + 1 + i as u16, current_y)]
-                                .set_char(' ')
-                                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                            buf[(x + 1 + i as u16, current_y)].set_char(' ').set_bg(
+                                crossterm_bridge::to_ratatui_color(theme.browser_background),
+                            );
                         }
 
                         render_row += 1;
@@ -510,7 +509,9 @@ impl HighlightBrowser {
                 let current_y = list_y + render_row as u16;
                 let header_text = format!(" ═══ {} ═══", entry_category.to_uppercase());
                 let header_style = ratatui::style::Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused)) // Gold
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    )) // Gold
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                     .add_modifier(Modifier::BOLD);
 
@@ -589,7 +590,9 @@ impl HighlightBrowser {
             let scope_text = if entry.is_global { "[G]" } else { "[C]" };
             let scope_style = if is_selected {
                 ratatui::style::Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    ))
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
             } else if entry.is_global {
                 ratatui::style::Style::default()
@@ -597,7 +600,9 @@ impl HighlightBrowser {
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
             } else {
                 ratatui::style::Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_normal))
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_normal,
+                    ))
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
             };
 
@@ -611,15 +616,21 @@ impl HighlightBrowser {
             // Col 15+: Entry name (cyan normally, gold when selected)
             let name_style = if is_selected {
                 ratatui::style::Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
-                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)) // Gold when selected
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    ))
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
+            // Gold when selected
             } else {
                 ratatui::style::Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_normal))
-                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)) // Normal color otherwise
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_normal,
+                    ))
+                    .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
+                // Normal color otherwise
             };
 
-                        let sound_indicator = if entry.has_sound { " " } else { "" };
+            let sound_indicator = if entry.has_sound { " " } else { "" };
             let squelch_indicator = if entry.is_squelched { " [SQUELCH]" } else { "" };
             let replace_indicator = if let Some(ref repl) = entry.replace {
                 format!(" ->{}", repl)
@@ -636,7 +647,14 @@ impl HighlightBrowser {
             } else {
                 String::new()
             };
-            let name_with_indicators = format!(" {}{}{}{}{}", entry.name, sound_indicator, replace_indicator, redirect_indicator, squelch_indicator);
+            let name_with_indicators = format!(
+                " {}{}{}{}{}",
+                entry.name,
+                sound_indicator,
+                replace_indicator,
+                redirect_indicator,
+                squelch_indicator
+            );
             for (i, ch) in name_with_indicators.chars().enumerate() {
                 let col = x + 15 + i as u16;
                 if col < x + width - 1 {
@@ -760,21 +778,24 @@ impl HighlightBrowser {
             if character_highlights.contains_key(name) {
                 continue;
             }
-            self.entries.push(Self::pattern_to_entry(name, pattern, true));
+            self.entries
+                .push(Self::pattern_to_entry(name, pattern, true));
         }
 
         // Add character highlights (mark as is_global = false)
         for (name, pattern) in character_highlights {
-            self.entries.push(Self::pattern_to_entry(name, pattern, false));
+            self.entries
+                .push(Self::pattern_to_entry(name, pattern, false));
         }
 
         // Sort by category, then by name
-        self.entries.sort_by(|a, b| match (&a.category, &b.category) {
-            (Some(cat_a), Some(cat_b)) => cat_a.cmp(cat_b).then_with(|| a.name.cmp(&b.name)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.name.cmp(&b.name),
-        });
+        self.entries
+            .sort_by(|a, b| match (&a.category, &b.category) {
+                (Some(cat_a), Some(cat_b)) => cat_a.cmp(cat_b).then_with(|| a.name.cmp(&b.name)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            });
 
         // Reset selection if out of bounds
         if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
@@ -784,10 +805,14 @@ impl HighlightBrowser {
 
     /// Update the list of highlight entries (legacy - all marked as global)
     #[allow(dead_code)]
-    pub fn update_items(&mut self, highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>) {
+    pub fn update_items(
+        &mut self,
+        highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>,
+    ) {
         self.entries.clear();
         for (name, highlight) in highlights {
-            self.entries.push(Self::pattern_to_entry(name, highlight, true));
+            self.entries
+                .push(Self::pattern_to_entry(name, highlight, true));
         }
         // Sort by name
         self.entries.sort_by(|a, b| a.name.cmp(&b.name));

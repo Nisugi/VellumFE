@@ -33,10 +33,7 @@ impl Rect {
 
     /// Check if a point (x, y) is inside this rectangle
     pub fn contains(&self, x: u16, y: u16) -> bool {
-        x >= self.x
-            && x < self.x + self.width
-            && y >= self.y
-            && y < self.y + self.height
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
     }
 
     /// Get the right edge coordinate (exclusive)

@@ -5,7 +5,8 @@ impl TuiFrontend {
         if !self.widget_manager.command_inputs.contains_key(window_name) {
             let mut cmd_input = command_input::CommandInput::new(100);
             cmd_input.set_title("Command".to_string());
-            self.widget_manager.command_inputs
+            self.widget_manager
+                .command_inputs
                 .insert(window_name.to_string(), cmd_input);
             tracing::debug!("Created CommandInput widget for '{}'", window_name);
         }
@@ -91,7 +92,9 @@ impl TuiFrontend {
                         cmd_input.move_cursor_right(extend);
                     }
                 }
-                KeyCode::Home => cmd_input.move_cursor_home(modifiers.contains(KeyModifiers::SHIFT)),
+                KeyCode::Home => {
+                    cmd_input.move_cursor_home(modifiers.contains(KeyModifiers::SHIFT))
+                }
                 KeyCode::End => cmd_input.move_cursor_end(modifiers.contains(KeyModifiers::SHIFT)),
                 KeyCode::Up => cmd_input.history_previous(),
                 KeyCode::Down => cmd_input.history_next(),
@@ -106,7 +109,10 @@ impl TuiFrontend {
 
     /// Submit command from command input and return the command string
     pub fn command_input_submit(&mut self, window_name: &str) -> Option<String> {
-        self.widget_manager.command_inputs.get_mut(window_name)?.submit()
+        self.widget_manager
+            .command_inputs
+            .get_mut(window_name)?
+            .submit()
     }
 
     /// Load command history for a character

@@ -86,8 +86,12 @@ impl PopupMenu {
         // Create block with border
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)))
-            .style(Style::default().bg(crossterm_bridge::to_ratatui_color(theme.browser_background)));
+            .border_style(
+                Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)),
+            )
+            .style(
+                Style::default().bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
+            );
 
         let paragraph = Paragraph::new(lines).block(block);
 

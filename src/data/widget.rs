@@ -100,7 +100,7 @@ impl TextSegment {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SpanType {
     #[default]
-    Normal,      // Regular text
+    Normal, // Regular text
     Link,        // <a> tag from parser (clickable game objects)
     Monsterbold, // <preset id="monsterbold"> from parser (monsters)
     Spell,       // <spell> tag from parser (spells)
@@ -160,8 +160,8 @@ pub struct ProgressData {
 /// Countdown timer state
 #[derive(Clone, Debug)]
 pub struct CountdownData {
-    pub end_time: i64, // Unix timestamp when timer expires
-    pub label: String, // Display label
+    pub end_time: i64,        // Unix timestamp when timer expires
+    pub label: String,        // Display label
     pub countdown_id: String, // Feed id (XML event id), case-sensitive
 }
 
@@ -239,10 +239,10 @@ pub struct ActiveEffectsContent {
 /// Tab definition for tabbed text window
 #[derive(Clone, Debug)]
 pub struct TabDefinition {
-    pub name: String,   // Display name of tab
-    pub streams: Vec<String>, // Stream IDs this tab listens to
-    pub show_timestamps: bool, // Whether to render timestamps for this tab
-    pub ignore_activity: bool, // Skip unread indicators/counts
+    pub name: String,                          // Display name of tab
+    pub streams: Vec<String>,                  // Stream IDs this tab listens to
+    pub show_timestamps: bool,                 // Whether to render timestamps for this tab
+    pub ignore_activity: bool,                 // Skip unread indicators/counts
     pub timestamp_position: TimestampPosition, // Position of timestamps (start or end)
 }
 
@@ -268,21 +268,23 @@ impl TabbedTextContent {
     ) -> Self {
         let tabs = tabs
             .into_iter()
-            .map(|(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
-                let definition = TabDefinition {
-                    name: name.clone(),
-                    streams,
-                    show_timestamps,
-                    ignore_activity,
-                    timestamp_position,
-                };
-                let content = TextContent::new(name, max_lines_per_tab);
-                TabState {
-                    definition,
-                    content,
-                    has_unread: false,
-                }
-            })
+            .map(
+                |(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
+                    let definition = TabDefinition {
+                        name: name.clone(),
+                        streams,
+                        show_timestamps,
+                        ignore_activity,
+                        timestamp_position,
+                    };
+                    let content = TextContent::new(name, max_lines_per_tab);
+                    TabState {
+                        definition,
+                        content,
+                        has_unread: false,
+                    }
+                },
+            )
             .collect();
         Self {
             tabs,
@@ -343,12 +345,21 @@ impl TabbedTextContent {
         max_lines_per_tab: usize,
     ) -> bool {
         // Quick check: if tab count and names match, no structural change needed
-        let old_names: Vec<&str> = self.tabs.iter().map(|t| t.definition.name.as_str()).collect();
-        let new_names: Vec<&str> = new_tabs.iter().map(|(name, _, _, _, _)| name.as_str()).collect();
+        let old_names: Vec<&str> = self
+            .tabs
+            .iter()
+            .map(|t| t.definition.name.as_str())
+            .collect();
+        let new_names: Vec<&str> = new_tabs
+            .iter()
+            .map(|(name, _, _, _, _)| name.as_str())
+            .collect();
 
         if old_names == new_names {
             // Just update definitions (streams, settings) without recreating
-            for (tab, (_, streams, show_ts, ignore, ts_pos)) in self.tabs.iter_mut().zip(new_tabs.iter()) {
+            for (tab, (_, streams, show_ts, ignore, ts_pos)) in
+                self.tabs.iter_mut().zip(new_tabs.iter())
+            {
                 tab.definition.streams = streams.clone();
                 tab.definition.show_timestamps = *show_ts;
                 tab.definition.ignore_activity = *ignore;
@@ -366,29 +377,31 @@ impl TabbedTextContent {
 
         self.tabs = new_tabs
             .into_iter()
-            .map(|(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
-                let definition = TabDefinition {
-                    name: name.clone(),
-                    streams,
-                    show_timestamps,
-                    ignore_activity,
-                    timestamp_position,
-                };
+            .map(
+                |(name, streams, show_timestamps, ignore_activity, timestamp_position)| {
+                    let definition = TabDefinition {
+                        name: name.clone(),
+                        streams,
+                        show_timestamps,
+                        ignore_activity,
+                        timestamp_position,
+                    };
 
-                // Reuse existing tab content if available
-                if let Some(mut old_tab) = old_tabs.remove(&name) {
-                    old_tab.definition = definition;
-                    old_tab
-                } else {
-                    // New tab - empty content
-                    let content = TextContent::new(&name, max_lines_per_tab);
-                    TabState {
-                        definition,
-                        content,
-                        has_unread: false,
+                    // Reuse existing tab content if available
+                    if let Some(mut old_tab) = old_tabs.remove(&name) {
+                        old_tab.definition = definition;
+                        old_tab
+                    } else {
+                        // New tab - empty content
+                        let content = TextContent::new(&name, max_lines_per_tab);
+                        TabState {
+                            definition,
+                            content,
+                            has_unread: false,
+                        }
                     }
-                }
-            })
+                },
+            )
             .collect();
 
         // Ensure active_tab_index is valid
@@ -408,8 +421,8 @@ impl TextContent {
             max_lines,
             title: title.into(),
             generation: 0,
-            streams: vec![],  // Default to empty - will be set during window creation
-            compact: false,   // Default to disabled - set during window creation from layout
+            streams: vec![], // Default to empty - will be set during window creation
+            compact: false,  // Default to disabled - set during window creation from layout
         }
     }
 
@@ -481,29 +494,29 @@ impl StyledLine {
 /// Perception entry with parsed format and calculated weight for sorting
 #[derive(Clone, Debug, PartialEq)]
 pub struct PerceptionEntry {
-    pub name: String,                    // "Bless", "Monkey"
-    pub format: PerceptionFormat,        // Parsed format type
-    pub raw_text: String,                // Original text
-    pub weight: i32,                     // Sort priority
-    pub link_data: Option<LinkData>,     // Optional clickable link
+    pub name: String,                // "Bless", "Monkey"
+    pub format: PerceptionFormat,    // Parsed format type
+    pub raw_text: String,            // Original text
+    pub weight: i32,                 // Sort priority
+    pub link_data: Option<LinkData>, // Optional clickable link
 }
 
 /// Perception format types detected from parenthetical suffixes
 #[derive(Clone, Debug, PartialEq)]
 pub enum PerceptionFormat {
-    OngoingMagic,           // (OM)
-    Indefinite,             // (Indefinite) or (Cyclic)
-    Fading,                 // (Fading)
-    Percentage(u8),         // (94%)
-    Roisaen(u32),           // (82 roisaen)
-    Other(String),          // Unknown formats
+    OngoingMagic,   // (OM)
+    Indefinite,     // (Indefinite) or (Cyclic)
+    Fading,         // (Fading)
+    Percentage(u8), // (94%)
+    Roisaen(u32),   // (82 roisaen)
+    Other(String),  // Unknown formats
 }
 
 /// Perception window content (sorted entries)
 #[derive(Clone, Debug, PartialEq)]
 pub struct PerceptionData {
-    pub entries: Vec<PerceptionEntry>,   // Sorted by weight
-    pub last_update: i64,                // Unix timestamp
+    pub entries: Vec<PerceptionEntry>, // Sorted by weight
+    pub last_update: i64,              // Unix timestamp
 }
 
 #[cfg(test)]
@@ -824,7 +837,13 @@ mod tests {
     #[test]
     fn test_tabbed_text_content_new() {
         let tabs = vec![
-            ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
+            (
+                "Main".to_string(),
+                vec!["main".to_string()],
+                false,
+                false,
+                TimestampPosition::End,
+            ),
             (
                 "Combat".to_string(),
                 vec!["combat".to_string(), "death".to_string()],
@@ -843,13 +862,19 @@ mod tests {
         assert_eq!(content.tabs[0].definition.streams, vec!["main"]);
         assert!(!content.tabs[0].definition.show_timestamps);
         assert!(!content.tabs[0].definition.ignore_activity);
-        assert_eq!(content.tabs[0].definition.timestamp_position, TimestampPosition::End);
+        assert_eq!(
+            content.tabs[0].definition.timestamp_position,
+            TimestampPosition::End
+        );
 
         assert_eq!(content.tabs[1].definition.name, "Combat");
         assert_eq!(content.tabs[1].definition.streams, vec!["combat", "death"]);
         assert!(content.tabs[1].definition.show_timestamps);
         assert!(content.tabs[1].definition.ignore_activity);
-        assert_eq!(content.tabs[1].definition.timestamp_position, TimestampPosition::Start);
+        assert_eq!(
+            content.tabs[1].definition.timestamp_position,
+            TimestampPosition::Start
+        );
     }
 
     // ==================== ProgressData Tests ====================
@@ -913,8 +938,20 @@ mod tests {
 
         let mut tabbed = TabbedTextContent::new(
             vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+                (
+                    "Main".to_string(),
+                    vec!["main".to_string()],
+                    false,
+                    false,
+                    TimestampPosition::End,
+                ),
+                (
+                    "Combat".to_string(),
+                    vec!["combat".to_string()],
+                    true,
+                    false,
+                    TimestampPosition::Start,
+                ),
             ],
             1000,
         );
@@ -922,8 +959,20 @@ mod tests {
         // Same tabs - should return false (no structural change)
         let changed = tabbed.update_tabs(
             vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+                (
+                    "Main".to_string(),
+                    vec!["main".to_string()],
+                    false,
+                    false,
+                    TimestampPosition::End,
+                ),
+                (
+                    "Combat".to_string(),
+                    vec!["combat".to_string()],
+                    true,
+                    false,
+                    TimestampPosition::Start,
+                ),
             ],
             1000,
         );
@@ -937,17 +986,33 @@ mod tests {
         use crate::config::TimestampPosition;
 
         let mut tabbed = TabbedTextContent::new(
-            vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-            ],
+            vec![(
+                "Main".to_string(),
+                vec!["main".to_string()],
+                false,
+                false,
+                TimestampPosition::End,
+            )],
             1000,
         );
 
         // Add a new tab - should return true (structural change)
         let changed = tabbed.update_tabs(
             vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+                (
+                    "Main".to_string(),
+                    vec!["main".to_string()],
+                    false,
+                    false,
+                    TimestampPosition::End,
+                ),
+                (
+                    "Combat".to_string(),
+                    vec!["combat".to_string()],
+                    true,
+                    false,
+                    TimestampPosition::Start,
+                ),
             ],
             1000,
         );
@@ -964,8 +1029,20 @@ mod tests {
 
         let mut tabbed = TabbedTextContent::new(
             vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-                ("Combat".to_string(), vec!["combat".to_string()], true, false, TimestampPosition::Start),
+                (
+                    "Main".to_string(),
+                    vec!["main".to_string()],
+                    false,
+                    false,
+                    TimestampPosition::End,
+                ),
+                (
+                    "Combat".to_string(),
+                    vec!["combat".to_string()],
+                    true,
+                    false,
+                    TimestampPosition::Start,
+                ),
             ],
             1000,
         );
@@ -973,9 +1050,13 @@ mod tests {
 
         // Remove Combat tab - should return true and fix active_tab_index
         let changed = tabbed.update_tabs(
-            vec![
-                ("Main".to_string(), vec!["main".to_string()], false, false, TimestampPosition::End),
-            ],
+            vec![(
+                "Main".to_string(),
+                vec!["main".to_string()],
+                false,
+                false,
+                TimestampPosition::End,
+            )],
             1000,
         );
         assert!(changed);

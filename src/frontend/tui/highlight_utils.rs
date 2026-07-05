@@ -47,8 +47,8 @@ pub struct HighlightEngine {
 impl HighlightEngine {
     /// Compute a hash of highlight patterns for change detection
     pub fn compute_hash(highlights: &[HighlightPattern]) -> u64 {
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
         for h in highlights {
@@ -187,7 +187,10 @@ impl HighlightEngine {
         }
 
         // STEP 2: Build full text for pattern matching
-        let mut full_text: String = spans.iter().map(|(content, _, _, _)| content.as_str()).collect();
+        let mut full_text: String = spans
+            .iter()
+            .map(|(content, _, _, _)| content.as_str())
+            .collect();
 
         // STEP 3: Find all highlight matches (both Aho-Corasick and regex)
         let mut matches: Vec<MatchInfo> = Vec::new();
@@ -214,7 +217,8 @@ impl HighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize())
+                    if let Some(&highlight_idx) =
+                        self.fast_pattern_map.get(mat.pattern().as_usize())
                     {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             // Check stream filter - skip if highlight requires specific stream and doesn't match
@@ -317,7 +321,9 @@ impl HighlightEngine {
             let mut last_char_idx = 0usize;
             for m in matches {
                 let start_char = *byte_to_char.get(&m.start_byte).unwrap_or(&last_char_idx);
-                let end_char = *byte_to_char.get(&m.end_byte).unwrap_or(&full_text_chars.len());
+                let end_char = *byte_to_char
+                    .get(&m.end_byte)
+                    .unwrap_or(&full_text_chars.len());
                 if start_char < last_char_idx {
                     continue; // overlapping; skip
                 }
@@ -539,7 +545,8 @@ impl HighlightEngine {
                 };
 
                 if is_word_start && is_word_end {
-                    if let Some(&highlight_idx) = self.fast_pattern_map.get(mat.pattern().as_usize())
+                    if let Some(&highlight_idx) =
+                        self.fast_pattern_map.get(mat.pattern().as_usize())
                     {
                         if let Some(highlight) = self.highlights.get(highlight_idx) {
                             if let Some(ref fg) = highlight.fg {
@@ -571,9 +578,7 @@ impl HighlightEngine {
 }
 
 /// Convert TextSegment to span tuple format
-fn segment_to_span_tuple(
-    segment: &TextSegment,
-) -> (String, Style, SpanType, Option<LinkData>) {
+fn segment_to_span_tuple(segment: &TextSegment) -> (String, Style, SpanType, Option<LinkData>) {
     let mut style = Style::default();
 
     if let Some(ref fg_hex) = segment.fg {
@@ -601,9 +606,7 @@ fn segment_to_span_tuple(
 }
 
 /// Convert span tuple to TextSegment format
-fn span_tuple_to_segment(
-    span: &(String, Style, SpanType, Option<LinkData>),
-) -> TextSegment {
+fn span_tuple_to_segment(span: &(String, Style, SpanType, Option<LinkData>)) -> TextSegment {
     let (text, style, span_type, link_data) = span;
 
     let fg = style.fg.and_then(color_to_hex);

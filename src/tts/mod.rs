@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use std::collections::VecDeque;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use tts::Tts;
 
 /// Events sent from TTS callbacks to the main event loop
@@ -173,7 +173,10 @@ impl TtsManager {
 
         // Prevent queue from growing unbounded
         if self.queue.len() >= self.max_queue_size {
-            tracing::warn!("TTS queue full ({} entries), dropping oldest", self.max_queue_size);
+            tracing::warn!(
+                "TTS queue full ({} entries), dropping oldest",
+                self.max_queue_size
+            );
             self.queue.pop_front();
 
             // Adjust current_index since we removed from the front
@@ -188,7 +191,8 @@ impl TtsManager {
         }
 
         // Insert based on priority (higher priority first)
-        let insert_pos = self.queue
+        let insert_pos = self
+            .queue
             .iter()
             .position(|e| e.priority < entry.priority)
             .unwrap_or(self.queue.len());
@@ -200,13 +204,22 @@ impl TtsManager {
         if let Some(current) = self.current_index {
             if insert_pos <= current {
                 self.current_index = Some(current + 1);
-                tracing::debug!("High-priority message inserted at {} - adjusted current_index from {} to {}", insert_pos, current, current + 1);
+                tracing::debug!(
+                    "High-priority message inserted at {} - adjusted current_index from {} to {}",
+                    insert_pos,
+                    current,
+                    current + 1
+                );
             }
         }
 
         // Queue silently - user has full manual control with prev/next/next_unread
         // Messages will auto-play via callbacks when user manually navigates
-        tracing::debug!("Queued message at index {} (total: {})", insert_pos, self.queue.len());
+        tracing::debug!(
+            "Queued message at index {} (total: {})",
+            insert_pos,
+            self.queue.len()
+        );
     }
 
     /// Speak the next item in the queue (sequential, includes read messages)
@@ -285,12 +298,11 @@ impl TtsManager {
         // Find the next unspoken entry
         let next_index = if let Some(current) = self.current_index {
             // From current position, search forward for next unread
-            (current + 1..self.queue.len())
-                .find(|&i| !self.queue[i].spoken)
+            (current + 1..self.queue.len()).find(|&i| !self.queue[i].spoken)
         } else {
             // No current position - jump to LATEST unread (highest index)
             (0..self.queue.len())
-                .rev()  // Search backwards from end
+                .rev() // Search backwards from end
                 .find(|&i| !self.queue[i].spoken)
         };
 
@@ -312,11 +324,9 @@ impl TtsManager {
 
         // Find next unspoken entry
         let next_index = if let Some(current) = self.current_index {
-            (current + 1..self.queue.len())
-                .find(|&i| !self.queue[i].spoken)
+            (current + 1..self.queue.len()).find(|&i| !self.queue[i].spoken)
         } else {
-            (0..self.queue.len())
-                .find(|&i| !self.queue[i].spoken)
+            (0..self.queue.len()).find(|&i| !self.queue[i].spoken)
         };
 
         if let Some(index) = next_index {
@@ -422,7 +432,11 @@ impl TtsManager {
 
         if let Some(ref mut engine) = self.engine {
             engine.set_rate(normalized)?;
-            tracing::info!("TTS rate increased to {} (normalized: {})", self.rate, normalized);
+            tracing::info!(
+                "TTS rate increased to {} (normalized: {})",
+                self.rate,
+                normalized
+            );
         }
         Ok(())
     }
@@ -434,7 +448,11 @@ impl TtsManager {
 
         if let Some(ref mut engine) = self.engine {
             engine.set_rate(normalized)?;
-            tracing::info!("TTS rate decreased to {} (normalized: {})", self.rate, normalized);
+            tracing::info!(
+                "TTS rate decreased to {} (normalized: {})",
+                self.rate,
+                normalized
+            );
         }
         Ok(())
     }
@@ -446,7 +464,11 @@ impl TtsManager {
 
         if let Some(ref mut engine) = self.engine {
             engine.set_volume(normalized)?;
-            tracing::info!("TTS volume increased to {} (normalized: {})", self.volume, normalized);
+            tracing::info!(
+                "TTS volume increased to {} (normalized: {})",
+                self.volume,
+                normalized
+            );
         }
         Ok(())
     }
@@ -458,7 +480,11 @@ impl TtsManager {
 
         if let Some(ref mut engine) = self.engine {
             engine.set_volume(normalized)?;
-            tracing::info!("TTS volume decreased to {} (normalized: {})", self.volume, normalized);
+            tracing::info!(
+                "TTS volume decreased to {} (normalized: {})",
+                self.volume,
+                normalized
+            );
         }
         Ok(())
     }
@@ -467,5 +493,4 @@ impl TtsManager {
     pub fn try_recv_event(&self) -> Result<TtsEvent, std::sync::mpsc::TryRecvError> {
         self.event_rx.try_recv()
     }
-
 }

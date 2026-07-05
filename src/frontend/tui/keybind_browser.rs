@@ -34,7 +34,7 @@ pub struct KeybindEntry {
     pub key_combo: String,
     pub action_type: String, // "Action" or "Macro"
     pub action_value: String,
-    pub is_global: bool,     // true = from global/, false = from character profile
+    pub is_global: bool, // true = from global/, false = from character profile
 }
 
 /// Scrollable inventory of current keybinding entries with optional drag handle.
@@ -125,7 +125,6 @@ impl KeybindBrowser {
     }
 
     fn from_entries(mut entries: Vec<KeybindEntry>) -> Self {
-
         // Sort by action type (Actions first, then Macros), then by key combo
         entries.sort_by(|a, b| {
             a.action_type
@@ -409,7 +408,8 @@ impl KeybindBrowser {
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    buf[(x + col, y + row)]
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                 }
             }
         }
@@ -423,7 +423,9 @@ impl KeybindBrowser {
             if (x + 1 + i as u16) < (x + width) {
                 buf[(x + 1 + i as u16, y)]
                     .set_char(ch)
-                    .set_fg(crossterm_bridge::to_ratatui_color(theme.browser_item_normal))
+                    .set_fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_normal,
+                    ))
                     .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
             }
         }
@@ -480,7 +482,9 @@ impl KeybindBrowser {
                             " ═══ MACROS ═══"
                         };
                         let header_style = Style::default()
-                            .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                            .fg(crossterm_bridge::to_ratatui_color(
+                                theme.browser_item_focused,
+                            ))
                             .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                             .add_modifier(Modifier::BOLD);
                         for (i, ch) in header_text.chars().enumerate() {
@@ -513,7 +517,9 @@ impl KeybindBrowser {
                     " ═══ MACROS ═══"
                 };
                 let header_style = Style::default()
-                    .fg(crossterm_bridge::to_ratatui_color(theme.browser_item_focused))
+                    .fg(crossterm_bridge::to_ratatui_color(
+                        theme.browser_item_focused,
+                    ))
                     .bg(crossterm_bridge::to_ratatui_color(theme.browser_background))
                     .add_modifier(Modifier::BOLD);
                 for (i, ch) in header_text.chars().enumerate() {
@@ -536,7 +542,7 @@ impl KeybindBrowser {
             let current_y = list_y + render_row as u16;
 
             // Format as 4 columns: Scope (4) | Key (17 chars) | Type (10 chars) | Value (remaining)
-            let scope_width = 4;  // "[G] " or "[C] "
+            let scope_width = 4; // "[G] " or "[C] "
             let key_width = 17;
             let type_width = 10;
             let value_start = scope_width + key_width + type_width;
@@ -565,7 +571,7 @@ impl KeybindBrowser {
                 entry.action_value.clone()
             };
 
-            let entry_color = crossterm_bridge::to_ratatui_color(if is_selected  {
+            let entry_color = crossterm_bridge::to_ratatui_color(if is_selected {
                 theme.browser_item_focused
             } else {
                 theme.browser_item_normal
@@ -638,7 +644,8 @@ impl KeybindBrowser {
         buf: &mut Buffer,
         theme: &crate::theme::AppTheme,
     ) {
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.browser_border));
 
         // Top border
         buf[(x, y)].set_char('┌').set_style(border_style);
@@ -736,7 +743,10 @@ impl KeybindBrowser {
     ///
     /// Prefer `update_items_with_source` for proper [G]/[C] indicators.
     #[allow(dead_code)]
-    pub fn update_items(&mut self, keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>) {
+    pub fn update_items(
+        &mut self,
+        keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
+    ) {
         self.entries.clear();
         for (key, action) in keybinds {
             self.entries.push(KeybindEntry {

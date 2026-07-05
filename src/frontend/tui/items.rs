@@ -30,10 +30,7 @@ impl Items {
 
     /// Update the widget from room objects.
     /// Returns true if the display changed.
-    pub fn update_from_state(
-        &mut self,
-        room_objects: &[crate::core::state::RoomObject],
-    ) -> bool {
+    pub fn update_from_state(&mut self, room_objects: &[crate::core::state::RoomObject]) -> bool {
         // Build cache string for comparison
         let new_object_ids: String = room_objects
             .iter()
@@ -56,18 +53,20 @@ impl Items {
         for obj in room_objects.iter() {
             tracing::debug!(
                 "Processing room object: name='{}', noun={:?}, id='{}'",
-                obj.name, obj.noun, obj.id
+                obj.name,
+                obj.noun,
+                obj.id
             );
 
             // Build LinkData for clickable interaction
             // - exist_id: ID (e.g., "123456789")
             // - noun: Use parsed noun or fallback to last word
             // - text: full object name
-            let link_noun = obj.noun.as_ref()
+            let link_noun = obj
+                .noun
+                .as_ref()
                 .cloned()
-                .or_else(|| {
-                    obj.name.split_whitespace().last().map(|s| s.to_string())
-                })
+                .or_else(|| obj.name.split_whitespace().last().map(|s| s.to_string()))
                 .unwrap_or_else(|| obj.name.clone());
 
             let link_data = Some(LinkData {
@@ -78,7 +77,8 @@ impl Items {
             });
 
             // Add to widget with link data for click handling
-            self.widget.add_simple_line(obj.name.clone(), None, link_data);
+            self.widget
+                .add_simple_line(obj.name.clone(), None, link_data);
 
             self.count += 1;
         }
@@ -175,7 +175,8 @@ impl Items {
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -186,7 +187,8 @@ impl Items {
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 
     /// Get wrapped lines for click/drag detection

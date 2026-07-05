@@ -94,10 +94,10 @@ impl MiniVitals {
             spirit_text: String::new(),
             generation: 0,
             border_color: Color::White,
-            health_color: Color::Rgb(110, 2, 2),      // #6e0202
-            mana_color: Color::Rgb(8, 8, 109),        // #08086d
-            stamina_color: Color::Rgb(189, 123, 0),   // #bd7b00
-            spirit_color: Color::Rgb(110, 114, 124),  // #6e727c
+            health_color: Color::Rgb(110, 2, 2),     // #6e0202
+            mana_color: Color::Rgb(8, 8, 109),       // #08086d
+            stamina_color: Color::Rgb(189, 123, 0),  // #bd7b00
+            spirit_color: Color::Rgb(110, 114, 124), // #6e727c
             text_color: Color::White,
             display_mode: VitalDisplayMode::Full,
             background_color: None,
@@ -181,10 +181,30 @@ impl MiniVitals {
     /// Get vital data by name (value, max, text, color)
     fn get_vital_by_name(&self, name: &str) -> Option<(u32, u32, &String, Color)> {
         match name {
-            "health" => Some((self.health_value, self.health_max, &self.health_text, self.health_color)),
-            "mana" | "concentration" => Some((self.mana_value, self.mana_max, &self.mana_text, self.mana_color)),
-            "stamina" => Some((self.stamina_value, self.stamina_max, &self.stamina_text, self.stamina_color)),
-            "spirit" => Some((self.spirit_value, self.spirit_max, &self.spirit_text, self.spirit_color)),
+            "health" => Some((
+                self.health_value,
+                self.health_max,
+                &self.health_text,
+                self.health_color,
+            )),
+            "mana" | "concentration" => Some((
+                self.mana_value,
+                self.mana_max,
+                &self.mana_text,
+                self.mana_color,
+            )),
+            "stamina" => Some((
+                self.stamina_value,
+                self.stamina_max,
+                &self.stamina_text,
+                self.stamina_color,
+            )),
+            "spirit" => Some((
+                self.spirit_value,
+                self.spirit_max,
+                &self.spirit_text,
+                self.spirit_color,
+            )),
             _ => None,
         }
     }
@@ -345,7 +365,11 @@ impl MiniVitals {
         let total_width = inner.width as usize;
         let num_bars = vitals.len();
         let gap = 1; // 1 char gap between bars
-        let total_gaps = if num_bars > 1 { (num_bars - 1) * gap } else { 0 };
+        let total_gaps = if num_bars > 1 {
+            (num_bars - 1) * gap
+        } else {
+            0
+        };
         let available_width = total_width.saturating_sub(total_gaps);
         let bar_width = available_width / num_bars;
         let remainder = available_width % num_bars;
@@ -393,8 +417,16 @@ mod tests {
     fn test_update_from_state() {
         let mut mv = MiniVitals::new("Stats", true);
         let mut state = MiniVitalsState::default();
-        state.health = VitalEntry { value: 226, max: 300, text: "health 226/300".to_string() };
-        state.mana = VitalEntry { value: 100, max: 100, text: "mana 100/100".to_string() };
+        state.health = VitalEntry {
+            value: 226,
+            max: 300,
+            text: "health 226/300".to_string(),
+        };
+        state.mana = VitalEntry {
+            value: 100,
+            max: 100,
+            text: "mana 100/100".to_string(),
+        };
         state.generation = 1;
 
         let changed = mv.update_from_state(&state);
@@ -421,7 +453,10 @@ mod tests {
         let mut mv = MiniVitals::new("Stats", true);
         mv.set_display_mode(false, false);
         assert_eq!(mv.display_mode, VitalDisplayMode::Full);
-        assert_eq!(mv.format_display_text(226, 300, "health 226/300"), "health 226/300");
+        assert_eq!(
+            mv.format_display_text(226, 300, "health 226/300"),
+            "health 226/300"
+        );
     }
 
     #[test]
@@ -429,7 +464,10 @@ mod tests {
         let mut mv = MiniVitals::new("Stats", true);
         mv.set_display_mode(true, false);
         assert_eq!(mv.display_mode, VitalDisplayMode::NumbersOnly);
-        assert_eq!(mv.format_display_text(226, 300, "health 226/300"), "226/300");
+        assert_eq!(
+            mv.format_display_text(226, 300, "health 226/300"),
+            "226/300"
+        );
     }
 
     #[test]
@@ -479,8 +517,16 @@ mod tests {
     fn test_get_vital_by_name() {
         let mut mv = MiniVitals::new("Stats", true);
         let mut state = MiniVitalsState::default();
-        state.health = VitalEntry { value: 100, max: 200, text: "health 100/200".to_string() };
-        state.mana = VitalEntry { value: 50, max: 100, text: "mana 50/100".to_string() };
+        state.health = VitalEntry {
+            value: 100,
+            max: 200,
+            text: "health 100/200".to_string(),
+        };
+        state.mana = VitalEntry {
+            value: 50,
+            max: 100,
+            text: "mana 50/100".to_string(),
+        };
         state.generation = 1;
         mv.update_from_state(&state);
 

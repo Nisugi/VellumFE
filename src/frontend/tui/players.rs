@@ -70,24 +70,32 @@ impl Players {
 
             // Primary status (prepended, e.g., "stunned" from "a stunned Player")
             if let Some(ref primary) = player.primary_status {
-                let abbrev = config.status_abbrev
+                let abbrev = config
+                    .status_abbrev
                     .get(&primary.to_lowercase())
                     .cloned()
                     .unwrap_or_else(|| {
-                        if primary.len() <= 3 { primary.to_string() }
-                        else { primary.chars().take(3).collect() }
+                        if primary.len() <= 3 {
+                            primary.to_string()
+                        } else {
+                            primary.chars().take(3).collect()
+                        }
                     });
                 status_parts.push(format!("[{}]", abbrev));
             }
 
             // Secondary status (appended, e.g., "prone" from "Player (prone)")
             if let Some(ref secondary) = player.secondary_status {
-                let abbrev = config.status_abbrev
+                let abbrev = config
+                    .status_abbrev
                     .get(&secondary.to_lowercase())
                     .cloned()
                     .unwrap_or_else(|| {
-                        if secondary.len() <= 3 { secondary.to_string() }
-                        else { secondary.chars().take(3).collect() }
+                        if secondary.len() <= 3 {
+                            secondary.to_string()
+                        } else {
+                            secondary.chars().take(3).collect()
+                        }
                     });
                 status_parts.push(format!("[{}]", abbrev));
             }
@@ -197,7 +205,8 @@ impl Players {
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.widget.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.widget
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -208,7 +217,8 @@ impl Players {
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.widget.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.widget
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 

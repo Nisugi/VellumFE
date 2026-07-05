@@ -619,10 +619,8 @@ impl PerformanceStats {
             self.collect_uptime = false;
             return;
         }
-        self.collect_frame_times = cfg.show_fps
-            || cfg.show_frame_times
-            || cfg.show_jitter
-            || cfg.show_frame_spikes;
+        self.collect_frame_times =
+            cfg.show_fps || cfg.show_frame_times || cfg.show_jitter || cfg.show_frame_spikes;
         self.collect_render_times = cfg.show_render_times;
         self.collect_ui_times = cfg.show_ui_times;
         self.collect_wrap_times = cfg.show_wrap_times;
@@ -667,7 +665,10 @@ mod tests {
 
         // Both should have same initial state
         assert_eq!(default_stats.fps(), new_stats.fps());
-        assert_eq!(default_stats.avg_frame_time_ms(), new_stats.avg_frame_time_ms());
+        assert_eq!(
+            default_stats.avg_frame_time_ms(),
+            new_stats.avg_frame_time_ms()
+        );
     }
 
     // ==================== Frame Time Tests ====================
@@ -829,7 +830,12 @@ mod tests {
 
         let estimated = stats.estimated_memory_mb();
         let expected = (1000.0 * 200.0) / (1024.0 * 1024.0);
-        assert!((estimated - expected).abs() < 0.001, "Expected {}, got {}", expected, estimated);
+        assert!(
+            (estimated - expected).abs() < 0.001,
+            "Expected {}, got {}",
+            expected,
+            estimated
+        );
     }
 
     #[test]
@@ -847,7 +853,12 @@ mod tests {
 
         let estimated = stats.estimated_memory_mb();
         let expected = (100_000.0 * 200.0) / (1024.0 * 1024.0);
-        assert!((estimated - expected).abs() < 0.1, "Expected ~{:.2}MB, got {:.2}MB", expected, estimated);
+        assert!(
+            (estimated - expected).abs() < 0.1,
+            "Expected ~{:.2}MB, got {:.2}MB",
+            expected,
+            estimated
+        );
     }
 
     // ==================== Network Stats Tests ====================
@@ -877,7 +888,12 @@ mod tests {
 
         let formatted = stats.uptime_formatted();
         // Should match HH:MM:SS format
-        assert_eq!(formatted.len(), 8, "Format should be HH:MM:SS, got: {}", formatted);
+        assert_eq!(
+            formatted.len(),
+            8,
+            "Format should be HH:MM:SS, got: {}",
+            formatted
+        );
         assert_eq!(&formatted[2..3], ":");
         assert_eq!(&formatted[5..6], ":");
     }

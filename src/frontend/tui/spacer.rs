@@ -2,11 +2,7 @@
 //!
 //! Used heavily by dynamic layouts to enforce padding without drawing chrome.
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Color,
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
 /// Spacer widget - fills area with optional background color for layout spacing
 /// Never shows borders or title, just optional background fill

@@ -19,7 +19,8 @@ impl TuiFrontend {
                 room_window.set_show_name(data.show_name);
             }
 
-            self.widget_manager.room_windows
+            self.widget_manager
+                .room_windows
                 .insert(window_name.to_string(), room_window);
             tracing::debug!("Created RoomWindow widget for '{}'", window_name);
         }
@@ -567,7 +568,11 @@ impl TuiFrontend {
         if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get(window_name) {
             let border_offset = if tabbed_window.has_border() { 1 } else { 0 };
             let tab_bar_offset: u16 = 1; // Tab bar is always 1 row
-            let separator_offset: u16 = if tabbed_window.has_tab_separator() { 1 } else { 0 };
+            let separator_offset: u16 = if tabbed_window.has_tab_separator() {
+                1
+            } else {
+                0
+            };
 
             // Calculate content area bounds accounting for tab bar position and separator
             let (content_y_start, content_y_end) = if tabbed_window.tab_bar_at_top() {
@@ -578,7 +583,10 @@ impl TuiFrontend {
             } else {
                 // Tab bar at bottom: content starts after border, ends before separator + tab bar
                 let y_start = window_rect.y + border_offset;
-                let y_end = window_rect.y + window_rect.height - border_offset - tab_bar_offset - separator_offset;
+                let y_end = window_rect.y + window_rect.height
+                    - border_offset
+                    - tab_bar_offset
+                    - separator_offset;
                 (y_start, y_end)
             };
 

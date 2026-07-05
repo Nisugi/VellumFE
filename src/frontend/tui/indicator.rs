@@ -205,7 +205,7 @@ impl Indicator {
         }
     }
 
-pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
+    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
         self.render(area, buf);
     }
 }

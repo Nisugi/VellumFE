@@ -3,8 +3,8 @@
 //! Mirrors the VellumFE workflow: regex pattern entry, optional colors/sounds,
 //! and checkbox flags for rendering behavior.
 
-use crate::frontend::tui::crossterm_bridge;
 use crate::config::{Config, HighlightPattern};
+use crate::frontend::tui::crossterm_bridge;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -185,9 +185,9 @@ impl HighlightFormWidget {
             pattern_error: None,
             mode: FormMode::Create,
             sound_files: Self::load_sound_files(),
-            sound_file_index: 0, // Default to "none"
+            sound_file_index: 0,    // Default to "none"
             redirect_mode_index: 0, // Default to "Off"
-            is_global: true, // Default to global scope
+            is_global: true,        // Default to global scope
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -330,8 +330,6 @@ impl HighlightFormWidget {
         // - Ctrl+S → MenuAction::Save
         // - Ctrl+D → MenuAction::Delete (handled via handle_action)
 
-        
-
         match key.code {
             _ => {
                 // Pass key to appropriate text field
@@ -366,7 +364,10 @@ impl HighlightFormWidget {
     }
 
     /// Handle MenuAction (called from mod.rs input routing)
-    pub fn handle_action(&mut self, action: crate::core::menu_actions::MenuAction) -> Option<FormResult> {
+    pub fn handle_action(
+        &mut self,
+        action: crate::core::menu_actions::MenuAction,
+    ) -> Option<FormResult> {
         use crate::core::menu_actions::MenuAction;
 
         match action {
@@ -438,7 +439,7 @@ impl HighlightFormWidget {
                     12 => self.fast_parse = !self.fast_parse,
                     13 => self.squelch = !self.squelch,
                     14 => self.silent_prompt = !self.silent_prompt,
-                    15 => self.is_global = true,  // Select "Global" scope
+                    15 => self.is_global = true, // Select "Global" scope
                     16 => self.is_global = false, // Select "Character" scope
                     _ => {}
                 }
@@ -452,7 +453,7 @@ impl HighlightFormWidget {
                 // Treat Delete as a dismiss (no-op) for this form
                 Some(FormResult::Cancel)
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -581,8 +582,8 @@ impl HighlightFormWidget {
             redirect_to,
             redirect_mode,
             replace,
-            stream: None, // TODO: Add UI for stream filtering
-            window: None, // TODO: Add UI for window filtering
+            stream: None,         // TODO: Add UI for stream filtering
+            window: None,         // TODO: Add UI for window filtering
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -626,7 +627,8 @@ impl HighlightFormWidget {
         for row in 0..height {
             for col in 0..width {
                 if x + col < area.width && y + row < area.height {
-                    buf[(x + col, y + row)].set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+                    buf[(x + col, y + row)]
+                        .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                 }
             }
         }
@@ -682,7 +684,8 @@ impl HighlightFormWidget {
         buf: &mut Buffer,
         theme: &crate::theme::AppTheme,
     ) {
-        let border_style = Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
+        let border_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.form_label));
         let buf_width = buf.area().width;
         let buf_height = buf.area().height;
 
@@ -841,13 +844,9 @@ impl HighlightFormWidget {
                         .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                     if !fg_text.is_empty() {
                         if let Some(color) = self.parse_and_resolve_color(&fg_text, config) {
-                            buf[(preview_x, current_y)]
-                                .set_char(' ')
-                                .set_bg(color);
+                            buf[(preview_x, current_y)].set_char(' ').set_bg(color);
                             if preview_x + 1 < buf_width && preview_x + 1 < x + width - 1 {
-                                buf[(preview_x + 1, current_y)]
-                                    .set_char(' ')
-                                    .set_bg(color);
+                                buf[(preview_x + 1, current_y)].set_char(' ').set_bg(color);
                             }
                         }
                     }
@@ -884,13 +883,9 @@ impl HighlightFormWidget {
                         .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
                     if !bg_text.is_empty() {
                         if let Some(color) = self.parse_and_resolve_color(&bg_text, config) {
-                            buf[(preview_x, current_y)]
-                                .set_char(' ')
-                                .set_bg(color);
+                            buf[(preview_x, current_y)].set_char(' ').set_bg(color);
                             if preview_x + 1 < buf_width && preview_x + 1 < x + width - 1 {
-                                buf[(preview_x + 1, current_y)]
-                                    .set_char(' ')
-                                    .set_bg(color);
+                                buf[(preview_x + 1, current_y)].set_char(' ').set_bg(color);
                             }
                         }
                     }
@@ -961,111 +956,135 @@ impl HighlightFormWidget {
         // Checkboxes (Fields 10-13)
         buf[(x + 2, current_y)]
             .set_char('[')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 10 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 10 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 3, current_y)]
             .set_char(if self.bold { '✓' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 10 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 10 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 4, current_y)]
             .set_char(']')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 10 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 10 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let bold_label = " Bold";
         for (i, ch) in bold_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 10 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 10 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
         current_y += 1;
 
         buf[(x + 2, current_y)]
             .set_char('[')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 11 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 11 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 3, current_y)]
             .set_char(if self.color_entire_line { '✓' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 11 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 11 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 4, current_y)]
             .set_char(']')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 11 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 11 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let cel_label = " Color entire line";
         for (i, ch) in cel_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 11 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 11 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
         current_y += 1;
 
         buf[(x + 2, current_y)]
             .set_char('[')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 12 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 12 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 3, current_y)]
             .set_char(if self.fast_parse { '✓' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 12 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 12 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 4, current_y)]
             .set_char(']')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 12 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 12 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let fp_label = " Fast parse";
         for (i, ch) in fp_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 12 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 12 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
@@ -1074,37 +1093,45 @@ impl HighlightFormWidget {
         // Field 10: Squelch checkbox
         buf[(x + 2, current_y)]
             .set_char('[')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 13 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 13 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 3, current_y)]
             .set_char(if self.squelch { '✓' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 13 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 13 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 4, current_y)]
             .set_char(']')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 13 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 13 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let squelch_label = " Squelch (ignore line)";
         for (i, ch) in squelch_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 13 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 13 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
@@ -1113,37 +1140,45 @@ impl HighlightFormWidget {
         // Field 14: Silent Prompt checkbox
         buf[(x + 2, current_y)]
             .set_char('[')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 14 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 3, current_y)]
             .set_char(if self.silent_prompt { '✓' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 14 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(x + 4, current_y)]
             .set_char(']')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 14 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let silent_label = " Silent Prompt (suppress prompt)";
         for (i, ch) in silent_label.chars().enumerate() {
             buf[(x + 5 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 14 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 14 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
@@ -1162,37 +1197,45 @@ impl HighlightFormWidget {
         let global_start = x + 2 + scope_label.len() as u16;
         buf[(global_start, current_y)]
             .set_char('(')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 15 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(global_start + 1, current_y)]
             .set_char(if self.is_global { '●' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 15 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(global_start + 2, current_y)]
             .set_char(')')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 15 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let global_label = " Global  ";
         for (i, ch) in global_label.chars().enumerate() {
             buf[(global_start + 3 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 15 {
-                    theme.form_label_focused
-                } else {
-                    theme.form_label
-                }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 15 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
@@ -1200,37 +1243,45 @@ impl HighlightFormWidget {
         let char_start = global_start + 3 + global_label.len() as u16;
         buf[(char_start, current_y)]
             .set_char('(')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 16 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(char_start + 1, current_y)]
             .set_char(if !self.is_global { '●' } else { ' ' })
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 16 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         buf[(char_start + 2, current_y)]
             .set_char(')')
-            .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
-                theme.form_label_focused
-            } else {
-                theme.form_label
-            }))
+            .set_fg(crossterm_bridge::to_ratatui_color(
+                if self.focused_field == 16 {
+                    theme.form_label_focused
+                } else {
+                    theme.form_label
+                },
+            ))
             .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         let char_label = " Character";
         for (i, ch) in char_label.chars().enumerate() {
             buf[(char_start + 3 + i as u16, current_y)]
                 .set_char(ch)
-                .set_fg(crossterm_bridge::to_ratatui_color(if self.focused_field == 16 {
-                    theme.form_label_focused
-                } else {
-                    theme.form_label
-                }))
+                .set_fg(crossterm_bridge::to_ratatui_color(
+                    if self.focused_field == 16 {
+                        theme.form_label_focused
+                    } else {
+                        theme.form_label
+                    },
+                ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
     }
@@ -1278,7 +1329,11 @@ impl HighlightFormWidget {
         textarea.set_block(block);
 
         // Set text style
-        textarea.set_style(Style::default().fg(crossterm_bridge::to_ratatui_color(theme.text_primary)).bg(bg));
+        textarea.set_style(
+            Style::default()
+                .fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
+                .bg(bg),
+        );
 
         // Render the TextArea widget - it handles cursor positioning and scrolling automatically
         textarea.render(textarea_rect, buf);
@@ -1327,7 +1382,11 @@ impl HighlightFormWidget {
         textarea.set_block(block);
 
         // Set text style
-        textarea.set_style(Style::default().fg(crossterm_bridge::to_ratatui_color(theme.text_primary)).bg(bg));
+        textarea.set_style(
+            Style::default()
+                .fg(crossterm_bridge::to_ratatui_color(theme.text_primary))
+                .bg(bg),
+        );
 
         // Render the TextArea widget
         textarea.render(textarea_rect, buf);
@@ -1343,7 +1402,7 @@ impl HighlightFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let focused = self.focused_field == 5;
-        let label_color = crossterm_bridge::to_ratatui_color(if focused  {
+        let label_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -1372,7 +1431,11 @@ impl HighlightFormWidget {
         } else {
             theme.text_disabled
         });
-        for (i, ch) in current_value.chars().enumerate().take(available_width as usize) {
+        for (i, ch) in current_value
+            .chars()
+            .enumerate()
+            .take(available_width as usize)
+        {
             buf[(input_x + i as u16, y)]
                 .set_char(ch)
                 .set_fg(value_color)
@@ -1390,7 +1453,7 @@ impl HighlightFormWidget {
         theme: &crate::theme::AppTheme,
     ) {
         let focused = self.focused_field == 9;
-        let label_color = crossterm_bridge::to_ratatui_color(if focused  {
+        let label_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
             theme.form_label
@@ -1464,7 +1527,13 @@ impl HighlightFormWidget {
     }
 
     /// Handle mouse events for the popup
-    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) -> HighlightFormMouseAction {
+    pub fn handle_mouse(
+        &mut self,
+        col: u16,
+        row: u16,
+        pressed: bool,
+        terminal_area: Rect,
+    ) -> HighlightFormMouseAction {
         let popup_width = POPUP_WIDTH;
         let popup_height = POPUP_HEIGHT;
 
@@ -1706,11 +1775,13 @@ impl Toggleable for HighlightFormWidget {
 
 impl Cyclable for HighlightFormWidget {
     fn cycle_forward(&mut self) {
-        if self.focused_field == 5 && !self.sound_files.is_empty()
-            && self.sound_file_index + 1 < self.sound_files.len() {
-                self.sound_file_index += 1;
-                self.update_sound_from_index();
-            }
+        if self.focused_field == 5
+            && !self.sound_files.is_empty()
+            && self.sound_file_index + 1 < self.sound_files.len()
+        {
+            self.sound_file_index += 1;
+            self.update_sound_from_index();
+        }
     }
 
     fn cycle_backward(&mut self) {

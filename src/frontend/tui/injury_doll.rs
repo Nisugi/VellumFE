@@ -339,7 +339,11 @@ pub fn render_injuries_popup(
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
         .title(format!(" {}'s Injuries ", popup.player_name))
-        .title_style(Style::default().fg(title_color).add_modifier(ratatui::style::Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(title_color)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )
         .style(Style::default().bg(bg_color));
 
     let inner_area = block.inner(popup_area);
@@ -428,7 +432,11 @@ mod tests {
         // Expected: content should NOT overlap bottom border at row 6
 
         let mut doll = InjuryDoll::new("Injuries");
-        doll.set_border_config(true, Some("single".to_string()), Some("#ffffff".to_string()));
+        doll.set_border_config(
+            true,
+            Some("single".to_string()),
+            Some("#ffffff".to_string()),
+        );
         doll.set_border_sides(BorderSides {
             left: true,
             right: false,
@@ -558,7 +566,7 @@ mod tests {
         doll.set_border_sides(BorderSides {
             left: true,
             right: false,
-            top: false,  // No top border
+            top: false, // No top border
             bottom: true,
         });
 
@@ -575,4 +583,3 @@ mod tests {
         );
     }
 }
-

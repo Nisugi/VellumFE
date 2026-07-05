@@ -142,7 +142,7 @@ impl ActiveEffects {
         self.container.render(area, buf);
     }
 
-pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
+    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
         self.container.render_with_focus(area, buf, focused);
     }
 
@@ -153,7 +153,8 @@ pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool)
         mouse_row: u16,
         window_rect: Rect,
     ) -> Option<(usize, usize)> {
-        self.container.mouse_to_text_coords(mouse_col, mouse_row, window_rect)
+        self.container
+            .mouse_to_text_coords(mouse_col, mouse_row, window_rect)
     }
 
     /// Extract text from a selection range
@@ -164,7 +165,8 @@ pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool)
         end_line: usize,
         end_col: usize,
     ) -> String {
-        self.container.extract_selection_text(start_line, start_col, end_line, end_col)
+        self.container
+            .extract_selection_text(start_line, start_col, end_line, end_col)
     }
 }
 
