@@ -2876,6 +2876,7 @@ impl TabViewer for GuiDockTabViewer<'_> {
 impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.app_core.perf_stats.record_frame();
         self.pump_server_messages();
         self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();

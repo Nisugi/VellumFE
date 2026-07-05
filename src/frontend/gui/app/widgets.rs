@@ -800,6 +800,118 @@ impl VellumGuiApp {
         clicked
     }
 
+    pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let cfg = app_core.perf_overlay_data(true);
+        let stats = &app_core.perf_stats;
+
+        let mut rows: Vec<(&str, String)> = Vec::new();
+        if cfg.show_fps {
+            rows.push(("FPS", format!("{:.1}", stats.fps())));
+        }
+        if cfg.show_frame_times {
+            rows.push((
+                "Frame",
+                format!(
+                    "{:.2} ms ({:.2}-{:.2})",
+                    stats.avg_frame_time_ms(),
+                    stats.min_frame_time_ms(),
+                    stats.max_frame_time_ms()
+                ),
+            ));
+        }
+        if cfg.show_render_times {
+            rows.push(("Render", format!("{:.2} ms", stats.avg_render_time_ms())));
+        }
+        if cfg.show_ui_times {
+            rows.push(("UI", format!("{:.2} ms", stats.avg_ui_render_time_ms())));
+        }
+        if cfg.show_wrap_times {
+            rows.push(("Wrap", format!("{:.1} us", stats.avg_text_wrap_time_us())));
+        }
+        if cfg.show_net {
+            rows.push((
+                "Net",
+                format!(
+                    "{} B/s in, {} B/s out",
+                    stats.bytes_received_per_sec(),
+                    stats.bytes_sent_per_sec()
+                ),
+            ));
+        }
+        if cfg.show_parse {
+            rows.push((
+                "Parse",
+                format!(
+                    "{:.1} us, {} elem/s",
+                    stats.avg_parse_time_us(),
+                    stats.elements_per_sec()
+                ),
+            ));
+        }
+        if cfg.show_events {
+            rows.push((
+                "Events",
+                format!(
+                    "{:.1} us, queue {}",
+                    stats.avg_event_process_time_us(),
+                    stats.last_event_queue_depth()
+                ),
+            ));
+        }
+        if cfg.show_memory {
+            rows.push((
+                "Memory",
+                format!(
+                    "{:.1} MB rss, {:.1} MB est",
+                    stats.process_rss_mb(),
+                    stats.estimated_memory_mb()
+                ),
+            ));
+        }
+        if cfg.show_lines {
+            rows.push((
+                "Lines",
+                format!(
+                    "{} in {} windows",
+                    stats.total_lines_buffered(),
+                    stats.active_window_count()
+                ),
+            ));
+        }
+        if cfg.show_uptime {
+            rows.push(("Uptime", stats.uptime_formatted()));
+        }
+        if cfg.show_jitter {
+            rows.push(("Jitter", format!("{:.2} ms", stats.frame_jitter_ms())));
+        }
+        if cfg.show_frame_spikes {
+            rows.push(("Spikes", stats.frame_spike_count().to_string()));
+        }
+        if cfg.show_event_lag {
+            rows.push(("Event lag", format!("{:.1} ms", stats.event_lag_ms())));
+        }
+        if cfg.show_memory_delta {
+            rows.push(("Mem delta", format!("{:+.1} MB", stats.memory_delta_mb())));
+        }
+
+        if rows.is_empty() {
+            ui.weak("All performance metrics are disabled in settings.");
+            return;
+        }
+
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("performance_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for (name, value) in rows {
+                    ui.label(RichText::new(format!("{:<10} {}", name, value)).monospace());
+                }
+            });
+    }
+
     pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
@@ -1216,12 +1328,17 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
-            _ => {
-                ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
-                ui.label(format!(
-                    "Window: {} ({:?})",
-                    window.name, window.widget_type
-                ));
+            WindowContent::Performance => {
+                Self::render_performance_content(app_core, ui);
+                None
+            }
+            WindowContent::CommandInput { .. } => {
+                ui.weak("Command input is docked at the bottom of the GUI.");
+                None
+            }
+            WindowContent::Empty => {
+                // Spacers reserve their area and draw nothing.
+                ui.allocate_space(ui.available_size());
                 None
             }
         }
