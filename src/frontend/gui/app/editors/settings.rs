@@ -3,7 +3,6 @@
 //! editor's field list where the setting applies to the GUI.
 
 use super::super::VellumGuiApp;
-use crate::frontend::gui::CopyBehavior;
 use eframe::egui;
 
 const BORDER_STYLES: &[&str] = &[
@@ -30,30 +29,10 @@ pub(in super::super) struct SettingsEditorState {
     sound_cooldown_ms: u64,
     active_theme: String,
     theme_names: Vec<String>,
-    /// GUI-only; persisted in the layout file, not Config.
-    copy_behavior: CopyBehavior,
-}
-
-const COPY_BEHAVIORS: &[(CopyBehavior, &str)] = &[
-    (CopyBehavior::PlainText, "Plain text"),
-    (CopyBehavior::AnsiCodes, "ANSI colors"),
-    (CopyBehavior::Html, "HTML"),
-];
-
-fn copy_behavior_label(behavior: &CopyBehavior) -> &'static str {
-    COPY_BEHAVIORS
-        .iter()
-        .find(|(candidate, _)| candidate == behavior)
-        .map(|(_, label)| *label)
-        .unwrap_or("Plain text")
 }
 
 impl SettingsEditorState {
-    fn from_config(
-        config: &crate::config::Config,
-        theme_names: Vec<String>,
-        copy_behavior: CopyBehavior,
-    ) -> Self {
+    fn from_config(config: &crate::config::Config, theme_names: Vec<String>) -> Self {
         Self {
             host: config.connection.host.clone(),
             port: config.connection.port,
@@ -67,7 +46,6 @@ impl SettingsEditorState {
             sound_cooldown_ms: config.sound.cooldown_ms,
             active_theme: config.active_theme.clone(),
             theme_names,
-            copy_behavior,
         }
     }
 
@@ -101,7 +79,6 @@ impl VellumGuiApp {
         self.settings_editor = Some(SettingsEditorState::from_config(
             &self.app_core.config,
             theme_names,
-            self.copy_behavior.clone(),
         ));
     }
 
@@ -171,19 +148,6 @@ impl VellumGuiApp {
                                             .range(0..=10),
                                     );
                                     ui.end_row();
-                                    ui.label("Copy style");
-                                    egui::ComboBox::from_id_salt("settings_copy_behavior")
-                                        .selected_text(copy_behavior_label(&state.copy_behavior))
-                                        .show_ui(ui, |ui| {
-                                            for (behavior, label) in COPY_BEHAVIORS {
-                                                ui.selectable_value(
-                                                    &mut state.copy_behavior,
-                                                    behavior.clone(),
-                                                    *label,
-                                                );
-                                            }
-                                        });
-                                    ui.end_row();
                                 },
                             );
                         });
@@ -230,11 +194,6 @@ impl VellumGuiApp {
             });
 
         if saved {
-            if self.copy_behavior != state.copy_behavior {
-                self.copy_behavior = state.copy_behavior.clone();
-                // Persisted in the layout file rather than config.toml.
-                self.layout_dirty = true;
-            }
             state.apply_to_config(&mut self.app_core.config);
             match self.app_core.save_config() {
                 Ok(()) => self.app_core.add_system_message("Settings saved."),
