@@ -785,7 +785,7 @@ impl XmlParser {
             };
             elements.push(ParsedElement::Prompt {
                 time,
-                text: self.decode_entities(&text),
+                text: Self::decode_entities(text),
             });
         }
     }
@@ -2149,7 +2149,7 @@ impl XmlParser {
         }
 
         // Decode HTML entities
-        let content = self.decode_entities(&content);
+        let content = Self::decode_entities(content);
 
         // If we're inside a link (<a> or <d> tag), append this text to the link's text field
         if self.link_depth > 0 {
@@ -2183,12 +2183,42 @@ impl XmlParser {
         }
     }
 
-    fn decode_entities(&self, text: &str) -> String {
-        text.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
+    fn decode_entities(text: String) -> String {
+        // Fast path: most game text has no entities at all
+        if !text.contains('&') {
+            return text;
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0;
+        while i < text.len() {
+            if text.as_bytes()[i] == b'&' {
+                let rest = &text[i..];
+                let (decoded, len) = if rest.starts_with("&lt;") {
+                    ('<', 4)
+                } else if rest.starts_with("&gt;") {
+                    ('>', 4)
+                } else if rest.starts_with("&amp;") {
+                    ('&', 5)
+                } else if rest.starts_with("&quot;") {
+                    ('"', 6)
+                } else if rest.starts_with("&apos;") {
+                    ('\'', 6)
+                } else {
+                    // Unknown entity - copy the '&' through verbatim
+                    out.push('&');
+                    i += 1;
+                    continue;
+                };
+                out.push(decoded);
+                i += len;
+            } else {
+                // Copy everything up to the next '&' (or end) in one go
+                let next = text[i..].find('&').map_or(text.len(), |p| i + p);
+                out.push_str(&text[i..next]);
+                i = next;
+            }
+        }
+        out
     }
 
     /// Flush text buffer and check for event patterns
@@ -2468,6 +2498,34 @@ mod tests {
             ("roomName".to_string(), Some("#9BA2B2".to_string()), Some("#395573".to_string())),
         ];
         XmlParser::with_presets(presets, std::collections::HashMap::new())
+    }
+
+    // ==================== Entity Decoding ====================
+
+    #[test]
+    fn test_decode_entities_basic() {
+        assert_eq!(XmlParser::decode_entities("a &lt;b&gt; &amp; &quot;c&quot; &apos;d&apos;".to_string()), "a <b> & \"c\" 'd'");
+    }
+
+    #[test]
+    fn test_decode_entities_no_entities_passthrough() {
+        assert_eq!(XmlParser::decode_entities("plain game text".to_string()), "plain game text");
+    }
+
+    #[test]
+    fn test_decode_entities_double_encoded() {
+        // &amp;lt; decodes the &amp; only, yielding a literal &lt; - the
+        // product of one decode must not be re-decoded (matches the old
+        // chained-replace behavior)
+        assert_eq!(XmlParser::decode_entities("&amp;lt;".to_string()), "&lt;");
+        assert_eq!(XmlParser::decode_entities("&amp;gt;".to_string()), "&gt;");
+    }
+
+    #[test]
+    fn test_decode_entities_unknown_and_trailing() {
+        assert_eq!(XmlParser::decode_entities("&foo; stays".to_string()), "&foo; stays");
+        assert_eq!(XmlParser::decode_entities("trailing &".to_string()), "trailing &");
+        assert_eq!(XmlParser::decode_entities("&&lt;".to_string()), "&<");
     }
 
     // ==================== Basic Text Parsing ====================
