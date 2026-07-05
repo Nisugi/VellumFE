@@ -5,7 +5,19 @@
 
 use super::*;
 
+/// Seconds for a value-driven bar to glide to a new target value.
+const BAR_ANIMATION_SECONDS: f32 = 0.2;
+
 impl VellumGuiApp {
+    /// Animate a bar fraction toward its target so server updates glide
+    /// instead of jumping. The first paint for a given id snaps straight to
+    /// the target, and egui keeps repainting while the value is moving, so
+    /// this composes with repaint-on-demand at zero idle cost.
+    fn animated_fraction(ui: &egui::Ui, id_salt: &str, target: f32) -> f32 {
+        ui.ctx()
+            .animate_value_with_time(ui.id().with(id_salt), target, BAR_ANIMATION_SECONDS)
+    }
+
     pub(super) fn segment_to_rich_text(
         segment: &TextSegment,
         visuals: &egui::Visuals,
@@ -345,6 +357,7 @@ impl VellumGuiApp {
                         format!("{}: {}%", label, clamped_pct),
                     )
                 };
+                let fraction = Self::animated_fraction(column, label, fraction);
                 column.add_sized(
                     [column.available_width().max(40.0), bar_height],
                     egui::ProgressBar::new(fraction)
@@ -364,17 +377,30 @@ impl VellumGuiApp {
         (end_time - (local_unix_time + server_time_offset)).max(0) as u32
     }
 
+    /// Fractional remaining seconds on a countdown, so the drain bar moves a
+    /// little on every repaint instead of stepping once per whole second.
+    fn countdown_remaining_seconds_f(
+        end_time: i64,
+        server_time_offset: i64,
+        local_unix_time_f: f64,
+    ) -> f32 {
+        ((end_time - server_time_offset) as f64 - local_unix_time_f).max(0.0) as f32
+    }
+
     pub(super) fn render_countdown_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         countdown: &crate::data::CountdownData,
     ) {
-        let now = std::time::SystemTime::now()
+        let now_f = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0);
-        let remaining =
-            Self::countdown_remaining_seconds(countdown.end_time, app_core.server_time_offset, now);
+            .map(|elapsed| elapsed.as_secs_f64())
+            .unwrap_or(0.0);
+        let remaining = Self::countdown_remaining_seconds(
+            countdown.end_time,
+            app_core.server_time_offset,
+            now_f as i64,
+        );
 
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let bar_width = ui.available_width().max(40.0);
@@ -386,7 +412,12 @@ impl VellumGuiApp {
 
         // Bar is full at FULL_BAR_SECONDS or more and drains as the timer runs out.
         const FULL_BAR_SECONDS: u32 = 10;
-        let fraction = remaining.min(FULL_BAR_SECONDS) as f32 / FULL_BAR_SECONDS as f32;
+        let remaining_f = Self::countdown_remaining_seconds_f(
+            countdown.end_time,
+            app_core.server_time_offset,
+            now_f,
+        );
+        let fraction = remaining_f.min(FULL_BAR_SECONDS as f32) / FULL_BAR_SECONDS as f32;
         let fill = match countdown.countdown_id.to_ascii_lowercase().as_str() {
             "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
             "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
@@ -656,17 +687,21 @@ impl VellumGuiApp {
         }
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         if !exp.mind_state_text.is_empty() {
+            let fraction =
+                Self::animated_fraction(ui, "gs4_mind", exp.mind_state_value.min(100) as f32 / 100.0);
             ui.add_sized(
                 [ui.available_width().max(40.0), bar_height],
-                egui::ProgressBar::new(exp.mind_state_value.min(100) as f32 / 100.0)
+                egui::ProgressBar::new(fraction)
                     .text(format!("Mind: {}", exp.mind_state_text))
                     .fill(Color32::from_rgb(0x47, 0x84, 0xd9)),
             );
         }
         if !exp.next_level_text.is_empty() {
+            let fraction =
+                Self::animated_fraction(ui, "gs4_next", exp.next_level_value.min(100) as f32 / 100.0);
             ui.add_sized(
                 [ui.available_width().max(40.0), bar_height],
-                egui::ProgressBar::new(exp.next_level_value.min(100) as f32 / 100.0)
+                egui::ProgressBar::new(fraction)
                     .text(format!("Next: {}", exp.next_level_text))
                     .fill(Color32::from_rgb(0x55, 0xb8, 0x6c)),
             );
@@ -707,9 +742,10 @@ impl VellumGuiApp {
             format!("Encumbrance: {}", enc.text)
         };
         let bar_height = ui.spacing().interact_size.y.max(16.0);
+        let fraction = Self::animated_fraction(ui, "encumbrance", value as f32 / 100.0);
         ui.add_sized(
             [ui.available_width().max(40.0), bar_height],
-            egui::ProgressBar::new(value as f32 / 100.0)
+            egui::ProgressBar::new(fraction)
                 .text(text)
                 .fill(fill),
         );
@@ -726,9 +762,11 @@ impl VellumGuiApp {
             betrayer.text.clone()
         };
         let bar_height = ui.spacing().interact_size.y.max(16.0);
+        let fraction =
+            Self::animated_fraction(ui, "betrayer", betrayer.value.min(100) as f32 / 100.0);
         ui.add_sized(
             [ui.available_width().max(40.0), bar_height],
-            egui::ProgressBar::new(betrayer.value.min(100) as f32 / 100.0)
+            egui::ProgressBar::new(fraction)
                 .text(text)
                 .fill(Color32::from_rgb(0xcd, 0x4d, 0x4d)),
         );
@@ -1638,6 +1676,31 @@ mod tests {
     fn countdown_remaining_applies_server_offset() {
         // Server clock runs 5s ahead of local time.
         assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100), 5);
+    }
+
+    #[test]
+    fn countdown_remaining_fraction_keeps_sub_seconds() {
+        assert_eq!(
+            VellumGuiApp::countdown_remaining_seconds_f(110, 0, 105.5),
+            4.5
+        );
+    }
+
+    #[test]
+    fn countdown_remaining_fraction_clamps_to_zero_when_elapsed() {
+        assert_eq!(
+            VellumGuiApp::countdown_remaining_seconds_f(100, 0, 150.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn countdown_remaining_fraction_applies_server_offset() {
+        // Server clock runs 5s ahead of local time.
+        assert_eq!(
+            VellumGuiApp::countdown_remaining_seconds_f(110, 5, 100.0),
+            5.0
+        );
     }
 
     #[test]
