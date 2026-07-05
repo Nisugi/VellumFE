@@ -1638,29 +1638,20 @@ impl MessageProcessor {
         if should_push_stream {
             self.current_stream = id.to_string();
 
-            // Check stream subscribers for discard logic
-            if let Some(subscribers) = self.text_stream_subscribers.get(id) {
-                if !subscribers.is_empty() {
-                    self.discard_current_stream = false;
-                } else if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
-                    self.discard_current_stream = true;
-                    tracing::debug!("Discarding stream '{}' (in drop_unsubscribed list)", id);
-                } else {
-                    // Route to fallback
-                    self.discard_current_stream = false;
-                    tracing::debug!(
-                        "Routing stream '{}' to fallback '{}'",
-                        id,
-                        self.config.streams.fallback
-                    );
-                }
+            // Check stream subscribers for discard logic (case-insensitive lookup)
+            if !self.get_stream_subscribers(id).is_empty() {
+                self.discard_current_stream = false;
+            } else if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
+                self.discard_current_stream = true;
+                tracing::debug!("Discarding stream '{}' (in drop_unsubscribed list)", id);
             } else {
-                // No subscribers map entry - check drop list
-                if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
-                    self.discard_current_stream = true;
-                } else {
-                    self.discard_current_stream = false;
-                }
+                // No subscribers - route to fallback
+                self.discard_current_stream = false;
+                tracing::debug!(
+                    "Routing stream '{}' to fallback '{}'",
+                    id,
+                    self.config.streams.fallback
+                );
             }
         }
 
@@ -2403,30 +2394,28 @@ impl MessageProcessor {
         let mut text_added_to_any_window = false;
         let mut tts_handled = false;
 
-        // Debug: log stream routing attempt
-        tracing::debug!(
-            "Routing stream '{}' - checking {} windows",
+        // Route via the prebuilt subscriber index (one O(1) lookup per line)
+        // instead of scanning every window's stream list. The index is kept in
+        // sync by update_text_stream_subscribers at every window/tab mutation.
+        let subscriber_names: Vec<String> = self
+            .get_stream_subscribers(&self.current_stream)
+            .to_vec();
+
+        tracing::trace!(
+            "Routing stream '{}' to {} subscriber(s)",
             self.current_stream,
-            ui_state.windows.len()
+            subscriber_names.len()
         );
 
-        // Iterate over all windows to find interested parties
-        for (window_name, window) in ui_state.windows.iter_mut() {
+        for window_name in &subscriber_names {
+            let Some(window) = ui_state.windows.get_mut(window_name) else {
+                continue;
+            };
             let mut added_here = false;
             match &mut window.content {
                 WindowContent::Text(content) => {
-                    // Debug: log window streams
-                    if self.current_stream != "main" {
-                        tracing::debug!(
-                            "  Window '{}' has streams: {:?}, checking for '{}'",
-                            window_name,
-                            content.streams,
-                            self.current_stream
-                        );
-                    }
-                    // Check if this text window listens to the current stream
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
-                        tracing::debug!("  -> MATCHED: adding line to '{}'", window_name);
+                    // Subscription already verified by the index
+                    {
                         // Apply window-specific replacements if any
                         let final_line = if deferred_replacements.is_empty() {
                             line.clone()
@@ -2452,6 +2441,7 @@ impl MessageProcessor {
                                     content.add_line(StyledLine::from_text_with_stream(text, "bounty"));
                                 }
                                 added_here = true;
+                                let _ = added_here;
                                 // Skip normal add_line - we've handled this specially
                                 continue;
                             }
@@ -2462,18 +2452,12 @@ impl MessageProcessor {
                     }
                 }
                 WindowContent::Inventory(content) => {
-                    // Check if this inventory window listens to the current stream
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
-                        content.add_line(line.clone());
-                        added_here = true;
-                    }
+                    content.add_line(line.clone());
+                    added_here = true;
                 }
                 WindowContent::Spells(content) => {
-                    // Check if this spells window listens to the current stream
-                    if content.streams.iter().any(|s| s.eq_ignore_ascii_case(&self.current_stream)) {
-                        content.add_line(line.clone());
-                        added_here = true;
-                    }
+                    content.add_line(line.clone());
+                    added_here = true;
                 }
                 WindowContent::TabbedText(tab_content) => {
                     let active_tab_index = tab_content.active_tab_index;
@@ -3289,15 +3273,26 @@ impl MessageProcessor {
         let mut subscribers: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
 
+        // Keys are canonicalized (trimmed + ascii-lowercased) so routing can do
+        // one O(1) lookup per line instead of eq_ignore_ascii_case per window.
+        // Dedupe so a window with the same stream on multiple tabs appears once.
+        let mut add = |subscribers: &mut std::collections::HashMap<String, Vec<String>>,
+                       stream: &str,
+                       window_name: &String| {
+            let entry = subscribers
+                .entry(stream.trim().to_ascii_lowercase())
+                .or_default();
+            if !entry.contains(window_name) {
+                entry.push(window_name.clone());
+            }
+        };
+
         for (window_name, window) in &ui_state.windows {
             match &window.content {
                 // Text windows have explicit streams field
                 WindowContent::Text(content) => {
                     for stream in &content.streams {
-                        subscribers
-                            .entry(stream.clone())
-                            .or_default()
-                            .push(window_name.clone());
+                        add(&mut subscribers, stream, window_name);
                     }
                 }
 
@@ -3305,10 +3300,7 @@ impl MessageProcessor {
                 WindowContent::TabbedText(tabbed) => {
                     for tab in &tabbed.tabs {
                         for stream in &tab.definition.streams {
-                            subscribers
-                                .entry(stream.clone())
-                                .or_default()
-                                .push(window_name.clone());
+                            add(&mut subscribers, stream, window_name);
                         }
                     }
                 }
@@ -3316,29 +3308,20 @@ impl MessageProcessor {
                 // Inventory widget uses its streams field (like Text windows)
                 WindowContent::Inventory(content) => {
                     for stream in &content.streams {
-                        subscribers
-                            .entry(stream.clone())
-                            .or_default()
-                            .push(window_name.clone());
+                        add(&mut subscribers, stream, window_name);
                     }
                 }
 
                 // Spells widget uses its streams field (like Text windows)
                 WindowContent::Spells(content) => {
                     for stream in &content.streams {
-                        subscribers
-                            .entry(stream.clone())
-                            .or_default()
-                            .push(window_name.clone());
+                        add(&mut subscribers, stream, window_name);
                     }
                 }
 
                 // Perception widget implicitly subscribes to "percWindow" stream
                 WindowContent::Perception(_) => {
-                    subscribers
-                        .entry("percWindow".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                    add(&mut subscribers, "percWindow", window_name);
                 }
 
                 // Hand widgets implicitly subscribe to left/right/spell streams
@@ -3351,10 +3334,7 @@ impl MessageProcessor {
                         _ => None,
                     };
                     if let Some(stream) = hand_stream {
-                        subscribers
-                            .entry(stream.to_string())
-                            .or_default()
-                            .push(window_name.clone());
+                        add(&mut subscribers, stream, window_name);
                     }
                 }
 
@@ -3378,19 +3358,13 @@ impl MessageProcessor {
 
                 // Room widget implicitly subscribes to "room" stream
                 WindowContent::Room(_) => {
-                    subscribers
-                        .entry("room".to_string())
-                        .or_default()
-                        .push(window_name.clone());
+                    add(&mut subscribers, "room", window_name);
                 }
 
                 // ActiveEffects implicitly subscribes to multiple streams
                 WindowContent::ActiveEffects(_) => {
                     for stream in &["activespells", "buffs", "debuffs", "cooldowns"] {
-                        subscribers
-                            .entry(stream.to_string())
-                            .or_default()
-                            .push(window_name.clone());
+                        add(&mut subscribers, stream, window_name);
                     }
                 }
 
@@ -3411,20 +3385,23 @@ impl MessageProcessor {
         );
     }
 
-    /// Get subscribers for a stream (returns empty vec if none)
+    /// Get subscribers for a stream (returns empty vec if none).
+    /// Lookup is case-insensitive; map keys are canonical (trimmed, lowercase).
     pub fn get_stream_subscribers(&self, stream: &str) -> &[String] {
+        let trimmed = stream.trim();
+        // Fast path: already-canonical key needs no allocation
+        if let Some(v) = self.text_stream_subscribers.get(trimmed) {
+            return v.as_slice();
+        }
         self.text_stream_subscribers
-            .get(stream)
+            .get(&trimmed.to_ascii_lowercase())
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
     /// Check if a stream has any subscribers
     pub fn stream_has_subscribers(&self, stream: &str) -> bool {
-        self.text_stream_subscribers
-            .get(stream)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
+        !self.get_stream_subscribers(stream).is_empty()
     }
 
     /// Check if a line matches a redirect pattern
@@ -3580,6 +3557,45 @@ mod tests {
             result,
             Some((_window, crate::config::RedirectMode::RedirectOnly, 3))
         ));
+    }
+
+    // ===========================================
+    // Stream subscriber index tests
+    // ===========================================
+
+    #[test]
+    fn test_stream_subscribers_case_insensitive_and_trimmed() {
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        let mut ws = crate::data::window::WindowState::new_text("thoughts", 100);
+        if let WindowContent::Text(ref mut c) = ws.content {
+            // Config may carry stray whitespace and any casing
+            c.streams = vec![" Thoughts ".to_string()];
+        }
+        ui_state.windows.insert("thoughts".to_string(), ws);
+        processor.update_text_stream_subscribers(&ui_state);
+
+        // Lookups match regardless of case/whitespace
+        assert_eq!(processor.get_stream_subscribers("thoughts").len(), 1);
+        assert_eq!(processor.get_stream_subscribers("THOUGHTS").len(), 1);
+        assert_eq!(processor.get_stream_subscribers(" Thoughts ").len(), 1);
+        assert!(processor.stream_has_subscribers("tHoUgHtS"));
+        assert!(!processor.stream_has_subscribers("speech"));
+    }
+
+    #[test]
+    fn test_stream_subscribers_dedupe_window() {
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        let mut ws = crate::data::window::WindowState::new_text("combat", 100);
+        if let WindowContent::Text(ref mut c) = ws.content {
+            // Duplicate stream entries must not double-deliver lines
+            c.streams = vec!["combat".to_string(), "Combat".to_string()];
+        }
+        ui_state.windows.insert("combat".to_string(), ws);
+        processor.update_text_stream_subscribers(&ui_state);
+
+        assert_eq!(processor.get_stream_subscribers("combat").len(), 1);
     }
 
     #[test]

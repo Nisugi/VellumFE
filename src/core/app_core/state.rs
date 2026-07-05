@@ -1414,6 +1414,9 @@ impl AppCore {
         let changed = tabbed_content.update_tabs(new_tabs, data.buffer_size);
         if changed {
             tracing::info!("Updated tabs for window '{}'", window_name);
+            // Tab streams changed - keep the routing index in sync
+            self.message_processor
+                .update_text_stream_subscribers(&self.ui_state);
         }
         changed
     }
