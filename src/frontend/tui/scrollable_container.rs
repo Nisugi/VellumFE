@@ -47,7 +47,7 @@ pub struct ScrollableContainer {
     show_values: bool,
     show_percentage: bool,
     /// Highlight engine for pattern matching and styling
-    highlight_engine: super::highlight_utils::HighlightEngine,
+    highlight_engine: crate::core::CoreHighlightEngine,
 }
 
 impl ScrollableContainer {
@@ -71,7 +71,7 @@ impl ScrollableContainer {
             background_color: None,
             show_values: false,
             show_percentage: false,
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
+            highlight_engine: crate::core::CoreHighlightEngine::empty(),
         }
     }
 

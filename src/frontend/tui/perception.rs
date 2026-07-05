@@ -22,7 +22,7 @@ pub struct PerceptionWindow {
     entries: Vec<PerceptionEntry>,
     scroll_offset: usize,
     /// Highlight engine for pattern matching and styling
-    highlight_engine: super::highlight_utils::HighlightEngine,
+    highlight_engine: crate::core::CoreHighlightEngine,
     /// Cached compiled text replacements (compiled once, used many times)
     compiled_replacements: Vec<CompiledTextReplacement>,
     /// Hash of the source replacements to detect changes
@@ -40,7 +40,7 @@ impl PerceptionWindow {
             background_color: None,
             entries: Vec::new(),
             scroll_offset: 0,
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
+            highlight_engine: crate::core::CoreHighlightEngine::empty(),
             compiled_replacements: Vec::new(),
             replacements_hash: 0,
         }

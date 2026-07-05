@@ -80,9 +80,42 @@ pub struct CoreHighlightEngine {
     fast_matcher: Option<AhoCorasick>,
     fast_pattern_map: Vec<usize>,
     replace_enabled: bool,
+    /// Hash of the highlights for change detection (see update_if_changed)
+    highlights_hash: u64,
 }
 
 impl CoreHighlightEngine {
+    /// Compute a hash of highlight patterns for change detection
+    pub fn compute_hash(highlights: &[HighlightPattern]) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        for h in highlights {
+            h.pattern.hash(&mut hasher);
+            h.fg.hash(&mut hasher);
+            h.bg.hash(&mut hasher);
+            h.bold.hash(&mut hasher);
+            h.fast_parse.hash(&mut hasher);
+            h.color_entire_line.hash(&mut hasher);
+            h.replace.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Rebuild the engine only if the patterns changed (hash comparison).
+    /// Returns true if the engine was rebuilt. `replace_enabled` survives
+    /// the rebuild.
+    pub fn update_if_changed(&mut self, highlights: Vec<HighlightPattern>) -> bool {
+        if Self::compute_hash(&highlights) == self.highlights_hash {
+            return false;
+        }
+        let replace_enabled = self.replace_enabled;
+        *self = Self::new(highlights);
+        self.replace_enabled = replace_enabled;
+        true
+    }
+
     /// Create a new highlight engine from a list of patterns
     ///
     /// This compiles regexes and builds the Aho-Corasick automaton for fast matching.
@@ -128,12 +161,14 @@ impl CoreHighlightEngine {
             (None, Vec::new())
         };
 
+        let highlights_hash = Self::compute_hash(&highlights);
         Self {
             highlights,
             highlight_regexes,
             fast_matcher,
             fast_pattern_map,
             replace_enabled: true,
+            highlights_hash,
         }
     }
 
@@ -145,6 +180,7 @@ impl CoreHighlightEngine {
             fast_matcher: None,
             fast_pattern_map: Vec::new(),
             replace_enabled: true,
+            highlights_hash: Self::compute_hash(&[]),
         }
     }
 
@@ -167,14 +203,39 @@ impl CoreHighlightEngine {
         segments: &[TextSegment],
         stream: &str,
     ) -> HighlightResult {
-        // Skip if no highlights or empty input
-        if self.highlights.is_empty() || segments.is_empty() {
-            return HighlightResult {
+        self.apply_highlights_impl(segments, stream)
+            .unwrap_or_else(|| HighlightResult {
                 segments: segments.to_vec(),
                 sounds: Vec::new(),
                 deferred_replacements: Vec::new(),
                 line_is_silent: false,
-            };
+            })
+    }
+
+    /// Segment-only variant for frontend widgets: returns `None` when the
+    /// line is untouched (callers keep their original segments, no clone).
+    /// Sounds, deferred replacements, and silent-prompt state are handled by
+    /// the message pipeline, not here - widget lines already passed through
+    /// it, so acting on them again would double-fire.
+    pub fn apply_highlights_to_segments(
+        &self,
+        segments: &[TextSegment],
+        stream: &str,
+    ) -> Option<Vec<TextSegment>> {
+        self.apply_highlights_impl(segments, stream)
+            .map(|result| result.segments)
+    }
+
+    /// Shared implementation; `None` means "nothing matched, line unchanged"
+    /// so callers can skip cloning the input.
+    fn apply_highlights_impl(
+        &self,
+        segments: &[TextSegment],
+        stream: &str,
+    ) -> Option<HighlightResult> {
+        // Skip if no highlights or empty input
+        if self.highlights.is_empty() || segments.is_empty() {
+            return None;
         }
 
         // Skip highlight transforms for pure system lines
@@ -182,24 +243,14 @@ impl CoreHighlightEngine {
             .iter()
             .all(|seg| matches!(seg.span_type, SpanType::System))
         {
-            return HighlightResult {
-                segments: segments.to_vec(),
-                sounds: Vec::new(),
-                deferred_replacements: Vec::new(),
-                line_is_silent: false,
-            };
+            return None;
         }
 
         // STEP 2: Build full text for pattern matching
         let mut full_text: String = segments.iter().map(|s| s.text.as_str()).collect();
 
         if full_text.is_empty() {
-            return HighlightResult {
-                segments: segments.to_vec(),
-                sounds: Vec::new(),
-                deferred_replacements: Vec::new(),
-                line_is_silent: false,
-            };
+            return None;
         }
 
         // STEP 3: Find all highlight matches
@@ -340,16 +391,12 @@ impl CoreHighlightEngine {
             }
         }
 
-        // Most lines match nothing: return them untouched before paying for
-        // the per-character style/link explode below. Sounds are only pushed
-        // alongside a match, so they cannot be lost here.
+        // Most lines match nothing: bail before paying for the per-character
+        // style/link explode below. Sounds are only pushed alongside a match,
+        // so they cannot be lost here.
         if matches.is_empty() {
-            return HighlightResult {
-                segments: segments.to_vec(),
-                sounds,
-                deferred_replacements: Vec::new(),
-                line_is_silent: false,
-            };
+            debug_assert!(sounds.is_empty());
+            return None;
         }
 
         // STEP 4: Build character-by-character style and link maps, then
@@ -595,12 +642,12 @@ impl CoreHighlightEngine {
             });
         }
 
-        HighlightResult {
+        Some(HighlightResult {
             segments: result_segments,
             sounds,
             deferred_replacements,
             line_is_silent,
-        }
+        })
     }
 
     /// Get the foreground color of the first matching highlight pattern for the given text.

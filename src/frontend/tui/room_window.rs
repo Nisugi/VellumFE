@@ -56,7 +56,7 @@ pub struct RoomWindow {
     inner_height: usize,
 
     /// Highlight engine for pattern matching and styling
-    highlight_engine: super::highlight_utils::HighlightEngine,
+    highlight_engine: crate::core::CoreHighlightEngine,
 }
 
 impl RoomWindow {
@@ -88,7 +88,7 @@ impl RoomWindow {
             scroll_offset: 0,
             inner_width: 80,
             inner_height: 20,
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
+            highlight_engine: crate::core::CoreHighlightEngine::empty(),
         }
     }
 

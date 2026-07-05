@@ -41,7 +41,7 @@ pub struct ListWidget {
     default_text_color: Option<Color>,
 
     /// Highlight patterns
-    highlight_engine: super::highlight_utils::HighlightEngine,
+    highlight_engine: crate::core::CoreHighlightEngine,
     replace_enabled: bool,
 
     /// Click tracking (maintains last N links for coordinate matching)
@@ -71,7 +71,7 @@ impl ListWidget {
             background_color: None,
             transparent_background: false,
             default_text_color: None,
-            highlight_engine: super::highlight_utils::HighlightEngine::new(Vec::new()),
+            highlight_engine: crate::core::CoreHighlightEngine::empty(),
             replace_enabled: false,
             recent_links: VecDeque::new(),
             max_recent_links: 100,
