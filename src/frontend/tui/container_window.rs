@@ -527,6 +527,7 @@ mod tests {
         let container = ContainerData {
             id: "1".to_string(),
             title: "Bag".to_string(),
+            title_lower: "bag".to_string(),
             items: vec![],
             generation: 0,
         };
@@ -542,6 +543,7 @@ mod tests {
         let container = ContainerData {
             id: "2".to_string(),
             title: "My Bag".to_string(),
+            title_lower: "my bag".to_string(),
             items: vec!["an item".to_string()],
             generation: 1,
         };
@@ -557,6 +559,7 @@ mod tests {
         let container = ContainerData {
             id: "3".to_string(),
             title: "Container Title".to_string(),
+            title_lower: "container title".to_string(),
             items: vec![],
             generation: 1,
         };

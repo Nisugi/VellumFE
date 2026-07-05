@@ -342,6 +342,8 @@ pub struct ContainerData {
     pub id: String,
     /// Container title (e.g., "Bandolier")
     pub title: String,
+    /// Lowercased title, precomputed so title lookups don't allocate per call
+    pub title_lower: String,
     /// Items in the container (raw content lines with links preserved)
     pub items: Vec<String>,
     /// Generation counter for change detection
@@ -585,6 +587,7 @@ impl ContainerCache {
         if let Some(entry) = self.containers.get_mut(&id) {
             // Update title if it changed
             if entry.title != title {
+                entry.title_lower = title.to_lowercase();
                 entry.title = title;
                 entry.generation += 1;
             }
@@ -595,6 +598,7 @@ impl ContainerCache {
                 id.clone(),
                 ContainerData {
                     id,
+                    title_lower: title.to_lowercase(),
                     title,
                     items: Vec::new(),
                     generation: 0,
@@ -635,6 +639,7 @@ impl ContainerCache {
             let container = ContainerData {
                 id: container_id.to_string(),
                 title: String::new(),
+                title_lower: String::new(),
                 items: vec![content],
                 generation: 1,
             };
@@ -658,13 +663,13 @@ impl ContainerCache {
         let title_lower = title.to_lowercase();
         // First try exact match (case-insensitive)
         for container in self.containers.values() {
-            if container.title.to_lowercase() == title_lower {
+            if container.title_lower == title_lower {
                 return Some(container);
             }
         }
         // Then try partial match
         for container in self.containers.values() {
-            if container.title.to_lowercase().contains(&title_lower) {
+            if container.title_lower.contains(&title_lower) {
                 return Some(container);
             }
         }
@@ -674,7 +679,7 @@ impl ContainerCache {
     /// Get all known containers sorted by title
     pub fn list_containers(&self) -> Vec<&ContainerData> {
         let mut containers: Vec<_> = self.containers.values().collect();
-        containers.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        containers.sort_by(|a, b| a.title_lower.cmp(&b.title_lower));
         containers
     }
 }
@@ -845,6 +850,20 @@ mod tests {
         assert_eq!(cache.containers.len(), MAX_CONTAINERS);
         assert!(cache.get("id0").is_none());
         assert!(cache.get("overflow").is_some());
+    }
+
+    #[test]
+    fn test_container_cache_find_by_title_mixed_case() {
+        let mut cache = ContainerCache::default();
+        cache.register_container("c1".to_string(), "Sturdy Bandolier".to_string());
+        // Exact match, different case
+        assert_eq!(cache.find_by_title("sturdy bandolier").unwrap().id, "c1");
+        // Partial match, different case
+        assert_eq!(cache.find_by_title("BANDO").unwrap().id, "c1");
+        // Title update keeps the lowercase copy in sync
+        cache.register_container("c1".to_string(), "Leather Satchel".to_string());
+        assert!(cache.find_by_title("bandolier").is_none());
+        assert_eq!(cache.find_by_title("SATCHEL").unwrap().id, "c1");
     }
 
     #[test]
