@@ -148,7 +148,9 @@ impl AppCore {
         let layout = Layout::load(config.character.as_deref())?;
 
         // Load command list
-        let cmdlist = CmdList::load().ok();
+        let cmdlist = CmdList::load()
+            .inspect_err(|e| tracing::warn!("Failed to load command list: {}", e))
+            .ok();
 
         // Load saved dialog positions from widget_state.toml
         let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
@@ -178,7 +180,14 @@ impl AppCore {
             config.sound.enabled,
             config.sound.volume,
             config.sound.cooldown_ms,
-        ).ok();
+        )
+        .inspect_err(|e| {
+            // Err is the normal path when sound is disabled - only warn if enabled
+            if config.sound.enabled {
+                tracing::warn!("Failed to initialize sound player: {}", e);
+            }
+        })
+        .ok();
         if sound_player.is_some() {
             tracing::debug!("Sound player initialized");
             // Ensure sounds directory exists
