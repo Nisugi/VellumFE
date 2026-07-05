@@ -98,8 +98,8 @@ impl AppCore {
                 let mut terminal_too_small = false;
                 for window_def in &new_layout.windows {
                     let base = window_def.base();
-                    let required_width = base.col + base.cols;
-                    let required_height = base.row + base.rows;
+                    let required_width = base.col.saturating_add(base.cols);
+                    let required_height = base.row.saturating_add(base.rows);
                     if terminal_width < required_width || terminal_height < required_height {
                         terminal_too_small = true;
                         tracing::error!(
