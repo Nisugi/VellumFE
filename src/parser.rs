@@ -409,7 +409,7 @@ impl XmlParser {
 
         let mut elements = Vec::new();
         let mut text_buffer = String::new();
-        let mut remaining = line.as_str();
+        let mut remaining: &str = &line;
 
         while !remaining.is_empty() {
             // Check for paired tags first (manually check for each type)
@@ -2301,16 +2301,13 @@ impl XmlParser {
     ///
     /// Returns true for lines like "GSjBCDFGH" (compass) that are GSL control messages
     fn is_gsl_tag_line(line: &str) -> bool {
-        // Pattern: "GS" followed by a lowercase letter
-        if line.starts_with("GS") && line.len() >= 3 {
-            let third_char = line.chars().nth(2).unwrap_or(' ');
-            return third_char.is_ascii_lowercase();
-        }
-        // Also check for lines starting with \x1C (control char prefix)
-        if line.starts_with('\x1C') {
+        // Pattern: "GS" followed by a lowercase letter (byte peek - the
+        // prefix is ASCII, so as_bytes indexing is safe and allocation-free)
+        if line.starts_with("GS") && line.len() >= 3 && line.as_bytes()[2].is_ascii_lowercase() {
             return true;
         }
-        false
+        // Also check for lines starting with \x1C (control char prefix)
+        line.starts_with('\x1C')
     }
 
     /// Strip GSL (GemStone Language) protocol tags sent by Lich proxy
@@ -2324,44 +2321,22 @@ impl XmlParser {
     /// - "GSg0000000050" = stance value
     /// - "GSP..." = prompt indicators
     /// - "\x1CGSB..." = character info with control char prefix
-    fn strip_gsl_tags(line: &str) -> String {
+    fn strip_gsl_tags(line: &str) -> std::borrow::Cow<'_, str> {
         // Handle lines that are purely GSL tags (no leading \x1C in logs)
         // Pattern: "GS" followed by a lowercase letter, then optional data
-        if line.starts_with("GS") && line.len() >= 3 {
-            let third_char = line.chars().nth(2).unwrap_or(' ');
-            if third_char.is_ascii_lowercase() {
-                // This is a GSL tag line - filter it out entirely
-                tracing::debug!("[GSL] Filtering GSL tag: '{}'", line);
-                return String::new();
-            }
+        if line.starts_with("GS") && line.len() >= 3 && line.as_bytes()[2].is_ascii_lowercase() {
+            // This is a GSL tag line - filter it out entirely
+            tracing::debug!("[GSL] Filtering GSL tag: '{}'", line);
+            return std::borrow::Cow::Borrowed("");
         }
 
-        // Handle embedded GSL tags with \x1C prefix
-        // Strip anything from \x1C to end of line or next \x1C
-        let mut result = String::with_capacity(line.len());
-        let mut chars = line.chars().peekable();
-        let mut in_gsl_tag = false;
-
-        while let Some(ch) = chars.next() {
-            if ch == '\x1C' {
-                // Start of GSL sequence - skip until end of tag
-                in_gsl_tag = true;
-                // Skip the "GS" + letter + data until we hit another control char or normal text
-                // GSL tags typically end at newline, but we process line by line
-                continue;
-            }
-
-            if in_gsl_tag {
-                // We're in a GSL tag - check if this looks like normal text again
-                // GSL tags are typically fixed format or end at specific delimiters
-                // For safety, just skip the rest of the line after \x1C
-                continue;
-            }
-
-            result.push(ch);
+        // Handle embedded GSL tags with \x1C prefix: everything from the
+        // first \x1C to end of line is GSL data (processed line by line).
+        // The overwhelmingly common case is no \x1C at all - borrow as-is.
+        match line.find('\x1C') {
+            None => std::borrow::Cow::Borrowed(line),
+            Some(pos) => std::borrow::Cow::Borrowed(&line[..pos]),
         }
-
-        result
     }
 
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
