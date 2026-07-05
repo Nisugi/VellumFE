@@ -190,22 +190,10 @@ impl CoreHighlightEngine {
             };
         }
 
-        // STEP 1: Build character-by-character style and link maps
-        let mut char_styles: Vec<CharStyle> = Vec::new();
-        let mut char_links: Vec<Option<LinkData>> = Vec::new();
-        for segment in segments {
-            for _ in segment.text.chars() {
-                char_styles.push(CharStyle {
-                    fg: segment.fg.clone(),
-                    bg: segment.bg.clone(),
-                    bold: segment.bold,
-                    span_type: segment.span_type,
-                });
-                char_links.push(segment.link_data.clone());
-            }
-        }
+        // STEP 2: Build full text for pattern matching
+        let mut full_text: String = segments.iter().map(|s| s.text.as_str()).collect();
 
-        if char_styles.is_empty() {
+        if full_text.is_empty() {
             return HighlightResult {
                 segments: segments.to_vec(),
                 sounds: Vec::new(),
@@ -213,9 +201,6 @@ impl CoreHighlightEngine {
                 line_is_silent: false,
             };
         }
-
-        // STEP 2: Build full text for pattern matching
-        let mut full_text: String = segments.iter().map(|s| s.text.as_str()).collect();
 
         // STEP 3: Find all highlight matches
         let mut matches: Vec<MatchInfo> = Vec::new();
@@ -355,7 +340,34 @@ impl CoreHighlightEngine {
             }
         }
 
-        // STEP 4: Process matches and build replacement text
+        // Most lines match nothing: return them untouched before paying for
+        // the per-character style/link explode below. Sounds are only pushed
+        // alongside a match, so they cannot be lost here.
+        if matches.is_empty() {
+            return HighlightResult {
+                segments: segments.to_vec(),
+                sounds,
+                deferred_replacements: Vec::new(),
+                line_is_silent: false,
+            };
+        }
+
+        // STEP 4: Build character-by-character style and link maps, then
+        // process matches and build replacement text.
+        let mut char_styles: Vec<CharStyle> = Vec::new();
+        let mut char_links: Vec<Option<LinkData>> = Vec::new();
+        for segment in segments {
+            for _ in segment.text.chars() {
+                char_styles.push(CharStyle {
+                    fg: segment.fg.clone(),
+                    bg: segment.bg.clone(),
+                    bold: segment.bold,
+                    span_type: segment.span_type,
+                });
+                char_links.push(segment.link_data.clone());
+            }
+        }
+
         let mut deferred_replacements: Vec<DeferredReplacement> = Vec::new();
         let mut line_is_silent = false;
 

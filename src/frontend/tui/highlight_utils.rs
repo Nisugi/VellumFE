@@ -167,30 +167,15 @@ impl HighlightEngine {
             return None;
         }
 
-        // STEP 1: Build character-by-character style and link maps from current spans
-        let mut char_styles: Vec<CharStyle> = Vec::new();
-        let mut char_links: Vec<Option<LinkData>> = Vec::new();
-        for (content, style, span_type, link) in spans {
-            for _ in content.chars() {
-                char_styles.push(CharStyle {
-                    fg: style.fg,
-                    bg: style.bg,
-                    bold: style.add_modifier.contains(Modifier::BOLD),
-                    span_type: *span_type,
-                });
-                char_links.push(link.clone());
-            }
-        }
-
-        if char_styles.is_empty() {
-            return None;
-        }
-
         // STEP 2: Build full text for pattern matching
         let mut full_text: String = spans
             .iter()
             .map(|(content, _, _, _)| content.as_str())
             .collect();
+
+        if full_text.is_empty() {
+            return None;
+        }
 
         // STEP 3: Find all highlight matches (both Aho-Corasick and regex)
         let mut matches: Vec<MatchInfo> = Vec::new();
@@ -302,7 +287,28 @@ impl HighlightEngine {
             }
         }
 
-        // STEP 4: Process matches and build replacement text
+        // Most lines match nothing: callers treat None as "keep the original
+        // spans", so return before paying for the per-character explode below.
+        if matches.is_empty() {
+            return None;
+        }
+
+        // STEP 4: Build character-by-character style and link maps, then
+        // process matches and build replacement text.
+        let mut char_styles: Vec<CharStyle> = Vec::new();
+        let mut char_links: Vec<Option<LinkData>> = Vec::new();
+        for (content, style, span_type, link) in spans {
+            for _ in content.chars() {
+                char_styles.push(CharStyle {
+                    fg: style.fg,
+                    bg: style.bg,
+                    bold: style.add_modifier.contains(Modifier::BOLD),
+                    span_type: *span_type,
+                });
+                char_links.push(link.clone());
+            }
+        }
+
         if !matches.is_empty() {
             // Map byte offsets to char indices
             let mut byte_to_char: HashMap<usize, usize> = HashMap::new();
