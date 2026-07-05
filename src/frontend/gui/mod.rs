@@ -36,18 +36,24 @@ use anyhow::Result;
 /// GUI application launcher.
 pub struct EguiApp {
     app_core: AppCore,
+    direct: Option<crate::network::DirectConnectConfig>,
     login_key: Option<String>,
 }
 
 impl EguiApp {
-    pub fn new(app_core: AppCore, login_key: Option<String>) -> Self {
+    pub fn new(
+        app_core: AppCore,
+        direct: Option<crate::network::DirectConnectConfig>,
+        login_key: Option<String>,
+    ) -> Self {
         Self {
             app_core,
+            direct,
             login_key,
         }
     }
 
     pub fn run(self) -> Result<()> {
-        app::run_native_gui(self.app_core, self.login_key)
+        app::run_native_gui(self.app_core, self.direct, self.login_key)
     }
 }

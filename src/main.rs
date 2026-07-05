@@ -20,7 +20,7 @@ mod theme;
 mod tts;
 mod window_position;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser as ClapParser, Subcommand};
 use std::path::PathBuf;
 
@@ -203,10 +203,6 @@ fn main() -> Result<()> {
 
     // Parse CLI arguments
     let cli = Cli::parse();
-
-    if cli.direct && matches!(cli.frontend, FrontendType::Gui) {
-        bail!("Direct mode is currently only supported with the TUI frontend");
-    }
 
     // Handle subcommands
     if let Some(command) = cli.command {
@@ -412,14 +408,18 @@ fn main() -> Result<()> {
         FrontendType::Tui => {
             frontend::tui::run(config, character, direct_config, setup_palette, login_key)?
         }
-        FrontendType::Gui => run_gui(config, login_key)?,
+        FrontendType::Gui => run_gui(config, direct_config, login_key)?,
     }
 
     Ok(())
 }
 
 /// Run GUI frontend
-fn run_gui(config: config::Config, login_key: Option<String>) -> Result<()> {
+fn run_gui(
+    config: config::Config,
+    direct: Option<network::DirectConnectConfig>,
+    login_key: Option<String>,
+) -> Result<()> {
     use core::AppCore;
     use frontend::EguiApp;
 
@@ -427,7 +427,7 @@ fn run_gui(config: config::Config, login_key: Option<String>) -> Result<()> {
     let app_core = AppCore::new(config)?;
 
     // Create and run GUI
-    let app = EguiApp::new(app_core, login_key);
+    let app = EguiApp::new(app_core, direct, login_key);
     app.run()?;
 
     Ok(())

@@ -294,6 +294,7 @@ pub struct VellumGuiApp {
 impl VellumGuiApp {
     pub fn new(
         mut app_core: AppCore,
+        direct: Option<crate::network::DirectConnectConfig>,
         login_key: Option<String>,
         initial_width: f32,
         initial_height: f32,
@@ -319,14 +320,24 @@ impl VellumGuiApp {
             }
         };
 
-        let network_handle = runtime.spawn(async move {
-            if let Err(err) =
-                LichConnection::start(&host, port, login_key, server_tx, command_rx, raw_logger)
-                    .await
-            {
-                tracing::error!("GUI network connection error: {}", err);
-            }
-        });
+        let network_handle = match direct {
+            Some(cfg) => runtime.spawn(async move {
+                if let Err(err) =
+                    crate::network::DirectConnection::start(cfg, server_tx, command_rx, raw_logger)
+                        .await
+                {
+                    tracing::error!("GUI network connection error: {}", err);
+                }
+            }),
+            None => runtime.spawn(async move {
+                if let Err(err) =
+                    LichConnection::start(&host, port, login_key, server_tx, command_rx, raw_logger)
+                        .await
+                {
+                    tracing::error!("GUI network connection error: {}", err);
+                }
+            }),
+        };
 
         let (layout_profile, layout_character) = Self::resolve_layout_ids(&app_core.config);
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
@@ -1502,6 +1513,18 @@ impl VellumGuiApp {
                 }
             }
         }
+
+        // Play sounds queued by highlight processing.
+        for sound in self.app_core.game_state.drain_sound_queue() {
+            if let Some(ref player) = self.app_core.sound_player {
+                if let Err(err) = player.play_from_sounds_dir(&sound.file, sound.volume) {
+                    tracing::warn!("Failed to play sound '{}': {}", sound.file, err);
+                }
+            }
+        }
+
+        // Poll TTS callback events for auto-play.
+        self.app_core.poll_tts_events();
     }
 
     fn handle_global_input(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -3378,8 +3401,22 @@ impl Drop for VellumGuiApp {
     }
 }
 
-pub fn run_native_gui(app_core: AppCore, login_key: Option<String>) -> Result<()> {
-    let viewport = ViewportBuilder::default().with_inner_size([1200.0, 800.0]);
+pub fn run_native_gui(
+    app_core: AppCore,
+    direct: Option<crate::network::DirectConnectConfig>,
+    login_key: Option<String>,
+) -> Result<()> {
+    let window_title = app_core
+        .config
+        .connection
+        .character
+        .as_deref()
+        .or(app_core.config.character.as_deref())
+        .map(|character| format!("VellumFE - {}", character))
+        .unwrap_or_else(|| "VellumFE".to_string());
+    let viewport = ViewportBuilder::default()
+        .with_inner_size([1200.0, 800.0])
+        .with_title(window_title.clone());
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -3387,13 +3424,14 @@ pub fn run_native_gui(app_core: AppCore, login_key: Option<String>) -> Result<()
 
     let app = VellumGuiApp::new(
         app_core,
+        direct,
         login_key,
         INITIAL_LAYOUT_WIDTH as f32,
         INITIAL_LAYOUT_HEIGHT as f32,
     )?;
 
     eframe::run_native(
-        "VellumFE GUI",
+        &window_title,
         options,
         Box::new(move |_cc| Ok(Box::new(app))),
     )
