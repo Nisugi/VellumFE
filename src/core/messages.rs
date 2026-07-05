@@ -1817,10 +1817,12 @@ impl MessageProcessor {
                                             let after_bold = &remaining[bold_end + 4..];
                                             let status = if after_bold.trim_start().starts_with('(') {
                                                 // Extract text between ( and )
-                                                let after_paren = &after_bold[after_bold.find('(').unwrap() + 1..];
-                                                after_paren
-                                                    .find(')')
-                                                    .map(|end| after_paren[..end].to_string())
+                                                after_bold.find('(').and_then(|start| {
+                                                    let after_paren = &after_bold[start + 1..];
+                                                    after_paren
+                                                        .find(')')
+                                                        .map(|end| after_paren[..end].to_string())
+                                                })
                                             } else {
                                                 None
                                             };
