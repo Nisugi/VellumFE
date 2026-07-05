@@ -1,4 +1,6 @@
-use super::persistence::{load_layout, save_layout, FontRef, GuiLayoutFileV1, ViewportState};
+use super::persistence::{
+    load_layout, save_layout, CopyBehavior, FontRef, GuiLayoutFileV1, ViewportState,
+};
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
@@ -22,12 +24,14 @@ mod dialogs;
 mod dock;
 mod editors;
 mod menus;
+mod styled_copy;
 mod theme;
 mod widgets;
 mod zones;
 
 use dock::{DockStateSnapshot, MainWindowRectSnapshot};
 use menus::GuiWindowMenuRequest;
+use styled_copy::{StyledCopyPlugin, StyledCopyShared};
 use zones::{
     GuiShellZone, GuiZoneDragState, GuiZoneWindowRect, ShellLayoutSnapshot, TabZoneSnapshot,
 };
@@ -124,6 +128,8 @@ pub struct VellumGuiApp {
     applied_theme_id: Option<String>,
     current_theme: crate::theme::AppTheme,
     ui_font: FontRef,
+    copy_behavior: CopyBehavior,
+    styled_copy_shared: std::sync::Arc<std::sync::Mutex<StyledCopyShared>>,
     fonts_applied: bool,
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
@@ -230,6 +236,10 @@ impl VellumGuiApp {
             .as_ref()
             .map(|layout| layout.ui_font.clone())
             .unwrap_or_default();
+        let copy_behavior = persisted_layout
+            .as_ref()
+            .map(|layout| layout.copy_behavior.clone())
+            .unwrap_or_default();
 
         let available_tabs = Self::collect_available_tabs(&app_core);
         let mut hidden_tabs: HashSet<TabKey> = persisted_layout
@@ -331,6 +341,10 @@ impl VellumGuiApp {
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
             ui_font,
+            copy_behavior,
+            styled_copy_shared: std::sync::Arc::new(std::sync::Mutex::new(
+                StyledCopyShared::default(),
+            )),
             fonts_applied: false,
             settings_editor: None,
             highlight_editor: None,
@@ -633,6 +647,7 @@ impl VellumGuiApp {
         hidden_tabs.sort_by_key(|key| key.short_id());
         layout.hidden_tabs = hidden_tabs;
         layout.ui_font = self.ui_font.clone();
+        layout.copy_behavior = self.copy_behavior.clone();
 
         let snapshot = DockStateSnapshot {
             visible_tabs: self.current_main_surface_tab_keys(),
@@ -1147,6 +1162,7 @@ impl VellumGuiApp {
     /// Give the server-message forwarder a context so incoming game text
     /// wakes the event loop immediately.
     fn set_repaint_context(&self, ctx: egui::Context) {
+        ctx.add_plugin(StyledCopyPlugin::new(self.styled_copy_shared.clone()));
         if let Ok(mut slot) = self.repaint_ctx.lock() {
             *slot = Some(ctx);
         }
@@ -2133,6 +2149,7 @@ impl eframe::App for VellumGuiApp {
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);
         self.render_search_bar(&ctx);
+        self.arm_styled_copy(&ctx);
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.

@@ -186,6 +186,10 @@ pub struct GuiLayoutFileV1 {
     #[serde(default)]
     pub ui_font: FontRef,
 
+    /// How Ctrl+C copies text-window selections to the clipboard.
+    #[serde(default)]
+    pub copy_behavior: CopyBehavior,
+
     /// Detached viewport state keyed by viewport ID string
     #[serde(default)]
     pub detached_viewports: HashMap<String, ViewportState>,
@@ -203,6 +207,7 @@ impl GuiLayoutFileV1 {
             hidden_tabs: Vec::new(),
             tab_settings: Vec::new(),
             ui_font: FontRef::default(),
+            copy_behavior: CopyBehavior::default(),
             detached_viewports: HashMap::new(),
         }
     }
