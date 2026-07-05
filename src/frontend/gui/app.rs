@@ -136,6 +136,9 @@ pub struct VellumGuiApp {
     search_bar_needs_focus: bool,
     /// Cached search-bar match count: (lowercased query, content fingerprint, count).
     search_match_cache: Option<(String, u64, usize)>,
+    /// Fingerprint of the window set backing `available_tabs`; refresh is
+    /// skipped while it is unchanged.
+    available_tabs_fingerprint: Option<u64>,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
@@ -344,6 +347,7 @@ impl VellumGuiApp {
             window_editor: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
+            available_tabs_fingerprint: None,
             command_input_id: None,
             repaint_ctx,
             layout_save_tx: Some(layout_save_tx),
@@ -470,7 +474,30 @@ impl VellumGuiApp {
         })
     }
 
+    /// Order-independent hash of everything tab identity derives from:
+    /// window key, display title, widget type, and main-stream status.
+    /// Allocation-free, so the per-frame no-change path stays cheap.
+    fn available_tabs_fingerprint(app_core: &AppCore) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut acc = 0u64;
+        for (name, window) in &app_core.ui_state.windows {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut hasher);
+            window.name.hash(&mut hasher);
+            std::mem::discriminant(&window.widget_type).hash(&mut hasher);
+            Self::is_main_stream_window(name, window).hash(&mut hasher);
+            acc = acc.wrapping_add(hasher.finish());
+        }
+        acc
+    }
+
     fn refresh_available_tabs_if_needed(&mut self) {
+        let fingerprint = Self::available_tabs_fingerprint(&self.app_core);
+        if self.available_tabs_fingerprint == Some(fingerprint) {
+            return;
+        }
+        self.available_tabs_fingerprint = Some(fingerprint);
+
         let refreshed = Self::collect_available_tabs(&self.app_core);
         if refreshed.len() == self.available_tabs.len()
             && refreshed.iter().all(|(key, refreshed_tab)| {
