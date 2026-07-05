@@ -545,6 +545,100 @@ impl VellumGuiApp {
             });
     }
 
+    pub(super) fn render_encumbrance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let enc = &app_core.game_state.encumbrance;
+        let value = enc.value.min(100);
+        let fill = match value {
+            0..=33 => Color32::from_rgb(0x55, 0xb8, 0x6c),
+            34..=66 => Color32::from_rgb(0xff, 0x88, 0x00),
+            _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+        };
+        let text = if enc.text.is_empty() {
+            format!("Encumbrance: {}%", value)
+        } else {
+            format!("Encumbrance: {}", enc.text)
+        };
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        ui.add_sized(
+            [ui.available_width().max(40.0), bar_height],
+            egui::ProgressBar::new(value as f32 / 100.0)
+                .text(text)
+                .fill(fill),
+        );
+        if !enc.blurb.is_empty() {
+            ui.weak(&enc.blurb);
+        }
+    }
+
+    pub(super) fn render_betrayer_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let betrayer = &app_core.game_state.betrayer;
+        let text = if betrayer.text.is_empty() {
+            format!("Blood Points: {}", betrayer.value)
+        } else {
+            betrayer.text.clone()
+        };
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        ui.add_sized(
+            [ui.available_width().max(40.0), bar_height],
+            egui::ProgressBar::new(betrayer.value.min(100) as f32 / 100.0)
+                .text(text)
+                .fill(Color32::from_rgb(0xcd, 0x4d, 0x4d)),
+        );
+        if !betrayer.items.is_empty() {
+            let max_height = ui.available_height().max(1.0);
+            egui::ScrollArea::vertical()
+                .id_salt("betrayer_scroll")
+                .auto_shrink([false, false])
+                .min_scrolled_height(max_height)
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    for item in &betrayer.items {
+                        ui.label(item);
+                    }
+                });
+        }
+    }
+
+    pub(super) fn render_perception_content(
+        ui: &mut egui::Ui,
+        perception: &crate::data::PerceptionData,
+    ) -> Option<GuiLinkClick> {
+        if perception.entries.is_empty() {
+            ui.weak("Nothing perceived.");
+            return None;
+        }
+
+        let mut clicked_link = None;
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("perception_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for entry in &perception.entries {
+                    if let Some(link_data) = &entry.link_data {
+                        let response = ui
+                            .add(
+                                egui::Label::new(entry.raw_text.as_str())
+                                    .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.clicked() && clicked_link.is_none() {
+                            clicked_link = Some(Self::gui_link_click_from_response(
+                                &response,
+                                ui,
+                                link_data.clone(),
+                            ));
+                        }
+                    } else {
+                        ui.label(entry.raw_text.as_str());
+                    }
+                }
+            });
+        clicked_link
+    }
+
     pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
@@ -943,6 +1037,17 @@ impl VellumGuiApp {
             WindowContent::Experience => {
                 Self::render_dr_experience_content(app_core, ui);
                 None
+            }
+            WindowContent::Encumbrance => {
+                Self::render_encumbrance_content(app_core, ui);
+                None
+            }
+            WindowContent::Betrayer => {
+                Self::render_betrayer_content(app_core, ui);
+                None
+            }
+            WindowContent::Perception(perception) => {
+                Self::render_perception_content(ui, perception)
             }
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
