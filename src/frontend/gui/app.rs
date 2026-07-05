@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod dialogs;
 mod editors;
 mod theme;
 mod widgets;
@@ -3671,6 +3672,7 @@ impl eframe::App for VellumGuiApp {
         self.render_popup_menus(&ctx);
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
+        self.render_server_dialog(&ctx);
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.

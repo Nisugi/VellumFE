@@ -1005,8 +1005,7 @@ impl TuiFrontend {
                     if let Some(index) = dialog::hit_test_button(&layout, *x, *y) {
                         Self::set_dialog_focus(dialog_state, None);
                         dialog_state.selected = index;
-                        let (cmd, should_close) =
-                            Self::activate_dialog_button(dialog_state, index);
+                        let (cmd, should_close) = dialog_state.activate_button(index);
                         command_to_send = cmd;
                         close_dialog = should_close;
                     }
@@ -3631,8 +3630,7 @@ impl TuiFrontend {
                             if let Some(index) = Self::find_dialog_button_index(dialog, &button_id)
                             {
                                 dialog.selected = index;
-                                let (cmd, should_close) =
-                                    Self::activate_dialog_button(dialog, index);
+                                let (cmd, should_close) = dialog.activate_button(index);
                                 command_to_send = cmd;
                                 close_dialog = should_close;
                             }
@@ -3677,8 +3675,7 @@ impl TuiFrontend {
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if !dialog.buttons.is_empty() {
-                            let (cmd, should_close) =
-                                Self::activate_dialog_button(dialog, dialog.selected);
+                            let (cmd, should_close) = dialog.activate_button(dialog.selected);
                             command_to_send = cmd;
                             close_dialog = should_close;
                         }
@@ -3695,18 +3692,6 @@ impl TuiFrontend {
         }
 
         Ok(command_to_send)
-    }
-
-    fn dialog_command_with_placeholders(
-        dialog: &crate::data::DialogState,
-        command: &str,
-    ) -> String {
-        let mut resolved = command.to_string();
-        for field in &dialog.fields {
-            let token = format!("%{}%", field.id);
-            resolved = resolved.replace(&token, &field.value);
-        }
-        resolved
     }
 
     fn find_dialog_button_index(dialog: &crate::data::DialogState, id: &str) -> Option<usize> {
@@ -3767,45 +3752,6 @@ impl TuiFrontend {
         }
     }
 
-    fn activate_dialog_button(
-        dialog: &mut crate::data::DialogState,
-        index: usize,
-    ) -> (Option<String>, bool) {
-        let mut command_to_send: Option<String> = None;
-        let mut close_dialog = false;
-
-        if let Some(button) = dialog.buttons.get(index) {
-            let button_id = button.id.clone();
-            let button_cmd = button.command.clone();
-            let button_autosend = button.autosend;
-            let button_is_radio = button.is_radio;
-            let button_is_close = button.is_close;
-            let button_group = button.group.clone();
-
-            if button_is_close {
-                if !button_cmd.trim().is_empty() {
-                    let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
-                    command_to_send = Some(format!("{}\n", resolved));
-                }
-                close_dialog = true;
-            } else if button_is_radio {
-                for other in dialog.buttons.iter_mut() {
-                    if other.is_radio && other.group == button_group {
-                        other.selected = other.id == button_id;
-                    }
-                }
-                if button_autosend {
-                    let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
-                    command_to_send = Some(format!("{}\n", resolved));
-                }
-            } else {
-                let resolved = Self::dialog_command_with_placeholders(dialog, &button_cmd);
-                command_to_send = Some(format!("{}\n", resolved));
-            }
-        }
-
-        (command_to_send, close_dialog)
-    }
 
     /// Handle Menu mode keyboard navigation (extracted from main.rs Phase 4.2)
     fn handle_menu_mode_keys(

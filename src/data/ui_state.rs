@@ -217,6 +217,58 @@ pub struct DialogState {
     pub save_position: bool,
 }
 
+impl DialogState {
+    /// Substitute `%fieldid%` placeholders in a button command with the
+    /// current field values.
+    pub fn command_with_placeholders(&self, command: &str) -> String {
+        let mut resolved = command.to_string();
+        for field in &self.fields {
+            let token = format!("%{}%", field.id);
+            resolved = resolved.replace(&token, &field.value);
+        }
+        resolved
+    }
+
+    /// Activate a button by index, applying close/radio-group/autosend
+    /// semantics. Returns (command to send, whether to close the dialog).
+    pub fn activate_button(&mut self, index: usize) -> (Option<String>, bool) {
+        let mut command_to_send: Option<String> = None;
+        let mut close_dialog = false;
+
+        if let Some(button) = self.buttons.get(index) {
+            let button_id = button.id.clone();
+            let button_cmd = button.command.clone();
+            let button_autosend = button.autosend;
+            let button_is_radio = button.is_radio;
+            let button_is_close = button.is_close;
+            let button_group = button.group.clone();
+
+            if button_is_close {
+                if !button_cmd.trim().is_empty() {
+                    let resolved = self.command_with_placeholders(&button_cmd);
+                    command_to_send = Some(format!("{}\n", resolved));
+                }
+                close_dialog = true;
+            } else if button_is_radio {
+                for other in self.buttons.iter_mut() {
+                    if other.is_radio && other.group == button_group {
+                        other.selected = other.id == button_id;
+                    }
+                }
+                if button_autosend {
+                    let resolved = self.command_with_placeholders(&button_cmd);
+                    command_to_send = Some(format!("{}\n", resolved));
+                }
+            } else {
+                let resolved = self.command_with_placeholders(&button_cmd);
+                command_to_send = Some(format!("{}\n", resolved));
+            }
+        }
+
+        (command_to_send, close_dialog)
+    }
+}
+
 /// Dialog button definition
 #[derive(Clone, Debug)]
 pub struct DialogButton {
