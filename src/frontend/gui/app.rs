@@ -1447,7 +1447,15 @@ impl VellumGuiApp {
             },
             shell_layout: self.shell_layout.clone(),
         };
-        layout.dock_state_json = serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null);
+        layout.dock_state_json = match serde_json::to_value(snapshot) {
+            Ok(value) => value,
+            Err(err) => {
+                // Persisting a null snapshot would wipe the saved window layout;
+                // keep the existing file instead.
+                tracing::error!("Failed to serialize GUI dock layout; skipping save: {}", err);
+                return;
+            }
+        };
         if let Some(dock_state) = &mut self.dock_state {
             layout.detached_viewports =
                 Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds);
