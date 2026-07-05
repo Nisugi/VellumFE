@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod editors;
 mod theme;
 mod widgets;
 
@@ -284,6 +285,7 @@ pub struct VellumGuiApp {
     current_theme: crate::theme::AppTheme,
     ui_font: FontRef,
     fonts_applied: bool,
+    settings_editor: Option<editors::SettingsEditorState>,
     window_context_menu: Option<GuiWindowMenuRequest>,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
@@ -447,6 +449,7 @@ impl VellumGuiApp {
             current_theme: crate::theme::AppTheme::default(),
             ui_font,
             fonts_applied: false,
+            settings_editor: None,
             window_context_menu: None,
             zone_drag_state: None,
             hand_resize_tab: None,
@@ -1921,6 +1924,10 @@ impl VellumGuiApp {
             self.apply_theme_by_name(&name);
             return true;
         }
+        if action == "action:settings" {
+            self.open_settings_editor();
+            return true;
+        }
         false
     }
 
@@ -3369,6 +3376,7 @@ impl eframe::App for VellumGuiApp {
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
         self.render_injuries_popup(&ctx);
+        self.render_editors(&ctx);
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.
