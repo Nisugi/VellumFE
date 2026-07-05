@@ -519,14 +519,12 @@ impl XmlParser {
 
         // Flush before opening new colors (so old styled text is emitted with old colors)
         if color_opening && !text_buffer.is_empty() {
-            self.flush_text_with_events(text_buffer.clone(), elements);
-            text_buffer.clear();
+            self.flush_text_with_events(std::mem::take(text_buffer), elements);
         }
 
         // Flush before closing colors (so text gets the color before we pop it)
         if color_closing && !text_buffer.is_empty() {
-            self.flush_text_with_events(text_buffer.clone(), elements);
-            text_buffer.clear();
+            self.flush_text_with_events(std::mem::take(text_buffer), elements);
         }
 
         // Parse tag and update state
@@ -541,8 +539,7 @@ impl XmlParser {
         } else if tag.starts_with("<style ") {
             // Flush before style change
             if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
             }
             self.handle_style(tag);
         } else if tag.starts_with("<pushBold") || tag.starts_with("<b>") {
@@ -583,16 +580,14 @@ impl XmlParser {
             // Inline stream tag: <stream id="Spells">content</stream>
             // Flush any buffered text to the current stream before switching
             if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
             }
             // Switch to the inline stream (handled same as pushStream)
             self.handle_push_stream(tag, elements);
         } else if tag == "</stream>" {
             // End of inline stream tag - flush buffer and pop stream
             if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
             }
             elements.push(ParsedElement::StreamPop);
             self.current_stream = "main".to_string();
@@ -607,8 +602,7 @@ impl XmlParser {
                 // Hold onto the current buffer; don't flush to the previous stream.
                 carried_prefix = Some(std::mem::take(text_buffer));
             } else if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
             }
             self.handle_push_stream(tag, elements);
             if let Some(prefix) = carried_prefix {
@@ -616,8 +610,7 @@ impl XmlParser {
             }
         } else if tag.starts_with("<popStream") || tag == "</component>" {
             if !text_buffer.is_empty() {
-                self.flush_text_with_events(text_buffer.clone(), elements);
-                text_buffer.clear();
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
             }
             elements.push(ParsedElement::StreamPop);
             self.current_stream = "main".to_string();
