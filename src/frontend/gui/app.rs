@@ -3300,6 +3300,7 @@ impl eframe::App for VellumGuiApp {
         }
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
+        self.render_injuries_popup(&ctx);
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.

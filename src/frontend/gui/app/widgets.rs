@@ -261,6 +261,77 @@ impl VellumGuiApp {
         );
     }
 
+    /// Body-part glyph grid mirroring the TUI injury doll (col, glyph, part).
+    const INJURY_DOLL_ROWS: &'static [&'static [(usize, &'static str, &'static str)]] = &[
+        &[(0, "\u{2022}", "leftEye"), (4, "\u{2022}", "rightEye")],
+        &[(2, "0", "head"), (6, "nk", "neck")],
+        &[(1, "/", "leftArm"), (2, "|", "chest"), (3, "\\", "rightArm")],
+        &[
+            (0, "o", "leftHand"),
+            (2, "|", "abdomen"),
+            (4, "o", "rightHand"),
+            (6, "bk", "back"),
+        ],
+        &[(1, "/", "leftLeg"), (3, "\\", "rightLeg")],
+        &[(0, "o", "leftLeg"), (4, "o", "rightLeg"), (6, "ns", "nsys")],
+    ];
+
+    /// ProfanityFE injury palette: none, injury 1-3, scar 1-3.
+    pub(super) fn injury_level_color(level: u8) -> Color32 {
+        match level.min(6) {
+            0 => Color32::from_rgb(0x33, 0x33, 0x33),
+            1 => Color32::from_rgb(0xaa, 0x55, 0x00),
+            2 => Color32::from_rgb(0xff, 0x88, 0x00),
+            3 => Color32::from_rgb(0xff, 0x00, 0x00),
+            4 => Color32::from_rgb(0x99, 0x99, 0x99),
+            5 => Color32::from_rgb(0x77, 0x77, 0x77),
+            _ => Color32::from_rgb(0x55, 0x55, 0x55),
+        }
+    }
+
+    pub(super) fn render_injury_doll_grid(
+        ui: &mut egui::Ui,
+        injuries: &HashMap<String, u8>,
+    ) {
+        for row in Self::INJURY_DOLL_ROWS {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let mut col = 0usize;
+                for (start, glyph, part) in row.iter() {
+                    if *start > col {
+                        ui.label(RichText::new(" ".repeat(start - col)).monospace());
+                    }
+                    let level = injuries.get(*part).copied().unwrap_or(0);
+                    ui.label(
+                        RichText::new(*glyph)
+                            .monospace()
+                            .color(Self::injury_level_color(level)),
+                    );
+                    col = start + glyph.chars().count();
+                }
+            });
+        }
+    }
+
+    /// Popup for viewing another player's injuries (server `injuries-*` dialog).
+    pub(super) fn render_injuries_popup(&mut self, ctx: &egui::Context) {
+        let Some(popup) = self.app_core.ui_state.injuries_popup.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(format!("{}'s Injuries", popup.player_name))
+            .id(egui::Id::new("gui_injuries_popup"))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                Self::render_injury_doll_grid(ui, &popup.injuries);
+            });
+        if !open {
+            self.app_core.ui_state.injuries_popup = None;
+        }
+    }
+
     pub(super) fn render_indicator_content(
         ui: &mut egui::Ui,
         label: &str,
@@ -757,6 +828,10 @@ impl VellumGuiApp {
                 Self::render_indicator_content(ui, &tab.id.title, indicator);
                 None
             }
+            WindowContent::InjuryDoll(doll) => {
+                Self::render_injury_doll_grid(ui, &doll.injuries);
+                None
+            }
             _ => {
                 ui.label("Widget rendering for this tab is scheduled for later GUI milestones.");
                 ui.label(format!(
@@ -799,5 +874,27 @@ mod tests {
     fn countdown_remaining_applies_server_offset() {
         // Server clock runs 5s ahead of local time.
         assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100), 5);
+    }
+
+    #[test]
+    fn injury_level_color_distinguishes_injuries_from_scars() {
+        use eframe::egui::Color32;
+        assert_eq!(
+            VellumGuiApp::injury_level_color(0),
+            Color32::from_rgb(0x33, 0x33, 0x33)
+        );
+        assert_eq!(
+            VellumGuiApp::injury_level_color(3),
+            Color32::from_rgb(0xff, 0x00, 0x00)
+        );
+        assert_eq!(
+            VellumGuiApp::injury_level_color(6),
+            Color32::from_rgb(0x55, 0x55, 0x55)
+        );
+        // Out-of-range levels clamp to the deepest scar color.
+        assert_eq!(
+            VellumGuiApp::injury_level_color(9),
+            VellumGuiApp::injury_level_color(6)
+        );
     }
 }
