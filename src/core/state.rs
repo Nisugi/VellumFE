@@ -3,7 +3,7 @@
 //! Tracks the current state of the game session: connection status,
 //! character info, room state, inventory, etc.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use super::highlight_engine::SoundTrigger;
 
@@ -331,6 +331,8 @@ pub struct RoomObject {
 pub struct ContainerCache {
     /// Map of container ID to container data
     pub containers: HashMap<String, ContainerData>,
+    /// Container IDs in insertion order, used for oldest-first eviction
+    insertion_order: VecDeque<String>,
 }
 
 /// Data for a single container
@@ -573,19 +575,43 @@ impl BetrayerState {
     }
 }
 
+/// Maximum number of containers kept in the cache. Network data creates an
+/// entry per unique container ID, so cap growth and evict oldest-first.
+const MAX_CONTAINERS: usize = 1000;
+
 impl ContainerCache {
     /// Register a new container or update its metadata
     pub fn register_container(&mut self, id: String, title: String) {
-        let entry = self.containers.entry(id.clone()).or_insert_with(|| ContainerData {
-            id,
-            title: title.clone(),
-            items: Vec::new(),
-            generation: 0,
-        });
-        // Update title if it changed
-        if entry.title != title {
-            entry.title = title;
-            entry.generation += 1;
+        if let Some(entry) = self.containers.get_mut(&id) {
+            // Update title if it changed
+            if entry.title != title {
+                entry.title = title;
+                entry.generation += 1;
+            }
+        } else {
+            self.evict_if_full();
+            self.insertion_order.push_back(id.clone());
+            self.containers.insert(
+                id.clone(),
+                ContainerData {
+                    id,
+                    title,
+                    items: Vec::new(),
+                    generation: 0,
+                },
+            );
+        }
+    }
+
+    /// Evict oldest containers until below the cap
+    fn evict_if_full(&mut self) {
+        while self.containers.len() >= MAX_CONTAINERS {
+            match self.insertion_order.pop_front() {
+                Some(oldest) => {
+                    self.containers.remove(&oldest);
+                }
+                None => break,
+            }
         }
     }
 
@@ -604,6 +630,8 @@ impl ContainerCache {
             container.generation += 1;
         } else {
             // Container not registered yet - create it with unknown title
+            self.evict_if_full();
+            self.insertion_order.push_back(container_id.to_string());
             let container = ContainerData {
                 id: container_id.to_string(),
                 title: String::new(),
@@ -789,6 +817,47 @@ impl Default for Vitals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ========== ContainerCache tests ==========
+
+    #[test]
+    fn test_container_cache_evicts_oldest_at_cap() {
+        let mut cache = ContainerCache::default();
+        for i in 0..(MAX_CONTAINERS + 10) {
+            cache.register_container(format!("id{}", i), format!("title{}", i));
+        }
+        assert_eq!(cache.containers.len(), MAX_CONTAINERS);
+        // Oldest entries were evicted, newest survive
+        assert!(cache.get("id0").is_none());
+        assert!(cache.get("id9").is_none());
+        assert!(cache.get("id10").is_some());
+        assert!(cache.get(&format!("id{}", MAX_CONTAINERS + 9)).is_some());
+    }
+
+    #[test]
+    fn test_container_cache_add_item_evicts_at_cap() {
+        let mut cache = ContainerCache::default();
+        for i in 0..MAX_CONTAINERS {
+            cache.register_container(format!("id{}", i), String::new());
+        }
+        // add_item to an unregistered container also creates an entry
+        cache.add_item("overflow", "a coin".to_string());
+        assert_eq!(cache.containers.len(), MAX_CONTAINERS);
+        assert!(cache.get("id0").is_none());
+        assert!(cache.get("overflow").is_some());
+    }
+
+    #[test]
+    fn test_container_cache_reregister_does_not_evict() {
+        let mut cache = ContainerCache::default();
+        for i in 0..MAX_CONTAINERS {
+            cache.register_container(format!("id{}", i), String::new());
+        }
+        // Re-registering an existing ID (title update) must not evict anything
+        cache.register_container("id0".to_string(), "new title".to_string());
+        assert_eq!(cache.containers.len(), MAX_CONTAINERS);
+        assert_eq!(cache.get("id0").unwrap().title, "new title");
+    }
 
     // ========== GameState tests ==========
 
