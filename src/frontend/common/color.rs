@@ -58,6 +58,23 @@ impl Color {
     pub const TRANSPARENT: Self = Self::rgb(0, 0, 0); // Will be handled specially in rendering
 }
 
+// The web protocol serializes colors as CSS hex strings ("#rrggbb",
+// lowercase) rather than as an {r, g, b} struct, so browsers can use the
+// value directly in styles (docs/mobile-web-frontend-plan.md).
+impl serde::Serialize for Color {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Color {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s: String = serde::Deserialize::deserialize(deserializer)?;
+        Self::from_hex(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid hex color: {s:?}")))
+    }
+}
+
 /// Named color variants for ease of use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NamedColor {
@@ -436,6 +453,30 @@ mod tests {
         let hex = original.to_hex();
         let parsed = Color::from_hex(&hex).unwrap();
         assert_eq!(original, parsed);
+    }
+
+    // ===========================================
+    // Serde (web protocol) tests
+    // ===========================================
+
+    #[test]
+    fn test_serialize_as_css_hex() {
+        let json = serde_json::to_string(&Color::rgb(255, 87, 51)).unwrap();
+        assert_eq!(json, "\"#ff5733\"");
+    }
+
+    #[test]
+    fn test_serde_json_round_trip() {
+        let original = Color::rgb(1, 2, 3);
+        let json = serde_json::to_string(&original).unwrap();
+        let back: Color = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, back);
+    }
+
+    #[test]
+    fn test_deserialize_rejects_invalid_hex() {
+        assert!(serde_json::from_str::<Color>("\"#12345\"").is_err());
+        assert!(serde_json::from_str::<Color>("\"not-a-color\"").is_err());
     }
 
     // ===========================================
