@@ -37,9 +37,14 @@ overlay buttons (tap fires, hold drags; positions persist per device in
 the browser, not in config). Clients get ids/labels only; taps send
 `macro { id }` and the server resolves commands (`MacrosConfig::resolve`).
 `.reloadmacros` re-reads the file and pushes to connected phones live.
-Deferred from Phase 5: `show_when` context awareness and script-pushed
-macro sets (design sketch only, as planned); Quickbar reconciliation
-untouched. Phase 5b (session dashboard) and Phase 6 (security) next.
+Phone-side editor: action buttons can be created/edited/deleted from the
+phone (+ button on the rail → manager/editor sheets); edits persist to a
+separate `macros-local.toml` overlay merged at load, so the hand-written
+`macros.toml` is never rewritten. Hand-file buttons are read-only remotely.
+Deferred from Phase 5: menu-button (options) editing on the phone,
+`show_when` context awareness, and script-pushed macro sets; Quickbar
+reconciliation untouched. Phase 5b (session dashboard) and Phase 6
+(security) next.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
