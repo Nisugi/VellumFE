@@ -51,8 +51,17 @@ instances port-walk (+20); `pinned = true` binds exactly or fails loudly
 via a Notice system message. Pid-keyed registry files in
 `~/.vellum-fe/web-sessions/`, removed on clean shutdown, pid-liveness
 GC'd after crashes. Verified with two live instances sharing a base port.
-Phase 6 (security: pairing token, .webinfo QR, throttle) is the remaining
-planned phase.
+Phase 6: pairing token (generated once into the shared base dir, one
+pairing covers all characters) required as the first WS message, denied
+frame + closed socket otherwise, 5-failures/60s lockout. `.webinfo` prints
+the pair URL + QR (actual bound port), loopback warning, and off-LAN
+guidance. Client reads the token from the URL fragment (scrubbed after
+storing) or localStorage; denied opens a pairing prompt. Dashboard
+forwards the token fragment to session links.
+All planned phases (0-6) are complete. Remaining: Phase 4-style iteration
+from real play, deferred design sketches (`show_when`, script-pushed macro
+sets, Quickbar reconciliation), and optional Phase 7 (headless / native
+shells).
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
