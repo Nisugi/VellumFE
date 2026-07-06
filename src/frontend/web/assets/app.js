@@ -100,6 +100,62 @@ function setConnected(up) {
 const buffers = new Map(); // stream -> { lines: [], unread: 0, chip, badge }
 let activeStream = "main";
 
+// Chip order is user-arrangeable (long-press a chip) and persists per
+// device; streams the user hasn't placed keep their first-text arrival
+// order after the placed ones.
+const CHIP_ORDER_KEY = "vellum-chip-order";
+let chipOrder = [];
+try {
+  chipOrder = JSON.parse(localStorage.getItem(CHIP_ORDER_KEY) || "[]");
+} catch { /* corrupted storage — arrival order it is */ }
+
+function effectiveChipOrder() {
+  return [...buffers.keys()].sort((a, b) => {
+    const ia = chipOrder.indexOf(a);
+    const ib = chipOrder.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return 0; // stable sort keeps arrival order for unplaced streams
+  });
+}
+
+function applyChipOrder() {
+  for (const stream of effectiveChipOrder()) {
+    chipsBar.appendChild(buffers.get(stream).chip);
+  }
+}
+
+function moveChip(stream, delta) {
+  const order = effectiveChipOrder();
+  const from = order.indexOf(stream);
+  const to = delta === "front" ? 0 : from + delta;
+  if (from === -1 || to < 0 || to >= order.length) return;
+  order.splice(from, 1);
+  order.splice(to, 0, stream);
+  chipOrder = order;
+  try {
+    localStorage.setItem(CHIP_ORDER_KEY, JSON.stringify(chipOrder));
+  } catch { /* fine, just won't persist */ }
+  applyChipOrder();
+}
+
+function openChipArrange(stream) {
+  const order = effectiveChipOrder();
+  const at = order.indexOf(stream);
+  openSheet(`Arrange: ${STREAM_LABELS[stream] || stream}`);
+  if (at > 0) sheetButton("⟨  Move left", () => openChipArrangeAfter(stream, -1));
+  if (at < order.length - 1) sheetButton("Move right  ⟩", () => openChipArrangeAfter(stream, 1));
+  if (at > 0) sheetButton("Move to front", () => openChipArrangeAfter(stream, "front"));
+}
+
+// Keep the arrange sheet open across moves so multi-step arranging is
+// one gesture; reopening also refreshes which moves are possible.
+function openChipArrangeAfter(stream, delta) {
+  moveChip(stream, delta);
+  openChipArrange(stream);
+}
+
 function ensureStream(stream) {
   let buf = buffers.get(stream);
   if (buf) return buf;
@@ -112,11 +168,25 @@ function ensureStream(stream) {
   badge.className = "chip-badge";
   badge.hidden = true;
   chip.append(label, badge);
-  chip.addEventListener("click", () => setActiveStream(stream));
-  // Keep Story first, everything else in arrival order.
-  chipsBar.appendChild(chip);
+  // Tap switches; long-press opens the arrange sheet.
+  let hold = null;
+  let held = false;
+  chip.addEventListener("pointerdown", () => {
+    held = false;
+    clearTimeout(hold);
+    hold = setTimeout(() => {
+      held = true;
+      openChipArrange(stream);
+    }, 450);
+  });
+  chip.addEventListener("pointerup", () => clearTimeout(hold));
+  chip.addEventListener("pointerleave", () => clearTimeout(hold));
+  chip.addEventListener("click", () => {
+    if (!held) setActiveStream(stream);
+  });
   buf = { lines: [], unread: 0, chip, badge };
   buffers.set(stream, buf);
+  applyChipOrder();
   updateChips();
   return buf;
 }
@@ -494,6 +564,7 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("span.link")) return;
   if (ev.target.closest("#repeat-btn")) return; // long-press opens history
   if (ev.target.closest("#macro-rail")) return; // rail taps retarget the sheet
+  if (ev.target.closest("#chips")) return; // long-press opens arrange
   if (ev.target.closest(".float-btn")) return;
   closeSheet();
 });
