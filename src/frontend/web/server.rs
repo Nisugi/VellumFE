@@ -33,6 +33,19 @@ struct WebState {
 
 /// Bind and serve until the process exits. Runs as a detached tokio task.
 pub async fn serve(config: WebConfig, handles: RemoteServerHandles) -> Result<()> {
+    let addr = format!("{}:{}", config.bind, config.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .with_context(|| format!("web server failed to bind {addr}"))?;
+    tracing::info!("web server listening on http://{addr}");
+    serve_listener(listener, handles).await
+}
+
+/// Serve on an already-bound listener (integration tests bind port 0).
+pub async fn serve_listener(
+    listener: tokio::net::TcpListener,
+    handles: RemoteServerHandles,
+) -> Result<()> {
     let state = Arc::new(WebState { handles });
     let router = Router::new()
         .route("/", get(index_html))
@@ -41,12 +54,6 @@ pub async fn serve(config: WebConfig, handles: RemoteServerHandles) -> Result<()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
-
-    let addr = format!("{}:{}", config.bind, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .with_context(|| format!("web server failed to bind {addr}"))?;
-    tracing::info!("web server listening on http://{addr}");
     axum::serve(listener, router)
         .await
         .context("web server exited")?;

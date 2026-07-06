@@ -63,6 +63,13 @@ async fn async_run(
     // Create core application state
     let mut app_core = AppCore::new(config)?;
 
+    // Start the web frontend sidecar if enabled (off by default). The
+    // server runs as a tokio task; core feeds it via the attached sink.
+    if app_core.config.web.enabled {
+        let sink = crate::frontend::web::start(&app_core.config.web);
+        app_core.enable_remote(sink);
+    }
+
     super::colors::set_global_color_mode(app_core.config.ui.color_mode);
 
     // Initialize palette lookup for Slot mode
@@ -311,6 +318,10 @@ async fn async_run(
                 }
             }
         }
+
+        // Flush coalesced state deltas to web clients once per batch
+        // (no-op unless [web] is enabled)
+        app_core.flush_remote_state();
 
         // Update terminal title if configured and state changed
         if let Some(ref mut manager) = title_manager {

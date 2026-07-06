@@ -232,6 +232,15 @@ impl VellumGuiApp {
         app_core.init_windows(core_layout_size.0, core_layout_size.1);
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+
+        // Start the web frontend sidecar if enabled (off by default); it
+        // runs on this GUI-owned runtime.
+        if app_core.config.web.enabled {
+            let _guard = runtime.enter();
+            let sink = crate::frontend::web::start(&app_core.config.web);
+            app_core.enable_remote(sink);
+        }
+
         let (server_tx, mut network_rx) =
             mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
@@ -1218,6 +1227,10 @@ impl VellumGuiApp {
             self.app_core
                 .process_pending_window_additions(layout_width, layout_height);
         }
+
+        // Flush coalesced state deltas to web clients once per batch
+        // (no-op unless [web] is enabled)
+        self.app_core.flush_remote_state();
 
         // Play sounds queued by highlight processing.
         for sound in self.app_core.game_state.drain_sound_queue() {
