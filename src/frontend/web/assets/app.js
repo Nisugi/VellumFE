@@ -77,7 +77,16 @@ const state = {
   reconnectDelay: 1000,
 };
 
-function serverNow() {
+// RT math mirrors the TUI (countdown.rs): the game reports whole seconds
+// (prompt time and roundtime end are both truncated), so the offset and
+// the remaining count are integer math — fractional local time would
+// round nearly everything up a second.
+function serverNowInt() {
+  return Math.floor(Date.now() / 1000) + state.clockOffset;
+}
+
+// Fractional variant, used only to drain the bar smoothly.
+function serverNowFrac() {
   return Date.now() / 1000 + state.clockOffset;
 }
 
@@ -286,25 +295,28 @@ function setIndicators(d) {
 
 function setRt(rt) {
   if (typeof rt.server_time === "number" && rt.server_time > 0) {
-    state.clockOffset = rt.server_time - Date.now() / 1000;
+    state.clockOffset = rt.server_time - Math.floor(Date.now() / 1000);
   }
   state.rtEnd = rt.roundtime_end ?? null;
   state.ctEnd = rt.casttime_end ?? null;
   const end = Math.max(state.rtEnd ?? 0, state.ctEnd ?? 0);
-  state.rtTotal = end > serverNow() ? end - serverNow() : 0;
+  state.rtTotal = Math.max(end - serverNowInt(), 0);
 }
 
 function tickRt() {
   const end = Math.max(state.rtEnd ?? 0, state.ctEnd ?? 0);
-  const remaining = end - serverNow();
+  // Integer seconds, exactly like the TUI countdown: 1s of roundtime
+  // shows "1", never "2".
+  const remaining = end - serverNowInt();
   const isCast = (state.ctEnd ?? 0) >= (state.rtEnd ?? 0) && (state.ctEnd ?? 0) > 0;
   // The bar itself is the panel divider and always visible; only the
   // fill and the little numeric chip come and go.
   if (remaining > 0) {
-    const frac = state.rtTotal > 0 ? Math.min(1, remaining / state.rtTotal) : 0;
+    const smooth = Math.max(0, end - serverNowFrac());
+    const frac = state.rtTotal > 0 ? Math.min(1, smooth / state.rtTotal) : 0;
     rtFill.style.width = `${frac * 100}%`;
     rtFill.style.background = isCast ? "var(--ct)" : "var(--rt)";
-    rtLabel.textContent = `${isCast ? "CT" : "RT"} ${Math.ceil(remaining)}`;
+    rtLabel.textContent = `${isCast ? "CT" : "RT"} ${remaining}`;
   } else {
     rtFill.style.width = "0";
     rtLabel.textContent = "";
