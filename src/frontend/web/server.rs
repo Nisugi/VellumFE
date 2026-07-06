@@ -233,6 +233,30 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::Macro { id })
             .is_ok(),
+        ClientMessage::MacroSave {
+            group,
+            label,
+            command,
+            color,
+            confirm,
+            original,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::MacroSave {
+                group,
+                label,
+                command,
+                color,
+                confirm,
+                original,
+            })
+            .is_ok(),
+        ClientMessage::MacroDelete { group, label } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::MacroDelete { group, label })
+            .is_ok(),
     }
 }
 

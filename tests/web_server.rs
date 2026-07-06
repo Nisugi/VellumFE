@@ -405,6 +405,56 @@ async fn macros_flow_definitions_out_taps_in() {
 }
 
 #[tokio::test]
+async fn macro_save_and_delete_arrive_as_events() {
+    let (_sink, mut event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_and_sync(addr, 0).await;
+
+    client
+        .send_text(
+            r##"{"t":"macro_save","d":{"group":"Couch","label":"Nap","command":"sleep","color":"#d9b44f","confirm":true,"original":{"group":null,"label":"Old nap"}}}"##,
+        )
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::MacroSave {
+        group,
+        label,
+        command,
+        color,
+        confirm,
+        original,
+    } = event
+    else {
+        panic!("expected MacroSave");
+    };
+    assert_eq!(group.as_deref(), Some("Couch"));
+    assert_eq!(label, "Nap");
+    assert_eq!(command, "sleep");
+    assert_eq!(color.as_deref(), Some("#d9b44f"));
+    assert!(confirm);
+    assert_eq!(original, Some((None, "Old nap".to_string())));
+
+    // Empty label/command is rejected at parse time, not forwarded.
+    client
+        .send_text(r#"{"t":"macro_save","d":{"group":null,"label":"  ","command":"x"}}"#)
+        .await;
+    client
+        .send_text(r#"{"t":"macro_delete","d":{"group":null,"label":"Heal"}}"#)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::MacroDelete { group, label } = event else {
+        panic!("expected MacroDelete (blank save must not forward)");
+    };
+    assert_eq!(group, None);
+    assert_eq!(label, "Heal");
+}
+
+#[tokio::test]
 async fn resume_replays_only_missed_lines() {
     let (mut sink, _event_rx, addr) = start_server(100).await;
 

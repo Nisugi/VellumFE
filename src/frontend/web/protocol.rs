@@ -254,6 +254,27 @@ pub enum ClientMessage {
     /// A macro button/option tap; the id is resolved to its command
     /// server-side (the client never sends macro command text).
     Macro { id: String },
+    /// Create/edit a phone-authored macro button (macros-local.toml).
+    MacroSave {
+        group: Option<String>,
+        label: String,
+        command: String,
+        color: Option<String>,
+        confirm: bool,
+        original: Option<(Option<String>, String)>,
+    },
+    /// Delete a phone-authored macro button.
+    MacroDelete {
+        group: Option<String>,
+        label: String,
+    },
+}
+
+fn opt_str(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
 }
 
 #[derive(Deserialize)]
@@ -302,6 +323,31 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         "macro" => {
             let id = msg.d.get("id")?.as_str()?.to_string();
             Some(ClientMessage::Macro { id })
+        }
+        "macro_save" => {
+            let label = msg.d.get("label")?.as_str()?.trim().to_string();
+            let command = msg.d.get("command")?.as_str()?.trim().to_string();
+            if label.is_empty() || command.is_empty() {
+                return None;
+            }
+            let original = msg.d.get("original").filter(|v| !v.is_null()).and_then(|o| {
+                Some((opt_str(o.get("group")), o.get("label")?.as_str()?.to_string()))
+            });
+            Some(ClientMessage::MacroSave {
+                group: opt_str(msg.d.get("group")),
+                label,
+                command,
+                color: opt_str(msg.d.get("color")),
+                confirm: msg.d.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                original,
+            })
+        }
+        "macro_delete" => {
+            let label = msg.d.get("label")?.as_str()?.to_string();
+            Some(ClientMessage::MacroDelete {
+                group: opt_str(msg.d.get("group")),
+                label,
+            })
         }
         _ => None,
     }

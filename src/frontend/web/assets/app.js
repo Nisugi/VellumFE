@@ -550,15 +550,15 @@ function currentGroup() {
 
 function renderMacros() {
   renderFloating();
+  // Rail shows once definitions arrive, even empty: the + button is how
+  // the first macro gets created from the phone.
+  macroRail.hidden = macros === null;
   const group = currentGroup();
-  if (!group) {
-    macroRail.hidden = true;
-    return;
-  }
-  macroRail.hidden = false;
+  macroGroupBtn.hidden = !group;
+  macroButtonsEl.replaceChildren();
+  if (!group) return;
   macroGroupBtn.textContent =
     macros.groups.length > 1 ? `${group.name} ▾` : group.name;
-  macroButtonsEl.replaceChildren();
   for (const btn of group.buttons) {
     const el = document.createElement("button");
     el.type = "button";
@@ -668,6 +668,177 @@ function attachFloatBehavior(el, btn) {
   el.addEventListener("click", () => {
     if (!dragging) activateMacro(btn);
   });
+}
+
+// ---- Macro editor ----------------------------------------------------------
+// Phone-authored buttons live in macros-local.toml on the PC; the server
+// applies edits and re-broadcasts, so every client (and the desk) sees
+// the change instantly. Hand-file buttons are read-only here.
+
+const COLOR_PRESETS = [null, "#d9b44f", "#d9534f", "#4f7fd9", "#6fbf73", "#b07fd9"];
+
+function editableButtons() {
+  const list = [];
+  if (!macros) return list;
+  for (const group of macros.groups) {
+    for (const btn of group.buttons) {
+      if (btn.editable && !(btn.options && btn.options.length)) {
+        list.push({ group: group.name, btn });
+      }
+    }
+  }
+  for (const btn of macros.floating) {
+    if (btn.editable && !(btn.options && btn.options.length)) {
+      list.push({ group: null, btn });
+    }
+  }
+  return list;
+}
+
+document.getElementById("macro-add").addEventListener("click", () => {
+  const editable = editableButtons();
+  if (!editable.length) {
+    openMacroEditor(null);
+    return;
+  }
+  openSheet("Macros");
+  sheetButton("＋ New button…", () => openMacroEditor(null));
+  const header = document.createElement("div");
+  header.className = "sheet-header";
+  header.textContent = "Edit";
+  sheetItems.appendChild(header);
+  for (const entry of editable) {
+    sheetButton(
+      `${entry.btn.label}  (${entry.group || "floating"})`,
+      () => openMacroEditor(entry)
+    );
+  }
+});
+
+function openMacroEditor(existing) {
+  openSheet(existing ? `Edit: ${existing.btn.label}` : "New macro button");
+  const form = document.createElement("form");
+  form.className = "sheet-form";
+
+  const labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.placeholder = "e.g. Sell gems";
+  labelInput.value = existing ? existing.btn.label : "";
+  const labelWrap = document.createElement("label");
+  labelWrap.append("Label", labelInput);
+
+  const cmdInputEl = document.createElement("input");
+  cmdInputEl.type = "text";
+  cmdInputEl.placeholder = "e.g. ;sellgems";
+  cmdInputEl.autocapitalize = "off";
+  cmdInputEl.spellcheck = false;
+  cmdInputEl.value = existing ? existing.btn.command || "" : "";
+  const cmdWrap = document.createElement("label");
+  cmdWrap.append("Command", cmdInputEl);
+
+  // Placement: existing groups, floating, or a new group.
+  const placeSelect = document.createElement("select");
+  const groupNames = macros ? macros.groups.map((g) => g.name) : [];
+  for (const name of groupNames) {
+    placeSelect.append(new Option(name, `g:${name}`));
+  }
+  placeSelect.append(new Option("Floating button", "floating"));
+  placeSelect.append(new Option("New group…", "new"));
+  const newGroupInput = document.createElement("input");
+  newGroupInput.type = "text";
+  newGroupInput.placeholder = "group name";
+  newGroupInput.hidden = true;
+  placeSelect.addEventListener("change", () => {
+    newGroupInput.hidden = placeSelect.value !== "new";
+  });
+  if (existing) {
+    placeSelect.value = existing.group ? `g:${existing.group}` : "floating";
+  }
+  const placeWrap = document.createElement("label");
+  placeWrap.append("Show in", placeSelect, newGroupInput);
+
+  // Color presets.
+  let chosenColor = existing ? existing.btn.color || null : null;
+  const colorRow = document.createElement("div");
+  colorRow.className = "form-row";
+  const swatches = [];
+  for (const color of COLOR_PRESETS) {
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.className = "color-swatch";
+    if (color) swatch.style.background = color;
+    if (color === chosenColor) swatch.classList.add("selected");
+    swatch.addEventListener("click", () => {
+      chosenColor = color;
+      swatches.forEach((s) => s.classList.remove("selected"));
+      swatch.classList.add("selected");
+    });
+    swatches.push(swatch);
+    colorRow.appendChild(swatch);
+  }
+
+  const confirmToggle = document.createElement("input");
+  confirmToggle.type = "checkbox";
+  confirmToggle.checked = existing ? !!existing.btn.confirm : false;
+  const confirmWrap = document.createElement("label");
+  confirmWrap.append(confirmToggle, "Ask before sending");
+  const confirmRow = document.createElement("div");
+  confirmRow.className = "form-row";
+  confirmRow.appendChild(confirmWrap);
+
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "form-save";
+  saveBtn.textContent = "Save";
+  actions.appendChild(saveBtn);
+  if (existing) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "form-delete";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => {
+      closeSheet();
+      confirmSheet(`Delete '${existing.btn.label}'`, () => {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        state.ws.send(JSON.stringify({
+          t: "macro_delete",
+          d: { group: existing.group, label: existing.btn.label },
+        }));
+      });
+    });
+    actions.appendChild(deleteBtn);
+  }
+
+  form.append(labelWrap, cmdWrap, placeWrap, colorRow, confirmRow, actions);
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const label = labelInput.value.trim();
+    const command = cmdInputEl.value.trim();
+    if (!label || !command) return;
+    let group = null;
+    if (placeSelect.value === "new") {
+      group = newGroupInput.value.trim() || null;
+      if (!group) return;
+    } else if (placeSelect.value.startsWith("g:")) {
+      group = placeSelect.value.slice(2);
+    }
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    state.ws.send(JSON.stringify({
+      t: "macro_save",
+      d: {
+        group,
+        label,
+        command,
+        color: chosenColor,
+        confirm: confirmToggle.checked,
+        original: existing ? { group: existing.group, label: existing.btn.label } : null,
+      },
+    }));
+    closeSheet();
+  });
+  sheetItems.appendChild(form);
 }
 
 // ---- Command input, repeat, history ---------------------------------------

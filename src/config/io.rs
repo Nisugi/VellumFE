@@ -41,6 +41,7 @@ impl Config {
         config.keybinds = Self::load_keybinds(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
+        config.macros_local = MacrosConfig::load_local(character).unwrap_or_default();
 
         // Validate and auto-fix menu keybinds
         let validation = menu_keybind_validator::validate_menu_keybinds(&config.menu_keybinds);
@@ -347,6 +348,7 @@ impl Config {
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
+        config.macros_local = MacrosConfig::load_local(character).unwrap_or_default();
 
         // Validate and auto-fix menu keybinds
         let validation = menu_keybind_validator::validate_menu_keybinds(&config.menu_keybinds);
@@ -571,6 +573,7 @@ impl Default for Config {
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default
             macros: MacrosConfig::default(), // Loaded from macros.toml
+            macros_local: MacrosConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

@@ -304,6 +304,26 @@ async fn async_run(
                             let _ = command_tx.send(cmd);
                         }
                     }
+                    crate::core::remote::RemoteEvent::MacroSave {
+                        group,
+                        label,
+                        command,
+                        color,
+                        confirm,
+                        original,
+                    } => {
+                        let button = crate::config::MacroButton {
+                            label,
+                            command: Some(command),
+                            color,
+                            confirm,
+                            ..Default::default()
+                        };
+                        app_core.apply_macro_save(group, button, original);
+                    }
+                    crate::core::remote::RemoteEvent::MacroDelete { group, label } => {
+                        app_core.apply_macro_delete(group, label);
+                    }
                     crate::core::remote::RemoteEvent::Macro { id } => {
                         // Resolve the id against config; the resulting
                         // command runs the same path as typed input (echo,

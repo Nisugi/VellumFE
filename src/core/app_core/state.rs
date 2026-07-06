@@ -724,6 +724,63 @@ impl AppCore {
         self.message_processor.remote = Some(sink);
     }
 
+    /// Create or edit a phone-authored macro button. The edit lands in the
+    /// macros-local.toml overlay (the hand-written macros.toml is never
+    /// rewritten), then the merged set is re-published to every client.
+    pub fn apply_macro_save(
+        &mut self,
+        group: Option<String>,
+        button: crate::config::MacroButton,
+        original: Option<(Option<String>, String)>,
+    ) {
+        if button.label.trim().is_empty() || button.command.as_deref().unwrap_or("").trim().is_empty()
+        {
+            self.add_system_message("Macro not saved: label and command are required");
+            return;
+        }
+        let label = button.label.clone();
+        self.config.macros_local.upsert_button(
+            group.as_deref(),
+            button,
+            original
+                .as_ref()
+                .map(|(group, label)| (group.as_deref(), label.as_str())),
+        );
+        self.persist_and_push_macros(&format!("Saved macro '{}'", label));
+    }
+
+    /// Delete a phone-authored macro button. Buttons from the hand-written
+    /// macros.toml are not deletable remotely.
+    pub fn apply_macro_delete(&mut self, group: Option<String>, label: String) {
+        if self.config.macros_local.delete_button(group.as_deref(), &label) {
+            self.persist_and_push_macros(&format!("Deleted macro '{}'", label));
+        } else {
+            self.add_system_message(&format!(
+                "Macro '{}' is defined in macros.toml and can only be edited there",
+                label
+            ));
+        }
+    }
+
+    fn persist_and_push_macros(&mut self, message: &str) {
+        if let Err(e) = self
+            .config
+            .macros_local
+            .save_local(self.config.character.as_deref())
+        {
+            self.add_system_message(&format!("Failed to save macros-local.toml: {e:#}"));
+            return;
+        }
+        let base = crate::config::MacrosConfig::load_base(self.config.character.as_deref())
+            .unwrap_or_default();
+        self.config.macros =
+            crate::config::MacrosConfig::merge(base, self.config.macros_local.clone());
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_macros(&self.config.macros);
+        }
+        self.add_system_message(message);
+    }
+
     /// Flush coalesced game-state deltas to remote clients. Called once
     /// per message batch by the frontend loop; no-op when web is disabled.
     pub fn flush_remote_state(&mut self) {

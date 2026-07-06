@@ -258,6 +258,16 @@ html, body {
   background: var(--fg-dim);
 }
 
+#macro-add {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  background: none;
+  border: 1px dashed var(--fg-dim);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
 #macro-collapse {
   flex-shrink: 0;
   padding: 7px 8px;
@@ -265,6 +275,86 @@ html, body {
   border: none;
   color: var(--fg-dim);
   font-size: 13px;
+}
+
+/* Macro editor form (rendered inside the bottom sheet) */
+.sheet-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.sheet-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.sheet-form input[type="text"],
+.sheet-form select {
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px; /* stop iOS zoom */
+}
+
+.sheet-form .form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sheet-form .form-row label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.color-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  padding: 0;
+}
+
+.color-swatch.selected {
+  border-color: var(--fg);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.form-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+}
+
+.form-save {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.form-delete {
+  background: none;
+  border: 1px solid var(--hp) !important;
+  color: var(--hp);
 }
 
 /* Hands + status indicators */

@@ -78,6 +78,12 @@ pub struct RemoteMacroButton {
     pub x: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub y: Option<f32>,
+    /// Phone-authored (macros-local.toml): may be edited/deleted remotely.
+    pub editable: bool,
+    /// The command behind an editable action button, echoed back so the
+    /// phone editor can prefill its form. Hand-file commands stay private.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -107,6 +113,12 @@ impl RemoteMacros {
                 confirm: button.confirm,
                 x: button.x,
                 y: button.y,
+                editable: button.editable,
+                command: if button.editable {
+                    button.command.clone()
+                } else {
+                    None
+                },
             }
         }
         Self {
@@ -188,6 +200,23 @@ pub enum RemoteEvent {
     /// resolves the id against config (MacrosConfig::resolve) and runs
     /// the command through the same dispatch as typed input.
     Macro { id: String },
+    /// Create or edit a phone-authored macro button (lands in the
+    /// macros-local.toml overlay; AppCore::apply_macro_save).
+    MacroSave {
+        /// Target rail group by name; None = floating.
+        group: Option<String>,
+        label: String,
+        command: String,
+        color: Option<String>,
+        confirm: bool,
+        /// Set when editing: the button's previous (group, label).
+        original: Option<(Option<String>, String)>,
+    },
+    /// Delete a phone-authored macro button by (group, label).
+    MacroDelete {
+        group: Option<String>,
+        label: String,
+    },
 }
 
 /// Latest coalesced game state, published via `watch` so the server can

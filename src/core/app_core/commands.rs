@@ -142,13 +142,17 @@ impl AppCore {
                 self.show_version();
             }
 
-            // Web frontend: reload macros.toml and push to connected phones
+            // Web frontend: reload macros.toml (+ the phone-edited local
+            // overlay) and push to connected phones
             "reloadmacros" => {
                 match crate::config::MacrosConfig::load(self.config.character.as_deref()) {
                     Ok(macros) => {
                         let groups = macros.groups.len();
                         let floating = macros.floating.len();
                         self.config.macros = macros;
+                        self.config.macros_local =
+                            crate::config::MacrosConfig::load_local(self.config.character.as_deref())
+                                .unwrap_or_default();
                         if let Some(remote) = self.message_processor.remote.as_mut() {
                             remote.set_macros(&self.config.macros);
                         }

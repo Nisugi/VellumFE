@@ -49,6 +49,10 @@ pub struct MacroButton {
     pub x: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub y: Option<f32>,
+    /// True when this button came from macros-local.toml (phone-created)
+    /// and may be edited/deleted remotely. Set during merge, never stored.
+    #[serde(skip)]
+    pub editable: bool,
 }
 
 /// A named, switchable set of rail buttons.
@@ -68,8 +72,17 @@ pub struct MacrosConfig {
 }
 
 impl MacrosConfig {
-    /// Load macros: profile macros.toml if present, else global, else empty.
+    /// Load the merged macro set: the hand-written base file plus the
+    /// phone-edited local overlay (see [`MacrosConfig::merge`]).
     pub fn load(character: Option<&str>) -> Result<Self> {
+        let base = Self::load_base(character)?;
+        let local = Self::load_local(character).unwrap_or_default();
+        Ok(Self::merge(base, local))
+    }
+
+    /// Load only the hand-written base file: profile macros.toml if
+    /// present, else global, else empty. Never written by the app.
+    pub fn load_base(character: Option<&str>) -> Result<Self> {
         let profile_path = super::Config::profile_dir(character)?.join("macros.toml");
         let global_path = super::Config::global_dir()?.join("macros.toml");
         let path = if profile_path.exists() {
@@ -82,6 +95,105 @@ impl MacrosConfig {
         let text = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
+    }
+
+    /// Load the phone-edited overlay (profile macros-local.toml).
+    /// Kept separate from the base file so remote edits never rewrite the
+    /// user's hand-authored macros.toml (which would lose its comments).
+    pub fn load_local(character: Option<&str>) -> Result<Self> {
+        let path = super::Config::profile_dir(character)?.join("macros-local.toml");
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
+    }
+
+    /// Persist this config as the phone-edited overlay.
+    pub fn save_local(&self, character: Option<&str>) -> Result<()> {
+        let dir = super::Config::profile_dir(character)?;
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("Failed to create {}", dir.display()))?;
+        let path = dir.join("macros-local.toml");
+        let text = toml::to_string_pretty(self).context("Failed to serialize macros-local")?;
+        fs::write(&path, text).with_context(|| format!("Failed to write {}", path.display()))
+    }
+
+    /// Merge the local overlay onto the base: same-named groups gain the
+    /// local buttons (appended), unknown local groups are added, floating
+    /// buttons append. Everything from `local` is marked editable.
+    pub fn merge(base: Self, mut local: Self) -> Self {
+        let mut merged = base;
+        for group in &mut local.groups {
+            for button in &mut group.buttons {
+                button.editable = true;
+            }
+        }
+        for button in &mut local.floating {
+            button.editable = true;
+        }
+        for local_group in local.groups {
+            match merged
+                .groups
+                .iter_mut()
+                .find(|g| g.name == local_group.name)
+            {
+                Some(existing) => existing.buttons.extend(local_group.buttons),
+                None => merged.groups.push(local_group),
+            }
+        }
+        merged.floating.extend(local.floating);
+        merged
+    }
+
+    /// Insert or replace a button in this (local-overlay) config.
+    /// `group`: Some(name) targets a rail group (created if missing),
+    /// None targets the floating set. `original` identifies an existing
+    /// local button being edited: (group name or None-for-floating, label).
+    pub fn upsert_button(
+        &mut self,
+        group: Option<&str>,
+        button: MacroButton,
+        original: Option<(Option<&str>, &str)>,
+    ) {
+        if let Some(original) = original {
+            self.delete_button(original.0, original.1);
+        }
+        match group {
+            Some(name) => {
+                match self.groups.iter_mut().find(|g| g.name == name) {
+                    Some(existing) => existing.buttons.push(button),
+                    None => self.groups.push(MacroGroup {
+                        name: name.to_string(),
+                        buttons: vec![button],
+                    }),
+                }
+            }
+            None => self.floating.push(button),
+        }
+    }
+
+    /// Remove a button by (group-or-floating, label). Returns true if
+    /// something was removed. Empty groups are dropped.
+    pub fn delete_button(&mut self, group: Option<&str>, label: &str) -> bool {
+        let removed = match group {
+            Some(name) => match self.groups.iter_mut().find(|g| g.name == name) {
+                Some(existing) => {
+                    let before = existing.buttons.len();
+                    existing.buttons.retain(|b| b.label != label);
+                    existing.buttons.len() != before
+                }
+                None => false,
+            },
+            None => {
+                let before = self.floating.len();
+                self.floating.retain(|b| b.label != label);
+                self.floating.len() != before
+            }
+        };
+        self.groups.retain(|g| !g.buttons.is_empty());
+        removed
     }
 
     /// Look up the command behind a client-supplied macro id and whether it
@@ -161,6 +273,77 @@ mod tests {
         assert!(macros.groups[0].buttons[1].options[1].confirm);
         assert_eq!(macros.floating.len(), 1);
         assert_eq!(macros.floating[0].x, Some(0.85));
+    }
+
+    #[test]
+    fn merge_appends_local_and_marks_editable() {
+        let base = sample();
+        let local: MacrosConfig = toml::from_str(
+            r#"
+            [[group]]
+            name = "Town"
+            [[group.button]]
+            label = "Sell gems"
+            command = ";sellgems"
+
+            [[group]]
+            name = "Couch"
+            [[group.button]]
+            label = "Nap"
+            command = "sleep"
+
+            [[floating]]
+            label = "Heal"
+            command = ";heal"
+            "#,
+        )
+        .unwrap();
+        let merged = MacrosConfig::merge(base, local);
+        // Town gains the local button after the base ones.
+        let town = &merged.groups[0];
+        assert_eq!(town.buttons.len(), 3);
+        assert!(!town.buttons[0].editable, "base buttons stay read-only");
+        assert!(town.buttons[2].editable);
+        assert_eq!(town.buttons[2].label, "Sell gems");
+        // New local group appended after base groups.
+        assert_eq!(merged.groups[1].name, "Couch");
+        assert!(merged.groups[1].buttons[0].editable);
+        // Floating appends and is editable.
+        assert_eq!(merged.floating.len(), 2);
+        assert!(merged.floating[1].editable);
+    }
+
+    #[test]
+    fn upsert_and_delete_buttons() {
+        let mut local = MacrosConfig::default();
+        let button = |label: &str, command: &str| MacroButton {
+            label: label.to_string(),
+            command: Some(command.to_string()),
+            ..Default::default()
+        };
+
+        // Create into a new group, then floating.
+        local.upsert_button(Some("Couch"), button("Nap", "sleep"), None);
+        local.upsert_button(None, button("Heal", ";heal"), None);
+        assert_eq!(local.groups[0].buttons[0].label, "Nap");
+        assert_eq!(local.floating[0].label, "Heal");
+
+        // Edit: rename + move group in one upsert.
+        local.upsert_button(
+            Some("Town"),
+            button("Long nap", "sleep"),
+            Some((Some("Couch"), "Nap")),
+        );
+        assert!(local.groups.iter().all(|g| g.name != "Couch"), "empty group dropped");
+        assert_eq!(local.groups[0].name, "Town");
+        assert_eq!(local.groups[0].buttons[0].label, "Long nap");
+
+        // Delete.
+        assert!(local.delete_button(Some("Town"), "Long nap"));
+        assert!(!local.delete_button(Some("Town"), "Long nap"));
+        assert!(local.delete_button(None, "Heal"));
+        assert!(local.groups.is_empty());
+        assert!(local.floating.is_empty());
     }
 
     #[test]

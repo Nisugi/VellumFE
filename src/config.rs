@@ -243,8 +243,10 @@ pub struct Config {
     pub quickbars: QuickbarsConfig, // Custom quickbar definitions and defaults
     #[serde(default)]
     pub web: WebConfig, // Embedded web server for the mobile web frontend
-    #[serde(skip)] // Loaded from separate macros.toml file
+    #[serde(skip)] // Merged view of macros.toml + macros-local.toml
     pub macros: MacrosConfig, // Macro buttons for the web frontend
+    #[serde(skip)] // Phone-edited overlay, persisted to macros-local.toml
+    pub macros_local: MacrosConfig,
 }
 
 

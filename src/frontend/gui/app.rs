@@ -1236,6 +1236,26 @@ impl VellumGuiApp {
                         let _ = self.command_tx.send(cmd);
                     }
                 }
+                crate::core::remote::RemoteEvent::MacroSave {
+                    group,
+                    label,
+                    command,
+                    color,
+                    confirm,
+                    original,
+                } => {
+                    let button = crate::config::MacroButton {
+                        label,
+                        command: Some(command),
+                        color,
+                        confirm,
+                        ..Default::default()
+                    };
+                    self.app_core.apply_macro_save(group, button, original);
+                }
+                crate::core::remote::RemoteEvent::MacroDelete { group, label } => {
+                    self.app_core.apply_macro_delete(group, label);
+                }
                 crate::core::remote::RemoteEvent::Macro { id } => {
                     // Resolve the id against config; the command runs the
                     // same dispatch as typed input (echo, dot-commands).
