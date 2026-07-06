@@ -767,6 +767,7 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#macro-rail")) return; // rail taps retarget the sheet
   if (ev.target.closest("#chips")) return; // long-press opens arrange
   if (ev.target.closest(".fx-pill")) return; // opens the effects sheet
+  if (ev.target.closest("#textsize-btn")) return; // opens the size stepper
   if (ev.target.closest(".float-btn")) return;
   closeSheet();
 });
@@ -1360,6 +1361,59 @@ cmdInput.addEventListener("keydown", (ev) => {
   } else {
     historyIndex = -1;
   }
+});
+
+// ---- Text size --------------------------------------------------------------
+// Story-text size, adjusted live from a stepper sheet and persisted per
+// device (a phone and a tablet want different sizes).
+
+const TEXT_SIZE_KEY = "vellum-text-size";
+const TEXT_SIZE_MIN = 11;
+const TEXT_SIZE_MAX = 24;
+let storySize = parseInt(localStorage.getItem(TEXT_SIZE_KEY) || "14", 10);
+if (isNaN(storySize)) storySize = 14;
+
+function applyStorySize() {
+  storySize = Math.max(TEXT_SIZE_MIN, Math.min(TEXT_SIZE_MAX, storySize));
+  document.documentElement.style.setProperty("--story-size", `${storySize}px`);
+  try {
+    localStorage.setItem(TEXT_SIZE_KEY, String(storySize));
+  } catch { /* fine, just won't persist */ }
+  if (autoScroll) scrollToBottom();
+}
+applyStorySize();
+
+document.getElementById("textsize-btn").addEventListener("click", () => {
+  openSheet("Text size");
+  const stepper = document.createElement("div");
+  stepper.className = "size-stepper";
+  const smaller = document.createElement("button");
+  smaller.type = "button";
+  smaller.textContent = "A−";
+  const value = document.createElement("span");
+  value.className = "size-value";
+  const bigger = document.createElement("button");
+  bigger.type = "button";
+  bigger.textContent = "A+";
+  const refresh = () => {
+    value.textContent = `${storySize}px`;
+    smaller.disabled = storySize <= TEXT_SIZE_MIN;
+    bigger.disabled = storySize >= TEXT_SIZE_MAX;
+  };
+  smaller.addEventListener("click", () => {
+    storySize -= 1;
+    applyStorySize();
+    refresh();
+  });
+  bigger.addEventListener("click", () => {
+    storySize += 1;
+    applyStorySize();
+    refresh();
+  });
+  refresh();
+  stepper.append(smaller, value, bigger);
+  sheetItems.appendChild(stepper);
+  sheetNote("Changes apply live — tap anywhere else to close", true);
 });
 
 // ---- Soft keyboard / viewport --------------------------------------------

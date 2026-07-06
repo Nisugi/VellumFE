@@ -96,13 +96,41 @@ html, body {
 .conn-up { color: #6fbf73; }
 .conn-down { color: var(--hp); }
 
-#wake-btn {
+#wake-btn,
+#textsize-btn {
   padding: 2px 8px;
   background: none;
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--fg-dim);
   font-size: 13px;
+}
+
+/* Text size stepper (inside the sheet) */
+.size-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 16px;
+}
+
+.size-stepper button {
+  width: 52px;
+  height: 44px;
+  background: var(--border);
+  border: none;
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 18px;
+}
+
+.size-stepper .size-value {
+  min-width: 60px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 14px;
 }
 
 #wake-btn.wake-on {
@@ -170,6 +198,8 @@ html, body {
   padding: 6px 8px;
   -webkit-overflow-scrolling: touch;
   overflow-anchor: none;
+  /* User-adjustable story text size (Aa button); chrome stays fixed. */
+  font-size: var(--story-size, 14px);
 }
 
 /* Floating macro buttons: the layer never intercepts pane touches, only
