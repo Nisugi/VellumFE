@@ -192,6 +192,12 @@ impl LauncherApp {
             form.error = Some("Profile name is required".to_string());
             return;
         }
+        // Names ride through a cmd command line when spawning terminal
+        // sessions on Windows; quotes and %-expansion cannot pass safely.
+        if name.contains(['"', '%']) {
+            form.error = Some("Profile name cannot contain \" or %".to_string());
+            return;
+        }
         let duplicate = self
             .store
             .find(name)
@@ -765,6 +771,14 @@ fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()
             if let Some(password) = password {
                 cmd.env(profiles::PASSWORD_ENV, password);
             }
+            // The launcher may have freed its console (double-click start),
+            // leaving dead std handles behind. Default Stdio::inherit would
+            // try to duplicate them and CreateProcess fails with os error 50
+            // (rust-lang/rust#113277), so hand the child explicit nulls -
+            // sessions log to a file, never to stdout.
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
@@ -782,14 +796,40 @@ fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()
 
 /// Terminal sessions need a console/terminal of their own. They never get a
 /// password handoff: with a console available, the session can prompt there.
+///
+/// Spawning the session directly with CREATE_NEW_CONSOLE does not work from
+/// a console-freed launcher: the child would inherit our dead std handles
+/// (os error 50), and substituting NUL handles would leave the TUI writing
+/// to NUL instead of its console. `cmd /c start` sidesteps both - the hidden
+/// cmd owns a live (windowless) console, and `start` creates the session's
+/// console fresh, with correct handles, visible.
 #[cfg(windows)]
 fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result<()> {
     use std::os::windows::process::CommandExt;
-    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    Command::new(exe)
-        .arg("--launch-profile")
-        .arg(&profile.name)
-        .creation_flags(CREATE_NEW_CONSOLE)
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // The profile name is interpolated into a cmd command line; names are
+    // validated at save time, but never trust the file on disk.
+    if profile.name.contains(['"', '%']) {
+        return Err(anyhow!(
+            "Profile name contains characters cmd cannot pass safely (\" or %)"
+        ));
+    }
+    let exe = exe.display().to_string();
+    if exe.contains(['"', '%']) {
+        return Err(anyhow!("Executable path contains \" or %"));
+    }
+
+    Command::new("cmd")
+        // First quoted token after `start` is the window title.
+        .raw_arg(format!(
+            "/c start \"VellumFE\" \"{}\" --launch-profile \"{}\"",
+            exe, profile.name
+        ))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .context("Failed to start terminal session")?;
     Ok(())
