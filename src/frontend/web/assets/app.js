@@ -24,13 +24,22 @@ const HIDDEN_STREAMS = new Set([
 
 const pane = document.getElementById("text-pane");
 const chipsBar = document.getElementById("chips");
+const charNameEl = document.getElementById("char-name");
 const roomNameEl = document.getElementById("room-name");
 const connEl = document.getElementById("conn");
 const rtFill = document.getElementById("rt-fill");
 const rtLabel = document.getElementById("rt-label");
+const handsEl = document.getElementById("hands");
 const handLeftEl = document.getElementById("hand-left");
 const handRightEl = document.getElementById("hand-right");
 const indicatorsEl = document.getElementById("indicators");
+
+function setCharacter(name) {
+  if (!name) return;
+  document.title = `${name} — VellumFE`;
+  charNameEl.textContent = name;
+  charNameEl.hidden = false;
+}
 
 const state = {
   lastSeq: 0,          // highest text seq seen (the resume cursor)
@@ -230,6 +239,7 @@ function setRoom(room) {
 }
 
 function setHands(d) {
+  handsEl.hidden = !d.left && !d.right;
   handLeftEl.textContent = d.left || "—";
   handRightEl.textContent = d.right || "—";
   handLeftEl.classList.toggle("empty", !d.left);
@@ -273,6 +283,8 @@ function tickRt() {
   const end = Math.max(state.rtEnd ?? 0, state.ctEnd ?? 0);
   const remaining = end - serverNow();
   const isCast = (state.ctEnd ?? 0) >= (state.rtEnd ?? 0) && (state.ctEnd ?? 0) > 0;
+  // The bar itself is the panel divider and always visible; only the
+  // fill and the little numeric chip come and go.
   if (remaining > 0) {
     const frac = state.rtTotal > 0 ? Math.min(1, remaining / state.rtTotal) : 0;
     rtFill.style.width = `${frac * 100}%`;
@@ -309,6 +321,7 @@ function handleSnapshot(d) {
   }
   for (const item of d.text) appendText(item.seq, item.stream, item.line);
   flushPendingLines();
+  setCharacter(d.character);
   setVitals(d.vitals);
   setRoom(d.room);
   setHands(d.hands || {});
@@ -320,7 +333,7 @@ function handleSnapshot(d) {
 function handleMessage(msg) {
   switch (msg.t) {
     case "hello":
-      if (msg.d.character) document.title = `${msg.d.character} — VellumFE`;
+      setCharacter(msg.d.character);
       // Seqs restart when the server process changes; drop the cursor.
       if (msg.d.session !== state.session) {
         state.session = msg.d.session;

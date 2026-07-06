@@ -17,6 +17,7 @@
 <body>
   <div id="app">
     <header id="topbar">
+      <span id="char-name" hidden></span>
       <span id="room-name">&mdash;</span>
       <span id="topbar-right">
         <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
@@ -29,6 +30,8 @@
       <div id="floating-layer"></div>
     </main>
     <footer id="bottombar">
+      <div id="rt-bar"><div id="rt-fill"></div></div>
+      <span id="rt-label"></span>
       <nav id="macro-rail" hidden>
         <button id="macro-group-btn" type="button"></button>
         <div id="macro-buttons"></div>
@@ -36,15 +39,11 @@
         <button id="macro-collapse" type="button" aria-label="Collapse macros">&#9662;</button>
       </nav>
       <div id="status-row">
-        <span id="hands">
+        <span id="hands" hidden>
           <span class="hand"><span class="hand-tag">L</span><span id="hand-left">&mdash;</span></span>
-        <span class="hand"><span class="hand-tag">R</span><span id="hand-right">&mdash;</span></span>
+          <span class="hand"><span class="hand-tag">R</span><span id="hand-right">&mdash;</span></span>
         </span>
         <span id="indicators"></span>
-      </div>
-      <div id="rt-row">
-        <div id="rt-bar"><div id="rt-fill"></div></div>
-        <span id="rt-label"></span>
       </div>
       <div id="vitals">
         <div class="vital" id="v-health"><div class="vital-fill"></div><span class="vital-label">HP</span></div>

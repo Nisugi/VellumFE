@@ -204,10 +204,41 @@ html, body {
 .line .b { font-weight: bold; }
 
 #bottombar {
+  position: relative;
   background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-  padding: 6px 10px 8px;
+  padding: 0 10px 8px;
 }
+
+/* The RT/CT bar IS the divider between the text pane and the bottom
+   panel: a thin full-bleed strip that idles as a border line and fills
+   red/blue while the timer runs. */
+#rt-bar {
+  height: 5px;
+  margin: 0 -10px 6px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+#rt-fill {
+  height: 100%;
+  width: 0;
+  background: var(--rt);
+  transition: width 100ms linear;
+}
+
+#rt-label {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+  padding: 0 4px;
+  border-radius: 4px;
+  z-index: 1;
+}
+
+#rt-label:empty { display: none; }
 
 /* Macro rail */
 #macro-rail {
@@ -357,22 +388,21 @@ html, body {
   color: var(--hp);
 }
 
-/* Hands + status indicators */
-#status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  min-height: 16px;
+#char-name {
+  flex-shrink: 0;
+  font-weight: bold;
+  color: var(--st);
 }
+
+#char-name[hidden] { display: none; }
 
 #hands {
   display: flex;
   gap: 12px;
   overflow: hidden;
 }
+
+#hands[hidden] { display: none; }
 
 .hand {
   display: flex;
@@ -560,34 +590,15 @@ html, body {
   font-style: italic;
 }
 
-#rt-row {
+/* Hands + status indicators (bottom, above vitals) */
+#status-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  height: 16px;
   margin-bottom: 6px;
-}
-
-#rt-bar {
-  flex: 1;
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-#rt-fill {
-  height: 100%;
-  width: 0;
-  background: var(--rt);
-  transition: width 100ms linear;
-}
-
-#rt-label {
-  min-width: 3.5em;
-  text-align: right;
   font-size: 12px;
-  color: var(--fg-dim);
+  min-height: 16px;
 }
 
 #vitals {
