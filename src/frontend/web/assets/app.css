@@ -48,29 +48,24 @@ html, body {
   white-space: nowrap;
 }
 
-#room-name {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  overflow-x: auto;
-  scrollbar-width: none;
+#topbar-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#room-name::-webkit-scrollbar { display: none; }
-
-.exit {
-  padding: 2px 8px;
-  background: var(--border);
-  color: var(--fg);
-  border: none;
-  border-radius: 10px;
-  font: inherit;
-  font-size: 12px;
-}
-
-.exit:active {
-  background: var(--fg-dim);
+#topbar-title.title-char {
+  color: var(--st);
+  font-weight: bold;
 }
 
 #topbar-right {
@@ -387,14 +382,6 @@ html, body {
   border: 1px solid var(--hp) !important;
   color: var(--hp);
 }
-
-#char-name {
-  flex-shrink: 0;
-  font-weight: bold;
-  color: var(--st);
-}
-
-#char-name[hidden] { display: none; }
 
 #hands {
   display: flex;

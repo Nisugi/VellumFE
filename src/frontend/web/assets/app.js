@@ -24,8 +24,7 @@ const HIDDEN_STREAMS = new Set([
 
 const pane = document.getElementById("text-pane");
 const chipsBar = document.getElementById("chips");
-const charNameEl = document.getElementById("char-name");
-const roomNameEl = document.getElementById("room-name");
+const topbarTitle = document.getElementById("topbar-title");
 const connEl = document.getElementById("conn");
 const rtFill = document.getElementById("rt-fill");
 const rtLabel = document.getElementById("rt-label");
@@ -34,11 +33,37 @@ const handLeftEl = document.getElementById("hand-left");
 const handRightEl = document.getElementById("hand-right");
 const indicatorsEl = document.getElementById("indicators");
 
+// The top bar shows either the room name or the character name; tapping
+// it toggles (choice persists per device). Exits are not shown — the
+// direction links in the story text are tappable already.
+const TITLE_MODE_KEY = "vellum-topbar-mode";
+let titleMode = localStorage.getItem(TITLE_MODE_KEY) || "room";
+let characterName = null;
+let roomName = null;
+
+function renderTitle() {
+  const showChar = titleMode === "char";
+  const value = showChar ? characterName || roomName : roomName || characterName;
+  topbarTitle.textContent = value || "—";
+  topbarTitle.classList.toggle(
+    "title-char",
+    showChar ? !!characterName : !roomName && !!characterName
+  );
+}
+
+topbarTitle.addEventListener("click", () => {
+  titleMode = titleMode === "char" ? "room" : "char";
+  try {
+    localStorage.setItem(TITLE_MODE_KEY, titleMode);
+  } catch { /* fine, just won't persist */ }
+  renderTitle();
+});
+
 function setCharacter(name) {
   if (!name) return;
   document.title = `${name} — VellumFE`;
-  charNameEl.textContent = name;
-  charNameEl.hidden = false;
+  characterName = name;
+  renderTitle();
 }
 
 const state = {
@@ -224,18 +249,8 @@ function sendCommand(text) {
 }
 
 function setRoom(room) {
-  roomNameEl.replaceChildren();
-  const name = document.createElement("span");
-  name.textContent = room.name || "—";
-  roomNameEl.appendChild(name);
-  for (const exit of room.exits || []) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "exit";
-    btn.textContent = exit;
-    btn.addEventListener("click", () => sendCommand(exit));
-    roomNameEl.appendChild(btn);
-  }
+  roomName = room.name || null;
+  renderTitle();
 }
 
 function setHands(d) {
