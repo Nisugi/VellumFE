@@ -29,7 +29,17 @@ client-side buffers, curated hidden-stream list), one-handed bottom chrome
 visualViewport keyboard handling, wake-lock toggle, repeat-last +
 hold-for-history input. Also fixed a latent core bug: indicator ids matched
 case-sensitively so game_state.status never updated. Remaining Phase 4
-iteration happens against real phone use. Phase 5 (macros) next.
+iteration happens against real phone use.
+Phase 5 (manual groups + floating buttons): `macros.toml` in core config —
+`[[group]]`s of buttons (action buttons fire on tap; menu buttons open the
+bottom sheet; `confirm` gates add a two-step sheet) plus `[[floating]]`
+overlay buttons (tap fires, hold drags; positions persist per device in
+the browser, not in config). Clients get ids/labels only; taps send
+`macro { id }` and the server resolves commands (`MacrosConfig::resolve`).
+`.reloadmacros` re-reads the file and pushes to connected phones live.
+Deferred from Phase 5: `show_when` context awareness and script-pushed
+macro sets (design sketch only, as planned); Quickbar reconciliation
+untouched. Phase 5b (session dashboard) and Phase 6 (security) next.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
