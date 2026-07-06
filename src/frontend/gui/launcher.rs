@@ -146,19 +146,19 @@ impl LauncherApp {
                 } else {
                     None
                 };
-                match (saved, profile.frontend) {
+                match saved {
                     // Session re-reads the credential store itself.
-                    (Some(_), _) => self.spawn(&profile, None),
-                    // Terminal sessions get their own console and can prompt
-                    // there, exactly like a hand-run --direct command.
-                    (None, LaunchFrontend::Tui) => self.spawn(&profile, None),
-                    // GUI sessions have no console to prompt in - collect the
-                    // password here and hand it over privately.
-                    (None, LaunchFrontend::Gui) => {
+                    Some(_) => self.spawn(&profile, None),
+                    // Nothing saved: collect the password here (with the
+                    // option to remember it) and hand it over privately.
+                    // This covers terminal sessions too - prompting in the
+                    // launcher beats a bare console prompt with no way to
+                    // save the password.
+                    None => {
                         self.password_prompt = Some(PasswordPrompt {
                             profile_name: profile.name.clone(),
                             password: String::new(),
-                            remember: false,
+                            remember: true,
                         });
                     }
                 }
@@ -790,12 +790,13 @@ fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()
             cmd.spawn().context("Failed to start session process")?;
             Ok(())
         }
-        LaunchFrontend::Tui => spawn_tui_session(&exe, profile),
+        LaunchFrontend::Tui => spawn_tui_session(&exe, profile, password),
     }
 }
 
-/// Terminal sessions need a console/terminal of their own. They never get a
-/// password handoff: with a console available, the session can prompt there.
+/// Terminal sessions need a console/terminal of their own. A just-prompted
+/// password rides along in the environment (it survives the cmd/start hop);
+/// if the variable is missing the session falls back to a console prompt.
 ///
 /// Spawning the session directly with CREATE_NEW_CONSOLE does not work from
 /// a console-freed launcher: the child would inherit our dead std handles
@@ -804,7 +805,11 @@ fn spawn_session(profile: &LauncherProfile, password: Option<&str>) -> Result<()
 /// cmd owns a live (windowless) console, and `start` creates the session's
 /// console fresh, with correct handles, visible.
 #[cfg(windows)]
-fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result<()> {
+fn spawn_tui_session(
+    exe: &std::path::Path,
+    profile: &LauncherProfile,
+    password: Option<&str>,
+) -> Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -820,7 +825,11 @@ fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result
         return Err(anyhow!("Executable path contains \" or %"));
     }
 
-    Command::new("cmd")
+    let mut cmd = Command::new("cmd");
+    if let Some(password) = password {
+        cmd.env(profiles::PASSWORD_ENV, password);
+    }
+    cmd
         // First quoted token after `start` is the window title.
         .raw_arg(format!(
             "/c start \"VellumFE\" \"{}\" --launch-profile \"{}\"",
@@ -836,7 +845,13 @@ fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result<()> {
+fn spawn_tui_session(
+    exe: &std::path::Path,
+    profile: &LauncherProfile,
+    _password: Option<&str>,
+) -> Result<()> {
+    // No env handoff: `open` routes through LaunchServices, which does not
+    // propagate our environment. The session prompts in Terminal instead.
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -858,7 +873,11 @@ fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result<()> {
+fn spawn_tui_session(
+    exe: &std::path::Path,
+    profile: &LauncherProfile,
+    password: Option<&str>,
+) -> Result<()> {
     let exe = exe.display().to_string();
     // $TERMINAL first, then common emulators. gnome-terminal wants `--`,
     // the rest take `-e`-style trailing commands.
@@ -881,6 +900,11 @@ fn spawn_tui_session(exe: &std::path::Path, profile: &LauncherProfile) -> Result
             .arg(&exe)
             .arg("--launch-profile")
             .arg(&profile.name);
+        // Best-effort: factory-model emulators (gnome-terminal) do not
+        // inherit our environment; the session prompts in its terminal then.
+        if let Some(password) = password {
+            cmd.env(crate::config::profiles::PASSWORD_ENV, password);
+        }
         if cmd.spawn().is_ok() {
             return Ok(());
         }

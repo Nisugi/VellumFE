@@ -334,6 +334,18 @@ mod tests {
         }
     }
 
+    /// Touches the real OS credential store - run explicitly with
+    /// `cargo test keyring_round_trip -- --ignored`.
+    #[test]
+    #[ignore]
+    fn keyring_round_trip() {
+        let account = "vellum-fe-selftest";
+        save_password(account, "s3cret").expect("save to OS credential store");
+        assert_eq!(load_password(account).as_deref(), Some("s3cret"));
+        delete_password(account);
+        assert_eq!(load_password(account), None);
+    }
+
     #[test]
     fn toml_round_trip_preserves_profiles() {
         let dir = tempfile::tempdir().unwrap();
