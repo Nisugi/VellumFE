@@ -172,6 +172,14 @@ html, body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* `display: flex` on the id selector outranks the UA's [hidden] rule, so
+   without this the sheet can never be dismissed. Keep it adjacent to the
+   display above. */
+#sheet[hidden],
+#sheet-backdrop[hidden] {
+  display: none;
+}
+
 #sheet-titlebar {
   display: flex;
   align-items: center;
