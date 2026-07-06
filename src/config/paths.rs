@@ -264,6 +264,28 @@ impl Config {
         Ok(keybinds_path)
     }
 
+    /// Load the web pairing token, generating it on first use. Lives in
+    /// the shared base dir (not per-profile) so one phone pairing covers
+    /// every character and switching sessions never re-prompts.
+    pub fn load_or_create_web_token() -> Result<String> {
+        let path = Self::base_dir()?.join("web-token");
+        if let Ok(existing) = fs::read_to_string(&path) {
+            let token = existing.trim().to_string();
+            if !token.is_empty() {
+                return Ok(token);
+            }
+        }
+        let mut bytes = [0u8; 16];
+        openssl::rand::rand_bytes(&mut bytes).context("Failed to generate web token")?;
+        let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, &token).context("Failed to write web-token")?;
+        tracing::info!("Generated web pairing token at {:?}", path);
+        Ok(token)
+    }
+
     /// Load keybinds from a named profile
     pub fn load_keybinds_from(name: &str) -> Result<HashMap<String, KeyBindAction>> {
         let keybinds_dir = Self::keybinds_dir()?;

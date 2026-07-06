@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#111318">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vellum">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <title>VellumFE</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button id="topbar-title" type="button"
+              title="Toggle between room and character name">&mdash;</button>
+      <span id="topbar-right">
+        <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
+        <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
+        <span id="conn" class="conn conn-down">connecting&hellip;</span>
+      </span>
+    </header>
+    <nav id="chips"></nav>
+    <main id="pane-wrap">
+      <div id="text-pane"></div>
+      <aside id="effects-panel"></aside>
+      <div id="floating-layer"></div>
+    </main>
+    <footer id="bottombar">
+      <div id="rt-bar"><div id="rt-fill"></div></div>
+      <span id="rt-label"></span>
+      <nav id="macro-rail" hidden>
+        <button id="macro-group-btn" type="button"></button>
+        <div id="macro-buttons"></div>
+        <button id="macro-add" type="button" aria-label="Add or edit macros">&#65291;</button>
+        <button id="macro-collapse" type="button" aria-label="Collapse macros">&#9662;</button>
+      </nav>
+      <div id="status-row">
+        <span id="hands" hidden>
+          <span class="hand"><span class="hand-tag">L</span><span id="hand-left">&mdash;</span></span>
+          <span class="hand"><span class="hand-tag">R</span><span id="hand-right">&mdash;</span></span>
+        </span>
+        <span id="status-right">
+          <button id="fx-buffs" class="fx-pill" type="button" hidden></button>
+          <button id="fx-debuffs" class="fx-pill fx-bad" type="button" hidden></button>
+          <span id="indicators"></span>
+        </span>
+      </div>
+      <div id="vitals">
+        <div class="vital" id="v-health"><div class="vital-fill"></div><span class="vital-label">HP</span></div>
+        <div class="vital" id="v-mana"><div class="vital-fill"></div><span class="vital-label">MP</span></div>
+        <div class="vital" id="v-stamina"><div class="vital-fill"></div><span class="vital-label">ST</span></div>
+        <div class="vital" id="v-spirit"><div class="vital-fill"></div><span class="vital-label">SP</span></div>
+      </div>
+      <form id="input-row" autocomplete="off">
+        <input id="cmd-input" type="text" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="command&hellip;">
+        <button id="repeat-btn" type="button" aria-label="Repeat last command (hold for history)"
+                title="Repeat last command (hold for history)">&#8635;</button>
+        <button id="cmd-send" type="submit" aria-label="Send">&#10148;</button>
+      </form>
+    </footer>
+  </div>
+  <div id="pair-overlay" hidden>
+    <form id="pair-form">
+      <h2>Pair with VellumFE</h2>
+      <p>Run <code>.webinfo</code> in Vellum and scan the QR code, or type
+         the pairing token here.</p>
+      <input id="pair-token" type="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="pairing token">
+      <button type="submit">Connect</button>
+    </form>
+  </div>
+  <div id="sheet-backdrop" hidden></div>
+  <div id="sheet" hidden>
+    <div id="sheet-titlebar">
+      <span id="sheet-title"></span>
+      <button id="sheet-close" type="button" aria-label="Close">&#10005;</button>
+    </div>
+    <div id="sheet-items"></div>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

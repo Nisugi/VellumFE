@@ -1877,9 +1877,10 @@ impl XmlParser {
 
     fn handle_stream_window(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <streamWindow id='room' subtitle=" - Emberthorn Refuge, Bowery" ... />
-        // Extract id and subtitle
+        // Extract id and subtitle. Subtitles carry entity-escaped room
+        // names (e.g. Scrivener&apos;s) - decode like text content.
         if let Some(id) = Self::extract_attribute(tag, "id") {
-            let subtitle = Self::extract_attribute(tag, "subtitle");
+            let subtitle = Self::extract_attribute(tag, "subtitle").map(Self::decode_entities);
             elements.push(ParsedElement::StreamWindow { id, subtitle });
         }
     }

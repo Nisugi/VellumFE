@@ -307,6 +307,32 @@ impl CommandInputModel {
         Some(command)
     }
 
+    /// Record a command submitted outside this input (e.g. from a remote
+    /// web client) into history so local up-arrow reaches it. Applies the
+    /// same dedupe/min-length rules as submit() but leaves the current
+    /// text, cursor, and undo state untouched.
+    pub fn record_external_command(&mut self, command: &str) {
+        if command.is_empty() || command.len() < self.min_command_length {
+            return;
+        }
+        let should_add = self
+            .history
+            .front()
+            .map(|last_cmd| last_cmd != command)
+            .unwrap_or(true);
+        if !should_add {
+            return;
+        }
+        self.history.push_front(command.to_string());
+        if self.history.len() > self.max_history {
+            self.history.pop_back();
+        }
+        // Keep an in-progress history browse anchored on the same entry.
+        if let Some(idx) = self.history_index.as_mut() {
+            *idx = (*idx + 1).min(self.history.len().saturating_sub(1));
+        }
+    }
+
     pub fn get_last_command(&self) -> Option<String> {
         self.history.front().cloned()
     }

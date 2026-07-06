@@ -10,12 +10,18 @@
   - [Installation](./getting-started/installation.md)
   - [First Launch](./getting-started/first-launch.md)
 
+- [Frontends](./frontends/README.md)
+  - [Terminal (TUI)](./frontends/tui.md)
+  - [Desktop GUI](./frontends/gui.md)
+  - [Mobile Web](./frontends/web.md)
+
 - [Configuration](./configuration/README.md)
   - [config.toml](./configuration/config-toml.md)
   - [layout.toml](./configuration/layout-toml.md)
   - [keybinds.toml](./configuration/keybinds-toml.md)
   - [highlights.toml](./configuration/highlights-toml.md)
   - [colors.toml](./configuration/colors-toml.md)
+  - [macros.toml](./configuration/macros-toml.md)
 
 - [Widgets](./widgets/README.md)
   - [Text Windows](./widgets/text-windows.md)
@@ -41,3 +47,13 @@
   - [Highlight Patterns](./customization/highlights.md)
   - [Keybind Actions](./customization/keybinds.md)
   - [Sound Alerts](./customization/sounds.md)
+  - [Themes](./customization/themes.md)
+
+---
+
+# Reference
+
+- [Command Reference](./reference/commands.md)
+- [CLI Reference](./reference/cli.md)
+- [FAQ](./reference/faq.md)
+- [Troubleshooting](./reference/troubleshooting.md)

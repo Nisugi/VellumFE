@@ -10,6 +10,7 @@ pub mod highlight_engine;
 pub mod input_router;
 pub mod menu_actions;
 pub mod messages;
+pub mod remote;
 pub mod state;
 
 pub use app_core::AppCore;

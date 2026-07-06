@@ -77,6 +77,12 @@ impl AppCore {
                 stream: String::from("main"),
             };
 
+            // Echo bypasses the message pipeline, so mirror it to remote
+            // clients explicitly (they see the same echo as local windows)
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
+            }
+
             // Add the styled line to each subscriber window
             for window_name in subscribers {
                 if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
@@ -118,6 +124,102 @@ impl AppCore {
         Ok(command)
     }
 
+    /// `.webinfo`: the phone-onboarding pairing URL and QR code.
+    fn show_webinfo(&mut self) {
+        if !self.config.web.enabled {
+            self.add_system_message(
+                "Web server is disabled. Enable [web] in config.toml or pass --web-port.",
+            );
+            return;
+        }
+        let Some(port) = self
+            .message_processor
+            .remote
+            .as_ref()
+            .and_then(|remote| remote.bound_port())
+        else {
+            self.add_system_message("Web server is not running (bind failed or still starting)");
+            return;
+        };
+        let token = match crate::config::Config::load_or_create_web_token() {
+            Ok(token) => token,
+            Err(e) => {
+                self.add_system_message(&format!("Pairing token unavailable: {e:#}"));
+                return;
+            }
+        };
+        let host = if self.config.web.bind == "127.0.0.1" {
+            "127.0.0.1".to_string()
+        } else {
+            Self::local_lan_ip().unwrap_or_else(|| self.config.web.bind.clone())
+        };
+        let url = format!("http://{host}:{port}/#token={token}");
+        self.add_system_message(&format!("Web session URL: {url}"));
+        if self.config.web.bind == "127.0.0.1" {
+            self.add_system_message(
+                "Note: bind = \"127.0.0.1\" is this PC only. Set [web] bind = \"0.0.0.0\" so phones on your LAN can connect.",
+            );
+        }
+        self.add_system_message(
+            "Off-LAN play: use Tailscale/WireGuard. Never expose this port to the open internet.",
+        );
+        // A QR drawn with unicode blocks depends on font glyph coverage
+        // (the GUI font renders them all as tofu boxes), so render a real
+        // SVG QR into a local page and pop the default browser instead.
+        match Self::write_pairing_page(&url) {
+            Ok(path) => {
+                if open::that(&path).is_ok() {
+                    self.add_system_message("Opened the pairing QR in your browser.");
+                } else {
+                    self.add_system_message(&format!(
+                        "Pairing QR written to {} (open it in a browser)",
+                        path.display()
+                    ));
+                }
+            }
+            Err(e) => {
+                tracing::warn!("webinfo pairing page failed: {e:#}");
+                self.add_system_message(&format!("Could not write pairing page: {e:#}"));
+            }
+        }
+    }
+
+    /// Write ~/.vellum-fe/pair.html: a dark page with a scannable SVG QR
+    /// and the URL. Lives next to web-token — same trust domain.
+    fn write_pairing_page(url: &str) -> Result<std::path::PathBuf> {
+        use anyhow::Context as _;
+        let code = qrcode::QrCode::new(url.as_bytes()).context("QR encode failed")?;
+        let svg = code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(320, 320)
+            .dark_color(qrcode::render::svg::Color("#000000"))
+            .light_color(qrcode::render::svg::Color("#ffffff"))
+            .build();
+        let html = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <title>VellumFE pairing</title>\
+             <style>body{{background:#111318;color:#d6d6d6;font-family:ui-monospace,Consolas,monospace;\
+             display:flex;flex-direction:column;align-items:center;gap:18px;padding-top:6vh}}\
+             .qr{{background:#fff;padding:16px;border-radius:12px}}\
+             a{{color:#d9b44f;word-break:break-all;max-width:80vw}}</style></head>\
+             <body><h2>Scan with your phone</h2><div class=\"qr\">{svg}</div>\
+             <a href=\"{url}\">{url}</a>\
+             <p>This pairs the phone with every VellumFE session on this PC.</p>\
+             </body></html>"
+        );
+        let path = crate::config::Config::base_dir()?.join("pair.html");
+        std::fs::write(&path, html).context("Failed to write pair.html")?;
+        Ok(path)
+    }
+
+    /// Best-effort LAN IP: route lookup via an unconnected UDP socket
+    /// (no packets are sent).
+    fn local_lan_ip() -> Option<String> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        socket.connect("8.8.8.8:80").ok()?;
+        Some(socket.local_addr().ok()?.ip().to_string())
+    }
+
     /// Handle dot commands (local client commands)
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
@@ -134,6 +236,36 @@ impl AppCore {
             }
             "version" | "ver" => {
                 self.show_version();
+            }
+
+            // Web frontend: reload macros.toml (+ the phone-edited local
+            // overlay) and push to connected phones
+            "reloadmacros" => {
+                match crate::config::MacrosConfig::load(self.config.character.as_deref()) {
+                    Ok(macros) => {
+                        let groups = macros.groups.len();
+                        let floating = macros.floating.len();
+                        self.config.macros = macros;
+                        self.config.macros_local =
+                            crate::config::MacrosConfig::load_local(self.config.character.as_deref())
+                                .unwrap_or_default();
+                        if let Some(remote) = self.message_processor.remote.as_mut() {
+                            remote.set_macros(&self.config.macros);
+                        }
+                        self.add_system_message(&format!(
+                            "Reloaded macros.toml: {} group(s), {} floating button(s)",
+                            groups, floating
+                        ));
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to reload macros.toml: {e:#}"));
+                    }
+                }
+            }
+
+            // Web frontend: show the pairing URL + QR for phone onboarding
+            "webinfo" => {
+                self.show_webinfo();
             }
 
             // Layout commands

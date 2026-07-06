@@ -40,6 +40,8 @@ impl Config {
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
+        config.macros = MacrosConfig::load(character).unwrap_or_default();
+        config.macros_local = MacrosConfig::load_local(character).unwrap_or_default();
 
         // Validate and auto-fix menu keybinds
         let validation = menu_keybind_validator::validate_menu_keybinds(&config.menu_keybinds);
@@ -222,6 +224,13 @@ impl Config {
             tracing::info!("Extracted keybinds.toml to {:?}", keybinds_path);
         }
 
+        // Extract macros.toml (web frontend macro buttons) to global directory
+        let macros_path = Self::global_dir()?.join("macros.toml");
+        if !macros_path.exists() {
+            fs::write(&macros_path, DEFAULT_MACROS).context("Failed to write macros.toml")?;
+            tracing::info!("Extracted macros.toml to {:?}", macros_path);
+        }
+
         // Create empty history.txt in profile (if it doesn't exist)
         let history_path = profile.join("history.txt");
         if !history_path.exists() {
@@ -338,6 +347,8 @@ impl Config {
         config.keybinds = Self::load_keybinds(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
+        config.macros = MacrosConfig::load(character).unwrap_or_default();
+        config.macros_local = MacrosConfig::load_local(character).unwrap_or_default();
 
         // Validate and auto-fix menu keybinds
         let validation = menu_keybind_validator::validate_menu_keybinds(&config.menu_keybinds);
@@ -560,6 +571,9 @@ impl Default for Config {
             streams: StreamsConfig::default(), // Stream routing config
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
+            web: WebConfig::default(), // Web server off by default
+            macros: MacrosConfig::default(), // Loaded from macros.toml
+            macros_local: MacrosConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

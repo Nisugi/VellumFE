@@ -45,8 +45,9 @@ title = "Custom Title"
 
 ## Adding Widgets
 
-1. **Via Menu**: F1 → Windows → Add Window → [Category] → [Widget]
-2. **Via Command**: `.addwindow widgetname`
+1. **Via Menu**: `.menu` → Windows → Add Window → [Category] → [Widget]
+2. **Via Command**: `.addwindow` opens a picker, or
+   `.addwindow <name> <type> <x> <y> <width> [height]` creates directly
 3. **Via Config**: Edit layout.toml directly
 
 ## Categories

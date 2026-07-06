@@ -25,7 +25,7 @@ eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support"
 fontdb = "0.23"  # System font discovery for per-window font selection
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 toml = "0.8"
 dirs = "5"
@@ -38,6 +38,10 @@ include_dir = "0.7"  # Embed default config files
 rpassword = "7"
 # openssl = "0.10"  # For local builds with system OpenSSL
 openssl = { version = "0.10", features = ["vendored"] }  # For CI builds - compiles OpenSSL from source
+
+# Web server (mobile web frontend) - HTTP + WebSocket sidecar
+axum = { version = "0.8", features = ["ws"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .webinfo pairing QR
 
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
@@ -63,6 +67,11 @@ sysinfo = "0.30"
 
 # URL opening (for LaunchURL)
 open = "5"
+
+# OS credential store for launcher profiles (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service). Best-effort: launcher falls back
+# to prompting when no secure store is available (headless, WSL, bare WMs).
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "vendored"] }
 
 [features]
 default = ["sound"]

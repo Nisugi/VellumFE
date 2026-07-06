@@ -1,36 +1,50 @@
 # VellumFE
 
-A modern terminal client for GemStone IV, built in Rust.
+A modern client for GemStone IV (and DragonRealms), built in Rust.
+
+One core, three ways to play:
+
+- **Terminal (TUI)** — the default. Runs in any modern terminal.
+- **Desktop GUI** — native windowed client (`--frontend gui`).
+- **Mobile Web** — an optional sidecar server that lets your phone's browser join the same session, with tap-to-move exits and configurable macro buttons.
 
 ## Features
 
-- **Fast rendering** - 60+ FPS with efficient text handling
-- **Customizable layouts** - Position and size every window
-- **Flexible connections** - Lich proxy or direct eAccess authentication
-- **Rich highlighting** - Regex-based text coloring with sound alerts
-- **Full keyboard control** - Rebindable keys for all actions
+- **Customizable layouts** — position and size every window
+- **Flexible connections** — Lich proxy or direct eAccess (no Lich required)
+- **Rich highlighting** — regex coloring, sounds, line squelching, redirects, text replacement
+- **Themes** — 35+ built-in themes including accessibility variants, plus custom themes
+- **Full keyboard control** — rebindable keys for all actions
+- **Text-to-speech** — screen reader support built in
 
 ## Quick Start
 
 ```bash
 # Connect via Lich (most common)
-vellum-fe --port 8000
+vellum-fe --port 8000 --character YourName
 
 # Direct connection (no Lich required)
-vellum-fe --direct --account ACCOUNT --password PASS --character NAME
+vellum-fe --direct --account ACCOUNT --character YourName --game prime
 ```
+
+See [Connecting](./getting-started/first-launch.md) for details.
 
 ## Configuration
 
-VellumFE stores configuration in `~/.vellum-fe/`:
+VellumFE stores configuration in `~/.vellum-fe/` (override with `VELLUM_FE_DIR` or `--data-dir`):
 
 | File | Purpose |
 |------|---------|
-| `config.toml` | General settings |
-| `layout.toml` | Window positions and sizes |
-| `keybinds.toml` | Keyboard shortcuts |
-| `highlights.toml` | Text highlighting rules |
-| `colors.toml` | Color palette |
+| `global/config.toml` | General settings (connection, UI, sound, TTS, web server) |
+| `global/keybinds.toml` | Keyboard shortcuts |
+| `global/highlights.toml` | Text highlighting, sounds, squelch rules |
+| `global/colors.toml` | Color palette, stream presets, spell colors |
+| `global/macros.toml` | Macro buttons for the mobile web frontend |
+| `profiles/<name>/` | Per-character overrides of any of the above |
+| `themes/*.toml` | Custom themes |
+
+Most settings can also be changed in-app: type `.settings`, or see the
+[Command Reference](./reference/commands.md).
 
 ## Getting Help
 

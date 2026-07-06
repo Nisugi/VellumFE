@@ -102,6 +102,10 @@ pub struct MessageProcessor {
     /// Buffered society stream lines for reload
     /// Updated whenever society stream text arrives
     society_buffer: Vec<String>,
+
+    /// Remote client sink for the web frontend sidecar.
+    /// None unless `[web] enabled = true` — see core/remote.rs.
+    pub remote: Option<super::remote::RemoteSink>,
 }
 
 impl MessageProcessor {
@@ -155,6 +159,7 @@ impl MessageProcessor {
             highlight_engine,
             current_stream: String::from("main"),
             current_segments: Vec::new(),
+            remote: None,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
@@ -937,14 +942,20 @@ impl MessageProcessor {
             ParsedElement::StatusIndicator { id, active } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Update game state (legacy)
-                match id.as_str() {
+                // Update game state. The parser strips the "Icon" prefix
+                // but preserves casing (e.g. "BLEEDING"), so match
+                // case-insensitively like the indicator widgets below do.
+                match id.to_ascii_lowercase().as_str() {
                     "stunned" => game_state.status.stunned = *active,
                     "bleeding" => game_state.status.bleeding = *active,
                     "hidden" => game_state.status.hidden = *active,
                     "invisible" => game_state.status.invisible = *active,
                     "webbed" => game_state.status.webbed = *active,
                     "dead" => game_state.status.dead = *active,
+                    "standing" => game_state.status.standing = *active,
+                    "kneeling" => game_state.status.kneeling = *active,
+                    "sitting" => game_state.status.sitting = *active,
+                    "prone" => game_state.status.prone = *active,
                     _ => {}
                 }
 
@@ -1485,21 +1496,50 @@ impl MessageProcessor {
                     _ => return, // Unknown category
                 };
 
+                let spell_style = id
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|spell_id| self.config.get_spell_color_style(spell_id));
+                let default_style = SpellColorStyle {
+                    bar_color: None,
+                    text_color: None,
+                };
+                let style = spell_style.unwrap_or(default_style);
+
+                // Always store in game state, independent of the local
+                // layout: remote clients (and windows added mid-session)
+                // need effects even when no effects window exists.
+                let store = game_state
+                    .effects
+                    .entry(category.clone())
+                    .or_insert_with(|| crate::data::ActiveEffectsContent {
+                        category: category.clone(),
+                        effects: Vec::new(),
+                        generation: 0,
+                    });
+                if let Some(effect) = store.effects.iter_mut().find(|e| e.id == *id) {
+                    effect.text = text.clone();
+                    effect.value = *value;
+                    effect.time = time.clone();
+                    effect.bar_color = style.bar_color.clone();
+                    effect.text_color = style.text_color.clone();
+                } else {
+                    store.effects.push(crate::data::ActiveEffect {
+                        id: id.clone(),
+                        text: text.clone(),
+                        value: *value,
+                        time: time.clone(),
+                        bar_color: style.bar_color.clone(),
+                        text_color: style.text_color.clone(),
+                    });
+                }
+                store.generation += 1;
+
                 // Update the window content if it exists
                 if let Some(window) = ui_state.get_window_mut(window_name) {
                     if let crate::data::WindowContent::ActiveEffects(ref mut effects_content) =
                         window.content
                     {
-                        let spell_style = id
-                            .parse::<u32>()
-                            .ok()
-                            .and_then(|spell_id| self.config.get_spell_color_style(spell_id));
-                        let default_style = SpellColorStyle {
-                            bar_color: None,
-                            text_color: None,
-                        };
-                        let style = spell_style.unwrap_or(default_style);
-
                         // Find existing effect or add new one
                         if let Some(effect) =
                             effects_content.effects.iter_mut().find(|e| e.id == *id)
@@ -1536,6 +1576,12 @@ impl MessageProcessor {
                     "ActiveSpells" => "active_spells",
                     _ => return, // Unknown category
                 };
+
+                // Clear the game-state store too (see ActiveEffect above)
+                if let Some(store) = game_state.effects.get_mut(category.as_str()) {
+                    store.effects.clear();
+                    store.generation += 1;
+                }
 
                 // Clear the window content if it exists
                 if let Some(window) = ui_state.get_window_mut(window_name) {
@@ -2317,6 +2363,20 @@ impl MessageProcessor {
                 "Discarding text segment from room stream (room uses components, not text)"
             );
             return;
+        }
+
+        // Remote scrollback tap (web frontend): record the finalized,
+        // unwrapped line keyed by stream. Must stay after squelch/speech
+        // filtering and the room-stream discard so remote clients see what
+        // local windows can see. Mirrors the redirect copy: a redirected
+        // line is recorded under both streams when the mode keeps the
+        // original.
+        if let Some(remote) = self.remote.as_mut() {
+            let shared = std::sync::Arc::new(line.clone());
+            remote.push_text(&self.current_stream, shared.clone());
+            if should_send_to_original && self.current_stream != original_stream {
+                remote.push_text(&original_stream, shared);
+            }
         }
 
         // Buffer bounty stream data for later use (e.g., when adding a bounty window later)

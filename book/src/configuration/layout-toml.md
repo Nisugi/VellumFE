@@ -1,6 +1,11 @@
 # layout.toml
 
-Defines window positions, sizes, and properties.
+Defines window positions, sizes, and properties for the **TUI**. (The
+[Desktop GUI](../frontends/gui.md) keeps its own layout separately.)
+
+Layouts are saved with `.savelayout [name]` to `~/.vellum-fe/layouts/`,
+and the current layout auto-saves per character to
+`profiles/<name>/layout.toml`.
 
 ## Basic Structure
 

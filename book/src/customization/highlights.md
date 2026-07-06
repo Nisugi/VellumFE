@@ -1,143 +1,98 @@
 # Highlight Patterns
 
-Color and style game text based on patterns.
+Recipes for common highlighting tasks. Full field reference:
+[highlights.toml](../configuration/highlights-toml.md). The in-app editor
+(`.addhighlight`) walks you through the same fields.
 
-## Basic Highlight
-
-```toml
-[[highlights]]
-name = "player_speech"
-pattern = " says,"
-foreground = "#87CEEB"
-```
-
-## Pattern Types
-
-### Literal (Default)
-
-Fast exact matching:
+## Color Important Text
 
 ```toml
+[creature_dead]
 pattern = "appears dead"
-```
-
-### Regex
-
-Flexible pattern matching:
-
-```toml
-pattern = "^A .+ attacks"
-is_regex = true
-```
-
-## Styling Options
-
-```toml
-[[highlights]]
-name = "important"
-pattern = "IMPORTANT"
-foreground = "#FF0000"      # Text color
-background = "#330000"      # Background color
+fg = "#00ff00"
 bold = true
-italic = true
-underline = true
-```
+category = "Combat"
 
-## Sound Alerts
-
-```toml
-[[highlights]]
-name = "whisper_alert"
-pattern = "whispers to you"
-foreground = "#DDA0DD"
-sound = "whisper.wav"       # In ~/.vellum-fe/sounds/
-sound_volume = 0.8          # 0.0 to 1.0
-```
-
-## Text Replacement
-
-```toml
-[[highlights]]
-name = "shorten"
-pattern = "The death cry of"
-replace = "†"
-foreground = "#FF0000"
-```
-
-## Stream Redirect
-
-Route lines to another window:
-
-```toml
-[[highlights]]
-name = "loot_redirect"
-pattern = "^You gather"
-is_regex = true
-redirect = "loot"           # Window name
-```
-
-## Common Patterns
-
-```toml
-# Combat
-[[highlights]]
-name = "creature_dead"
-pattern = "appears dead"
-foreground = "#00FF00"
-bold = true
-sound = "kill.wav"
-
-[[highlights]]
-name = "you_hit"
-pattern = "^You .+ (swing|slash|thrust)"
-is_regex = true
-foreground = "#FFFF00"
-
-[[highlights]]
-name = "you_miss"
-pattern = "^A clean miss"
-foreground = "#808080"
-
-# Communication
-[[highlights]]
-name = "says"
-pattern = " says,"
-foreground = "#87CEEB"
-
-[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#DDA0DD"
-italic = true
-
-[[highlights]]
-name = "thoughts"
-pattern = "^You hear .+ thinking,"
-is_regex = true
-foreground = "#9370DB"
-
-# Warnings
-[[highlights]]
-name = "stunned"
+[stunned]
 pattern = "You are stunned"
-foreground = "#FF4500"
+fg = "#ff4500"
 bold = true
 sound = "alert.wav"
-
-[[highlights]]
-name = "bleeding"
-pattern = "Blood runs down"
-foreground = "#FF0000"
-sound = "danger.wav"
+category = "Warnings"
 ```
 
-## Disabling Highlights
+## Highlight Names (Friends and Enemies)
 
-In `config.toml`:
+Use `fast_parse` for lists of literal words — it's much faster than regex:
 
 ```toml
-[highlights]
-sounds_enabled = false      # Disable sounds
-coloring_enabled = false    # Disable colors
-replace_enabled = false     # Disable replacements
+[friends]
+pattern = "Mandrill|Monolis|Chiora"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
+
+[enemies]
+pattern = "Sihtric|Ehria"
+fg = "#ffffff"
+bg = "#8b0000"
+bold = true
+fast_parse = true
+category = "Players"
 ```
+
+## Hide Spam (Squelch)
+
+```toml
+[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls"
+fast_parse = true
+squelch = true
+category = "Squelch"
+```
+
+## Route Lines to Another Window
+
+```toml
+[loot_lines]
+pattern = "^You gather"
+redirect_to = "loot"
+redirect_mode = "copy"    # "only" to move instead of copy
+```
+
+## Rewrite Text
+
+Capture groups from the pattern are available as `$1`, `$2`:
+
+```toml
+[shorten_deaths]
+pattern = "The death cry of (\\w+)"
+replace = "† $1"
+fg = "#ff0000"
+```
+
+## Limit to One Stream or Window
+
+```toml
+[thought_names]
+pattern = "^\\[(\\w+)\\]"
+fg = "#9370db"
+stream = "thoughts"       # only applies to the thoughts stream
+```
+
+## Test Your Patterns
+
+Don't wait for the game — inject a line:
+
+```
+.testline The death cry of Grimswarm echoes!
+```
+
+## Tips
+
+- Patterns are regexes: escape literal `.` `(` `[`, use `(?i)` for
+  case-insensitive, anchor with `^` where you can.
+- Use `category` — the `.highlights` browser groups by it.
+- Save variants per activity: `.savehighlights hunting`,
+  `.loadhighlights hunting`.

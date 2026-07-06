@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,46 +178,41 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="customization"><a class="header" href="#customization">Customization</a></h1>
-<p>Create your perfect interface with custom layouts, highlights, keybinds, and sounds.</p>
+<p>Create your perfect interface with custom layouts, highlights, keybinds,
+sounds, and themes.</p>
 <h2 id="topics"><a class="header" href="#topics">Topics</a></h2>
 <ul>
 <li><a href="./layouts.html">Creating Layouts</a> - Design custom window arrangements</li>
-<li><a href="./highlights.html">Highlight Patterns</a> - Color and style game text</li>
+<li><a href="./highlights.html">Highlight Patterns</a> - Color, filter, and reroute game text</li>
 <li><a href="./keybinds.html">Keybind Actions</a> - Custom keyboard shortcuts</li>
 <li><a href="./sounds.html">Sound Alerts</a> - Audio notifications for game events</li>
+<li><a href="./themes.html">Themes</a> - Switch or build UI color themes</li>
 </ul>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
 <h3 id="custom-layout"><a class="header" href="#custom-layout">Custom Layout</a></h3>
 <ol>
-<li>Press F1 → Windows → Add Window</li>
-<li>Position and resize windows</li>
-<li>Press Ctrl+S to save</li>
+<li><code>.menu</code> → Windows → Add Window (or <code>.addwindow</code>)</li>
+<li>Ctrl+drag to move windows, drag borders to resize</li>
+<li><code>.savelayout myname</code> to save</li>
 </ol>
-<h3 id="add-highlights"><a class="header" href="#add-highlights">Add Highlights</a></h3>
-<p>Edit <code>~/.vellum-fe/highlights.toml</code>:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "death"
+<h3 id="add-a-highlight"><a class="header" href="#add-a-highlight">Add a Highlight</a></h3>
+<p><code>.addhighlight</code> in-app, or edit <code>~/.vellum-fe/global/highlights.toml</code>:</p>
+<pre><code class="language-toml">[death]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 bold = true
 sound = "kill.wav"
 </code></pre>
-<h3 id="custom-keybinds"><a class="header" href="#custom-keybinds">Custom Keybinds</a></h3>
-<p>Edit <code>~/.vellum-fe/keybinds.toml</code>:</p>
-<pre><code class="language-toml">[keybinds]
-"f2" = { command = "stance offensive" }
-"f3" = { command = "stance defensive" }
+<h3 id="add-a-keybind"><a class="header" href="#add-a-keybind">Add a Keybind</a></h3>
+<p><code>.addkeybind</code> in-app, or edit <code>~/.vellum-fe/global/keybinds.toml</code>:</p>
+<pre><code class="language-toml">[user]
+f2 = { macro_text = "stance offensive\r" }
+f3 = { macro_text = "stance defensive\r" }
 </code></pre>
-<h3 id="sound-alerts"><a class="header" href="#sound-alerts">Sound Alerts</a></h3>
-<ol>
-<li>Place <code>.wav</code> files in <code>~/.vellum-fe/sounds/</code></li>
-<li>Reference in highlights:</li>
-</ol>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper"
-pattern = "whispers to you"
-sound = "whisper.wav"
+<h3 id="switch-theme"><a class="header" href="#switch-theme">Switch Theme</a></h3>
+<pre><code>.themes
 </code></pre>
+<p>Apply file edits without restarting: <code>.reload</code></p>
 
                     </main>
 

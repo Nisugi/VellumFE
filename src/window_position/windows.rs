@@ -9,14 +9,15 @@ use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
-use windows::Win32::System::Console::GetConsoleWindow;
+use windows::core::PCWSTR;
+use windows::Win32::System::Console::{GetConsoleTitleW, GetConsoleWindow, SetConsoleTitleW};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, SetWindowPos, HWND_TOP,
-    SWP_NOZORDER,
+    EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindowVisible, SetWindowPos, HWND_TOP, SWP_NOZORDER,
 };
 
 use super::{ScreenInfo, WindowPositioner, WindowRect};
@@ -44,11 +45,168 @@ impl WindowsPositioner {
             hwnd,
             hwnd.0.is_null()
         );
+
+        // ConPTY delegation (e.g. Windows Terminal as the default host, with
+        // no WT ancestor - launcher-spawned sessions): GetConsoleWindow is a
+        // fake "PseudoConsoleWindow" - it even claims to be visible, but has
+        // no pixels, and moving it moves nothing. A real console is class
+        // "ConsoleWindowClass". For the fake, the owning process is the
+        // host's console broker (OpenConsole/conhost), so walk its parent
+        // chain to the process that owns a real visible window. Falls back
+        // to mirroring a unique console title for hosts with a different
+        // process shape.
+        if !hwnd.0.is_null() && is_pseudo_console_window(hwnd) {
+            if let Some(host) = find_host_window_by_process(hwnd)
+                .or_else(|| find_host_window_by_title(hwnd))
+            {
+                tracing::debug!("Console is ConPTY-hosted; using host window {:?}", host);
+                return Self {
+                    hwnd: host,
+                    is_windows_terminal: true,
+                };
+            }
+            tracing::debug!("Console is ConPTY-hosted but no host window found");
+        }
+
         Self {
             hwnd,
             is_windows_terminal: false,
         }
     }
+}
+
+/// True when GetConsoleWindow returned ConPTY's stand-in window rather than
+/// a real console window. The stand-in reports itself visible, so the class
+/// name is the reliable signal; a zero-size rect or invisibility count too.
+fn is_pseudo_console_window(hwnd: HWND) -> bool {
+    unsafe {
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut class) as usize;
+        if len > 0 {
+            let name = String::from_utf16_lossy(&class[..len.min(class.len())]);
+            if name == "PseudoConsoleWindow" {
+                return true;
+            }
+        }
+        if !IsWindowVisible(hwnd).as_bool() {
+            return true;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            return rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0;
+        }
+    }
+    false
+}
+
+/// Locate the terminal window hosting our ConPTY console by ownership: the
+/// hidden pseudo-window belongs to the host's console broker process
+/// (OpenConsole.exe under Windows Terminal), whose parent chain leads to
+/// the process owning the visible terminal window.
+fn find_host_window_by_process(pseudo: HWND) -> Option<HWND> {
+    let mut owner_pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(pseudo, Some(&mut owner_pid));
+    }
+    if owner_pid == 0 {
+        return None;
+    }
+
+    let own_pid = unsafe { GetCurrentProcessId() };
+    let mut search_pid = owner_pid;
+    for _ in 0..5 {
+        // Never adopt a window from our own process (or the pseudo-window's
+        // broker itself having none) - keep walking upward.
+        if search_pid != own_pid {
+            if let Some(hwnd) = find_window_for_process(search_pid) {
+                tracing::debug!(
+                    "ConPTY host window found via process {} (broker {})",
+                    search_pid,
+                    owner_pid
+                );
+                return Some(hwnd);
+            }
+        }
+        match get_parent_process(search_pid) {
+            Some((parent_pid, _)) if parent_pid != 0 && parent_pid != search_pid => {
+                search_pid = parent_pid;
+            }
+            _ => break,
+        }
+    }
+    None
+}
+
+/// Fallback: set a unique console title, find the visible top-level window
+/// that mirrors it, then restore the original title. Hosts propagate the
+/// title into the tab and window title asynchronously, so poll briefly.
+/// Fails (None) when the session's tab is not the active one - the window
+/// title shows the active tab - which is fine: positioning a shared window
+/// would be wrong anyway.
+fn find_host_window_by_title(exclude: HWND) -> Option<HWND> {
+    unsafe {
+        let mut original = [0u16; 512];
+        let original_len = GetConsoleTitleW(&mut original) as usize;
+        let original_title: Vec<u16> = original[..original_len.min(original.len() - 1)]
+            .iter()
+            .copied()
+            .chain([0])
+            .collect();
+
+        let marker = format!("vellum-fe:{}", GetCurrentProcessId());
+        let marker_w: Vec<u16> = marker.encode_utf16().chain([0]).collect();
+        if SetConsoleTitleW(PCWSTR(marker_w.as_ptr())).is_err() {
+            return None;
+        }
+
+        let mut found = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            found = find_visible_window_titled(&marker, exclude);
+            if found.is_some() {
+                break;
+            }
+        }
+
+        let _ = SetConsoleTitleW(PCWSTR(original_title.as_ptr()));
+        found
+    }
+}
+
+/// Find a visible top-level window whose title contains `marker`.
+fn find_visible_window_titled(marker: &str, exclude: HWND) -> Option<HWND> {
+    struct EnumContext {
+        marker: String,
+        exclude: HWND,
+        found: Option<HWND>,
+    }
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam.0 as *mut EnumContext);
+        if hwnd.0 == ctx.exclude.0 || !IsWindowVisible(hwnd).as_bool() {
+            return BOOL::from(true);
+        }
+        let mut text = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut text) as usize;
+        if len > 0 {
+            let title = String::from_utf16_lossy(&text[..len.min(text.len())]);
+            if title.contains(&ctx.marker) {
+                ctx.found = Some(hwnd);
+                return BOOL::from(false);
+            }
+        }
+        BOOL::from(true)
+    }
+
+    let mut ctx = EnumContext {
+        marker: marker.to_string(),
+        exclude,
+        found: None,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
+    }
+    ctx.found
 }
 
 impl WindowPositioner for WindowsPositioner {

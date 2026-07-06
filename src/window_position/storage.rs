@@ -39,6 +39,13 @@ pub fn load(character: Option<&str>) -> Result<Option<WindowPositionConfig>> {
 
 /// Save window position configuration for a character.
 pub fn save(character: Option<&str>, config: &WindowPositionConfig) -> Result<()> {
+    if !config.window.is_sane() {
+        tracing::debug!(
+            "Not saving implausible window rect {:?} (pseudo-console handle?)",
+            config.window
+        );
+        return Ok(());
+    }
     let path = config_path(character)?;
 
     // Ensure parent directory exists

@@ -6,13 +6,27 @@ use crate::frontend::Frontend;
 
 /// Run the TUI frontend with the given configuration.
 /// This is the main entry point for TUI mode.
+///
+/// `console_size_profile` is set only for launcher-spawned sessions, which
+/// own their console window: the size is restored on start and saved on
+/// exit, keyed by settings profile. Manual runs pass None - resizing a
+/// terminal the user already owns (a tmux pane, a Windows Terminal tab)
+/// would be rude.
 pub fn run(
     config: crate::config::Config,
     character: Option<String>,
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
     login_key: Option<String>,
+    console_size_profile: Option<String>,
 ) -> Result<()> {
+    if let Some(profile) = console_size_profile.as_deref() {
+        restore_console_size(profile);
+    }
+    // Closing the console with the X button never reaches the end-of-loop
+    // save; catch it and save geometry there.
+    #[cfg(windows)]
+    console_close::install(character.clone(), console_size_profile.clone());
     // Use tokio runtime for async network I/O
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async_run(
@@ -21,7 +35,121 @@ pub fn run(
         direct,
         setup_palette,
         login_key,
+        console_size_profile,
     ))
+}
+
+/// Saved console geometry for launcher-spawned sessions, in character cells
+/// (`~/.vellum-fe/profiles/<profile>/console-size.toml`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ConsoleSize {
+    cols: u16,
+    rows: u16,
+}
+
+fn console_size_path(profile: &str) -> Option<std::path::PathBuf> {
+    crate::config::Config::profile_dir(Some(profile))
+        .ok()
+        .map(|dir| dir.join("console-size.toml"))
+}
+
+/// Best-effort: a freshly `start`-ed console opens at the host's default
+/// size, not where the player left it. crossterm's SetSize resizes via the
+/// console API or CSI 8 depending on host; hosts that support neither just
+/// keep their default size.
+fn restore_console_size(profile: &str) {
+    let Some(path) = console_size_path(profile) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(size) = toml::from_str::<ConsoleSize>(&text) else {
+        return;
+    };
+    if size.cols == 0 || size.rows == 0 {
+        return;
+    }
+    if crossterm::terminal::size().ok() == Some((size.cols, size.rows)) {
+        return;
+    }
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::SetSize(size.cols, size.rows)
+    );
+}
+
+/// Save window geometry when the console window is closed with the X
+/// button. Windows delivers CTRL_CLOSE_EVENT on its own thread and kills
+/// the process as soon as the handler returns (or after ~5s), so the normal
+/// end-of-loop save in async_run never runs on that path.
+#[cfg(windows)]
+mod console_close {
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_CLOSE_EVENT};
+
+    struct SaveContext {
+        character: Option<String>,
+        size_profile: Option<String>,
+    }
+
+    static CONTEXT: OnceLock<SaveContext> = OnceLock::new();
+
+    pub fn install(character: Option<String>, size_profile: Option<String>) {
+        if CONTEXT
+            .set(SaveContext {
+                character,
+                size_profile,
+            })
+            .is_err()
+        {
+            return;
+        }
+        unsafe {
+            let _ = SetConsoleCtrlHandler(Some(on_console_event), true);
+        }
+    }
+
+    unsafe extern "system" fn on_console_event(ctrl_type: u32) -> BOOL {
+        if ctrl_type != CTRL_CLOSE_EVENT {
+            return BOOL::from(false);
+        }
+        if let Some(context) = CONTEXT.get() {
+            if let Some(positioner) = crate::window_position::create_positioner() {
+                if let (Ok(rect), Ok(screens)) =
+                    (positioner.get_position(), positioner.get_screen_bounds())
+                {
+                    let _ = crate::window_position::save(
+                        context.character.as_deref(),
+                        &crate::window_position::WindowPositionConfig {
+                            window: rect,
+                            monitors: screens,
+                        },
+                    );
+                }
+            }
+            if let Some(profile) = context.size_profile.as_deref() {
+                super::save_console_size(profile);
+            }
+        }
+        BOOL::from(true)
+    }
+}
+
+fn save_console_size(profile: &str) {
+    let Ok((cols, rows)) = crossterm::terminal::size() else {
+        return;
+    };
+    let Some(path) = console_size_path(profile) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = toml::to_string(&ConsoleSize { cols, rows }) {
+        let _ = std::fs::write(path, text);
+    }
 }
 
 /// Async TUI main loop with network support
@@ -31,6 +159,7 @@ async fn async_run(
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
     login_key: Option<String>,
+    console_size_profile: Option<String>,
 ) -> Result<()> {
     use crate::core::AppCore;
     use crate::network::{DirectConnection, LichConnection, ServerMessage};
@@ -63,6 +192,21 @@ async fn async_run(
     // Create core application state
     let mut app_core = AppCore::new(config)?;
 
+    // Start the web frontend sidecar if enabled (off by default). The
+    // server runs as a tokio task; core feeds it via the attached sink,
+    // and remote client commands arrive on remote_rx.
+    let mut remote_rx = if app_core.config.web.enabled {
+        let session_label = character
+            .clone()
+            .or_else(|| app_core.config.connection.character.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web, session_label);
+        app_core.enable_remote(sink);
+        Some(event_rx)
+    } else {
+        None
+    };
+
     super::colors::set_global_color_mode(app_core.config.ui.color_mode);
 
     // Initialize palette lookup for Slot mode
@@ -75,8 +219,17 @@ async fn async_run(
     let mut frontend = TuiFrontend::new()?;
 
     // Restore window position for this character (if saved)
-    if let Some(positioner) = crate::window_position::create_positioner() {
-        if let Ok(Some(saved)) = crate::window_position::load(character.as_deref()) {
+    // One positioner for the whole session: restore now, then the main loop
+    // saves geometry periodically. Exit-time saving alone is not enough -
+    // closing the window with the X (or a crash) tears the host window down
+    // before any handler can read its position.
+    let positioner = crate::window_position::create_positioner();
+    if let Some(positioner) = positioner.as_deref() {
+        // Guard against files written by older builds that captured the
+        // ConPTY pseudo-window (zero-size rects would collapse the window).
+        if let Ok(Some(saved)) = crate::window_position::load(character.as_deref())
+            .map(|config| config.filter(|c| c.window.is_sane()))
+        {
             use crate::window_position::WindowPositionerExt;
             let rect = if positioner.is_visible(&saved.window) {
                 saved.window
@@ -92,6 +245,9 @@ async fn async_run(
             }
         }
     }
+    let mut last_geometry_check = Instant::now();
+    let mut last_saved_window: Option<crate::window_position::WindowRect> = None;
+    let mut last_saved_cells: Option<(u16, u16)> = None;
 
     // Ensure frontend theme cache matches whatever layout/theme AppCore activated
     let initial_theme_id = app_core.config.active_theme.clone();
@@ -188,6 +344,37 @@ async fn async_run(
 
     // Main event loop
     while app_core.running {
+        // Persist window geometry when it changes (checked at a slow tick).
+        // This is the primary save path: it survives every way a session
+        // can end, including the console X button and crashes.
+        if last_geometry_check.elapsed().as_secs() >= 3 {
+            last_geometry_check = Instant::now();
+            if let Some(positioner) = positioner.as_deref() {
+                if let Ok(rect) = positioner.get_position() {
+                    if rect.is_sane() && last_saved_window.as_ref() != Some(&rect) {
+                        if let Ok(screens) = positioner.get_screen_bounds() {
+                            let config = crate::window_position::WindowPositionConfig {
+                                window: rect.clone(),
+                                monitors: screens,
+                            };
+                            if crate::window_position::save(character.as_deref(), &config).is_ok()
+                            {
+                                last_saved_window = Some(rect);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(profile) = console_size_profile.as_deref() {
+                if let Ok(cells) = crossterm::terminal::size() {
+                    if last_saved_cells != Some(cells) {
+                        save_console_size(profile);
+                        last_saved_cells = Some(cells);
+                    }
+                }
+            }
+        }
+
         // Poll for frontend events (keyboard, mouse, resize)
         let events = frontend.poll_events()?;
         app_core
@@ -244,6 +431,100 @@ async fn async_run(
             // Process pending window additions after event handling (for .testline)
             let (term_width, term_height) = frontend.size();
             app_core.process_pending_window_additions(term_width, term_height);
+        }
+
+        // Drain commands typed on remote web clients (non-blocking). Each
+        // runs the exact same path as a locally submitted command (echo,
+        // dot-commands, quit interception) and enters shared history so
+        // desk up-arrow reaches phone-typed commands.
+        if let Some(rx) = remote_rx.as_mut() {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    crate::core::remote::RemoteEvent::Command(text) => {
+                        tracing::debug!("remote command: '{}'", text);
+                        frontend.command_input_record_external("command_input", &text);
+                        if let Some(cmd) = frontend.handle_command_submission(text, &mut app_core)? {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
+                    crate::core::remote::RemoteEvent::LinkTap {
+                        client_id,
+                        request_id,
+                        exist_id,
+                        noun,
+                        text,
+                        coord,
+                    } => {
+                        // Resolved exactly like a local click: <d>/coord
+                        // links become direct commands, plain links a
+                        // _menu request tagged to route back this client.
+                        let link = crate::data::LinkData {
+                            exist_id,
+                            noun,
+                            text,
+                            coord,
+                        };
+                        if let Some(cmd) = app_core.resolve_link_activation(
+                            &link,
+                            crate::core::remote::MenuOrigin::Remote {
+                                client_id,
+                                request_id,
+                            },
+                        ) {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
+                    crate::core::remote::RemoteEvent::MacroSave {
+                        group,
+                        label,
+                        command,
+                        color,
+                        confirm,
+                        options,
+                        original,
+                    } => {
+                        let button = crate::config::MacroButton {
+                            label,
+                            command: Some(command).filter(|c| !c.is_empty()),
+                            color,
+                            confirm,
+                            options,
+                            ..Default::default()
+                        };
+                        app_core.apply_macro_save(group, button, original);
+                    }
+                    crate::core::remote::RemoteEvent::MacroDelete { group, label } => {
+                        app_core.apply_macro_delete(group, label);
+                    }
+                    crate::core::remote::RemoteEvent::Notice(message) => {
+                        app_core.add_system_message(&message);
+                    }
+                    crate::core::remote::RemoteEvent::Macro { id } => {
+                        // Resolve the id against config; the resulting
+                        // command runs the same path as typed input (echo,
+                        // dot-commands) but skips history — button spam
+                        // shouldn't bury real typed commands.
+                        let Some(command) = app_core.config.macros.resolve(&id).map(String::from)
+                        else {
+                            tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id);
+                            continue;
+                        };
+                        tracing::debug!("remote macro '{}': '{}'", id, command);
+                        if let Some(cmd) = frontend.handle_command_submission(command, &mut app_core)? {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
+                }
+            }
         }
 
         // Poll for server messages (non-blocking)
@@ -312,6 +593,10 @@ async fn async_run(
             }
         }
 
+        // Flush coalesced state deltas to web clients once per batch
+        // (no-op unless [web] is enabled)
+        app_core.flush_remote_state();
+
         // Update terminal title if configured and state changed
         if let Some(ref mut manager) = title_manager {
             if let Err(e) = manager.update(&app_core, &mut std::io::stdout()) {
@@ -357,8 +642,10 @@ async fn async_run(
         tracing::warn!("Failed to save command history: {}", e);
     }
 
-    // Save window position for this character
-    if let Some(positioner) = crate::window_position::create_positioner() {
+    // Final geometry save on clean exit (the loop's periodic save may be up
+    // to one tick stale). Reuses the session positioner - its handle is
+    // still valid here, unlike in close-event handlers.
+    if let Some(positioner) = positioner.as_deref() {
         if let Ok(rect) = positioner.get_position() {
             if let Ok(screens) = positioner.get_screen_bounds() {
                 let config = crate::window_position::WindowPositionConfig {
@@ -370,6 +657,12 @@ async fn async_run(
                 }
             }
         }
+    }
+
+    // Remember the console size the player settled on (launcher-spawned
+    // sessions only) before teardown.
+    if let Some(profile) = console_size_profile.as_deref() {
+        save_console_size(profile);
     }
 
     // Cleanup

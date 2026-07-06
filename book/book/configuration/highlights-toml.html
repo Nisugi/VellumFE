@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,112 +178,109 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="highlightstoml"><a class="header" href="#highlightstoml">highlights.toml</a></h1>
-<p>Text highlighting rules for coloring, sounds, and redirects.</p>
+<p>Text highlighting rules: coloring, sounds, line filtering (squelch),
+redirects, and text replacement. Edit the file directly (then
+<code>.reload highlights</code>) or use the in-app browser (<code>.highlights</code> / <code>.addhighlight</code>).</p>
 <h2 id="basic-format"><a class="header" href="#basic-format">Basic Format</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "my_highlight"
-pattern = "pattern to match"
-foreground = "#FF0000"
-</code></pre>
-<h2 id="pattern-matching"><a class="header" href="#pattern-matching">Pattern Matching</a></h2>
-<h3 id="literal-match-fast"><a class="header" href="#literal-match-fast">Literal Match (Fast)</a></h3>
-<pre><code class="language-toml">[[highlights]]
-name = "death_cry"
-pattern = "death cry"           # Exact text match
-foreground = "#FF0000"
-</code></pre>
-<h3 id="regex-match"><a class="header" href="#regex-match">Regex Match</a></h3>
-<pre><code class="language-toml">[[highlights]]
-name = "creature_attack"
-pattern = "^A .+ (swings|claws|lunges)"
-is_regex = true
-foreground = "#FFA500"
-</code></pre>
-<h2 id="styling-options"><a class="header" href="#styling-options">Styling Options</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#9370DB"          # Text color
-background = "#1a1a2e"          # Background color
+<p>Each highlight is a named TOML table:</p>
+<pre><code class="language-toml">[stunned]
+pattern = "You are stunned"
+fg = "#ff4500"
 bold = true
-italic = true
-underline = true
+category = "Combat"
 </code></pre>
-<h3 id="colors"><a class="header" href="#colors">Colors</a></h3>
-<p>Use hex colors (<code>#RRGGBB</code>) or named colors:</p>
-<ul>
-<li>Basic: <code>red</code>, <code>green</code>, <code>blue</code>, <code>yellow</code>, <code>cyan</code>, <code>magenta</code>, <code>white</code>, <code>black</code></li>
-<li>Extended: <code>gray</code>, <code>orange</code>, <code>purple</code>, <code>pink</code>, <code>brown</code></li>
-</ul>
-<h2 id="sound-alerts"><a class="header" href="#sound-alerts">Sound Alerts</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "dead"
+<p>Patterns are regular expressions. For plain-word lists, set
+<code>fast_parse = true</code> and separate alternatives with <code>|</code> — this uses a much
+faster literal matcher:</p>
+<pre><code class="language-toml">[friends]
+pattern = "Mandrill|Monolis|Chiora"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
+</code></pre>
+<h2 id="all-fields"><a class="header" href="#all-fields">All Fields</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>pattern</code></td><td>string</td><td>Regex (or <code>|</code>-separated literals with <code>fast_parse</code>)</td></tr>
+<tr><td><code>fg</code> / <code>bg</code></td><td>color</td><td>Text / background color — hex or a palette color name</td></tr>
+<tr><td><code>bold</code></td><td>bool</td><td>Bold text</td></tr>
+<tr><td><code>color_entire_line</code></td><td>bool</td><td>Color the whole line, not just the match</td></tr>
+<tr><td><code>fast_parse</code></td><td>bool</td><td>Literal matching via Aho-Corasick (much faster)</td></tr>
+<tr><td><code>sound</code></td><td>string</td><td>Sound file to play (in <code>global/sounds/</code>)</td></tr>
+<tr><td><code>sound_volume</code></td><td>float</td><td>Per-sound volume override (0.0–1.0)</td></tr>
+<tr><td><code>category</code></td><td>string</td><td>Grouping in the highlights browser (e.g. <code>"Combat"</code>)</td></tr>
+<tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
+<tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
+<tr><td><code>redirect_to</code></td><td>string</td><td>Send matching lines to this window</td></tr>
+<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"only"</code> (move) or <code>"copy"</code> (show in both)</td></tr>
+<tr><td><code>replace</code></td><td>string</td><td>Replace matched text (supports <code>$1</code>, <code>$2</code> capture groups)</td></tr>
+<tr><td><code>stream</code></td><td>string</td><td>Only apply to lines from this stream (e.g. <code>"thoughts"</code>)</td></tr>
+<tr><td><code>window</code></td><td>string</td><td>With <code>replace</code>: only replace in this window</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="squelch-filtering-spam"><a class="header" href="#squelch-filtering-spam">Squelch (Filtering Spam)</a></h2>
+<p>Hide lines you never want to see:</p>
+<pre><code class="language-toml">[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls"
+fast_parse = true
+squelch = true
+category = "Squelch"
+
+[arrival_spam]
+pattern = "^[A-Z][a-z]+ (arrives|departs)"
+squelch = true
+category = "Squelch"
+</code></pre>
+<h2 id="sounds"><a class="header" href="#sounds">Sounds</a></h2>
+<pre><code class="language-toml">[death_alert]
 pattern = "appears dead"
-foreground = "#00FF00"
-sound = "ding.wav"              # File in ~/.vellum-fe/sounds/
-sound_volume = 0.8              # 0.0 to 1.0
+fg = "#00ff00"
+sound = "kill.wav"        # in ~/.vellum-fe/global/sounds/
+sound_volume = 0.8
+</code></pre>
+<p>See <a href="../customization/sounds.html">Sound Alerts</a>.</p>
+<h2 id="redirects"><a class="header" href="#redirects">Redirects</a></h2>
+<p>Route matching lines to another window:</p>
+<pre><code class="language-toml">[loot_lines]
+pattern = "^You gather"
+redirect_to = "loot"
+redirect_mode = "copy"    # also keep it in the original window
 </code></pre>
 <h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "shorten_deaths"
-pattern = "The death cry of"
-replace = "†"
-foreground = "#FF0000"
+<pre><code class="language-toml">[shorten_deaths]
+pattern = "The death cry of (\\w+)"
+replace = "† $1"
+fg = "#ff0000"
 </code></pre>
-<h2 id="stream-redirect"><a class="header" href="#stream-redirect">Stream Redirect</a></h2>
-<p>Route matching lines to another window:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "loot_to_window"
-pattern = "^You gather"
-redirect = "loot"               # Window name
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<p>Inject a fake game line to test your patterns without waiting for the game:</p>
+<pre><code>.testline You are stunned for 3 rounds!
 </code></pre>
-<h2 id="full-example"><a class="header" href="#full-example">Full Example</a></h2>
-<pre><code class="language-toml"># Creature deaths
-[[highlights]]
-name = "creature_dead"
-pattern = "appears dead"
-foreground = "#00FF00"
-bold = true
-sound = "kill.wav"
-
-# Player speech
-[[highlights]]
-name = "says"
-pattern = ' (says|asks|exclaims),'
-is_regex = true
-foreground = "#87CEEB"
-
-# Whispers (with background)
-[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#DDA0DD"
-background = "#2a1a2a"
-italic = true
-
-# Stun warning
-[[highlights]]
-name = "stunned"
-pattern = "You are stunned"
-foreground = "#FF4500"
-bold = true
-sound = "alert.wav"
-
-# Treasure (redirect to loot window)
-[[highlights]]
-name = "loot"
-pattern = "^(You gather|You search)"
-is_regex = true
-foreground = "#FFD700"
-redirect = "loot"
-</code></pre>
-<h2 id="priority"><a class="header" href="#priority">Priority</a></h2>
-<p>Highlights are applied in order. Later patterns can override earlier ones.</p>
-<h2 id="disabling"><a class="header" href="#disabling">Disabling</a></h2>
-<p>Disable without deleting via config.toml:</p>
+<h2 id="global-toggles"><a class="header" href="#global-toggles">Global Toggles</a></h2>
+<p>Disable whole features without deleting patterns, in <code>config.toml</code>:</p>
 <pre><code class="language-toml">[highlights]
-sounds_enabled = false          # Disable all sounds
-coloring_enabled = false        # Disable all coloring
+sounds_enabled = true
+replace_enabled = true
+redirect_enabled = true
+coloring_enabled = true
+</code></pre>
+<p>System highlights (monsterbold, links, room names) are not affected by
+these toggles.</p>
+<h2 id="highlight-profiles"><a class="header" href="#highlight-profiles">Highlight Profiles</a></h2>
+<p>Save and swap whole highlight sets:</p>
+<pre><code>.savehighlights hunting
+.loadhighlights hunting
+.highlightprofiles        # list saved profiles
+</code></pre>
+<h2 id="importing-from-wraythstormfront"><a class="header" href="#importing-from-wraythstormfront">Importing from Wrayth/StormFront</a></h2>
+<p>Convert an existing Wrayth or StormFront settings file:</p>
+<pre><code class="language-bash">vellum-fe import-highlights settings.xml --out my-highlights.toml
 </code></pre>
 
                     </main>

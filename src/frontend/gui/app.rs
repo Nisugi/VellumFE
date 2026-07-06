@@ -140,6 +140,8 @@ pub struct VellumGuiApp {
     _runtime: tokio::runtime::Runtime,
     command_tx: mpsc::UnboundedSender<String>,
     server_rx: mpsc::Receiver<ServerMessage>,
+    /// Commands typed on remote web clients (empty when web is disabled).
+    remote_rx: mpsc::UnboundedReceiver<crate::core::remote::RemoteEvent>,
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
     close_requested: bool,
@@ -232,6 +234,26 @@ impl VellumGuiApp {
         app_core.init_windows(core_layout_size.0, core_layout_size.1);
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+
+        // Start the web frontend sidecar if enabled (off by default); it
+        // runs on this GUI-owned runtime.
+        let web_event_rx = if app_core.config.web.enabled {
+            let _guard = runtime.enter();
+            let session_label = app_core
+                .config
+                .connection
+                .character
+                .clone()
+                .or_else(|| app_core.config.character.clone())
+                .unwrap_or_else(|| "default".to_string());
+            let (sink, event_rx) =
+                crate::frontend::web::start(&app_core.config.web, session_label);
+            app_core.enable_remote(sink);
+            Some(event_rx)
+        } else {
+            None
+        };
+
         let (server_tx, mut network_rx) =
             mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
@@ -254,6 +276,26 @@ impl VellumGuiApp {
                 }
             }
         });
+
+        // Same waking hop for remote web-client commands: forward them and
+        // wake the event loop so phone input isn't stuck waiting for the
+        // next idle repaint. With web disabled the sender drops immediately
+        // and the receiver just sits empty.
+        let (remote_forward_tx, remote_rx) =
+            mpsc::unbounded_channel::<crate::core::remote::RemoteEvent>();
+        if let Some(mut event_rx) = web_event_rx {
+            let waker_ctx = std::sync::Arc::clone(&repaint_ctx);
+            runtime.spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    if remote_forward_tx.send(event).is_err() {
+                        break;
+                    }
+                    if let Some(ctx) = waker_ctx.lock().ok().and_then(|slot| slot.clone()) {
+                        ctx.request_repaint();
+                    }
+                }
+            });
+        }
 
         let host = app_core.config.connection.host.clone();
         let port = app_core.config.connection.port;
@@ -399,6 +441,7 @@ impl VellumGuiApp {
             _runtime: runtime,
             command_tx,
             server_rx,
+            remote_rx,
             network_handle: Some(network_handle),
             command_input: String::new(),
             close_requested: false,
@@ -1163,6 +1206,86 @@ impl VellumGuiApp {
     }
 
     fn pump_server_messages(&mut self) {
+        // Commands from remote web clients run the same dispatch path as
+        // the local input bar.
+        while let Ok(event) = self.remote_rx.try_recv() {
+            match event {
+                crate::core::remote::RemoteEvent::Command(text) => {
+                    tracing::debug!("remote command: '{}'", text);
+                    self.dispatch_command(text);
+                }
+                crate::core::remote::RemoteEvent::LinkTap {
+                    client_id,
+                    request_id,
+                    exist_id,
+                    noun,
+                    text,
+                    coord,
+                } => {
+                    // Resolved exactly like a local click: <d>/coord links
+                    // become direct commands, plain links a _menu request
+                    // tagged to route back to this client.
+                    let link = crate::data::LinkData {
+                        exist_id,
+                        noun,
+                        text,
+                        coord,
+                    };
+                    if let Some(cmd) = self.app_core.resolve_link_activation(
+                        &link,
+                        crate::core::remote::MenuOrigin::Remote {
+                            client_id,
+                            request_id,
+                        },
+                    ) {
+                        self.app_core
+                            .perf_stats
+                            .record_bytes_sent((cmd.len() + 1) as u64);
+                        let _ = self.command_tx.send(cmd);
+                    }
+                }
+                crate::core::remote::RemoteEvent::MacroSave {
+                    group,
+                    label,
+                    command,
+                    color,
+                    confirm,
+                    options,
+                    original,
+                } => {
+                    let button = crate::config::MacroButton {
+                        label,
+                        command: Some(command).filter(|c| !c.is_empty()),
+                        color,
+                        confirm,
+                        options,
+                        ..Default::default()
+                    };
+                    self.app_core.apply_macro_save(group, button, original);
+                }
+                crate::core::remote::RemoteEvent::MacroDelete { group, label } => {
+                    self.app_core.apply_macro_delete(group, label);
+                }
+                crate::core::remote::RemoteEvent::Notice(message) => {
+                    self.app_core.add_system_message(&message);
+                }
+                crate::core::remote::RemoteEvent::Macro { id } => {
+                    // Resolve the id against config; the command runs the
+                    // same dispatch as typed input (echo, dot-commands).
+                    match self.app_core.config.macros.resolve(&id).map(String::from) {
+                        Some(command) => {
+                            tracing::debug!("remote macro '{}': '{}'", id, command);
+                            self.dispatch_command(command);
+                        }
+                        None => tracing::warn!(
+                            "remote macro id '{}' did not resolve (stale client?)",
+                            id
+                        ),
+                    }
+                }
+            }
+        }
+
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
             match message {
@@ -1218,6 +1341,10 @@ impl VellumGuiApp {
             self.app_core
                 .process_pending_window_additions(layout_width, layout_height);
         }
+
+        // Flush coalesced state deltas to web clients once per batch
+        // (no-op unless [web] is enabled)
+        self.app_core.flush_remote_state();
 
         // Play sounds queued by highlight processing.
         for sound in self.app_core.game_state.drain_sound_queue() {
@@ -1591,7 +1718,14 @@ impl VellumGuiApp {
 
     fn submit_command(&mut self) {
         let input = std::mem::take(&mut self.command_input);
-        let command = input.trim_end().to_string();
+        self.dispatch_command(input);
+    }
+
+    /// Run a command through the shared core path (echo, dot-commands,
+    /// quit interception). Used by the local input bar and by commands
+    /// arriving from remote web clients.
+    fn dispatch_command(&mut self, command: String) {
+        let command = command.trim_end().to_string();
         if command.is_empty() {
             return;
         }

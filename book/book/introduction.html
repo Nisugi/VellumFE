@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-621f15b5.js"></script>
+        <script src="toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,38 +178,50 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="vellumfe"><a class="header" href="#vellumfe">VellumFE</a></h1>
-<p>A modern terminal client for GemStone IV, built in Rust.</p>
+<p>A modern client for GemStone IV (and DragonRealms), built in Rust.</p>
+<p>One core, three ways to play:</p>
+<ul>
+<li><strong>Terminal (TUI)</strong> — the default. Runs in any modern terminal.</li>
+<li><strong>Desktop GUI</strong> — native windowed client (<code>--frontend gui</code>).</li>
+<li><strong>Mobile Web</strong> — an optional sidecar server that lets your phone’s browser join the same session, with tap-to-move exits and configurable macro buttons.</li>
+</ul>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
-<li><strong>Fast rendering</strong> - 60+ FPS with efficient text handling</li>
-<li><strong>Customizable layouts</strong> - Position and size every window</li>
-<li><strong>Flexible connections</strong> - Lich proxy or direct eAccess authentication</li>
-<li><strong>Rich highlighting</strong> - Regex-based text coloring with sound alerts</li>
-<li><strong>Full keyboard control</strong> - Rebindable keys for all actions</li>
+<li><strong>Customizable layouts</strong> — position and size every window</li>
+<li><strong>Flexible connections</strong> — Lich proxy or direct eAccess (no Lich required)</li>
+<li><strong>Rich highlighting</strong> — regex coloring, sounds, line squelching, redirects, text replacement</li>
+<li><strong>Themes</strong> — 35+ built-in themes including accessibility variants, plus custom themes</li>
+<li><strong>Full keyboard control</strong> — rebindable keys for all actions</li>
+<li><strong>Text-to-speech</strong> — screen reader support built in</li>
 </ul>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
 <pre><code class="language-bash"># Connect via Lich (most common)
-vellum-fe --port 8000
+vellum-fe --port 8000 --character YourName
 
 # Direct connection (no Lich required)
-vellum-fe --direct --account ACCOUNT --password PASS --character NAME
+vellum-fe --direct --account ACCOUNT --character YourName --game prime
 </code></pre>
+<p>See <a href="./getting-started/first-launch.html">Connecting</a> for details.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
-<p>VellumFE stores configuration in <code>~/.vellum-fe/</code>:</p>
+<p>VellumFE stores configuration in <code>~/.vellum-fe/</code> (override with <code>VELLUM_FE_DIR</code> or <code>--data-dir</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>File</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><code>config.toml</code></td><td>General settings</td></tr>
-<tr><td><code>layout.toml</code></td><td>Window positions and sizes</td></tr>
-<tr><td><code>keybinds.toml</code></td><td>Keyboard shortcuts</td></tr>
-<tr><td><code>highlights.toml</code></td><td>Text highlighting rules</td></tr>
-<tr><td><code>colors.toml</code></td><td>Color palette</td></tr>
+<tr><td><code>global/config.toml</code></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
+<tr><td><code>global/keybinds.toml</code></td><td>Keyboard shortcuts</td></tr>
+<tr><td><code>global/highlights.toml</code></td><td>Text highlighting, sounds, squelch rules</td></tr>
+<tr><td><code>global/colors.toml</code></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><code>global/macros.toml</code></td><td>Macro buttons for the mobile web frontend</td></tr>
+<tr><td><code>profiles/&lt;name&gt;/</code></td><td>Per-character overrides of any of the above</td></tr>
+<tr><td><code>themes/*.toml</code></td><td>Custom themes</td></tr>
 </tbody>
 </table>
 </div>
+<p>Most settings can also be changed in-app: type <code>.settings</code>, or see the
+<a href="./reference/commands.html">Command Reference</a>.</p>
 <h2 id="getting-help"><a class="header" href="#getting-help">Getting Help</a></h2>
 <ul>
 <li><strong>GitHub Issues</strong>: <a href="https://github.com/Nisugi/VellumFE/issues">github.com/Nisugi/VellumFE/issues</a></li>

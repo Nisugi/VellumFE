@@ -1,6 +1,69 @@
 # Mobile Web Frontend — Implementation Plan
 
-Status: draft / not started
+Status: complete — all planned phases (0–6, incl. 5b) shipped. Remaining
+work is iteration from real play, the deferred sketches noted below, and
+optional Phase 7. User guide: book/src/frontends/web.md.
+Phase 0: serde derives + round-trip test, Color CSS-hex serde, `[web]` config +
+`--web-port` flag, axum dependency.
+Phase 1: remote ring buffer (`data/remote_buffer.rs`) + `RemoteSink` tap in core,
+axum sidecar (`frontend/web/`) with JSON protocol, phone client v0 (text pane,
+vitals, RT), wired into both TUI and GUI loops.
+Phase 2: client input bar feeding the same command path as local input (echo,
+dot-commands, shared history via `record_external_command`), echo/system-message
+mirroring into the sink, reconnect resume (session id + full/resume/gap snapshot
+modes with a missed-output marker), multi-client fan-out. Verified with socket
+integration tests (`tests/web_server.rs`) and live browser sessions against a fake
+Lich feed.
+Phase 3: origin-tagged menu routing in core (`MenuOrigin` on
+`PendingMenuRequest`; local popup path unchanged) plus link-dispatch parity via
+`AppCore::resolve_link_activation` — `<d>` tags and coord links (exits) execute
+their default command directly, only plain nouns raise a menu, mirroring local
+clicks exactly. `link_tap` → per-client `menu` protocol message; picks execute
+via the ordinary `cmd` path (items carry ready-made commands, so no `menu_pick`
+message was needed). Client: tappable nouns/exits, bottom-sheet menu with four
+dismissal paths (pick, ✕, backdrop, tap anywhere else), no-response and
+stale-response guards; assets served no-cache. Validated against a real game
+session.
+Phase 4 (first iteration): stream chips with unread badges (per-stream
+client-side buffers, curated hidden-stream list), one-handed bottom chrome
+(hands + indicator badges, RT/CT, vitals, input bar lowest), PWA install shell
+(manifest + SVG icon + network-first app-shell service worker, iOS metas),
+visualViewport keyboard handling, wake-lock toggle, repeat-last +
+hold-for-history input. Also fixed a latent core bug: indicator ids matched
+case-sensitively so game_state.status never updated. Remaining Phase 4
+iteration happens against real phone use.
+Phase 5 (manual groups + floating buttons): `macros.toml` in core config —
+`[[group]]`s of buttons (action buttons fire on tap; menu buttons open the
+bottom sheet; `confirm` gates add a two-step sheet) plus `[[floating]]`
+overlay buttons (tap fires, hold drags; positions persist per device in
+the browser, not in config). Clients get ids/labels only; taps send
+`macro { id }` and the server resolves commands (`MacrosConfig::resolve`).
+`.reloadmacros` re-reads the file and pushes to connected phones live.
+Phone-side editor: action buttons can be created/edited/deleted from the
+phone (+ button on the rail → manager/editor sheets); edits persist to a
+separate `macros-local.toml` overlay merged at load, so the hand-written
+`macros.toml` is never rewritten. Hand-file buttons are read-only remotely.
+Phone editor since gained menu-button (options) editing and per-device
+long-press arranging of rail buttons and stream chips. Deferred from
+Phase 5: `show_when` context awareness and script-pushed macro sets;
+Quickbar reconciliation untouched.
+Phase 5b: `/` is the dashboard (session cards by character, browser
+health-checked, 10s refresh); the client moved to `/play`. Unpinned
+instances port-walk (+20); `pinned = true` binds exactly or fails loudly
+via a Notice system message. Pid-keyed registry files in
+`~/.vellum-fe/web-sessions/`, removed on clean shutdown, pid-liveness
+GC'd after crashes. Verified with two live instances sharing a base port.
+Phase 6: pairing token (generated once into the shared base dir, one
+pairing covers all characters) required as the first WS message, denied
+frame + closed socket otherwise, 5-failures/60s lockout. `.webinfo` prints
+the pair URL + QR (actual bound port), loopback warning, and off-LAN
+guidance. Client reads the token from the URL fragment (scrubbed after
+storing) or localStorage; denied opens a pairing prompt. Dashboard
+forwards the token fragment to session links.
+All planned phases (0-6) are complete. Remaining: Phase 4-style iteration
+from real play, deferred design sketches (`show_when`, script-pushed macro
+sets, Quickbar reconciliation), and optional Phase 7 (headless / native
+shells).
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.

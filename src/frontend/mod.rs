@@ -7,6 +7,7 @@ pub mod common;
 pub mod events;
 pub mod gui;
 pub mod tui;
+pub mod web;
 
 use anyhow::Result;
 

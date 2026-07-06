@@ -1,47 +1,27 @@
 # VellumFE Wiki
 
-Welcome to the VellumFE quick reference wiki! For comprehensive documentation, see the [full documentation](https://nisugi.github.io/vellum-fe/).
+The user guide lives in one place now: **[the full documentation](https://nisugi.github.io/vellum-fe/)**.
 
-## Quick Reference Cards
+| Looking for... | Go to |
+|----------------|-------|
+| Get running in 5 minutes | [Getting Started](https://nisugi.github.io/vellum-fe/getting-started/) |
+| Keyboard shortcuts | [keybinds.toml](https://nisugi.github.io/vellum-fe/configuration/keybinds-toml.html) |
+| Configuration reference | [Configuration](https://nisugi.github.io/vellum-fe/configuration/) |
+| Widget types | [Widgets](https://nisugi.github.io/vellum-fe/widgets/) |
+| Dot-commands (`.help`, `.settings`, ...) | [Command Reference](https://nisugi.github.io/vellum-fe/reference/commands.html) |
+| CLI flags | [CLI Reference](https://nisugi.github.io/vellum-fe/reference/cli.html) |
+| Phone / mobile web frontend | [Mobile Web](https://nisugi.github.io/vellum-fe/frontends/web.html) |
+| Common problems | [Troubleshooting](https://nisugi.github.io/vellum-fe/reference/troubleshooting.html) |
+| FAQ | [FAQ](https://nisugi.github.io/vellum-fe/reference/faq.html) |
 
-| Card | Description |
-|------|-------------|
-| [Quick Start](Quick-Start) | Get running in 5 minutes |
-| [Keybind Cheatsheet](Keybind-Cheatsheet) | All keyboard shortcuts |
-| [Config Cheatsheet](Config-Cheatsheet) | Configuration quick reference |
-| [Widget Reference](Widget-Quick-Reference) | All widget types |
-| [Troubleshooting](Troubleshooting-Quick-Fixes) | Common problems & fixes |
-| [FAQ](FAQ) | Frequently asked questions |
+## Quick Facts
 
-## Essential Links
+- Config lives in `~/.vellum-fe/` on **all platforms** (override with `VELLUM_FE_DIR` or `--data-dir`)
+- Connect via Lich: `vellum-fe --port 8000 --character Name`
+- Connect directly: `vellum-fe --direct --account USER --character Name --game prime` (password prompted)
+- Type `.help` in-game for every client command
 
-- **[Full Documentation](https://nisugi.github.io/vellum-fe/)** - Complete user guide
-- **[GitHub Releases](https://github.com/nisugi/vellum-fe/releases)** - Download latest version
-- **[Issue Tracker](https://github.com/nisugi/vellum-fe/issues)** - Report bugs
+## Links
 
-## Quick Commands
-
-```bash
-# Start with Lich
-vellum-fe --host 127.0.0.1 --port 8000
-
-# Start with direct eAccess
-vellum-fe --direct --account USER --password PASS --game prime --character NAME
-
-# Show help
-vellum-fe --help
-```
-
-## File Locations
-
-| Platform | Config Directory |
-|----------|------------------|
-| Windows | `%APPDATA%\vellum-fe\` |
-| macOS | `~/Library/Application Support/vellum-fe/` |
-| Linux | `~/.config/vellum-fe/` |
-
-## Need Help?
-
-1. Check the [Troubleshooting](Troubleshooting-Quick-Fixes) page
-2. Search [existing issues](https://github.com/nisugi/vellum-fe/issues)
-3. Open a [new issue](https://github.com/nisugi/vellum-fe/issues/new)
+- [GitHub Releases](https://github.com/Nisugi/VellumFE/releases) — download
+- [Issue Tracker](https://github.com/Nisugi/VellumFE/issues) — report bugs

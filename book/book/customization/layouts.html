@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,20 +181,20 @@
 <p>Design custom window arrangements for different playstyles.</p>
 <h2 id="using-the-window-editor"><a class="header" href="#using-the-window-editor">Using the Window Editor</a></h2>
 <ol>
-<li>Press F1 → Windows → Edit Window → [window name]</li>
+<li><code>.menu</code> → Windows → Edit Window → [window name]</li>
 <li>Modify position, size, and properties</li>
 <li>Save changes (applied immediately)</li>
 </ol>
-<p>Or via command: <code>.edit windowname</code></p>
+<p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>
-<p>F1 → Windows → Add Window → [Category] → [Widget]</p>
+<p><code>.menu</code> → Windows → Add Window → [Category] → [Widget]</p>
 <h3 id="via-command"><a class="header" href="#via-command">Via Command</a></h3>
-<pre><code>.addwindow targets
-.addwindow text mywindow
+<pre><code>.addwindow                                  # opens a picker
+.addwindow loot text 100 0 30 10            # name type x y width [height]
 </code></pre>
 <h3 id="via-config"><a class="header" href="#via-config">Via Config</a></h3>
-<p>Edit <code>~/.vellum-fe/layout.toml</code>:</p>
+<p>Edit your layout file directly:</p>
 <pre><code class="language-toml">[[windows]]
 name = "mywindow"
 widget_type = "text"
@@ -213,12 +213,15 @@ cols = 60     # Width
 </code></pre>
 <h3 id="overlapping"><a class="header" href="#overlapping">Overlapping</a></h3>
 <p>Windows can overlap. Later windows in the file render on top.</p>
-<h2 id="saving"><a class="header" href="#saving">Saving</a></h2>
-<ul>
-<li><strong>Ctrl+S</strong> - Save current layout</li>
-<li><strong>F1 → Config → Save Layout</strong> - Same thing</li>
-<li>Changes to window positions via drag are saved automatically</li>
-</ul>
+<h2 id="saving-and-switching"><a class="header" href="#saving-and-switching">Saving and Switching</a></h2>
+<pre><code>.savelayout hunting     # save to ~/.vellum-fe/layouts/hunting.toml
+.loadlayout hunting
+.layouts                # list saved layouts
+.resize                 # refit layout to the current terminal size
+</code></pre>
+<p>Window positions also auto-save per character. You can switch layouts
+automatically by terminal size with <code>layout_mappings</code> in
+<a href="../configuration/config-toml.html">config.toml</a>.</p>
 <h2 id="example-layouts"><a class="header" href="#example-layouts">Example Layouts</a></h2>
 <h3 id="hunting-layout"><a class="header" href="#hunting-layout">Hunting Layout</a></h3>
 <pre><code class="language-toml">terminal_width = 160
@@ -303,10 +306,12 @@ rows = 3
 cols = 80
 </code></pre>
 <h2 id="per-character-layouts"><a class="header" href="#per-character-layouts">Per-Character Layouts</a></h2>
-<p>Save layouts per character:</p>
-<pre><code>~/.vellum-fe/characters/CharName/layout.toml
+<p>When you launch with <code>--character NAME</code>, the current layout auto-saves to:</p>
+<pre><code>~/.vellum-fe/profiles/CharName/layout.toml
 </code></pre>
-<p>Use <code>--character NAME</code> to load character-specific layout.</p>
+<p>Validate a layout file from the command line:</p>
+<pre><code class="language-bash">vellum-fe validate-layout hunting.toml
+</code></pre>
 
                     </main>
 

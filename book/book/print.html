@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-621f15b5.js"></script>
+        <script src="toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,38 +179,50 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="vellumfe"><a class="header" href="#vellumfe">VellumFE</a></h1>
-<p>A modern terminal client for GemStone IV, built in Rust.</p>
+<p>A modern client for GemStone IV (and DragonRealms), built in Rust.</p>
+<p>One core, three ways to play:</p>
+<ul>
+<li><strong>Terminal (TUI)</strong> — the default. Runs in any modern terminal.</li>
+<li><strong>Desktop GUI</strong> — native windowed client (<code>--frontend gui</code>).</li>
+<li><strong>Mobile Web</strong> — an optional sidecar server that lets your phone’s browser join the same session, with tap-to-move exits and configurable macro buttons.</li>
+</ul>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
-<li><strong>Fast rendering</strong> - 60+ FPS with efficient text handling</li>
-<li><strong>Customizable layouts</strong> - Position and size every window</li>
-<li><strong>Flexible connections</strong> - Lich proxy or direct eAccess authentication</li>
-<li><strong>Rich highlighting</strong> - Regex-based text coloring with sound alerts</li>
-<li><strong>Full keyboard control</strong> - Rebindable keys for all actions</li>
+<li><strong>Customizable layouts</strong> — position and size every window</li>
+<li><strong>Flexible connections</strong> — Lich proxy or direct eAccess (no Lich required)</li>
+<li><strong>Rich highlighting</strong> — regex coloring, sounds, line squelching, redirects, text replacement</li>
+<li><strong>Themes</strong> — 35+ built-in themes including accessibility variants, plus custom themes</li>
+<li><strong>Full keyboard control</strong> — rebindable keys for all actions</li>
+<li><strong>Text-to-speech</strong> — screen reader support built in</li>
 </ul>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
 <pre><code class="language-bash"># Connect via Lich (most common)
-vellum-fe --port 8000
+vellum-fe --port 8000 --character YourName
 
 # Direct connection (no Lich required)
-vellum-fe --direct --account ACCOUNT --password PASS --character NAME
+vellum-fe --direct --account ACCOUNT --character YourName --game prime
 </code></pre>
+<p>See <a href="#first-launch">Connecting</a> for details.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
-<p>VellumFE stores configuration in <code>~/.vellum-fe/</code>:</p>
+<p>VellumFE stores configuration in <code>~/.vellum-fe/</code> (override with <code>VELLUM_FE_DIR</code> or <code>--data-dir</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>File</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><code>config.toml</code></td><td>General settings</td></tr>
-<tr><td><code>layout.toml</code></td><td>Window positions and sizes</td></tr>
-<tr><td><code>keybinds.toml</code></td><td>Keyboard shortcuts</td></tr>
-<tr><td><code>highlights.toml</code></td><td>Text highlighting rules</td></tr>
-<tr><td><code>colors.toml</code></td><td>Color palette</td></tr>
+<tr><td><code>global/config.toml</code></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
+<tr><td><code>global/keybinds.toml</code></td><td>Keyboard shortcuts</td></tr>
+<tr><td><code>global/highlights.toml</code></td><td>Text highlighting, sounds, squelch rules</td></tr>
+<tr><td><code>global/colors.toml</code></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><code>global/macros.toml</code></td><td>Macro buttons for the mobile web frontend</td></tr>
+<tr><td><code>profiles/&lt;name&gt;/</code></td><td>Per-character overrides of any of the above</td></tr>
+<tr><td><code>themes/*.toml</code></td><td>Custom themes</td></tr>
 </tbody>
 </table>
 </div>
+<p>Most settings can also be changed in-app: type <code>.settings</code>, or see the
+<a href="#command-reference">Command Reference</a>.</p>
 <h2 id="getting-help"><a class="header" href="#getting-help">Getting Help</a></h2>
 <ul>
 <li><strong>GitHub Issues</strong>: <a href="https://github.com/Nisugi/VellumFE/issues">github.com/Nisugi/VellumFE/issues</a></li>
@@ -276,9 +288,11 @@ cargo build --release
 <pre><code class="language-bash">vellum-fe --port 8000 --character YourCharacter
 </code></pre>
 <ul>
-<li><code>--port</code> - Lich’s listening port (default: 8000)</li>
-<li><code>--character</code> - Your character name (used for per-character layouts)</li>
+<li><code>--port</code> - Lich’s listening port</li>
+<li><code>--character</code> - Your character name (used for per-character profiles and direct login)</li>
 </ul>
+<p>VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
+check <code>$frontend</code> get full feature parity.</p>
 <h2 id="lich-launcher-integration"><a class="header" href="#lich-launcher-integration">Lich Launcher Integration</a></h2>
 <p>Configure Lich launcher to spawn VellumFE automatically:</p>
 <ol>
@@ -296,11 +310,26 @@ cargo build --release
 <p>Connect without Lich using eAccess authentication:</p>
 <pre><code class="language-bash">vellum-fe --direct \
   --account YOUR_ACCOUNT \
-  --password YOUR_PASSWORD \
   --character YourCharacter \
   --game prime
 </code></pre>
-<p>Games: <code>prime</code>, <code>platinum</code>, <code>fallen</code>, <code>test</code></p>
+<p>If you omit <code>--password</code>, VellumFE prompts for it securely at startup
+(recommended — passwords on the command line end up in shell history).
+Credentials can also be stored in <code>config.toml</code> under <code>[connection]</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>--game</code> value</th><th>World</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prime</code></td><td>GemStone IV Prime</td></tr>
+<tr><td><code>platinum</code></td><td>GemStone IV Platinum</td></tr>
+<tr><td><code>shattered</code></td><td>GemStone IV Shattered</td></tr>
+<tr><td><code>test</code></td><td>GemStone IV Test</td></tr>
+<tr><td><code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td><td>DragonRealms worlds</td></tr>
+</tbody>
+</table>
+</div>
 <blockquote>
 <p><strong>Note</strong>: Direct mode requires OpenSSL on Windows. See <a href="#installation">Installation</a>.</p>
 </blockquote>
@@ -314,7 +343,8 @@ cargo build --release
 │ &gt; [Command Input]                                       │
 └─────────────────────────────────────────────────────────┘
 </code></pre>
-<h3 id="basic-controls"><a class="header" href="#basic-controls">Basic Controls</a></h3>
+<h3 id="default-keys"><a class="header" href="#default-keys">Default Keys</a></h3>
+<p>All of these can be changed in <a href="#keybindstoml">keybinds.toml</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -322,29 +352,216 @@ cargo build --release
 </thead>
 <tbody>
 <tr><td><code>Enter</code></td><td>Send command</td></tr>
-<tr><td><code>Page Up/Down</code></td><td>Scroll main window</td></tr>
-<tr><td><code>Ctrl+C</code></td><td>Copy selected text</td></tr>
-<tr><td><code>Escape</code></td><td>Close menus / cancel</td></tr>
-<tr><td><code>F1</code></td><td>Open main menu</td></tr>
+<tr><td><code>Up</code> / <code>Down</code></td><td>Command history</td></tr>
+<tr><td><code>Page Up/Down</code></td><td>Scroll focused window</td></tr>
+<tr><td><code>Tab</code></td><td>Switch focused window</td></tr>
+<tr><td><code>Ctrl+F</code></td><td>Search in window (<code>F3</code> next match)</td></tr>
+<tr><td><code>Ctrl+R</code></td><td>Repeat last command</td></tr>
+<tr><td><code>Escape</code></td><td>Close dialogs / cancel</td></tr>
+<tr><td><code>Ctrl+C</code></td><td><strong>Quit VellumFE</strong></td></tr>
+<tr><td>Numpad</td><td>Movement macros (<code>8</code>=north, <code>2</code>=south, …)</td></tr>
 </tbody>
 </table>
 </div>
+<blockquote>
+<p><strong>Copying text</strong>: select with the mouse — it’s copied to the clipboard on
+release (<code>selection_auto_copy</code>). <code>Ctrl+C</code> quits; it does not copy.</p>
+</blockquote>
 <h3 id="mouse-controls"><a class="header" href="#mouse-controls">Mouse Controls</a></h3>
 <ul>
 <li><strong>Click</strong> links to interact with objects</li>
 <li><strong>Right-click</strong> for context menus</li>
 <li><strong>Scroll wheel</strong> to scroll windows</li>
-<li><strong>Drag</strong> window borders to resize (in edit mode)</li>
+<li><strong>Ctrl+drag</strong> to move windows (modifier configurable via <code>drag_modifier_key</code>)</li>
 </ul>
+<h3 id="dot-commands"><a class="header" href="#dot-commands">Dot-Commands</a></h3>
+<p>Anything starting with <code>.</code> is a client command rather than game input.
+Start with:</p>
+<ul>
+<li><code>.menu</code> — open the main menu</li>
+<li><code>.settings</code> — in-app settings editor</li>
+<li><code>.help</code> — list every command</li>
+</ul>
+<p>See the full <a href="#command-reference">Command Reference</a>.</p>
 <h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
 <ul>
 <li><a href="configuration/README.html">Configuration</a> - Customize settings</li>
 <li><a href="widgets/README.html">Widgets</a> - Learn about available widgets</li>
-<li><a href="customization/README.html">Customization</a> - Create custom layouts</li>
+<li><a href="customization/README.html">Customization</a> - Layouts, highlights, themes</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="frontends"><a class="header" href="#frontends">Frontends</a></h1>
+<p>VellumFE has one core and three ways to use it. All frontends share the
+same configuration, highlights, keybinds, themes, and dot-commands.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Frontend</th><th>How</th><th>Best for</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#terminal-tui">Terminal (TUI)</a></td><td>default</td><td>Playing in a terminal; SSH; lowest footprint</td></tr>
+<tr><td><a href="#desktop-gui">Desktop GUI</a></td><td><code>--frontend gui</code></td><td>Native windows, mouse-first layout editing, system fonts</td></tr>
+<tr><td><a href="#mobile-web">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins the <em>same session</em> as a second screen/controller</td></tr>
+</tbody>
+</table>
+</div>
+<p>The TUI and GUI are alternatives — you run one or the other. The mobile web
+frontend is a <strong>sidecar</strong>: it runs alongside whichever desktop frontend is
+active, and both control the same character at the same time.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="terminal-tui"><a class="header" href="#terminal-tui">Terminal (TUI)</a></h1>
+<p>The default frontend. Runs in any modern terminal:</p>
+<pre><code class="language-bash">vellum-fe --port 8000 --character YourName
+</code></pre>
+<p>Most of this book describes the TUI: its <a href="widgets/README.html">widgets</a>
+are laid out on a character grid via
+<a href="#layouttoml">layout.toml</a>, and everything is
+keyboard-driven with mouse support for links, scrolling, selection, and
+window dragging.</p>
+<h2 id="terminal-recommendations"><a class="header" href="#terminal-recommendations">Terminal Recommendations</a></h2>
+<ul>
+<li>Use a terminal with 24-bit color (Windows Terminal, kitty, alacritty,
+WezTerm, iTerm2) and leave <code>color_mode = "direct"</code>.</li>
+<li>On terminals limited to 256 colors, set <code>color_mode = "slot"</code> and run
+<code>.setpalette</code>, or use <code>"indexed"</code> as a safe fallback.</li>
+<li>Use a Nerd Font if you want the default countdown glyphs and compass to
+render perfectly.</li>
+</ul>
+<h2 id="tui-only-features"><a class="header" href="#tui-only-features">TUI-Only Features</a></h2>
+<p>A few things only make sense in a terminal:</p>
+<ul>
+<li><code>.setpalette</code> / <code>.resetpalette</code> — reprogram the terminal’s color palette</li>
+<li><code>.transparent</code> — toggle transparent window backgrounds</li>
+<li><code>.resize</code> — refit the layout to the current terminal size</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="desktop-gui"><a class="header" href="#desktop-gui">Desktop GUI</a></h1>
+<p>A native windowed client built on egui:</p>
+<pre><code class="language-bash">vellum-fe --frontend gui --port 8000 --character YourName
+</code></pre>
+<p>Direct connection (<code>--direct</code>) works in the GUI too.</p>
+<h2 id="whats-shared-with-the-tui"><a class="header" href="#whats-shared-with-the-tui">What’s Shared with the TUI</a></h2>
+<p>Connection settings, highlights, keybinds, colors, themes, and all
+dot-commands work identically — editors opened in the GUI write to the same
+config files, so changes carry over if you switch frontends.</p>
+<p><strong>Layout is not shared.</strong> The GUI keeps its own per-character layout
+(window positions, zoom, fonts) in <code>~/.vellum-fe/gui/</code>, separate from the
+TUI’s layout.toml. Window size, position, and zoom are restored between
+sessions automatically.</p>
+<h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
+<p>The GUI arranges windows in five zones: header, footer, left sidebar,
+center, and right sidebar. Toggle zones from the top toolbar.</p>
+<ul>
+<li><strong>Move a window</strong>: drag its title bar (free placement in the center), or
+<strong>Alt+drag</strong> the window body to move it between zones.</li>
+<li><strong>Resize</strong>: drag any window edge or corner.</li>
+<li><strong>Add/hide windows</strong>: the <strong>Windows</strong> menu in the toolbar — add from
+categorized templates, toggle visibility, or reassign a window’s zone.</li>
+<li><strong>Right-click</strong> a window body for its context menu; title bars can be
+hidden per-window.</li>
+<li>Windows can be <strong>detached</strong> into separate OS windows (restored across
+sessions), or locked together into tab groups that move as a unit.</li>
+</ul>
+<h2 id="appearance"><a class="header" href="#appearance">Appearance</a></h2>
+<p>Open <code>.settings</code> → GUI panel:</p>
+<ul>
+<li><strong>Zoom</strong> (Ctrl+= / Ctrl+- / Ctrl+0, or the slider), <strong>text size</strong>,
+<strong>density</strong> (spacing scale — the default approximates Wrayth’s compact
+look), title bar size, bar corner radius.</li>
+<li><strong>Fonts</strong>: pick any installed system font app-wide, or per-window.</li>
+<li><strong>Vitals bars</strong>: orientation, height, text format, and per-bar toggles
+(health/mana/stamina/spirit/mind/encumbrance/…), with automatic
+light/dark bar text for contrast.</li>
+<li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
+</ul>
+<p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="differences-from-the-tui"><a class="header" href="#differences-from-the-tui">Differences from the TUI</a></h2>
+<ul>
+<li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>.</li>
+<li><code>Ctrl+F</code> opens in-window search with match highlighting.</li>
+<li>Terminal-only commands (<code>.setpalette</code>, <code>.resetpalette</code>, <code>.transparent</code>)
+don’t apply; themes handle appearance instead.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="mobile-web"><a class="header" href="#mobile-web">Mobile Web</a></h1>
+<p>An optional embedded web server that lets your <strong>phone’s browser join the
+running session</strong>. It’s a sidecar, not a separate mode — the TUI or GUI
+keeps running on your PC, and the phone becomes a second screen and
+controller for the same character.</p>
+<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<p>In <code>config.toml</code>:</p>
+<pre><code class="language-toml">[web]
+enabled = true
+port = 8040
+bind = "0.0.0.0"   # required for phones on your LAN (default 127.0.0.1)
+pinned = false     # see "Multiple characters" below
+</code></pre>
+<p>Or one-off from the CLI: <code>--web-port 8040</code> (this enables the server but
+does <strong>not</strong> change <code>bind</code> — set that in config to reach it from a phone).</p>
+<h2 id="pairing-your-phone"><a class="header" href="#pairing-your-phone">Pairing Your Phone</a></h2>
+<p>Access requires a pairing token. In-game:</p>
+<pre><code>.webinfo
+</code></pre>
+<p>This prints the session URL (with the token included) and opens a QR code
+in your browser — scan it with the phone. One pairing covers all your
+characters; the phone remembers the token, so this is a one-time step per
+device. Unpaired connections are refused, and repeated bad attempts are
+locked out temporarily.</p>
+<blockquote>
+<p><strong>Security</strong>: pairing keeps strangers out, but the traffic is plain
+HTTP on your LAN. For off-LAN play use Tailscale/WireGuard — never
+expose the port to the open internet.</p>
+</blockquote>
+<h2 id="the-dashboard"><a class="header" href="#the-dashboard">The Dashboard</a></h2>
+<ul>
+<li><code>/</code> is a <strong>dashboard</strong>: one card per running character session, health-
+checked and auto-refreshing — tap a card to play it.</li>
+<li><code>/play</code> is the game client itself.</li>
+<li>“Add to Home Screen” works — the client is a PWA and installs like an app.</li>
+</ul>
+<h2 id="multiple-characters"><a class="header" href="#multiple-characters">Multiple Characters</a></h2>
+<p>Run several VellumFE instances and they share the web setup automatically:
+each instance walks upward from the base port to find a free one, and all
+of them appear on the dashboard. If you want a specific character to have
+a <strong>stable port</strong> (for a direct <code>/play</code> bookmark), set <code>pinned = true</code> in
+that character’s profile config — it then binds exactly that port or
+disables web for the session with a loud warning, never a silent neighbor
+port.</p>
+<h2 id="what-you-can-do-from-the-phone"><a class="header" href="#what-you-can-do-from-the-phone">What You Can Do from the Phone</a></h2>
+<ul>
+<li><strong>Read the game</strong> live, with streams as filter chips (unread badges;
+long-press a chip to reorder — remembered per device).</li>
+<li><strong>Send commands</strong> from the input bar — identical to typing at the PC,
+including dot-commands and command history shared both ways.</li>
+<li><strong>Tap links and nouns</strong> — context menus open in a bottom sheet; tap
+exits in the room bar to move.</li>
+<li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
+<li><strong>Active effects</strong> — buffs/debuffs as pills on phones, a sidebar on
+tablets.</li>
+<li><strong>Adjust text size</strong> — the <strong>Aa</strong> control resizes story text, remembered
+per device.</li>
+<li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable floating
+buttons defined in <a href="#macrostoml">macros.toml</a>.</li>
+<li><strong>Create and edit macros on the phone</strong> — the rail’s <strong>+</strong> button;
+phone-created buttons are saved server-side (<code>macros-local.toml</code>) and
+survive restarts. Hand-written buttons are read-only from the phone.</li>
+<li><strong>Reconnect gracefully</strong> — on reconnect the client resumes where it left
+off, with a “missed output” marker if the gap was long. Multiple phones
+can connect at once.</li>
+</ul>
+<h2 id="tips"><a class="header" href="#tips">Tips</a></h2>
+<ul>
+<li>After editing <code>macros.toml</code> on the PC, run <code>.reloadmacros</code> — connected
+phones update instantly.</li>
+<li>The wake-lock toggle in the phone UI keeps the screen on while hunting.</li>
+<li>If the phone can’t connect at all, check <code>bind</code> — the default
+<code>127.0.0.1</code> is reachable only from the PC itself; <code>.webinfo</code> warns
+about this.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h1>
-<p>VellumFE uses TOML files for configuration, stored in <code>~/.vellum-fe/</code>.</p>
+<p>VellumFE uses TOML files for configuration, stored in <code>~/.vellum-fe/</code>
+(override the location with the <code>VELLUM_FE_DIR</code> environment variable or <code>--data-dir</code>).</p>
 <h2 id="configuration-files"><a class="header" href="#configuration-files">Configuration Files</a></h2>
 <div class="table-wrapper">
 <table>
@@ -352,43 +569,62 @@ cargo build --release
 <tr><th>File</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><a href="#configtoml">config.toml</a></td><td>General settings (UI, connection, behavior)</td></tr>
-<tr><td><a href="#layouttoml">layout.toml</a></td><td>Window positions, sizes, and properties</td></tr>
+<tr><td><a href="#configtoml">config.toml</a></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
+<tr><td><a href="#layouttoml">layout.toml</a></td><td>Window positions, sizes, and properties (TUI)</td></tr>
 <tr><td><a href="#keybindstoml">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
-<tr><td><a href="#highlightstoml">highlights.toml</a></td><td>Text highlighting rules</td></tr>
-<tr><td><a href="#colorstoml">colors.toml</a></td><td>Color palette definitions</td></tr>
+<tr><td><a href="#highlightstoml">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
+<tr><td><a href="#colorstoml">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><a href="#macrostoml">macros.toml</a></td><td>Macro buttons for the mobile web frontend</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="per-character-configuration"><a class="header" href="#per-character-configuration">Per-Character Configuration</a></h2>
-<p>When you specify <code>--character NAME</code>, VellumFE looks for character-specific files:</p>
+<h2 id="directory-layout"><a class="header" href="#directory-layout">Directory Layout</a></h2>
 <pre><code>~/.vellum-fe/
-├── config.toml           # Global defaults
-├── layout.toml           # Global layout
-├── characters/
-│   └── CharName/
-│       ├── config.toml   # Character overrides
-│       └── layout.toml   # Character layout
+├── global/               # Shared settings for all characters
+│   ├── config.toml
+│   ├── keybinds.toml
+│   ├── highlights.toml
+│   ├── colors.toml
+│   ├── macros.toml
+│   └── sounds/           # Sound files for highlight alerts
+├── layouts/              # Saved layouts (.savelayout / .loadlayout)
+├── profiles/
+│   └── CharName/         # Per-character overrides + auto-saved layout.toml
+├── themes/               # Custom themes (.edittheme saves here)
+└── vellum-fe.log
 </code></pre>
-<p>Character-specific files override global settings.</p>
+<p>Files in <code>profiles/&lt;name&gt;/</code> override the matching global file for that character.</p>
 <h2 id="editing-configuration"><a class="header" href="#editing-configuration">Editing Configuration</a></h2>
-<p>You can edit files directly, or use the in-client menu:</p>
-<ol>
-<li>Press <code>F1</code> to open the main menu</li>
-<li>Navigate to <strong>Config</strong> submenu</li>
-<li>Select the file to edit</li>
-</ol>
-<p>Changes to layout are saved automatically. Other config changes require restart.</p>
+<p>Most things can be edited in-app without touching files:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Opens</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.settings</code></td><td>Settings editor (connection, UI, sound, theme)</td></tr>
+<tr><td><code>.highlights</code></td><td>Highlights browser</td></tr>
+<tr><td><code>.keybinds</code></td><td>Keybinds browser</td></tr>
+<tr><td><code>.colors</code></td><td>Color palette browser</td></tr>
+<tr><td><code>.themes</code></td><td>Theme browser</td></tr>
+</tbody>
+</table>
+</div>
+<p>If you edit files directly, apply changes without restarting:</p>
+<pre><code>.reload              # reload everything
+.reload highlights   # or just one: highlights, keybinds, settings, colors, layout
+.reloadmacros        # macros.toml (also pushes to connected phones)
+</code></pre>
 <h2 id="resetting-to-defaults"><a class="header" href="#resetting-to-defaults">Resetting to Defaults</a></h2>
-<p>Delete a configuration file to reset it to defaults on next launch:</p>
-<pre><code class="language-bash">rm ~/.vellum-fe/layout.toml
+<p>Delete a configuration file and it is recreated with defaults on next launch:</p>
+<pre><code class="language-bash">rm ~/.vellum-fe/global/keybinds.toml
 </code></pre>
-<p>Or delete the entire directory for a full reset:</p>
-<pre><code class="language-bash">rm -rf ~/.vellum-fe
-</code></pre>
+<p>Or delete the entire directory for a full reset.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="configtoml"><a class="header" href="#configtoml">config.toml</a></h1>
-<p>General client settings including connection, UI behavior, and sound.</p>
+<p>General client settings: connection, UI behavior, sound, TTS, and the web
+server. Most values can also be changed in-app via <code>.settings</code>. Apply file
+edits with <code>.reload settings</code>.</p>
 <h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
 <pre><code class="language-toml">[connection]
 host = "127.0.0.1"
@@ -398,19 +634,22 @@ character = "YourName"
 # For direct connection (optional - can use CLI instead)
 account = "your_account"
 password = "your_password"  # Stored in plain text!
-game = "prime"              # prime, platinum, shattered, test
+game = "prime"              # prime, platinum, shattered, test, dr, ...
 </code></pre>
 <blockquote>
-<p><strong>Tip</strong>: For security, pass credentials via CLI: <code>--account X --password Y</code></p>
+<p><strong>Tip</strong>: For security, omit <code>password</code> — VellumFE prompts for it securely
+at startup in direct mode. CLI arguments override these values.</p>
 </blockquote>
 <h2 id="user-interface"><a class="header" href="#user-interface">User Interface</a></h2>
 <pre><code class="language-toml">[ui]
-buffer_size = 1000              # Lines kept per window
+buffer_size = 1000              # Default lines kept per window
 border_style = "single"         # single, double, rounded, thick, none
-color_mode = "direct"           # direct (24-bit), indexed (256-color)
+countdown_icon = "█"            # Glyph for RT/CT timer blocks
+color_mode = "direct"           # direct, slot, indexed (see below)
 
 # Text selection
 selection_enabled = true
+selection_respect_window_boundaries = true
 selection_auto_copy = true      # Copy on mouse-up
 
 # Commands
@@ -419,6 +658,9 @@ min_command_length = 3          # Min length to save in history
 
 # Drag modifier for moving windows
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
+
+# Prevent specific server dialogs from auto-opening windows
+open_dialog_blocklist = ["bank", "combat", "injuries"]
 </code></pre>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
@@ -428,8 +670,8 @@ drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 </thead>
 <tbody>
 <tr><td><code>direct</code></td><td>24-bit true color. Use with modern terminals (kitty, alacritty, Windows Terminal)</td></tr>
-<tr><td><code>indexed</code></td><td>256-color with standard palette. Fallback for legacy terminals</td></tr>
-<tr><td><code>slot</code></td><td>256-color with custom palette. For terminals supporting OSC4</td></tr>
+<tr><td><code>slot</code></td><td>256-color with custom palette via <code>.setpalette</code>. For terminals supporting OSC 4</td></tr>
+<tr><td><code>indexed</code></td><td>256-color with standard palette (closest match). Safe fallback</td></tr>
 </tbody>
 </table>
 </div>
@@ -464,7 +706,7 @@ coloring_enabled = true         # Apply color highlighting
 <pre><code class="language-toml">[sound]
 enabled = true
 volume = 0.7                    # 0.0 to 1.0
-cooldown_ms = 500               # Min time between sounds
+cooldown_ms = 500               # Min time between repeated sounds
 startup_music = true
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
@@ -476,38 +718,85 @@ speak_thoughts = true
 speak_speech = true
 speak_main = false              # Usually too noisy
 </code></pre>
+<p>TTS navigation keys are bound in <a href="#keybindstoml">keybinds.toml</a>
+(defaults: <code>Ctrl+Alt+arrows</code>, <code>F7</code>–<code>F11</code>).</p>
+<h2 id="web-server-mobile-frontend"><a class="header" href="#web-server-mobile-frontend">Web Server (Mobile Frontend)</a></h2>
+<p>Embedded HTTP + WebSocket server that lets a phone browser join the
+session. Off by default; see <a href="#mobile-web">Mobile Web</a>.</p>
+<pre><code class="language-toml">[web]
+enabled = false
+port = 8040           # base port; instances walk upward unless pinned
+bind = "127.0.0.1"    # set "0.0.0.0" to allow phones on your LAN
+pinned = false        # true = bind exactly this port or fail loudly
+</code></pre>
+<p>Phones must pair once via a token — run <code>.webinfo</code> in-game for the URL
+and QR code.</p>
+<blockquote>
+<p><strong>Security</strong>: pairing keeps strangers out, but keep the port on a
+trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose it
+to the open internet.</p>
+</blockquote>
+<h2 id="quickbars"><a class="header" href="#quickbars">Quickbars</a></h2>
+<p>Define custom quickbar windows that send commands:</p>
+<pre><code class="language-toml">[quickbars]
+default = "quick-custom"
+
+[[quickbars.custom]]
+id = "quick-custom"     # must be "quick" or start with "quick-"
+title = "Custom"
+entries = [
+  { type = "link", label = "look", command = "look" },
+  { type = "sep" },
+  { type = "link", label = "inventory", command = "inventory" }
+]
+</code></pre>
 <h2 id="stream-routing"><a class="header" href="#stream-routing">Stream Routing</a></h2>
-<p>Control how unsubscribed text streams are handled:</p>
+<p>Control how text streams without a subscribed window are handled:</p>
 <pre><code class="language-toml">[streams]
-# Streams to silently discard
+# Streams to silently discard (prevents duplicates/noise)
 drop_unsubscribed = [
-  "speech", "whisper", "talk",
-  "targetcount", "playercount"
+  "speech", "whisper", "talk", "conversation",
+  "targetcount", "playercount", "targetlist", "playerlist"
 ]
 
 fallback = "main"               # Route unknown streams here
 room_in_main = true             # Show room text in main (DR only)
 </code></pre>
 <h2 id="logging"><a class="header" href="#logging">Logging</a></h2>
-<p>Capture raw XML for debugging:</p>
+<p>Capture raw XML for debugging (written to <code>profiles/&lt;character&gt;/logs/</code>):</p>
 <pre><code class="language-toml">[logging]
 enabled = false
 # dir = "logs"
 # timestamps = true
+# max_lines_per_file = 30000
+</code></pre>
+<h2 id="layout-mappings"><a class="header" href="#layout-mappings">Layout Mappings</a></h2>
+<p>Automatically switch layouts based on terminal size:</p>
+<pre><code class="language-toml">[[layout_mappings]]
+min_width = 80
+min_height = 24
+max_width = 120
+max_height = 40
+layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
-<p>Regex patterns for countdown timers:</p>
+<p>Regex patterns that drive countdown timers (stun/RT/CT). The defaults
+cover standard stun messages; add your own:</p>
 <pre><code class="language-toml">[event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
-event_type = "stun"
-action = "set"
-duration_capture = 1
-duration_multiplier = 5.0
+event_type = "stun"             # stun, rt, ct
+action = "set"                  # set or clear
+duration_capture = 1            # capture group holding the duration
+duration_multiplier = 5.0       # rounds -&gt; seconds
 enabled = true
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="layouttoml"><a class="header" href="#layouttoml">layout.toml</a></h1>
-<p>Defines window positions, sizes, and properties.</p>
+<p>Defines window positions, sizes, and properties for the <strong>TUI</strong>. (The
+<a href="#desktop-gui">Desktop GUI</a> keeps its own layout separately.)</p>
+<p>Layouts are saved with <code>.savelayout [name]</code> to <code>~/.vellum-fe/layouts/</code>,
+and the current layout auto-saves per character to
+<code>profiles/&lt;name&gt;/layout.toml</code>.</p>
 <h2 id="basic-structure"><a class="header" href="#basic-structure">Basic Structure</a></h2>
 <pre><code class="language-toml">terminal_width = 120
 terminal_height = 40
@@ -679,305 +968,343 @@ visible = false
 <p>Show via: Menu → Windows → Add Window → Text Windows → Society</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="keybindstoml"><a class="header" href="#keybindstoml">keybinds.toml</a></h1>
-<p>Keyboard shortcuts for client actions and game commands.</p>
-<h2 id="basic-format"><a class="header" href="#basic-format">Basic Format</a></h2>
-<pre><code class="language-toml">[keybinds]
-"ctrl+s" = "save_layout"
-"f1" = "menu"
-"ctrl+c" = "copy"
-"numpad1" = { command = "go southwest" }
+<p>Keyboard shortcuts, organized into three sections by priority. You can edit
+this file directly (then <code>.reload keybinds</code>) or use the in-app editor
+(<code>.keybinds</code> to browse, <code>.addkeybind</code> to add).</p>
+<h2 id="file-structure"><a class="header" href="#file-structure">File Structure</a></h2>
+<p>The file maps keys to actions in three sections:</p>
+<pre><code class="language-toml">[app]      # Always active, highest priority (quit, search, close)
+quit = "ctrl+c"
+start_search = "ctrl+f"
+close_window = "esc"
+
+[menu]     # Active inside menus, forms, browsers, editors
+navigate_up = "up"
+select = "enter"
+save = "ctrl+s"
+
+[user]     # Game mode only — your customizations go here
+enter = "send_command"
+up = "previous_command"
+"ctrl+r" = "send_last_command"
+num_8 = { macro_text = "n\r" }
 </code></pre>
+<p>Note the orientation differs: <code>[app]</code> and <code>[menu]</code> are <code>action = "key"</code>,
+while <code>[user]</code> is <code>"key" = "action"</code>.</p>
 <h2 id="key-names"><a class="header" href="#key-names">Key Names</a></h2>
-<h3 id="modifiers"><a class="header" href="#modifiers">Modifiers</a></h3>
-<p>Combine with <code>+</code>: <code>ctrl+shift+a</code>, <code>alt+f1</code></p>
+<p>Combine modifiers with <code>+</code>: <code>"ctrl+shift+a"</code>, <code>"alt+page_up"</code>.
+Quote any name containing <code>+</code> or symbols.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Modifier</th><th>Name</th></tr>
+<tr><th>Group</th><th>Names</th></tr>
 </thead>
 <tbody>
-<tr><td>Control</td><td><code>ctrl</code></td></tr>
-<tr><td>Alt</td><td><code>alt</code></td></tr>
-<tr><td>Shift</td><td><code>shift</code></td></tr>
+<tr><td>Modifiers</td><td><code>ctrl</code>, <code>alt</code>, <code>shift</code></td></tr>
+<tr><td>Function keys</td><td><code>f1</code> – <code>f12</code></td></tr>
+<tr><td>Arrows</td><td><code>up</code>, <code>down</code>, <code>left</code>, <code>right</code></td></tr>
+<tr><td>Navigation</td><td><code>home</code>, <code>end</code>, <code>page_up</code>, <code>page_down</code></td></tr>
+<tr><td>Editing</td><td><code>insert</code>, <code>delete</code>, <code>backspace</code>, <code>enter</code>, <code>tab</code>, <code>esc</code>, <code>space</code></td></tr>
+<tr><td>Numpad</td><td><code>num_0</code> – <code>num_9</code>, <code>"num_+"</code>, <code>"num_-"</code>, <code>"num_*"</code>, <code>"num_/"</code>, <code>"num_."</code></td></tr>
 </tbody>
 </table>
 </div>
-<h3 id="special-keys"><a class="header" href="#special-keys">Special Keys</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Key</th><th>Name</th></tr>
-</thead>
-<tbody>
-<tr><td>Function keys</td><td><code>f1</code> through <code>f12</code></td></tr>
-<tr><td>Arrow keys</td><td><code>up</code>, <code>down</code>, <code>left</code>, <code>right</code></td></tr>
-<tr><td>Navigation</td><td><code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code></td></tr>
-<tr><td>Editing</td><td><code>insert</code>, <code>delete</code>, <code>backspace</code></td></tr>
-<tr><td>Other</td><td><code>enter</code>, <code>tab</code>, <code>escape</code>, <code>space</code></td></tr>
-<tr><td>Numpad</td><td><code>numpad0</code>-<code>numpad9</code>, <code>numpad_add</code>, <code>numpad_subtract</code>, etc.</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="action-types"><a class="header" href="#action-types">Action Types</a></h2>
-<h3 id="client-actions"><a class="header" href="#client-actions">Client Actions</a></h3>
-<pre><code class="language-toml">"f1" = "menu"                   # Open main menu
-"ctrl+c" = "copy"               # Copy selection
-"pageup" = "scroll_up"          # Scroll focused window
-"pagedown" = "scroll_down"
-"ctrl+home" = "scroll_top"
-"ctrl+end" = "scroll_bottom"
-"ctrl+s" = "save_layout"
-"ctrl+tab" = "focus_next"       # Cycle window focus
-"escape" = "cancel"             # Close menu/cancel
-</code></pre>
-<h3 id="game-commands"><a class="header" href="#game-commands">Game Commands</a></h3>
-<pre><code class="language-toml">"numpad1" = { command = "go southwest" }
-"numpad5" = { command = "look" }
-"f2" = { command = "stance defensive" }
-</code></pre>
-<h3 id="macros-multiple-commands"><a class="header" href="#macros-multiple-commands">Macros (Multiple Commands)</a></h3>
-<pre><code class="language-toml">"ctrl+h" = { macro = "hide\npause 2\nstalk" }
-</code></pre>
-<h2 id="common-keybinds"><a class="header" href="#common-keybinds">Common Keybinds</a></h2>
-<pre><code class="language-toml">[keybinds]
-# Navigation
-"numpad1" = { command = "go southwest" }
-"numpad2" = { command = "go south" }
-"numpad3" = { command = "go southeast" }
-"numpad4" = { command = "go west" }
-"numpad5" = { command = "look" }
-"numpad6" = { command = "go east" }
-"numpad7" = { command = "go northwest" }
-"numpad8" = { command = "go north" }
-"numpad9" = { command = "go northeast" }
-"numpad_add" = { command = "go out" }
-"numpad_subtract" = { command = "go up" }
-"numpad_multiply" = { command = "go down" }
-
-# Client
-"f1" = "menu"
-"ctrl+c" = "copy"
-"ctrl+s" = "save_layout"
-"pageup" = "scroll_up"
-"pagedown" = "scroll_down"
-"escape" = "cancel"
-
-# Search
-"ctrl+f" = "search"
-"ctrl+pageup" = "prev_search_match"
-"ctrl+pagedown" = "next_search_match"
-</code></pre>
-<h2 id="available-actions"><a class="header" href="#available-actions">Available Actions</a></h2>
+<blockquote>
+<p><strong>Tip</strong>: If backspace doesn’t work, your terminal may send <code>delete</code>
+instead. Run with <code>RUST_LOG=debug</code> and check the log for <code>KEY EVENT</code>
+lines to see what your terminal actually sends.</p>
+</blockquote>
+<h2 id="actions"><a class="header" href="#actions">Actions</a></h2>
+<p>Bind any of these in <code>[user]</code>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Action</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>menu</code></td><td>Open main menu</td></tr>
-<tr><td><code>copy</code></td><td>Copy selected text</td></tr>
-<tr><td><code>scroll_up</code> / <code>scroll_down</code></td><td>Scroll focused window</td></tr>
-<tr><td><code>scroll_top</code> / <code>scroll_bottom</code></td><td>Jump to top/bottom</td></tr>
-<tr><td><code>focus_next</code> / <code>focus_prev</code></td><td>Cycle window focus</td></tr>
-<tr><td><code>save_layout</code></td><td>Save current layout</td></tr>
-<tr><td><code>cancel</code></td><td>Close menu or cancel operation</td></tr>
-<tr><td><code>search</code></td><td>Open search in focused window</td></tr>
-<tr><td><code>prev_search_match</code> / <code>next_search_match</code></td><td>Cycle search results</td></tr>
+<tr><td><code>send_command</code></td><td>Send the input line to the game</td></tr>
+<tr><td><code>previous_command</code> / <code>next_command</code></td><td>Command history</td></tr>
+<tr><td><code>send_last_command</code> / <code>send_second_last_command</code></td><td>Repeat recent commands</td></tr>
+<tr><td><code>cursor_left</code> / <code>cursor_right</code> / <code>cursor_home</code> / <code>cursor_end</code></td><td>Move cursor</td></tr>
+<tr><td><code>cursor_word_left</code> / <code>cursor_word_right</code></td><td>Move by word</td></tr>
+<tr><td><code>cursor_backspace</code> / <code>cursor_delete</code></td><td>Delete characters</td></tr>
+<tr><td><code>switch_current_window</code></td><td>Focus next window</td></tr>
+<tr><td><code>scroll_current_window_up_page</code> / <code>..._down_page</code></td><td>Scroll by page</td></tr>
+<tr><td><code>scroll_current_window_up_one</code> / <code>..._down_one</code></td><td>Scroll by line</td></tr>
+<tr><td><code>start_search</code> / <code>next_search_match</code> / <code>prev_search_match</code> / <code>clear_search</code></td><td>In-window search</td></tr>
+<tr><td><code>toggle_performance_stats</code></td><td>Performance overlay</td></tr>
+<tr><td><code>tts_next</code> / <code>tts_previous</code> / <code>tts_next_unread</code> / <code>tts_stop</code></td><td>Text-to-speech navigation</td></tr>
+<tr><td><code>tts_mute_toggle</code> / <code>tts_increase_volume</code> / <code>tts_decrease_volume</code> / <code>tts_increase_rate</code> / <code>tts_decrease_rate</code></td><td>TTS controls</td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
+<p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
+<pre><code class="language-toml">[user]
+num_8 = { macro_text = "n\r" }              # north
+num_2 = { macro_text = "s\r" }              # south
+f5 = { macro_text = "stance defensive\r" }
+f6 = { macro_text = "hide\r" }              # omit \r to just type it
+</code></pre>
+<p>The default file ships numpad movement macros (<code>num_1</code>–<code>num_9</code> for
+directions, <code>num_0</code> down, <code>"num_."</code> up, <code>"num_+"</code> look, and so on).</p>
+<h2 id="keybind-profiles"><a class="header" href="#keybind-profiles">Keybind Profiles</a></h2>
+<p>Save and swap whole keybind sets:</p>
+<pre><code>.savekeybinds hunting
+.loadkeybinds hunting
+.keybindprofiles          # list saved profiles
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="highlightstoml"><a class="header" href="#highlightstoml">highlights.toml</a></h1>
-<p>Text highlighting rules for coloring, sounds, and redirects.</p>
-<h2 id="basic-format-1"><a class="header" href="#basic-format-1">Basic Format</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "my_highlight"
-pattern = "pattern to match"
-foreground = "#FF0000"
-</code></pre>
-<h2 id="pattern-matching"><a class="header" href="#pattern-matching">Pattern Matching</a></h2>
-<h3 id="literal-match-fast"><a class="header" href="#literal-match-fast">Literal Match (Fast)</a></h3>
-<pre><code class="language-toml">[[highlights]]
-name = "death_cry"
-pattern = "death cry"           # Exact text match
-foreground = "#FF0000"
-</code></pre>
-<h3 id="regex-match"><a class="header" href="#regex-match">Regex Match</a></h3>
-<pre><code class="language-toml">[[highlights]]
-name = "creature_attack"
-pattern = "^A .+ (swings|claws|lunges)"
-is_regex = true
-foreground = "#FFA500"
-</code></pre>
-<h2 id="styling-options"><a class="header" href="#styling-options">Styling Options</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#9370DB"          # Text color
-background = "#1a1a2e"          # Background color
-bold = true
-italic = true
-underline = true
-</code></pre>
-<h3 id="colors"><a class="header" href="#colors">Colors</a></h3>
-<p>Use hex colors (<code>#RRGGBB</code>) or named colors:</p>
-<ul>
-<li>Basic: <code>red</code>, <code>green</code>, <code>blue</code>, <code>yellow</code>, <code>cyan</code>, <code>magenta</code>, <code>white</code>, <code>black</code></li>
-<li>Extended: <code>gray</code>, <code>orange</code>, <code>purple</code>, <code>pink</code>, <code>brown</code></li>
-</ul>
-<h2 id="sound-alerts"><a class="header" href="#sound-alerts">Sound Alerts</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "dead"
-pattern = "appears dead"
-foreground = "#00FF00"
-sound = "ding.wav"              # File in ~/.vellum-fe/sounds/
-sound_volume = 0.8              # 0.0 to 1.0
-</code></pre>
-<h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "shorten_deaths"
-pattern = "The death cry of"
-replace = "†"
-foreground = "#FF0000"
-</code></pre>
-<h2 id="stream-redirect"><a class="header" href="#stream-redirect">Stream Redirect</a></h2>
-<p>Route matching lines to another window:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "loot_to_window"
-pattern = "^You gather"
-redirect = "loot"               # Window name
-</code></pre>
-<h2 id="full-example"><a class="header" href="#full-example">Full Example</a></h2>
-<pre><code class="language-toml"># Creature deaths
-[[highlights]]
-name = "creature_dead"
-pattern = "appears dead"
-foreground = "#00FF00"
-bold = true
-sound = "kill.wav"
-
-# Player speech
-[[highlights]]
-name = "says"
-pattern = ' (says|asks|exclaims),'
-is_regex = true
-foreground = "#87CEEB"
-
-# Whispers (with background)
-[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#DDA0DD"
-background = "#2a1a2a"
-italic = true
-
-# Stun warning
-[[highlights]]
-name = "stunned"
+<p>Text highlighting rules: coloring, sounds, line filtering (squelch),
+redirects, and text replacement. Edit the file directly (then
+<code>.reload highlights</code>) or use the in-app browser (<code>.highlights</code> / <code>.addhighlight</code>).</p>
+<h2 id="basic-format"><a class="header" href="#basic-format">Basic Format</a></h2>
+<p>Each highlight is a named TOML table:</p>
+<pre><code class="language-toml">[stunned]
 pattern = "You are stunned"
-foreground = "#FF4500"
+fg = "#ff4500"
 bold = true
-sound = "alert.wav"
-
-# Treasure (redirect to loot window)
-[[highlights]]
-name = "loot"
-pattern = "^(You gather|You search)"
-is_regex = true
-foreground = "#FFD700"
-redirect = "loot"
+category = "Combat"
 </code></pre>
-<h2 id="priority"><a class="header" href="#priority">Priority</a></h2>
-<p>Highlights are applied in order. Later patterns can override earlier ones.</p>
-<h2 id="disabling"><a class="header" href="#disabling">Disabling</a></h2>
-<p>Disable without deleting via config.toml:</p>
-<pre><code class="language-toml">[highlights]
-sounds_enabled = false          # Disable all sounds
-coloring_enabled = false        # Disable all coloring
+<p>Patterns are regular expressions. For plain-word lists, set
+<code>fast_parse = true</code> and separate alternatives with <code>|</code> — this uses a much
+faster literal matcher:</p>
+<pre><code class="language-toml">[friends]
+pattern = "Mandrill|Monolis|Chiora"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
 </code></pre>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="colorstoml"><a class="header" href="#colorstoml">colors.toml</a></h1>
-<p>Custom color palette definitions.</p>
-<h2 id="basic-format-2"><a class="header" href="#basic-format-2">Basic Format</a></h2>
-<pre><code class="language-toml">[colors]
-my_red = "#FF0000"
-soft_blue = "#5588AA"
-dark_bg = "#1a1a1a"
-</code></pre>
-<h2 id="using-custom-colors"><a class="header" href="#using-custom-colors">Using Custom Colors</a></h2>
-<p>Reference in other config files:</p>
-<pre><code class="language-toml"># In highlights.toml
-[[highlights]]
-name = "danger"
-pattern = "attacks you"
-foreground = "my_red"           # Uses color from colors.toml
-
-# In layout.toml
-[[windows]]
-name = "combat"
-border_color = "soft_blue"
-background_color = "dark_bg"
-</code></pre>
-<h2 id="preset-colors"><a class="header" href="#preset-colors">Preset Colors</a></h2>
-<p>VellumFE recognizes these named colors without definition:</p>
+<h2 id="all-fields"><a class="header" href="#all-fields">All Fields</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Name</th><th>Hex</th></tr>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>black</code></td><td>#000000</td></tr>
-<tr><td><code>red</code></td><td>#FF0000</td></tr>
-<tr><td><code>green</code></td><td>#00FF00</td></tr>
-<tr><td><code>yellow</code></td><td>#FFFF00</td></tr>
-<tr><td><code>blue</code></td><td>#0000FF</td></tr>
-<tr><td><code>magenta</code></td><td>#FF00FF</td></tr>
-<tr><td><code>cyan</code></td><td>#00FFFF</td></tr>
-<tr><td><code>white</code></td><td>#FFFFFF</td></tr>
-<tr><td><code>gray</code> / <code>grey</code></td><td>#808080</td></tr>
-<tr><td><code>orange</code></td><td>#FFA500</td></tr>
-<tr><td><code>purple</code></td><td>#800080</td></tr>
-<tr><td><code>pink</code></td><td>#FFC0CB</td></tr>
+<tr><td><code>pattern</code></td><td>string</td><td>Regex (or <code>|</code>-separated literals with <code>fast_parse</code>)</td></tr>
+<tr><td><code>fg</code> / <code>bg</code></td><td>color</td><td>Text / background color — hex or a palette color name</td></tr>
+<tr><td><code>bold</code></td><td>bool</td><td>Bold text</td></tr>
+<tr><td><code>color_entire_line</code></td><td>bool</td><td>Color the whole line, not just the match</td></tr>
+<tr><td><code>fast_parse</code></td><td>bool</td><td>Literal matching via Aho-Corasick (much faster)</td></tr>
+<tr><td><code>sound</code></td><td>string</td><td>Sound file to play (in <code>global/sounds/</code>)</td></tr>
+<tr><td><code>sound_volume</code></td><td>float</td><td>Per-sound volume override (0.0–1.0)</td></tr>
+<tr><td><code>category</code></td><td>string</td><td>Grouping in the highlights browser (e.g. <code>"Combat"</code>)</td></tr>
+<tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
+<tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
+<tr><td><code>redirect_to</code></td><td>string</td><td>Send matching lines to this window</td></tr>
+<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"only"</code> (move) or <code>"copy"</code> (show in both)</td></tr>
+<tr><td><code>replace</code></td><td>string</td><td>Replace matched text (supports <code>$1</code>, <code>$2</code> capture groups)</td></tr>
+<tr><td><code>stream</code></td><td>string</td><td>Only apply to lines from this stream (e.g. <code>"thoughts"</code>)</td></tr>
+<tr><td><code>window</code></td><td>string</td><td>With <code>replace</code>: only replace in this window</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="example-palette"><a class="header" href="#example-palette">Example Palette</a></h2>
-<pre><code class="language-toml">[colors]
-# UI colors
-border_normal = "#404040"
-border_focused = "#5588AA"
-border_alert = "#FF4040"
+<h2 id="squelch-filtering-spam"><a class="header" href="#squelch-filtering-spam">Squelch (Filtering Spam)</a></h2>
+<p>Hide lines you never want to see:</p>
+<pre><code class="language-toml">[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls"
+fast_parse = true
+squelch = true
+category = "Squelch"
 
-# Text colors
-text_normal = "#CCCCCC"
-text_dim = "#666666"
-text_bright = "#FFFFFF"
-
-# Creature states
-dead = "#00FF00"
-stunned = "#FFFF00"
-frozen = "#00FFFF"
-
-# Communication
-speech = "#87CEEB"
-whisper = "#DDA0DD"
-thoughts = "#9370DB"
-
-# Combat
-damage_minor = "#FFFF00"
-damage_major = "#FFA500"
-damage_critical = "#FF0000"
+[arrival_spam]
+pattern = "^[A-Z][a-z]+ (arrives|departs)"
+squelch = true
+category = "Squelch"
 </code></pre>
-<h2 id="color-formats"><a class="header" href="#color-formats">Color Formats</a></h2>
-<p>All colors must be specified as hex:</p>
-<pre><code class="language-toml"># Supported formats
-color1 = "#RGB"                 # 3-digit (expanded to 6)
-color2 = "#RRGGBB"              # 6-digit (most common)
-
-# Not supported
-color3 = "rgb(255, 0, 0)"       # CSS format - won't work
-color4 = "255, 0, 0"            # Raw values - won't work
+<h2 id="sounds"><a class="header" href="#sounds">Sounds</a></h2>
+<pre><code class="language-toml">[death_alert]
+pattern = "appears dead"
+fg = "#00ff00"
+sound = "kill.wav"        # in ~/.vellum-fe/global/sounds/
+sound_volume = 0.8
 </code></pre>
+<p>See <a href="#sound-alerts">Sound Alerts</a>.</p>
+<h2 id="redirects"><a class="header" href="#redirects">Redirects</a></h2>
+<p>Route matching lines to another window:</p>
+<pre><code class="language-toml">[loot_lines]
+pattern = "^You gather"
+redirect_to = "loot"
+redirect_mode = "copy"    # also keep it in the original window
+</code></pre>
+<h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
+<pre><code class="language-toml">[shorten_deaths]
+pattern = "The death cry of (\\w+)"
+replace = "† $1"
+fg = "#ff0000"
+</code></pre>
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<p>Inject a fake game line to test your patterns without waiting for the game:</p>
+<pre><code>.testline You are stunned for 3 rounds!
+</code></pre>
+<h2 id="global-toggles"><a class="header" href="#global-toggles">Global Toggles</a></h2>
+<p>Disable whole features without deleting patterns, in <code>config.toml</code>:</p>
+<pre><code class="language-toml">[highlights]
+sounds_enabled = true
+replace_enabled = true
+redirect_enabled = true
+coloring_enabled = true
+</code></pre>
+<p>System highlights (monsterbold, links, room names) are not affected by
+these toggles.</p>
+<h2 id="highlight-profiles"><a class="header" href="#highlight-profiles">Highlight Profiles</a></h2>
+<p>Save and swap whole highlight sets:</p>
+<pre><code>.savehighlights hunting
+.loadhighlights hunting
+.highlightprofiles        # list saved profiles
+</code></pre>
+<h2 id="importing-from-wraythstormfront"><a class="header" href="#importing-from-wraythstormfront">Importing from Wrayth/StormFront</a></h2>
+<p>Convert an existing Wrayth or StormFront settings file:</p>
+<pre><code class="language-bash">vellum-fe import-highlights settings.xml --out my-highlights.toml
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="colorstoml"><a class="header" href="#colorstoml">colors.toml</a></h1>
+<p>The central color file: a named color palette, game-text stream colors,
+prompt colors, UI element colors, and spell-circle colors. Edit in-app with
+<code>.colors</code> (palette), <code>.uicolors</code>, and <code>.spellcolors</code> — or edit the file and
+<code>.reload colors</code>.</p>
+<blockquote>
+<p>Themes are a separate system — they control <em>widget UI</em> colors and are
+covered in <a href="#themes">Themes</a>. colors.toml controls
+<em>game text</em> and palette colors, and is not switched by <code>.settheme</code>.</p>
+</blockquote>
+<h2 id="color-palette"><a class="header" href="#color-palette">Color Palette</a></h2>
+<p>Named colors you can reference anywhere a color is accepted
+(highlights <code>fg</code>/<code>bg</code>, layout <code>border_color</code>, theme files, …):</p>
+<pre><code class="language-toml">[[color_palette]]
+name = "Link"
+color = "#477ab3"
+category = "presets"
+slot = 16
+</code></pre>
+<ul>
+<li><code>name</code> — the name you reference elsewhere (case-insensitive)</li>
+<li><code>color</code> — hex value</li>
+<li><code>category</code> — grouping in the <code>.colors</code> browser</li>
+<li><code>slot</code> — optional terminal palette slot (16–231) for 256-color mode</li>
+</ul>
+<p>In <code>color_mode = "slot"</code> (see <a href="#configtoml">config.toml</a>), run
+<code>.setpalette</code> to load every slotted color into your terminal’s palette, and
+<code>.resetpalette</code> to undo it. The default palette pre-loads color sets for the
+built-in themes so theme switching works instantly in slot mode.</p>
+<h2 id="stream-presets"><a class="header" href="#stream-presets">Stream Presets</a></h2>
+<p>Colors for game text streams. Values can be hex or palette names:</p>
+<pre><code class="language-toml">[presets.speech]
+fg = "Speech"
+
+[presets.roomName]
+fg = "Room Name"
+bg = "Room Name BG"
+
+[presets.monsterbold]
+fg = "Monsterbold"
+</code></pre>
+<p>Available presets include <code>links</code>, <code>commands</code>, <code>speech</code>, <code>whisper</code>,
+<code>thought</code>, <code>roomName</code>, <code>monsterbold</code>, <code>familiar</code>, <code>voln</code>, <code>percWindow</code>,
+and <code>target_indicator</code>.</p>
+<h2 id="prompt-colors"><a class="header" href="#prompt-colors">Prompt Colors</a></h2>
+<p>Color individual prompt status characters:</p>
+<pre><code class="language-toml">[[prompt_colors]]
+character = "R"   # roundtime
+color = "#ff0000"
+</code></pre>
+<p>Defaults cover <code>R</code> (roundtime), <code>S</code> (stunned), <code>H</code> (hiding), <code>&gt;</code> (prompt),
+<code>!</code> (bleeding).</p>
+<h2 id="ui-colors"><a class="header" href="#ui-colors">UI Colors</a></h2>
+<p>Default colors for UI elements (per-window overrides live in layout.toml).
+Edit with <code>.uicolors</code>:</p>
+<pre><code class="language-toml">[ui]
+command_echo_color = "#ffffff"
+border_color = "#00ffff"
+focused_border_color = "#ffff00"
+text_color = "#ffffff"
+background_color = "#000000"
+selection_bg_color = "#4a4a4a"
+</code></pre>
+<h2 id="spell-colors"><a class="header" href="#spell-colors">Spell Colors</a></h2>
+<p>Color active-spell indicators by spell circle. Edit with <code>.spellcolors</code>,
+add with <code>.addspellcolor</code>:</p>
+<pre><code class="language-toml">[[spell_colors]]
+spells = [601, 602, 604, 605, 606]   # spell numbers
+color = "#1c731c"                    # indicator color
+bar_color = "#1c731c"                # progress bar color
+text_color = "#909090"
+bg_color = "#000000"
+</code></pre>
+<h2 id="color-values"><a class="header" href="#color-values">Color Values</a></h2>
+<p>Anywhere a color is accepted:</p>
+<pre><code class="language-toml">color1 = "#RRGGBB"      # hex (6-digit)
+color2 = "#abc"         # hex (3-digit, expanded)
+color3 = "Link Blue"    # palette color name from [[color_palette]]
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="macrostoml"><a class="header" href="#macrostoml">macros.toml</a></h1>
+<p>Macro buttons for the <a href="#mobile-web">mobile web frontend</a>. These are
+the buttons shown on your phone — the desktop client doesn’t use this file
+(desktop macros live in <a href="#keybindstoml">keybinds.toml</a>).</p>
+<p>After editing, apply with <code>.reloadmacros</code> — connected phones update live.</p>
+<h2 id="two-button-shapes"><a class="header" href="#two-button-shapes">Two Button Shapes</a></h2>
+<p><strong>Action button</strong> — has a <code>command</code>, fires immediately on tap:</p>
+<pre><code class="language-toml">[[group]]
+name = "Basics"
+
+  [[group.button]]
+  label = "Look"
+  command = "look"
+</code></pre>
+<p><strong>Menu button</strong> — has options instead, tap opens a bottom-sheet picker:</p>
+<pre><code class="language-toml">  [[group.button]]
+  label = "Travel"
+  color = "#d9b44f"
+
+    [[group.button.option]]
+    label = "To the bank"
+    command = ";go2 bank"
+
+    [[group.button.option]]
+    label = "To the gate"
+    command = ";go2 gate"
+</code></pre>
+<p><code>command</code> can be anything you could type — including Lich <code>;scripts</code>.</p>
+<h2 id="floating-buttons"><a class="header" href="#floating-buttons">Floating Buttons</a></h2>
+<p>Always-visible overlay buttons on the text pane. Tap to fire; hold and drag
+to reposition (positions are remembered per device, not in this file):</p>
+<pre><code class="language-toml">[[floating]]
+label = "Atk"
+color = "#d9534f"
+command = ";bigshot"
+x = 0.85     # starting position, fraction of screen (0.0-1.0)
+y = 0.6
+</code></pre>
+<h2 id="optional-fields"><a class="header" href="#optional-fields">Optional Fields</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Applies to</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>color</code></td><td>button, option</td><td>Button face color, <code>"#rrggbb"</code></td></tr>
+<tr><td><code>confirm</code></td><td>button, option</td><td>Ask before sending (for dangerous commands)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="groups-and-the-macro-rail"><a class="header" href="#groups-and-the-macro-rail">Groups and the Macro Rail</a></h2>
+<p>Each <code>[[group]]</code> is a page of buttons in the phone’s macro rail; switch
+groups from the rail’s left-hand button.</p>
+<h2 id="file-locations"><a class="header" href="#file-locations">File Locations</a></h2>
+<ul>
+<li>Global: <code>~/.vellum-fe/global/macros.toml</code></li>
+<li>Per-character: <code>profiles/&lt;name&gt;/macros.toml</code> — replaces the global file
+<strong>wholesale</strong> (no merging)</li>
+<li><code>profiles/&lt;name&gt;/macros-local.toml</code> — buttons created <strong>on the phone</strong>
+are saved here as an overlay; your hand-written macros.toml is never
+rewritten by the app</li>
+</ul>
+<p>Buttons created on the phone are editable from the phone; hand-written
+buttons are read-only there.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="widgets"><a class="header" href="#widgets">Widgets</a></h1>
 <p>Widgets are the visual building blocks of your layout. Each widget type displays specific game information.</p>
@@ -1025,8 +1352,9 @@ title = "Custom Title"
 </code></pre>
 <h2 id="adding-widgets"><a class="header" href="#adding-widgets">Adding Widgets</a></h2>
 <ol>
-<li><strong>Via Menu</strong>: F1 → Windows → Add Window → [Category] → [Widget]</li>
-<li><strong>Via Command</strong>: <code>.addwindow widgetname</code></li>
+<li><strong>Via Menu</strong>: <code>.menu</code> → Windows → Add Window → [Category] → [Widget]</li>
+<li><strong>Via Command</strong>: <code>.addwindow</code> opens a picker, or
+<code>.addwindow &lt;name&gt; &lt;type&gt; &lt;x&gt; &lt;y&gt; &lt;width&gt; [height]</code> creates directly</li>
 <li><strong>Via Config</strong>: Edit layout.toml directly</li>
 </ol>
 <h2 id="categories"><a class="header" href="#categories">Categories</a></h2>
@@ -2090,7 +2418,7 @@ title = "Known Spells"
 <p>Enable container windows via command:</p>
 <pre><code>.containers
 </code></pre>
-<p>Or via menu: F1 → Config → Toggle Containers</p>
+<p>Or via menu: <code>.menu</code> → Config → Toggle Containers</p>
 <h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
 <p>When enabled:</p>
 <ol>
@@ -2125,65 +2453,60 @@ cols = 30
 <p>The <code>container_title</code> must match the container name in-game.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="customization"><a class="header" href="#customization">Customization</a></h1>
-<p>Create your perfect interface with custom layouts, highlights, keybinds, and sounds.</p>
+<p>Create your perfect interface with custom layouts, highlights, keybinds,
+sounds, and themes.</p>
 <h2 id="topics"><a class="header" href="#topics">Topics</a></h2>
 <ul>
 <li><a href="#creating-layouts">Creating Layouts</a> - Design custom window arrangements</li>
-<li><a href="#highlight-patterns">Highlight Patterns</a> - Color and style game text</li>
+<li><a href="#highlight-patterns">Highlight Patterns</a> - Color, filter, and reroute game text</li>
 <li><a href="#keybind-actions">Keybind Actions</a> - Custom keyboard shortcuts</li>
-<li><a href="#sound-alerts-3">Sound Alerts</a> - Audio notifications for game events</li>
+<li><a href="#sound-alerts">Sound Alerts</a> - Audio notifications for game events</li>
+<li><a href="#themes">Themes</a> - Switch or build UI color themes</li>
 </ul>
 <h2 id="quick-start-1"><a class="header" href="#quick-start-1">Quick Start</a></h2>
 <h3 id="custom-layout"><a class="header" href="#custom-layout">Custom Layout</a></h3>
 <ol>
-<li>Press F1 → Windows → Add Window</li>
-<li>Position and resize windows</li>
-<li>Press Ctrl+S to save</li>
+<li><code>.menu</code> → Windows → Add Window (or <code>.addwindow</code>)</li>
+<li>Ctrl+drag to move windows, drag borders to resize</li>
+<li><code>.savelayout myname</code> to save</li>
 </ol>
-<h3 id="add-highlights"><a class="header" href="#add-highlights">Add Highlights</a></h3>
-<p>Edit <code>~/.vellum-fe/highlights.toml</code>:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "death"
+<h3 id="add-a-highlight"><a class="header" href="#add-a-highlight">Add a Highlight</a></h3>
+<p><code>.addhighlight</code> in-app, or edit <code>~/.vellum-fe/global/highlights.toml</code>:</p>
+<pre><code class="language-toml">[death]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 bold = true
 sound = "kill.wav"
 </code></pre>
-<h3 id="custom-keybinds"><a class="header" href="#custom-keybinds">Custom Keybinds</a></h3>
-<p>Edit <code>~/.vellum-fe/keybinds.toml</code>:</p>
-<pre><code class="language-toml">[keybinds]
-"f2" = { command = "stance offensive" }
-"f3" = { command = "stance defensive" }
+<h3 id="add-a-keybind"><a class="header" href="#add-a-keybind">Add a Keybind</a></h3>
+<p><code>.addkeybind</code> in-app, or edit <code>~/.vellum-fe/global/keybinds.toml</code>:</p>
+<pre><code class="language-toml">[user]
+f2 = { macro_text = "stance offensive\r" }
+f3 = { macro_text = "stance defensive\r" }
 </code></pre>
-<h3 id="sound-alerts-1"><a class="header" href="#sound-alerts-1">Sound Alerts</a></h3>
-<ol>
-<li>Place <code>.wav</code> files in <code>~/.vellum-fe/sounds/</code></li>
-<li>Reference in highlights:</li>
-</ol>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper"
-pattern = "whispers to you"
-sound = "whisper.wav"
+<h3 id="switch-theme"><a class="header" href="#switch-theme">Switch Theme</a></h3>
+<pre><code>.themes
 </code></pre>
+<p>Apply file edits without restarting: <code>.reload</code></p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="creating-layouts"><a class="header" href="#creating-layouts">Creating Layouts</a></h1>
 <p>Design custom window arrangements for different playstyles.</p>
 <h2 id="using-the-window-editor"><a class="header" href="#using-the-window-editor">Using the Window Editor</a></h2>
 <ol>
-<li>Press F1 → Windows → Edit Window → [window name]</li>
+<li><code>.menu</code> → Windows → Edit Window → [window name]</li>
 <li>Modify position, size, and properties</li>
 <li>Save changes (applied immediately)</li>
 </ol>
-<p>Or via command: <code>.edit windowname</code></p>
+<p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>
-<p>F1 → Windows → Add Window → [Category] → [Widget]</p>
+<p><code>.menu</code> → Windows → Add Window → [Category] → [Widget]</p>
 <h3 id="via-command"><a class="header" href="#via-command">Via Command</a></h3>
-<pre><code>.addwindow targets
-.addwindow text mywindow
+<pre><code>.addwindow                                  # opens a picker
+.addwindow loot text 100 0 30 10            # name type x y width [height]
 </code></pre>
 <h3 id="via-config"><a class="header" href="#via-config">Via Config</a></h3>
-<p>Edit <code>~/.vellum-fe/layout.toml</code>:</p>
+<p>Edit your layout file directly:</p>
 <pre><code class="language-toml">[[windows]]
 name = "mywindow"
 widget_type = "text"
@@ -2202,12 +2525,15 @@ cols = 60     # Width
 </code></pre>
 <h3 id="overlapping"><a class="header" href="#overlapping">Overlapping</a></h3>
 <p>Windows can overlap. Later windows in the file render on top.</p>
-<h2 id="saving"><a class="header" href="#saving">Saving</a></h2>
-<ul>
-<li><strong>Ctrl+S</strong> - Save current layout</li>
-<li><strong>F1 → Config → Save Layout</strong> - Same thing</li>
-<li>Changes to window positions via drag are saved automatically</li>
-</ul>
+<h2 id="saving-and-switching"><a class="header" href="#saving-and-switching">Saving and Switching</a></h2>
+<pre><code>.savelayout hunting     # save to ~/.vellum-fe/layouts/hunting.toml
+.loadlayout hunting
+.layouts                # list saved layouts
+.resize                 # refit layout to the current terminal size
+</code></pre>
+<p>Window positions also auto-save per character. You can switch layouts
+automatically by terminal size with <code>layout_mappings</code> in
+<a href="#configtoml">config.toml</a>.</p>
 <h2 id="example-layouts"><a class="header" href="#example-layouts">Example Layouts</a></h2>
 <h3 id="hunting-layout"><a class="header" href="#hunting-layout">Hunting Layout</a></h3>
 <pre><code class="language-toml">terminal_width = 160
@@ -2292,239 +2618,145 @@ rows = 3
 cols = 80
 </code></pre>
 <h2 id="per-character-layouts"><a class="header" href="#per-character-layouts">Per-Character Layouts</a></h2>
-<p>Save layouts per character:</p>
-<pre><code>~/.vellum-fe/characters/CharName/layout.toml
+<p>When you launch with <code>--character NAME</code>, the current layout auto-saves to:</p>
+<pre><code>~/.vellum-fe/profiles/CharName/layout.toml
 </code></pre>
-<p>Use <code>--character NAME</code> to load character-specific layout.</p>
+<p>Validate a layout file from the command line:</p>
+<pre><code class="language-bash">vellum-fe validate-layout hunting.toml
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="highlight-patterns"><a class="header" href="#highlight-patterns">Highlight Patterns</a></h1>
-<p>Color and style game text based on patterns.</p>
-<h2 id="basic-highlight"><a class="header" href="#basic-highlight">Basic Highlight</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "player_speech"
-pattern = " says,"
-foreground = "#87CEEB"
-</code></pre>
-<h2 id="pattern-types"><a class="header" href="#pattern-types">Pattern Types</a></h2>
-<h3 id="literal-default"><a class="header" href="#literal-default">Literal (Default)</a></h3>
-<p>Fast exact matching:</p>
-<pre><code class="language-toml">pattern = "appears dead"
-</code></pre>
-<h3 id="regex"><a class="header" href="#regex">Regex</a></h3>
-<p>Flexible pattern matching:</p>
-<pre><code class="language-toml">pattern = "^A .+ attacks"
-is_regex = true
-</code></pre>
-<h2 id="styling-options-1"><a class="header" href="#styling-options-1">Styling Options</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "important"
-pattern = "IMPORTANT"
-foreground = "#FF0000"      # Text color
-background = "#330000"      # Background color
-bold = true
-italic = true
-underline = true
-</code></pre>
-<h2 id="sound-alerts-2"><a class="header" href="#sound-alerts-2">Sound Alerts</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper_alert"
-pattern = "whispers to you"
-foreground = "#DDA0DD"
-sound = "whisper.wav"       # In ~/.vellum-fe/sounds/
-sound_volume = 0.8          # 0.0 to 1.0
-</code></pre>
-<h2 id="text-replacement-1"><a class="header" href="#text-replacement-1">Text Replacement</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "shorten"
-pattern = "The death cry of"
-replace = "†"
-foreground = "#FF0000"
-</code></pre>
-<h2 id="stream-redirect-1"><a class="header" href="#stream-redirect-1">Stream Redirect</a></h2>
-<p>Route lines to another window:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "loot_redirect"
-pattern = "^You gather"
-is_regex = true
-redirect = "loot"           # Window name
-</code></pre>
-<h2 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h2>
-<pre><code class="language-toml"># Combat
-[[highlights]]
-name = "creature_dead"
+<p>Recipes for common highlighting tasks. Full field reference:
+<a href="#highlightstoml">highlights.toml</a>. The in-app editor
+(<code>.addhighlight</code>) walks you through the same fields.</p>
+<h2 id="color-important-text"><a class="header" href="#color-important-text">Color Important Text</a></h2>
+<pre><code class="language-toml">[creature_dead]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 bold = true
-sound = "kill.wav"
+category = "Combat"
 
-[[highlights]]
-name = "you_hit"
-pattern = "^You .+ (swing|slash|thrust)"
-is_regex = true
-foreground = "#FFFF00"
-
-[[highlights]]
-name = "you_miss"
-pattern = "^A clean miss"
-foreground = "#808080"
-
-# Communication
-[[highlights]]
-name = "says"
-pattern = " says,"
-foreground = "#87CEEB"
-
-[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#DDA0DD"
-italic = true
-
-[[highlights]]
-name = "thoughts"
-pattern = "^You hear .+ thinking,"
-is_regex = true
-foreground = "#9370DB"
-
-# Warnings
-[[highlights]]
-name = "stunned"
+[stunned]
 pattern = "You are stunned"
-foreground = "#FF4500"
+fg = "#ff4500"
 bold = true
 sound = "alert.wav"
+category = "Warnings"
+</code></pre>
+<h2 id="highlight-names-friends-and-enemies"><a class="header" href="#highlight-names-friends-and-enemies">Highlight Names (Friends and Enemies)</a></h2>
+<p>Use <code>fast_parse</code> for lists of literal words — it’s much faster than regex:</p>
+<pre><code class="language-toml">[friends]
+pattern = "Mandrill|Monolis|Chiora"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
 
-[[highlights]]
-name = "bleeding"
-pattern = "Blood runs down"
-foreground = "#FF0000"
-sound = "danger.wav"
+[enemies]
+pattern = "Sihtric|Ehria"
+fg = "#ffffff"
+bg = "#8b0000"
+bold = true
+fast_parse = true
+category = "Players"
 </code></pre>
-<h2 id="disabling-highlights"><a class="header" href="#disabling-highlights">Disabling Highlights</a></h2>
-<p>In <code>config.toml</code>:</p>
-<pre><code class="language-toml">[highlights]
-sounds_enabled = false      # Disable sounds
-coloring_enabled = false    # Disable colors
-replace_enabled = false     # Disable replacements
+<h2 id="hide-spam-squelch"><a class="header" href="#hide-spam-squelch">Hide Spam (Squelch)</a></h2>
+<pre><code class="language-toml">[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls"
+fast_parse = true
+squelch = true
+category = "Squelch"
 </code></pre>
+<h2 id="route-lines-to-another-window"><a class="header" href="#route-lines-to-another-window">Route Lines to Another Window</a></h2>
+<pre><code class="language-toml">[loot_lines]
+pattern = "^You gather"
+redirect_to = "loot"
+redirect_mode = "copy"    # "only" to move instead of copy
+</code></pre>
+<h2 id="rewrite-text"><a class="header" href="#rewrite-text">Rewrite Text</a></h2>
+<p>Capture groups from the pattern are available as <code>$1</code>, <code>$2</code>:</p>
+<pre><code class="language-toml">[shorten_deaths]
+pattern = "The death cry of (\\w+)"
+replace = "† $1"
+fg = "#ff0000"
+</code></pre>
+<h2 id="limit-to-one-stream-or-window"><a class="header" href="#limit-to-one-stream-or-window">Limit to One Stream or Window</a></h2>
+<pre><code class="language-toml">[thought_names]
+pattern = "^\\[(\\w+)\\]"
+fg = "#9370db"
+stream = "thoughts"       # only applies to the thoughts stream
+</code></pre>
+<h2 id="test-your-patterns"><a class="header" href="#test-your-patterns">Test Your Patterns</a></h2>
+<p>Don’t wait for the game — inject a line:</p>
+<pre><code>.testline The death cry of Grimswarm echoes!
+</code></pre>
+<h2 id="tips-1"><a class="header" href="#tips-1">Tips</a></h2>
+<ul>
+<li>Patterns are regexes: escape literal <code>.</code> <code>(</code> <code>[</code>, use <code>(?i)</code> for
+case-insensitive, anchor with <code>^</code> where you can.</li>
+<li>Use <code>category</code> — the <code>.highlights</code> browser groups by it.</li>
+<li>Save variants per activity: <code>.savehighlights hunting</code>,
+<code>.loadhighlights hunting</code>.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="keybind-actions"><a class="header" href="#keybind-actions">Keybind Actions</a></h1>
-<p>Customize keyboard shortcuts for commands and actions.</p>
-<h2 id="basic-keybind"><a class="header" href="#basic-keybind">Basic Keybind</a></h2>
-<pre><code class="language-toml">[keybinds]
-"f2" = { command = "stance offensive" }
+<p>Recipes for common keybind tasks. Full format and action reference:
+<a href="#keybindstoml">keybinds.toml</a>. The in-app editor
+(<code>.keybinds</code> / <code>.addkeybind</code>) edits the same file.</p>
+<p>Your custom binds go in the <code>[user]</code> section, as <code>"key" = value</code>.</p>
+<h2 id="send-a-command-with-one-key"><a class="header" href="#send-a-command-with-one-key">Send a Command with One Key</a></h2>
+<p>Use <code>macro_text</code>; end with <code>\r</code> to press Enter:</p>
+<pre><code class="language-toml">[user]
+f5 = { macro_text = "stance defensive\r" }
+f6 = { macro_text = "look in my backpack\r" }
+"ctrl+g" = { macro_text = "group\r" }
 </code></pre>
-<h2 id="key-format"><a class="header" href="#key-format">Key Format</a></h2>
-<pre><code>modifier+key
+<p>Omit the <code>\r</code> to type text into the input line without sending — useful
+for prefixes you finish by hand:</p>
+<pre><code class="language-toml">"ctrl+w" = { macro_text = "whisper Rolfard " }
 </code></pre>
-<h3 id="modifiers-1"><a class="header" href="#modifiers-1">Modifiers</a></h3>
-<ul>
-<li><code>ctrl</code> - Control key</li>
-<li><code>alt</code> - Alt key</li>
-<li><code>shift</code> - Shift key</li>
-</ul>
-<p>Combine: <code>ctrl+shift+a</code></p>
-<h3 id="key-names-1"><a class="header" href="#key-names-1">Key Names</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Keys</th><th>Names</th></tr>
-</thead>
-<tbody>
-<tr><td>Letters</td><td><code>a</code> through <code>z</code></td></tr>
-<tr><td>Numbers</td><td><code>0</code> through <code>9</code></td></tr>
-<tr><td>Function</td><td><code>f1</code> through <code>f12</code></td></tr>
-<tr><td>Arrows</td><td><code>up</code>, <code>down</code>, <code>left</code>, <code>right</code></td></tr>
-<tr><td>Navigation</td><td><code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code></td></tr>
-<tr><td>Numpad</td><td><code>numpad0</code>-<code>numpad9</code>, <code>numpad_add</code>, etc.</td></tr>
-<tr><td>Other</td><td><code>enter</code>, <code>tab</code>, <code>escape</code>, <code>space</code>, <code>backspace</code></td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="action-types-1"><a class="header" href="#action-types-1">Action Types</a></h2>
-<h3 id="game-commands-1"><a class="header" href="#game-commands-1">Game Commands</a></h3>
-<pre><code class="language-toml">"f2" = { command = "stance offensive" }
-"numpad5" = { command = "look" }
+<h2 id="numpad-movement"><a class="header" href="#numpad-movement">Numpad Movement</a></h2>
+<p>Ships by default; adjust to taste:</p>
+<pre><code class="language-toml">num_8 = { macro_text = "n\r" }
+num_2 = { macro_text = "s\r" }
+num_5 = { macro_text = "out\r" }
+"num_." = { macro_text = "up\r" }
+"num_+" = { macro_text = "look\r" }
 </code></pre>
-<h3 id="macros-multiple-commands-1"><a class="header" href="#macros-multiple-commands-1">Macros (Multiple Commands)</a></h3>
-<pre><code class="language-toml">"ctrl+h" = { macro = "hide\npause 2\nstalk" }
+<h2 id="rebind-a-client-action"><a class="header" href="#rebind-a-client-action">Rebind a Client Action</a></h2>
+<pre><code class="language-toml">[user]
+"ctrl+r" = "send_last_command"
+tab = "switch_current_window"
+page_up = "scroll_current_window_up_page"
 </code></pre>
-<h3 id="client-actions-1"><a class="header" href="#client-actions-1">Client Actions</a></h3>
-<pre><code class="language-toml">"f1" = "menu"
-"ctrl+c" = "copy"
-"pageup" = "scroll_up"
+<h2 id="change-the-quit--search-keys"><a class="header" href="#change-the-quit--search-keys">Change the Quit / Search Keys</a></h2>
+<p>Application-level keys live in <code>[app]</code>:</p>
+<pre><code class="language-toml">[app]
+quit = "ctrl+q"          # default is ctrl+c
+start_search = "ctrl+f"
 </code></pre>
-<h2 id="available-actions-1"><a class="header" href="#available-actions-1">Available Actions</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Action</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>menu</code></td><td>Open main menu</td></tr>
-<tr><td><code>copy</code></td><td>Copy selection</td></tr>
-<tr><td><code>scroll_up</code></td><td>Scroll focused window up</td></tr>
-<tr><td><code>scroll_down</code></td><td>Scroll focused window down</td></tr>
-<tr><td><code>scroll_top</code></td><td>Jump to top</td></tr>
-<tr><td><code>scroll_bottom</code></td><td>Jump to bottom</td></tr>
-<tr><td><code>focus_next</code></td><td>Focus next window</td></tr>
-<tr><td><code>focus_prev</code></td><td>Focus previous window</td></tr>
-<tr><td><code>save_layout</code></td><td>Save current layout</td></tr>
-<tr><td><code>cancel</code></td><td>Close menu/cancel</td></tr>
-<tr><td><code>search</code></td><td>Search in window</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="example-configuration"><a class="header" href="#example-configuration">Example Configuration</a></h2>
-<pre><code class="language-toml">[keybinds]
-# Navigation (numpad)
-"numpad1" = { command = "go sw" }
-"numpad2" = { command = "go s" }
-"numpad3" = { command = "go se" }
-"numpad4" = { command = "go w" }
-"numpad5" = { command = "look" }
-"numpad6" = { command = "go e" }
-"numpad7" = { command = "go nw" }
-"numpad8" = { command = "go n" }
-"numpad9" = { command = "go ne" }
-"numpad_add" = { command = "go out" }
-"numpad_subtract" = { command = "go up" }
-"numpad_multiply" = { command = "go down" }
-
-# Combat stances
-"f2" = { command = "stance offensive" }
-"f3" = { command = "stance defensive" }
-"f4" = { command = "stance guarded" }
-
-# Quick actions
-"f5" = { command = "look in my backpack" }
-"f6" = { command = "inventory" }
-
-# Macros
-"ctrl+h" = { macro = "hide\npause 2\nstalk" }
-"ctrl+l" = { macro = "search\npause 1\nloot" }
-
-# Client
-"f1" = "menu"
-"ctrl+s" = "save_layout"
-"ctrl+c" = "copy"
-"escape" = "cancel"
+<h2 id="swap-keybind-sets"><a class="header" href="#swap-keybind-sets">Swap Keybind Sets</a></h2>
+<pre><code>.savekeybinds hunting
+.loadkeybinds hunting
+.keybindprofiles
 </code></pre>
+<h2 id="when-a-key-doesnt-work"><a class="header" href="#when-a-key-doesnt-work">When a Key Doesn’t Work</a></h2>
+<p>Terminals differ in what they send. Run with <code>RUST_LOG=debug</code>, press the
+key, and look for <code>KEY EVENT</code> lines in the log — then bind exactly that
+name. Classic case: terminals that send <code>delete</code> for backspace.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="sound-alerts-3"><a class="header" href="#sound-alerts-3">Sound Alerts</a></h1>
+<h1 id="sound-alerts"><a class="header" href="#sound-alerts">Sound Alerts</a></h1>
 <p>Audio notifications for game events.</p>
 <h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
 <ol>
-<li>Create sounds directory: <code>~/.vellum-fe/sounds/</code></li>
-<li>Add <code>.wav</code> files</li>
-<li>Reference in highlights</li>
+<li>Put sound files in <code>~/.vellum-fe/global/sounds/</code></li>
+<li>Reference them in highlights</li>
 </ol>
 <h2 id="using-sounds"><a class="header" href="#using-sounds">Using Sounds</a></h2>
 <p>In <code>highlights.toml</code>:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "death_alert"
+<pre><code class="language-toml">[death_alert]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 sound = "kill.wav"
 sound_volume = 0.8
 </code></pre>
@@ -2559,33 +2791,28 @@ sounds_enabled = false
 </code></pre>
 <h2 id="example-sounds-setup"><a class="header" href="#example-sounds-setup">Example Sounds Setup</a></h2>
 <p>Directory structure:</p>
-<pre><code>~/.vellum-fe/sounds/
+<pre><code>~/.vellum-fe/global/sounds/
 ├── kill.wav
 ├── alert.wav
 ├── whisper.wav
-├── danger.wav
-└── loot.wav
+└── danger.wav
 </code></pre>
 <p>Highlights:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "kill"
+<pre><code class="language-toml">[kill]
 pattern = "appears dead"
 sound = "kill.wav"
 
-[[highlights]]
-name = "stunned"
+[stunned]
 pattern = "You are stunned"
 sound = "alert.wav"
 sound_volume = 1.0
 
-[[highlights]]
-name = "whisper"
+[whisper]
 pattern = "whispers to you"
 sound = "whisper.wav"
 sound_volume = 0.5
 
-[[highlights]]
-name = "bleeding"
+[bleeding]
 pattern = "Blood runs down"
 sound = "danger.wav"
 </code></pre>
@@ -2605,6 +2832,366 @@ sound = "danger.wav"
 <li>Check file format is supported</li>
 <li>Try increasing volume</li>
 </ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="themes"><a class="header" href="#themes">Themes</a></h1>
+<p>Themes control the client’s UI colors — windows, menus, editors, buttons —
+as one switchable unit. They work in both the TUI and GUI.</p>
+<h2 id="switching-themes"><a class="header" href="#switching-themes">Switching Themes</a></h2>
+<pre><code>.themes            # browse and preview all themes
+.settheme nord     # switch directly by name
+</code></pre>
+<p>The active theme is saved to your config (<code>active_theme</code>) and restored on
+launch.</p>
+<h2 id="built-in-themes"><a class="header" href="#built-in-themes">Built-in Themes</a></h2>
+<p>35+ presets, including:</p>
+<ul>
+<li><strong>Classics</strong>: <code>dark</code> (default), <code>light</code>, <code>nord</code>, <code>dracula</code>,
+<code>solarized-dark</code>, <code>solarized-light</code>, <code>monokai</code>, <code>gruvbox-dark</code>,
+<code>catppuccin</code>, <code>night-owl</code></li>
+<li><strong>Flavors</strong>: <code>cyberpunk</code>, <code>synthwave</code>, <code>retro-terminal</code>,
+<code>ocean-depths</code>, <code>forest-canopy</code>, <code>sunset-boulevard</code>, <code>arctic-night</code>,
+<code>sepia-parchment</code>, <code>cherry-blossom</code>, <code>slate-professional</code>, and more</li>
+<li><strong>Accessibility</strong>: <code>high-contrast-dark</code>, <code>high-contrast-light</code>,
+<code>deuteranopia</code>, <code>protanopia</code>, <code>tritanopia</code>, <code>monochrome</code>,
+<code>low-blue-light</code>, <code>photophobia</code>, <code>adhd-focus</code>, <code>reduced-motion</code></li>
+</ul>
+<h2 id="custom-themes"><a class="header" href="#custom-themes">Custom Themes</a></h2>
+<pre><code>.edittheme         # edit the current theme in-app
+</code></pre>
+<p>Saving writes a TOML file to <code>~/.vellum-fe/themes/&lt;name&gt;.toml</code> and makes it
+active. A custom theme with the same name as a built-in overrides it.</p>
+<p>Theme files are flat tables of color fields — hex values or
+<a href="#colorstoml">palette color names</a>:</p>
+<pre><code class="language-toml">name = "my-theme"
+description = "My tweaked dark theme"
+window_background = "#1a1b26"
+text_primary = "#c0caf5"
+link_color = "Link"        # palette name from colors.toml
+# ... any fields you omit fall back to defaults
+</code></pre>
+<p>The easiest way to author one is <code>.edittheme</code> on a built-in you like, then
+save under a new name.</p>
+<h2 id="themes-vs-colorstoml"><a class="header" href="#themes-vs-colorstoml">Themes vs. colors.toml</a></h2>
+<p>Two separate systems:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Themes</th><th>colors.toml</th></tr>
+</thead>
+<tbody>
+<tr><td>Controls</td><td>Widget/UI colors (windows, menus, editors)</td><td>Game text colors (speech, links, monsterbold), spell colors, terminal palette</td></tr>
+<tr><td>Switch</td><td><code>.settheme</code>, instant</td><td>Edited in place (<code>.uicolors</code>, <code>.spellcolors</code>, <code>.colors</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Switching a theme does not change your game-text colors, and vice versa.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
+<p>Anything you type starting with <code>.</code> is handled by VellumFE instead of being
+sent to the game. Command names are case-insensitive; <code>Tab</code> completes them.
+<code>.help</code> prints this list in-game. Unknown commands print a hint.</p>
+<p>Everything else you type goes to the game unchanged. (Typing the game
+command <code>quit</code> also saves your settings on the way out.)</p>
+<h2 id="general"><a class="header" href="#general">General</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.help</code></td><td><code>.h</code>, <code>.?</code></td><td>List all commands</td></tr>
+<tr><td><code>.version</code></td><td><code>.ver</code></td><td>Show VellumFE version</td></tr>
+<tr><td><code>.quit</code></td><td><code>.q</code></td><td>Exit VellumFE (saves settings)</td></tr>
+<tr><td><code>.menu</code></td><td></td><td>Open the main menu</td></tr>
+<tr><td><code>.settings</code></td><td></td><td>Open the settings editor</td></tr>
+<tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="windows--layout"><a class="header" href="#windows--layout">Windows &amp; Layout</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.windows</code></td><td></td><td>List all windows</td></tr>
+<tr><td><code>.addwindow [name type x y w [h]]</code></td><td></td><td>Add a window (no args opens a picker)</td></tr>
+<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Delete a window</td></tr>
+<tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window (no name opens a picker)</td></tr>
+<tr><td><code>.hidewindow [name]</code></td><td><code>.hidewin</code></td><td>Hide a window</td></tr>
+<tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
+<tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
+<tr><td><code>.lockwindows</code></td><td><code>.lockall</code>, <code>.unlockwindows</code>, <code>.unlockall</code></td><td>Toggle move/resize lock on all windows</td></tr>
+<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout</td></tr>
+<tr><td><code>.loadlayout [name]</code></td><td></td><td>Load a saved layout</td></tr>
+<tr><td><code>.layouts</code></td><td></td><td>List saved layouts</td></tr>
+<tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size</td></tr>
+<tr><td><code>.nexttab</code> / <code>.prevtab</code></td><td></td><td>Switch tabs in a tabbed window</td></tr>
+<tr><td><code>.gonew</code></td><td><code>.nextunread</code></td><td>Jump to the next tab with unread messages</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="highlights-1"><a class="header" href="#highlights-1">Highlights</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.highlights</code></td><td><code>.hl</code></td><td>Browse highlights</td></tr>
+<tr><td><code>.addhighlight</code></td><td><code>.addhl</code></td><td>Create a highlight</td></tr>
+<tr><td><code>.edithighlight [name]</code></td><td><code>.edithl</code></td><td>Edit a highlight</td></tr>
+<tr><td><code>.testline &lt;text&gt;</code></td><td></td><td>Inject a fake game line to test patterns</td></tr>
+<tr><td><code>.savehighlights [name]</code></td><td><code>.savehl</code></td><td>Save highlights as a named profile</td></tr>
+<tr><td><code>.loadhighlights [name]</code></td><td><code>.loadhl</code></td><td>Load a highlight profile</td></tr>
+<tr><td><code>.highlightprofiles</code></td><td><code>.hlprofiles</code></td><td>List highlight profiles</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="keybinds"><a class="header" href="#keybinds">Keybinds</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.keybinds</code></td><td><code>.kb</code></td><td>Browse keybinds</td></tr>
+<tr><td><code>.addkeybind</code></td><td><code>.addkey</code></td><td>Create a keybind</td></tr>
+<tr><td><code>.savekeybinds [name]</code></td><td><code>.savekb</code></td><td>Save keybinds as a named profile</td></tr>
+<tr><td><code>.loadkeybinds &lt;name&gt;</code></td><td><code>.loadkb</code></td><td>Load a keybind profile</td></tr>
+<tr><td><code>.keybindprofiles</code></td><td><code>.kbprofiles</code></td><td>List keybind profiles</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="colors--themes"><a class="header" href="#colors--themes">Colors &amp; Themes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.themes</code></td><td></td><td>Browse and apply themes</td></tr>
+<tr><td><code>.settheme &lt;name&gt;</code></td><td><code>.theme</code></td><td>Switch theme by name</td></tr>
+<tr><td><code>.edittheme</code></td><td></td><td>Edit the current theme</td></tr>
+<tr><td><code>.colors</code></td><td><code>.colorpalette</code></td><td>Browse the color palette</td></tr>
+<tr><td><code>.addcolor</code></td><td><code>.createcolor</code></td><td>Add a palette color</td></tr>
+<tr><td><code>.uicolors</code></td><td></td><td>Edit UI element colors</td></tr>
+<tr><td><code>.spellcolors</code></td><td></td><td>Edit spell-circle colors</td></tr>
+<tr><td><code>.addspellcolor</code></td><td><code>.newspellcolor</code></td><td>Add a spell color entry</td></tr>
+<tr><td><code>.setpalette</code></td><td></td><td>Load palette into terminal slots (TUI, 256-color mode)</td></tr>
+<tr><td><code>.resetpalette</code></td><td></td><td>Reset the terminal palette (TUI)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="misc"><a class="header" href="#misc">Misc</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.transparent</code></td><td></td><td>Toggle transparent window backgrounds (TUI)</td></tr>
+<tr><td><code>.containers</code></td><td></td><td>Toggle container discovery (LOOK IN a container spawns a window for it)</td></tr>
+<tr><td><code>.hidecontainers [title]</code></td><td></td><td>Close container windows (all, or one by title)</td></tr>
+<tr><td><code>.reloadmacros</code></td><td></td><td>Reload macros.toml and push to connected phones</td></tr>
+<tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL and open its QR code</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
+<pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
+</code></pre>
+<h2 id="options"><a class="header" href="#options">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
+<tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
+<tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
+<tr><td><code>--character &lt;NAME&gt;</code></td><td>Character name (login + per-character profile)</td></tr>
+<tr><td><code>--profile &lt;NAME&gt;</code></td><td>Use a different profile directory than the character name</td></tr>
+<tr><td><code>--key &lt;KEY&gt;</code></td><td>Login key from Lich launcher (<code>%key%</code>)</td></tr>
+<tr><td><code>--direct</code></td><td>Connect directly via eAccess (no Lich)</td></tr>
+<tr><td><code>--account &lt;ACCOUNT&gt;</code></td><td>Account name (direct mode)</td></tr>
+<tr><td><code>--password &lt;PASSWORD&gt;</code></td><td>Password (direct mode; omit to be prompted securely)</td></tr>
+<tr><td><code>--game &lt;GAME&gt;</code></td><td>World for direct mode: <code>prime</code>, <code>platinum</code>, <code>shattered</code>, <code>test</code>, <code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td></tr>
+<tr><td><code>-c, --config &lt;FILE&gt;</code></td><td>Use a specific config.toml</td></tr>
+<tr><td><code>--data-dir &lt;DIR&gt;</code></td><td>Data directory (default <code>~/.vellum-fe</code>; also <code>VELLUM_FE_DIR</code> env var)</td></tr>
+<tr><td><code>--web-port &lt;PORT&gt;</code></td><td>Enable the <a href="#mobile-web">mobile web server</a> on this port</td></tr>
+<tr><td><code>--color-mode &lt;direct|slot&gt;</code></td><td>Override color rendering mode</td></tr>
+<tr><td><code>--setup-palette</code></td><td>Load the terminal palette at startup (use with <code>--color-mode slot</code>)</td></tr>
+<tr><td><code>--nosound</code></td><td>Disable the sound system entirely</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
+<h3 id="validate-layout"><a class="header" href="#validate-layout">validate-layout</a></h3>
+<p>Check a layout file for errors:</p>
+<pre><code class="language-bash">vellum-fe validate-layout                 # default layout for --character
+vellum-fe validate-layout mylayout.toml
+</code></pre>
+<h3 id="migrate-layout"><a class="header" href="#migrate-layout">migrate-layout</a></h3>
+<p>Convert layouts from older VellumFE versions:</p>
+<pre><code class="language-bash">vellum-fe migrate-layout --src &lt;DIR&gt; [--out &lt;DIR&gt;] [--dry-run] [-v]
+</code></pre>
+<h3 id="import-highlights"><a class="header" href="#import-highlights">import-highlights</a></h3>
+<p>Convert a Wrayth/StormFront settings XML into highlights.toml format:</p>
+<pre><code class="language-bash">vellum-fe import-highlights settings.xml [--out FILE] [--dry-run]
+</code></pre>
+<h2 id="common-invocations"><a class="header" href="#common-invocations">Common Invocations</a></h2>
+<pre><code class="language-bash"># Lich, most common
+vellum-fe --port 8000 --character Rolfard
+
+# Lich launcher integration
+vellum-fe --port %port% --key %key%
+
+# Direct, prompted for password
+vellum-fe --direct --account MYACCT --character Rolfard --game prime
+
+# GUI frontend
+vellum-fe --frontend gui --port 8000 --character Rolfard
+
+# TUI plus phone access
+vellum-fe --port 8000 --character Rolfard --web-port 8040
+
+# Debug logging
+RUST_LOG=debug vellum-fe --port 8000
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
+<h2 id="general-1"><a class="header" href="#general-1">General</a></h2>
+<p><strong>What is VellumFE?</strong>
+A modern, multi-frontend client for GemStone IV built in Rust — terminal
+(TUI), desktop GUI, and a mobile web sidecar, all driving the same core.
+DragonRealms is supported by the parser and connection layer but less
+battle-tested.</p>
+<p><strong>Do I need Lich?</strong>
+No. VellumFE can connect through Lich (recommended, for scripting) or
+directly via eAccess with <code>--direct</code>. VellumFE itself doesn’t run scripts —
+use Lich for that.</p>
+<p><strong>Is it free?</strong>
+Yes, open source: <a href="https://github.com/Nisugi/VellumFE">github.com/Nisugi/VellumFE</a>.</p>
+<h2 id="connection-1"><a class="header" href="#connection-1">Connection</a></h2>
+<p><strong>How do I connect via Lich?</strong>
+Start Lich, then <code>vellum-fe --port 8000 --character Name</code>. VellumFE
+identifies as Stormfront to Lich, so scripts behave as they would under
+Wrayth. See <a href="#first-launch">First Launch</a>.</p>
+<p><strong>Can I save my login credentials?</strong>
+Yes, in <code>config.toml</code> under <code>[connection]</code> (<code>account</code>, <code>password</code>, <code>game</code>)
+— but the password is stored in plain text. Safer: omit the password and
+VellumFE prompts for it at startup.</p>
+<h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
+<p><strong>Where are config files stored?</strong>
+<code>~/.vellum-fe/</code> on every platform (Windows: <code>C:\Users\you\.vellum-fe\</code>).
+Override with <code>--data-dir</code> or the <code>VELLUM_FE_DIR</code> environment variable.
+See <a href="configuration/README.html">Configuration</a> for the directory layout.</p>
+<p><strong>Can I have per-character settings?</strong>
+Yes — files in <code>profiles/&lt;name&gt;/</code> override the global ones when you launch
+with <code>--character</code> (or <code>--profile</code>).</p>
+<p><strong>Can I have multiple layouts?</strong>
+Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code>. You can also switch
+automatically by terminal size with <code>layout_mappings</code> in config.toml.</p>
+<p><strong>How do I reset to defaults?</strong>
+Delete the file (or the whole <code>~/.vellum-fe/</code> directory); defaults are
+recreated on next launch.</p>
+<h2 id="features-1"><a class="header" href="#features-1">Features</a></h2>
+<p><strong>Does VellumFE support macros?</strong>
+Two kinds: keyboard macros in <a href="#keybindstoml">keybinds.toml</a>
+(<code>f5 = { macro_text = "stance defensive\r" }</code>), and tap-button macros for
+the phone in <a href="#macrostoml">macros.toml</a>.</p>
+<p><strong>Sound alerts?</strong>
+Yes — add <code>sound = "alert.wav"</code> to any highlight. See
+<a href="#sound-alerts">Sound Alerts</a>.</p>
+<p><strong>Text-to-speech?</strong>
+Yes — set <code>enabled = true</code> in config.toml’s <code>[tts]</code> section. Navigation and
+volume/rate keys are in <a href="#keybindstoml">keybinds.toml</a>.</p>
+<p><strong>Can I hide spammy lines?</strong>
+Yes — <code>squelch = true</code> on a highlight pattern. See
+<a href="#highlightstoml">highlights.toml</a>.</p>
+<p><strong>Can I import my Wrayth highlights?</strong>
+Yes: <code>vellum-fe import-highlights settings.xml</code>. See the
+<a href="#cli-reference">CLI Reference</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h1>
+<h2 id="connection-2"><a class="header" href="#connection-2">Connection</a></h2>
+<p><strong>Can’t connect to Lich (“connection refused”)</strong></p>
+<ol>
+<li>Make sure Lich is running and logged in</li>
+<li>Check the port Lich is listening on and match it: <code>--port 8000</code></li>
+</ol>
+<p><strong>Direct eAccess authentication fails</strong></p>
+<ol>
+<li>Verify credentials (test them with another client first)</li>
+<li>Delete the cached certificate and retry: remove <code>~/.vellum-fe/simu.pem</code></li>
+<li>Check <code>~/.vellum-fe/vellum-fe.log</code> for details</li>
+</ol>
+<h2 id="display-13"><a class="header" href="#display-13">Display</a></h2>
+<p><strong>Colors look wrong</strong></p>
+<ol>
+<li>Use a true-color terminal with <code>color_mode = "direct"</code> (Windows
+Terminal, kitty, alacritty, WezTerm)</li>
+<li>On 256-color terminals, set <code>color_mode = "indexed"</code>, or <code>"slot"</code> plus
+<code>.setpalette</code></li>
+<li>On Unix, check <code>TERM</code> is something like <code>xterm-256color</code></li>
+</ol>
+<p><strong>Text or borders garbled</strong></p>
+<ol>
+<li>Ensure the terminal uses UTF-8 and a font with box-drawing glyphs
+(Nerd Fonts work well)</li>
+<li>Try a different terminal emulator</li>
+</ol>
+<p><strong>Layout looks broken after resizing the terminal</strong>
+Run <code>.resize</code> to refit the layout, or <code>.savelayout</code> a size that works.
+<code>vellum-fe validate-layout</code> checks a layout file for errors.</p>
+<h2 id="input"><a class="header" href="#input">Input</a></h2>
+<p><strong>Backspace doesn’t work</strong>
+Your terminal sends <code>delete</code> instead. In keybinds.toml <code>[user]</code>, change
+<code>backspace = "cursor_backspace"</code> to <code>delete = "cursor_backspace"</code>.</p>
+<p><strong>A keybind does nothing</strong></p>
+<ol>
+<li>Check the key isn’t captured by your terminal or OS</li>
+<li>Run with <code>RUST_LOG=debug</code> and check the log for <code>KEY EVENT</code> lines to
+see what your terminal actually sends</li>
+<li>Check for conflicts with <code>[app]</code>/<code>[menu]</code> bindings, which take priority</li>
+</ol>
+<h2 id="highlights-2"><a class="header" href="#highlights-2">Highlights</a></h2>
+<p><strong>Pattern doesn’t match</strong></p>
+<ol>
+<li>Patterns are regexes — escape literals: <code>\.</code> <code>\(</code> <code>\[</code></li>
+<li>Use <code>(?i)</code> for case-insensitive matching</li>
+<li>Test live with <code>.testline some text that should match</code></li>
+</ol>
+<p><strong>No sound plays</strong></p>
+<ol>
+<li><code>[sound] enabled = true</code> and <code>[highlights] sounds_enabled = true</code> in
+config.toml</li>
+<li>The file must exist in <code>~/.vellum-fe/global/sounds/</code></li>
+<li>Launch without <code>--nosound</code></li>
+</ol>
+<h2 id="performance"><a class="header" href="#performance">Performance</a></h2>
+<p><strong>Slow or high CPU</strong></p>
+<ol>
+<li>Convert big <code>|</code>-lists of literal words to <code>fast_parse = true</code></li>
+<li>Simplify complex regexes; anchor them (<code>^...</code>) where possible</li>
+<li>Reduce <code>buffer_size</code> on text windows</li>
+</ol>
+<h2 id="startup"><a class="header" href="#startup">Startup</a></h2>
+<p><strong>Crash or config error at startup</strong></p>
+<ol>
+<li>The error usually names the file and line — check TOML syntax there</li>
+<li>Move the offending file aside to regenerate defaults</li>
+<li>Check <code>~/.vellum-fe/vellum-fe.log</code>; run with <code>RUST_LOG=debug</code> for more</li>
+</ol>
+<h2 id="still-stuck"><a class="header" href="#still-stuck">Still Stuck?</a></h2>
+<p>Open an issue at
+<a href="https://github.com/Nisugi/VellumFE/issues">github.com/Nisugi/VellumFE/issues</a>
+with your version (<code>vellum-fe --version</code>), OS/terminal, and the relevant
+log lines from <code>~/.vellum-fe/vellum-fe.log</code>.</p>
 
                     </main>
 

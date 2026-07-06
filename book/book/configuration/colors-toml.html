@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,86 +178,83 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="colorstoml"><a class="header" href="#colorstoml">colors.toml</a></h1>
-<p>Custom color palette definitions.</p>
-<h2 id="basic-format"><a class="header" href="#basic-format">Basic Format</a></h2>
-<pre><code class="language-toml">[colors]
-my_red = "#FF0000"
-soft_blue = "#5588AA"
-dark_bg = "#1a1a1a"
+<p>The central color file: a named color palette, game-text stream colors,
+prompt colors, UI element colors, and spell-circle colors. Edit in-app with
+<code>.colors</code> (palette), <code>.uicolors</code>, and <code>.spellcolors</code> — or edit the file and
+<code>.reload colors</code>.</p>
+<blockquote>
+<p>Themes are a separate system — they control <em>widget UI</em> colors and are
+covered in <a href="../customization/themes.html">Themes</a>. colors.toml controls
+<em>game text</em> and palette colors, and is not switched by <code>.settheme</code>.</p>
+</blockquote>
+<h2 id="color-palette"><a class="header" href="#color-palette">Color Palette</a></h2>
+<p>Named colors you can reference anywhere a color is accepted
+(highlights <code>fg</code>/<code>bg</code>, layout <code>border_color</code>, theme files, …):</p>
+<pre><code class="language-toml">[[color_palette]]
+name = "Link"
+color = "#477ab3"
+category = "presets"
+slot = 16
 </code></pre>
-<h2 id="using-custom-colors"><a class="header" href="#using-custom-colors">Using Custom Colors</a></h2>
-<p>Reference in other config files:</p>
-<pre><code class="language-toml"># In highlights.toml
-[[highlights]]
-name = "danger"
-pattern = "attacks you"
-foreground = "my_red"           # Uses color from colors.toml
+<ul>
+<li><code>name</code> — the name you reference elsewhere (case-insensitive)</li>
+<li><code>color</code> — hex value</li>
+<li><code>category</code> — grouping in the <code>.colors</code> browser</li>
+<li><code>slot</code> — optional terminal palette slot (16–231) for 256-color mode</li>
+</ul>
+<p>In <code>color_mode = "slot"</code> (see <a href="./config-toml.html">config.toml</a>), run
+<code>.setpalette</code> to load every slotted color into your terminal’s palette, and
+<code>.resetpalette</code> to undo it. The default palette pre-loads color sets for the
+built-in themes so theme switching works instantly in slot mode.</p>
+<h2 id="stream-presets"><a class="header" href="#stream-presets">Stream Presets</a></h2>
+<p>Colors for game text streams. Values can be hex or palette names:</p>
+<pre><code class="language-toml">[presets.speech]
+fg = "Speech"
 
-# In layout.toml
-[[windows]]
-name = "combat"
-border_color = "soft_blue"
-background_color = "dark_bg"
+[presets.roomName]
+fg = "Room Name"
+bg = "Room Name BG"
+
+[presets.monsterbold]
+fg = "Monsterbold"
 </code></pre>
-<h2 id="preset-colors"><a class="header" href="#preset-colors">Preset Colors</a></h2>
-<p>VellumFE recognizes these named colors without definition:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Name</th><th>Hex</th></tr>
-</thead>
-<tbody>
-<tr><td><code>black</code></td><td>#000000</td></tr>
-<tr><td><code>red</code></td><td>#FF0000</td></tr>
-<tr><td><code>green</code></td><td>#00FF00</td></tr>
-<tr><td><code>yellow</code></td><td>#FFFF00</td></tr>
-<tr><td><code>blue</code></td><td>#0000FF</td></tr>
-<tr><td><code>magenta</code></td><td>#FF00FF</td></tr>
-<tr><td><code>cyan</code></td><td>#00FFFF</td></tr>
-<tr><td><code>white</code></td><td>#FFFFFF</td></tr>
-<tr><td><code>gray</code> / <code>grey</code></td><td>#808080</td></tr>
-<tr><td><code>orange</code></td><td>#FFA500</td></tr>
-<tr><td><code>purple</code></td><td>#800080</td></tr>
-<tr><td><code>pink</code></td><td>#FFC0CB</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="example-palette"><a class="header" href="#example-palette">Example Palette</a></h2>
-<pre><code class="language-toml">[colors]
-# UI colors
-border_normal = "#404040"
-border_focused = "#5588AA"
-border_alert = "#FF4040"
-
-# Text colors
-text_normal = "#CCCCCC"
-text_dim = "#666666"
-text_bright = "#FFFFFF"
-
-# Creature states
-dead = "#00FF00"
-stunned = "#FFFF00"
-frozen = "#00FFFF"
-
-# Communication
-speech = "#87CEEB"
-whisper = "#DDA0DD"
-thoughts = "#9370DB"
-
-# Combat
-damage_minor = "#FFFF00"
-damage_major = "#FFA500"
-damage_critical = "#FF0000"
+<p>Available presets include <code>links</code>, <code>commands</code>, <code>speech</code>, <code>whisper</code>,
+<code>thought</code>, <code>roomName</code>, <code>monsterbold</code>, <code>familiar</code>, <code>voln</code>, <code>percWindow</code>,
+and <code>target_indicator</code>.</p>
+<h2 id="prompt-colors"><a class="header" href="#prompt-colors">Prompt Colors</a></h2>
+<p>Color individual prompt status characters:</p>
+<pre><code class="language-toml">[[prompt_colors]]
+character = "R"   # roundtime
+color = "#ff0000"
 </code></pre>
-<h2 id="color-formats"><a class="header" href="#color-formats">Color Formats</a></h2>
-<p>All colors must be specified as hex:</p>
-<pre><code class="language-toml"># Supported formats
-color1 = "#RGB"                 # 3-digit (expanded to 6)
-color2 = "#RRGGBB"              # 6-digit (most common)
-
-# Not supported
-color3 = "rgb(255, 0, 0)"       # CSS format - won't work
-color4 = "255, 0, 0"            # Raw values - won't work
+<p>Defaults cover <code>R</code> (roundtime), <code>S</code> (stunned), <code>H</code> (hiding), <code>&gt;</code> (prompt),
+<code>!</code> (bleeding).</p>
+<h2 id="ui-colors"><a class="header" href="#ui-colors">UI Colors</a></h2>
+<p>Default colors for UI elements (per-window overrides live in layout.toml).
+Edit with <code>.uicolors</code>:</p>
+<pre><code class="language-toml">[ui]
+command_echo_color = "#ffffff"
+border_color = "#00ffff"
+focused_border_color = "#ffff00"
+text_color = "#ffffff"
+background_color = "#000000"
+selection_bg_color = "#4a4a4a"
+</code></pre>
+<h2 id="spell-colors"><a class="header" href="#spell-colors">Spell Colors</a></h2>
+<p>Color active-spell indicators by spell circle. Edit with <code>.spellcolors</code>,
+add with <code>.addspellcolor</code>:</p>
+<pre><code class="language-toml">[[spell_colors]]
+spells = [601, 602, 604, 605, 606]   # spell numbers
+color = "#1c731c"                    # indicator color
+bar_color = "#1c731c"                # progress bar color
+text_color = "#909090"
+bg_color = "#000000"
+</code></pre>
+<h2 id="color-values"><a class="header" href="#color-values">Color Values</a></h2>
+<p>Anywhere a color is accepted:</p>
+<pre><code class="language-toml">color1 = "#RRGGBB"      # hex (6-digit)
+color2 = "#abc"         # hex (3-digit, expanded)
+color3 = "Link Blue"    # palette color name from [[color_palette]]
 </code></pre>
 
                     </main>
@@ -268,7 +265,7 @@ color4 = "255, 0, 0"            # Raw values - won't work
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../widgets/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../configuration/macros-toml.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -282,7 +279,7 @@ color4 = "255, 0, 0"            # Raw values - won't work
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../widgets/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../configuration/macros-toml.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

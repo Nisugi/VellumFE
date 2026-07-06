@@ -18,6 +18,9 @@ use std::collections::{HashMap, HashSet};
 pub struct PendingMenuRequest {
     pub exist_id: String,
     pub noun: String,
+    /// Who asked: the local UI, or a remote web client. The `<menu>`
+    /// response routes back to this origin.
+    pub origin: crate::core::remote::MenuOrigin,
 }
 
 /// Core application state - frontend-agnostic
@@ -713,6 +716,112 @@ impl AppCore {
     /// Returns a list of commands to send to the server (for macros)
 
     /// Execute a KeyAction (dispatch to the appropriate method)
+
+    /// Attach the remote client sink (web frontend sidecar).
+    /// Called by the runtime after it spawns the web server task.
+    pub fn enable_remote(&mut self, mut sink: crate::core::remote::RemoteSink) {
+        sink.set_macros(&self.config.macros);
+        self.message_processor.remote = Some(sink);
+    }
+
+    /// Create or edit a phone-authored macro button. The edit lands in the
+    /// macros-local.toml overlay (the hand-written macros.toml is never
+    /// rewritten), then the merged set is re-published to every client.
+    pub fn apply_macro_save(
+        &mut self,
+        group: Option<String>,
+        button: crate::config::MacroButton,
+        original: Option<(Option<String>, String)>,
+    ) {
+        let has_command = !button.command.as_deref().unwrap_or("").trim().is_empty();
+        if button.label.trim().is_empty() || (!has_command && button.options.is_empty()) {
+            self.add_system_message(
+                "Macro not saved: a label plus a command (or menu options) are required",
+            );
+            return;
+        }
+        let label = button.label.clone();
+        self.config.macros_local.upsert_button(
+            group.as_deref(),
+            button,
+            original
+                .as_ref()
+                .map(|(group, label)| (group.as_deref(), label.as_str())),
+        );
+        self.persist_and_push_macros(&format!("Saved macro '{}'", label));
+    }
+
+    /// Delete a phone-authored macro button. Buttons from the hand-written
+    /// macros.toml are not deletable remotely.
+    pub fn apply_macro_delete(&mut self, group: Option<String>, label: String) {
+        if self.config.macros_local.delete_button(group.as_deref(), &label) {
+            self.persist_and_push_macros(&format!("Deleted macro '{}'", label));
+        } else {
+            self.add_system_message(&format!(
+                "Macro '{}' is defined in macros.toml and can only be edited there",
+                label
+            ));
+        }
+    }
+
+    fn persist_and_push_macros(&mut self, message: &str) {
+        if let Err(e) = self
+            .config
+            .macros_local
+            .save_local(self.config.character.as_deref())
+        {
+            self.add_system_message(&format!("Failed to save macros-local.toml: {e:#}"));
+            return;
+        }
+        let base = crate::config::MacrosConfig::load_base(self.config.character.as_deref())
+            .unwrap_or_default();
+        self.config.macros =
+            crate::config::MacrosConfig::merge(base, self.config.macros_local.clone());
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_macros(&self.config.macros);
+        }
+        self.add_system_message(message);
+    }
+
+    /// Flush coalesced game-state deltas to remote clients. Called once
+    /// per message batch by the frontend loop; no-op when web is disabled.
+    pub fn flush_remote_state(&mut self) {
+        if self.message_processor.remote.is_none() {
+            return;
+        }
+        let mut snap =
+            crate::core::remote::RemoteStateSnapshot::from_game_state(&self.game_state);
+        // Real sessions rarely set game_state.room_name/exits; fall back
+        // the same way the room widget does (see gui sync_room_windows):
+        // subtitle from <streamWindow> for the name, compass for exits.
+        if snap.room_name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+            snap.room_name = self.room_subtitle.as_ref().map(|subtitle| {
+                subtitle
+                    .trim()
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .to_string()
+            });
+        }
+        if snap.exits.is_empty() {
+            snap.exits = self.game_state.compass_dirs.clone();
+        }
+        if snap.character.is_none() {
+            // connection.character comes from config.toml; config.character
+            // is the CLI --character/--profile name.
+            snap.character = self
+                .config
+                .connection
+                .character
+                .clone()
+                .or_else(|| self.config.character.clone());
+        }
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.flush_state(snap);
+        }
+    }
 
     /// Poll TTS events from callback channel and handle them
     /// Should be called in the main event loop to enable auto-play
@@ -1722,6 +1831,12 @@ impl AppCore {
             }],
             stream: String::from("main"),
         };
+
+        // System messages bypass the message pipeline, so mirror them to
+        // remote clients explicitly (dot-command feedback, errors, ...)
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text("main", std::sync::Arc::new(line.clone()));
+        }
 
         // First try window named "main" (backward compatibility)
         if let Some(main_window) = self.ui_state.get_window_mut("main") {
@@ -3039,6 +3154,7 @@ impl AppCore {
             Some(list) => list,
             None => {
                 tracing::warn!("Context menu received but cmdlist not loaded");
+                self.answer_remote_menu_empty(&pending);
                 return;
             }
         };
@@ -3100,6 +3216,7 @@ impl AppCore {
 
         if categories.is_empty() {
             tracing::warn!("No menu items available for this object");
+            self.answer_remote_menu_empty(&pending);
             return;
         }
 
@@ -3117,6 +3234,39 @@ impl AppCore {
                 a.cmp(b)
             }
         });
+
+        // Route the response to its origin. A remote client gets a flat
+        // list (submenu categories become disabled section headers, since
+        // a phone bottom sheet has no nested menus); a pick comes back as
+        // an ordinary cmd. The local popup path below stays unchanged.
+        if let crate::core::remote::MenuOrigin::Remote {
+            client_id,
+            request_id,
+        } = pending.origin
+        {
+            let mut items = Vec::new();
+            for cat in &sorted_cats {
+                let cat_items = categories.get(cat).unwrap();
+                if cat.contains('_') && cat != "0" {
+                    items.push(crate::core::remote::RemoteMenuItem {
+                        text: Self::format_category_label(cat),
+                        command: String::new(),
+                        disabled: true,
+                    });
+                }
+                items.extend(cat_items.iter().map(|item| {
+                    crate::core::remote::RemoteMenuItem {
+                        text: item.text.clone(),
+                        command: item.command.clone(),
+                        disabled: item.disabled,
+                    }
+                }));
+            }
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_menu(client_id, request_id, pending.noun.clone(), items);
+            }
+            return;
+        }
 
         // Add items to menu
         for cat in &sorted_cats {
@@ -3151,6 +3301,21 @@ impl AppCore {
             "Created context menu with {} items",
             self.ui_state.popup_menu.as_ref().unwrap().get_items().len()
         );
+    }
+
+    /// When a menu request from a remote client can't produce items, still
+    /// answer with an empty menu — otherwise the client's sheet waits
+    /// forever. Local origins need nothing (no popup was opened).
+    fn answer_remote_menu_empty(&mut self, pending: &PendingMenuRequest) {
+        if let crate::core::remote::MenuOrigin::Remote {
+            client_id,
+            request_id,
+        } = pending.origin
+        {
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_menu(client_id, request_id, pending.noun.clone(), Vec::new());
+            }
+        }
     }
 
     fn format_category_label(cat: &str) -> String {
@@ -3203,13 +3368,79 @@ impl AppCore {
         }
     }
 
-    /// Request context menu for a link
+    /// Request context menu for a link (local popup origin)
     /// Returns the _menu command to send to the server
     pub fn request_menu(
         &mut self,
         exist_id: String,
         noun: String,
         click_pos: (u16, u16),
+    ) -> String {
+        // Store click position for menu placement
+        self.last_link_click_pos = Some(click_pos);
+        self.request_menu_from(exist_id, noun, crate::core::remote::MenuOrigin::Local)
+    }
+
+    /// Resolve a link activation the way a local click does (mirrors the
+    /// dispatch in frontend/tui/input.rs): `<d>` tags send their noun/text
+    /// as a direct command, links with a coord resolve through cmdlist to
+    /// a direct command (exits, default actions), and only plain links
+    /// issue a `_menu` request (tagged with `origin` so the response
+    /// routes back). Returns the command to send upstream, if any.
+    pub fn resolve_link_activation(
+        &mut self,
+        link: &crate::data::LinkData,
+        origin: crate::core::remote::MenuOrigin,
+    ) -> Option<String> {
+        if link.exist_id == "_direct_" {
+            // <d> tag: the noun (cmd attribute) or text IS the command
+            let command = if !link.noun.is_empty() {
+                &link.noun
+            } else {
+                &link.text
+            };
+            tracing::info!("Executing <d> direct command: {}", command);
+            return Some(format!("{}\n", command));
+        }
+
+        if let Some(ref coord) = link.coord {
+            // Coord link: look up the default action in cmdlist and send
+            // it directly - no menu round-trip (e.g. exits move you)
+            let Some(ref cmdlist) = self.cmdlist else {
+                tracing::warn!("Cmdlist not loaded - cannot resolve coord {}", coord);
+                return None;
+            };
+            let Some(entry) = cmdlist.get(coord) else {
+                tracing::warn!("Coord {} not found in cmdlist for '{}'", coord, link.text);
+                return None;
+            };
+            let command = CmdList::substitute_command(
+                &entry.command,
+                &link.noun,
+                &link.exist_id,
+                None,
+            );
+            tracing::info!(
+                "Executing cmdlist command for '{}' (coord: {}): {}",
+                link.text,
+                coord,
+                command.trim()
+            );
+            return Some(format!("{}\n", command));
+        }
+
+        // Plain link: context menu round-trip
+        Some(self.request_menu_from(link.exist_id.clone(), link.noun.clone(), origin))
+    }
+
+    /// Request context menu for a link on behalf of an origin (local UI or
+    /// a remote web client). The `<menu>` response routes back to the
+    /// origin in handle_menu_response.
+    pub fn request_menu_from(
+        &mut self,
+        exist_id: String,
+        noun: String,
+        origin: crate::core::remote::MenuOrigin,
     ) -> String {
         // Increment counter
         self.menu_request_counter += 1;
@@ -3221,11 +3452,9 @@ impl AppCore {
             PendingMenuRequest {
                 exist_id: exist_id.clone(),
                 noun,
+                origin,
             },
         );
-
-        // Store click position for menu placement
-        self.last_link_click_pos = Some(click_pos);
 
         // Return command to send to server
         format!("_menu #{} {}\n", exist_id, counter)

@@ -80,8 +80,18 @@ struct Cli {
     game: Option<DirectGameArg>,
 
     /// Disable sound system entirely (skip audio device initialization)
-    #[arg(long)]
+    #[arg(long, help = config::profiles::help::NOSOUND)]
     nosound: bool,
+
+    /// Launch a saved launcher profile by name (from launcher.toml).
+    /// Connection settings come from the profile; the password is resolved
+    /// from the OS credential store, or prompted for if not saved.
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["direct", "key", "launcher"])]
+    launch_profile: Option<String>,
+
+    /// Open the graphical launcher (also the default when run with no arguments)
+    #[arg(long)]
+    launcher: bool,
 
     /// Login key for Lich proxy connections (provided by Lich as %key%)
     /// This key is sent to the game server for authentication when connecting via Lich
@@ -92,8 +102,12 @@ struct Cli {
     #[arg(long, value_enum)]
     color_mode: Option<config::ColorMode>,
 
+    /// Enable the embedded web server on this port (overrides [web] in config.toml)
+    #[arg(long, value_name = "PORT", help = config::profiles::help::WEB_PORT)]
+    web_port: Option<u16>,
+
     /// Setup terminal palette on startup using .setpalette (use with --color-mode slot)
-    #[arg(long)]
+    #[arg(long, help = config::profiles::help::SETUP_PALETTE)]
     setup_palette: bool,
 
     #[command(subcommand)]
@@ -202,7 +216,7 @@ fn main() -> Result<()> {
         .init();
 
     // Parse CLI arguments
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     // Handle subcommands
     if let Some(command) = cli.command {
@@ -363,6 +377,22 @@ fn main() -> Result<()> {
         tracing::info!("Using data directory from VELLUM_FE_DIR: {}", env_dir);
     }
 
+    // Launcher mode: explicit --launcher, or a bare double-click/no-args
+    // start. Sessions are spawned from there as separate processes.
+    if cli.launcher || std::env::args_os().len() <= 1 {
+        #[cfg(windows)]
+        detach_exclusive_console();
+        return frontend::gui::launcher::run_launcher();
+    }
+
+    // Apply a saved launcher profile: fills the same fields the equivalent
+    // CLI switches would have set (explicit CLI switches win over profile
+    // values). Returns the resolved game code for direct connections.
+    let profile_game_code = match cli.launch_profile.clone() {
+        Some(name) => apply_launch_profile(&mut cli, &name)?,
+        None => None,
+    };
+
     // Load configuration
     // Profile (for config directory) uses --profile if specified, otherwise falls back to --character
     let profile = cli.profile.as_deref().or(cli.character.as_deref());
@@ -385,18 +415,26 @@ fn main() -> Result<()> {
     if let Some(mode) = cli.color_mode {
         config.ui.color_mode = mode;
     }
+    if let Some(web_port) = cli.web_port {
+        config.web.enabled = true;
+        config.web.port = web_port;
+    }
     // Store setup_palette flag for frontend to use after initialization
     let setup_palette = cli.setup_palette;
 
     // Build direct connection config if enabled
     // Uses --character for login (not --profile, which is only for config directory)
+    let game_code_arg = cli
+        .game
+        .map(|g| g.code().to_string())
+        .or(profile_game_code);
     let direct_config = network::DirectConnectConfig::from_cli(
         cli.direct,
         cli.account.clone(),
         cli.password.clone(),
         cli.character.clone(), // Character for direct connect login
         cli.character.clone(), // Fallback for character resolution
-        cli.game.map(|g| g.code()),
+        game_code_arg.as_deref(),
         &config,
     )?;
 
@@ -406,12 +444,148 @@ fn main() -> Result<()> {
     let login_key = cli.key.clone();
     match cli.frontend {
         FrontendType::Tui => {
-            frontend::tui::run(config, character, direct_config, setup_palette, login_key)?
+            // Launcher-spawned sessions own their console window, so the TUI
+            // restores/saves its size; manual runs leave the terminal alone.
+            let console_size_profile = cli.launch_profile.is_some().then(|| {
+                cli.profile
+                    .clone()
+                    .or_else(|| cli.character.clone())
+                    .unwrap_or_else(|| "default".to_string())
+            });
+            frontend::tui::run(
+                config,
+                character,
+                direct_config,
+                setup_palette,
+                login_key,
+                console_size_profile,
+            )?
         }
-        FrontendType::Gui => run_gui(config, direct_config, login_key)?,
+        FrontendType::Gui => {
+            #[cfg(windows)]
+            detach_exclusive_console();
+            run_gui(config, direct_config, login_key)?
+        }
     }
 
+    // Clean shutdown: drop this instance's entry from the web session
+    // dashboard registry (no-op when the web server never ran).
+    frontend::web::shutdown();
+
     Ok(())
+}
+
+/// Drop the console Windows auto-creates for a double-clicked console-
+/// subsystem exe, so no empty black window sits behind the launcher/GUI.
+/// Only detaches when this process is the console's sole owner - launching
+/// from a terminal keeps that terminal attached (count > 1), so prompts and
+/// --help output still work there.
+#[cfg(windows)]
+fn detach_exclusive_console() {
+    use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+    // SAFETY: plain Win32 queries; a 2-slot buffer suffices because only
+    // "exactly one attached process" matters.
+    unsafe {
+        let mut pids = [0u32; 2];
+        if GetConsoleProcessList(&mut pids) == 1 {
+            let _ = FreeConsole();
+        }
+    }
+}
+
+/// Apply a saved launcher profile onto the parsed CLI arguments.
+///
+/// Fills only fields the user did not set explicitly, so switches passed
+/// alongside `--launch-profile` still win. Password resolution order:
+/// explicit CLI/env handoff from the launcher → OS credential store →
+/// (later, in `DirectConnectConfig::from_cli`) interactive prompt.
+///
+/// Returns the game code ("GS3", "DRX", ...) for direct profiles.
+fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<Option<String>> {
+    use config::profiles::{self, LaunchFrontend, LaunchMode, LauncherStore};
+
+    let store = LauncherStore::load()?;
+    let profile = store
+        .find(name)
+        .with_context(|| {
+            let path = LauncherStore::path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "launcher.toml".to_string());
+            format!("Launcher profile '{}' not found in {}", name, path)
+        })?
+        .clone();
+
+    // Password handed off by the launcher process (only used for GUI
+    // sessions whose password is not in the credential store). Consume it
+    // immediately so it does not linger in this process's environment.
+    let env_password = std::env::var(profiles::PASSWORD_ENV).ok();
+    std::env::remove_var(profiles::PASSWORD_ENV);
+
+    let mut game_code = None;
+    match profile.mode {
+        LaunchMode::Direct => {
+            cli.direct = true;
+            if cli.account.is_none() {
+                cli.account = Some(profile.account.clone());
+            }
+            if cli.password.is_none() {
+                cli.password = env_password.or_else(|| {
+                    if profile.password_saved {
+                        profiles::load_password(&profile.account)
+                    } else {
+                        None
+                    }
+                });
+            }
+            if !profile.game.is_empty() {
+                game_code = Some(
+                    network::DirectConnectConfig::game_name_to_code(&profile.game).to_string(),
+                );
+            }
+        }
+        LaunchMode::Lich => {
+            if cli.host.is_none() {
+                cli.host = Some(profile.host.clone());
+            }
+            if cli.port.is_none() {
+                cli.port = Some(profile.port);
+            }
+        }
+    }
+
+    if cli.character.is_none() && !profile.character.is_empty() {
+        cli.character = Some(profile.character.clone());
+    }
+    if cli.profile.is_none() {
+        cli.profile = profile.settings_profile.clone();
+    }
+    if cli.web_port.is_none() {
+        cli.web_port = profile.web_port;
+    }
+    cli.nosound |= profile.nosound;
+    cli.setup_palette |= profile.setup_palette;
+    if cli.color_mode.is_none() {
+        if let Some(mode) = profile.color_mode.as_deref() {
+            match <config::ColorMode as clap::ValueEnum>::from_str(mode, true) {
+                Ok(parsed) => cli.color_mode = Some(parsed),
+                Err(_) => {
+                    tracing::warn!("Ignoring unknown color_mode '{}' in launcher profile", mode)
+                }
+            }
+        }
+    }
+    cli.frontend = match profile.frontend {
+        LaunchFrontend::Gui => FrontendType::Gui,
+        LaunchFrontend::Tui => FrontendType::Tui,
+    };
+    if cli.data_dir.is_none() {
+        if let Some(dir) = profile.data_dir.as_deref().filter(|d| !d.is_empty()) {
+            std::env::set_var("VELLUM_FE_DIR", dir);
+            tracing::info!("Using data directory from launcher profile: {}", dir);
+        }
+    }
+
+    Ok(game_code)
 }
 
 /// Run GUI frontend

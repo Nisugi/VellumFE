@@ -1,53 +1,50 @@
 # Customization
 
-Create your perfect interface with custom layouts, highlights, keybinds, and sounds.
+Create your perfect interface with custom layouts, highlights, keybinds,
+sounds, and themes.
 
 ## Topics
 
 - [Creating Layouts](./layouts.md) - Design custom window arrangements
-- [Highlight Patterns](./highlights.md) - Color and style game text
+- [Highlight Patterns](./highlights.md) - Color, filter, and reroute game text
 - [Keybind Actions](./keybinds.md) - Custom keyboard shortcuts
 - [Sound Alerts](./sounds.md) - Audio notifications for game events
+- [Themes](./themes.md) - Switch or build UI color themes
 
 ## Quick Start
 
 ### Custom Layout
 
-1. Press F1 → Windows → Add Window
-2. Position and resize windows
-3. Press Ctrl+S to save
+1. `.menu` → Windows → Add Window (or `.addwindow`)
+2. Ctrl+drag to move windows, drag borders to resize
+3. `.savelayout myname` to save
 
-### Add Highlights
+### Add a Highlight
 
-Edit `~/.vellum-fe/highlights.toml`:
+`.addhighlight` in-app, or edit `~/.vellum-fe/global/highlights.toml`:
 
 ```toml
-[[highlights]]
-name = "death"
+[death]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 bold = true
 sound = "kill.wav"
 ```
 
-### Custom Keybinds
+### Add a Keybind
 
-Edit `~/.vellum-fe/keybinds.toml`:
-
-```toml
-[keybinds]
-"f2" = { command = "stance offensive" }
-"f3" = { command = "stance defensive" }
-```
-
-### Sound Alerts
-
-1. Place `.wav` files in `~/.vellum-fe/sounds/`
-2. Reference in highlights:
+`.addkeybind` in-app, or edit `~/.vellum-fe/global/keybinds.toml`:
 
 ```toml
-[[highlights]]
-name = "whisper"
-pattern = "whispers to you"
-sound = "whisper.wav"
+[user]
+f2 = { macro_text = "stance offensive\r" }
+f3 = { macro_text = "stance defensive\r" }
 ```
+
+### Switch Theme
+
+```
+.themes
+```
+
+Apply file edits without restarting: `.reload`

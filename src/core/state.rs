@@ -3,6 +3,7 @@
 //! Tracks the current state of the game session: connection status,
 //! character info, room state, inventory, etc.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
 use super::highlight_engine::SoundTrigger;
@@ -84,6 +85,13 @@ pub struct GameState {
     /// Active effects/buffs
     pub active_effects: Vec<String>,
 
+    /// Active effects by category ("ActiveSpells", "Buffs", "Debuffs",
+    /// "Cooldowns"), stored unconditionally so remote clients (and any
+    /// window added mid-session) see them even when the local layout has
+    /// no effects windows. The per-window copies in ui_state remain the
+    /// widgets' source of truth.
+    pub effects: HashMap<String, crate::data::ActiveEffectsContent>,
+
     /// Compass directions
     pub compass_dirs: Vec<String>,
 
@@ -149,7 +157,7 @@ pub struct GameState {
 }
 
 /// Player status information
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct StatusInfo {
     pub standing: bool,
     pub kneeling: bool,
@@ -165,7 +173,7 @@ pub struct StatusInfo {
 }
 
 /// Player vitals (percentages only)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vitals {
     pub health: u8,
     pub mana: u8,
@@ -711,6 +719,7 @@ impl GameState {
             left_hand: None,
             right_hand: None,
             active_effects: Vec::new(),
+            effects: HashMap::new(),
             compass_dirs: Vec::new(),
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),

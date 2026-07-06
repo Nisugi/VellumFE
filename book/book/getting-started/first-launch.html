@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,9 +183,11 @@
 <pre><code class="language-bash">vellum-fe --port 8000 --character YourCharacter
 </code></pre>
 <ul>
-<li><code>--port</code> - Lich’s listening port (default: 8000)</li>
-<li><code>--character</code> - Your character name (used for per-character layouts)</li>
+<li><code>--port</code> - Lich’s listening port</li>
+<li><code>--character</code> - Your character name (used for per-character profiles and direct login)</li>
 </ul>
+<p>VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
+check <code>$frontend</code> get full feature parity.</p>
 <h2 id="lich-launcher-integration"><a class="header" href="#lich-launcher-integration">Lich Launcher Integration</a></h2>
 <p>Configure Lich launcher to spawn VellumFE automatically:</p>
 <ol>
@@ -203,11 +205,26 @@
 <p>Connect without Lich using eAccess authentication:</p>
 <pre><code class="language-bash">vellum-fe --direct \
   --account YOUR_ACCOUNT \
-  --password YOUR_PASSWORD \
   --character YourCharacter \
   --game prime
 </code></pre>
-<p>Games: <code>prime</code>, <code>platinum</code>, <code>fallen</code>, <code>test</code></p>
+<p>If you omit <code>--password</code>, VellumFE prompts for it securely at startup
+(recommended — passwords on the command line end up in shell history).
+Credentials can also be stored in <code>config.toml</code> under <code>[connection]</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>--game</code> value</th><th>World</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prime</code></td><td>GemStone IV Prime</td></tr>
+<tr><td><code>platinum</code></td><td>GemStone IV Platinum</td></tr>
+<tr><td><code>shattered</code></td><td>GemStone IV Shattered</td></tr>
+<tr><td><code>test</code></td><td>GemStone IV Test</td></tr>
+<tr><td><code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td><td>DragonRealms worlds</td></tr>
+</tbody>
+</table>
+</div>
 <blockquote>
 <p><strong>Note</strong>: Direct mode requires OpenSSL on Windows. See <a href="./installation.html">Installation</a>.</p>
 </blockquote>
@@ -221,7 +238,8 @@
 │ &gt; [Command Input]                                       │
 └─────────────────────────────────────────────────────────┘
 </code></pre>
-<h3 id="basic-controls"><a class="header" href="#basic-controls">Basic Controls</a></h3>
+<h3 id="default-keys"><a class="header" href="#default-keys">Default Keys</a></h3>
+<p>All of these can be changed in <a href="../configuration/keybinds-toml.html">keybinds.toml</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -229,25 +247,42 @@
 </thead>
 <tbody>
 <tr><td><code>Enter</code></td><td>Send command</td></tr>
-<tr><td><code>Page Up/Down</code></td><td>Scroll main window</td></tr>
-<tr><td><code>Ctrl+C</code></td><td>Copy selected text</td></tr>
-<tr><td><code>Escape</code></td><td>Close menus / cancel</td></tr>
-<tr><td><code>F1</code></td><td>Open main menu</td></tr>
+<tr><td><code>Up</code> / <code>Down</code></td><td>Command history</td></tr>
+<tr><td><code>Page Up/Down</code></td><td>Scroll focused window</td></tr>
+<tr><td><code>Tab</code></td><td>Switch focused window</td></tr>
+<tr><td><code>Ctrl+F</code></td><td>Search in window (<code>F3</code> next match)</td></tr>
+<tr><td><code>Ctrl+R</code></td><td>Repeat last command</td></tr>
+<tr><td><code>Escape</code></td><td>Close dialogs / cancel</td></tr>
+<tr><td><code>Ctrl+C</code></td><td><strong>Quit VellumFE</strong></td></tr>
+<tr><td>Numpad</td><td>Movement macros (<code>8</code>=north, <code>2</code>=south, …)</td></tr>
 </tbody>
 </table>
 </div>
+<blockquote>
+<p><strong>Copying text</strong>: select with the mouse — it’s copied to the clipboard on
+release (<code>selection_auto_copy</code>). <code>Ctrl+C</code> quits; it does not copy.</p>
+</blockquote>
 <h3 id="mouse-controls"><a class="header" href="#mouse-controls">Mouse Controls</a></h3>
 <ul>
 <li><strong>Click</strong> links to interact with objects</li>
 <li><strong>Right-click</strong> for context menus</li>
 <li><strong>Scroll wheel</strong> to scroll windows</li>
-<li><strong>Drag</strong> window borders to resize (in edit mode)</li>
+<li><strong>Ctrl+drag</strong> to move windows (modifier configurable via <code>drag_modifier_key</code>)</li>
 </ul>
+<h3 id="dot-commands"><a class="header" href="#dot-commands">Dot-Commands</a></h3>
+<p>Anything starting with <code>.</code> is a client command rather than game input.
+Start with:</p>
+<ul>
+<li><code>.menu</code> — open the main menu</li>
+<li><code>.settings</code> — in-app settings editor</li>
+<li><code>.help</code> — list every command</li>
+</ul>
+<p>See the full <a href="../reference/commands.html">Command Reference</a>.</p>
 <h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
 <ul>
 <li><a href="../configuration/README.html">Configuration</a> - Customize settings</li>
 <li><a href="../widgets/README.html">Widgets</a> - Learn about available widgets</li>
-<li><a href="../customization/README.html">Customization</a> - Create custom layouts</li>
+<li><a href="../customization/README.html">Customization</a> - Layouts, highlights, themes</li>
 </ul>
 
                     </main>
@@ -258,7 +293,7 @@
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../configuration/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../frontends/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -272,7 +307,7 @@
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../configuration/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../frontends/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
