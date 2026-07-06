@@ -1079,6 +1079,28 @@ impl VellumGuiApp {
             .add_system_message("Use .setskin <name> to activate, .setskin none to disable.");
     }
 
+    /// Handle `action:makeskin:<name>`: write the starter skin and tell the
+    /// user how to proceed. Does not activate it — a fresh scaffold is all
+    /// comments, so activating it would visibly do nothing.
+    fn make_skin_scaffold(&mut self, name: &str) {
+        match skin::write_scaffold(name) {
+            Ok(path) => {
+                self.app_core.add_system_message(&format!(
+                    "Created skin '{}' at {}",
+                    name,
+                    path.display()
+                ));
+                self.app_core.add_system_message(
+                    "Edit skin.toml (sections are commented out), add images, then .setskin to activate.",
+                );
+            }
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Cannot create skin '{}': {}", name, err));
+            }
+        }
+    }
+
     fn save_config_after_skin_change(&mut self) {
         if let Err(err) = self
             .app_core
@@ -2293,6 +2315,25 @@ impl VellumGuiApp {
         }
         if action == "action:skins" {
             self.list_skins_to_window();
+            return true;
+        }
+        if let Some(name) = action.strip_prefix("action:makeskin:") {
+            let name = name.to_string();
+            self.make_skin_scaffold(&name);
+            return true;
+        }
+        if action == "action:reloadskin" {
+            match self.app_core.config.active_skin.clone() {
+                Some(name) => {
+                    self.skin_state.force_reload();
+                    self.app_core
+                        .add_system_message(&format!("Reloading skin '{}'.", name));
+                }
+                None => {
+                    self.app_core
+                        .add_system_message("No skin active. Use .setskin <name> first.");
+                }
+            }
             return true;
         }
         if action == "action:settings" {

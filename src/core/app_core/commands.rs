@@ -525,6 +525,16 @@ impl AppCore {
                     self.add_system_message("Usage: .setskin <name> (or .setskin none to disable)");
                 }
             }
+            "makeskin" => {
+                if let Some(name) = parts.get(1) {
+                    return Ok(format!("action:makeskin:{}", name));
+                } else {
+                    self.add_system_message("Usage: .makeskin <name> - create a starter skin");
+                }
+            }
+            "reloadskin" => {
+                return Ok("action:reloadskin".to_string());
+            }
 
             // Tab navigation
             "nexttab" => {
@@ -966,6 +976,10 @@ mod tests {
                     None // Shows usage message instead
                 }
             }
+            "makeskin" => args
+                .first()
+                .map(|name| format!("action:makeskin:{}", name)),
+            "reloadskin" => Some("action:reloadskin".to_string()),
             "nexttab" => Some("action:nexttab".to_string()),
             "prevtab" => Some("action:prevtab".to_string()),
             "gonew" | "nextunread" => Some("action:nextunread".to_string()),

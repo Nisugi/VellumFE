@@ -258,20 +258,29 @@ pub struct SkinState {
     /// Widget sprite lookups built once per skin load.
     widget_art: Option<std::sync::Arc<SkinWidgetArt>>,
     applied: bool,
+    /// skin.toml mtime at load, for hot-reload detection.
+    manifest_mtime: Option<std::time::SystemTime>,
+    /// Last hot-reload poll, so the mtime stat runs at most once a second.
+    last_mtime_check: Option<std::time::Instant>,
 }
 
 impl SkinState {
     /// Load or unload to match `active` (from config). Call once per frame;
-    /// does nothing when the active skin hasn't changed.
+    /// does nothing when the active skin hasn't changed and its skin.toml
+    /// is untouched (edits to the manifest hot-reload within a second).
     pub fn apply_if_changed(&mut self, ctx: &egui::Context, active: Option<&str>) {
         if self.applied && self.loaded_id.as_deref() == active {
-            return;
+            if !self.manifest_changed_on_disk() {
+                return;
+            }
+            tracing::info!("skin.toml changed on disk; reloading skin");
         }
         self.applied = true;
         self.loaded_id = active.map(str::to_owned);
         self.manifest = SkinManifest::default();
         self.textures.clear();
         self.widget_art = None;
+        self.manifest_mtime = None;
 
         let Some(name) = active else {
             return;
@@ -280,13 +289,44 @@ impl SkinState {
             Ok((manifest, root)) => {
                 self.manifest = manifest;
                 self.root = root;
+                self.manifest_mtime = manifest_mtime(&self.root);
                 self.load_textures(ctx, name);
                 self.widget_art = self.build_widget_art();
             }
             Err(err) => {
+                // Remember the root so a skin.toml appearing later (e.g. a
+                // scaffold being written) still hot-loads.
+                if let Ok(dir) = crate::config::Config::skins_dir() {
+                    self.root = dir.join(name);
+                }
                 tracing::warn!("Failed to load skin '{}': {:#}", name, err);
             }
         }
+    }
+
+    /// Force a full reload on the next frame (`.reloadskin`). Unlike the
+    /// mtime poll this also picks up edited *images*, which don't touch
+    /// skin.toml.
+    pub fn force_reload(&mut self) {
+        self.applied = false;
+    }
+
+    /// True when the active skin's manifest mtime differs from what was
+    /// loaded. Rate-limited to one stat per second.
+    fn manifest_changed_on_disk(&mut self) -> bool {
+        if self.loaded_id.is_none() {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .last_mtime_check
+            .is_some_and(|last| now.duration_since(last) < std::time::Duration::from_secs(1))
+        {
+            return false;
+        }
+        self.last_mtime_check = Some(now);
+        let current = manifest_mtime(&self.root);
+        current.is_some() && current != self.manifest_mtime
     }
 
     /// Sprite lookups for widget renderers; None when the skin defines no
@@ -444,6 +484,124 @@ fn window_field<'a, T>(
     entry
         .and_then(&field)
         .or_else(|| manifest.windows.get("default").and_then(&field))
+}
+
+/// mtime of a skin directory's manifest, if it exists.
+fn manifest_mtime(root: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(root.join("skin.toml"))
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+/// Starter manifest written by `write_scaffold`: every section present but
+/// commented out, so making a skin starts as "uncomment and point at a PNG".
+/// Kept in sync with docs/SKINS.md; a test asserts it stays parseable.
+const SCAFFOLD_MANIFEST: &str = r##"# VellumFE skin manifest.
+# Full documentation: docs/SKINS.md in the VellumFE repository.
+#
+# Image paths are relative to this folder; absolute paths are allowed
+# (e.g. pointing at art from another install). Formats: PNG, JPEG, WebP, BMP.
+# Activate with `.setskin <folder-name>`. Edits to this file reload
+# automatically; after editing images run `.reloadskin`.
+
+[meta]
+name = "My Skin"
+description = ""
+
+# ---- Window backgrounds ---------------------------------------------------
+# "default" applies to every window without its own [window.<name>] entry.
+# Windows are matched by layout window name ("main", "thoughts", "combat", ...).
+#
+# [window.default.background]
+# image = "bg/paper.png"
+# fit = "cover"          # stretch | cover | contain | tile | center
+# opacity = 1.0          # 0.0 - 1.0
+# tint = "#c0a878"       # optional multiply tint
+# scrim = 0.3            # 0.0 - 1.0 theme-colored overlay so text stays readable
+
+# ---- Window borders (nine-slice) -------------------------------------------
+# slice = [top, right, bottom, left] insets in source-image pixels: corners
+# draw fixed, edges stretch, the center is never drawn.
+#
+# [window.default.border]
+# image = "border/frame.png"
+# slice = [8.0, 8.0, 8.0, 8.0]
+# scale = 1.0            # source pixels -> screen points
+
+# ---- Status icons -----------------------------------------------------------
+# Indicator id -> sprite (ids are case-insensitive). Used by the dashboard
+# and single indicator widgets; ids you don't list keep the vector pictogram.
+#
+# [icons]
+# standing = "icons/standing.png"
+# kneeling = "icons/kneeling.png"
+# sitting = "icons/sitting.png"
+# prone = "icons/prone.png"
+# dead = "icons/dead.png"
+# stunned = "icons/stunned.png"
+# bleeding = "icons/bleeding.png"
+# hidden = "icons/hidden.png"
+# invisible = "icons/invisible.png"
+# webbed = "icons/webbed.png"
+# poisoned = "icons/poisoned.png"
+# diseased = "icons/diseased.png"
+# joined = "icons/joined.png"
+
+# ---- Compass ----------------------------------------------------------------
+# Author the rose and every overlay on the same canvas size; each overlay
+# draws on top of the rose only while that exit is available. The hub is
+# the "out" exit.
+#
+# [compass]
+# rose = "compass/rose.png"
+# n = "compass/n.png"
+# ne = "compass/ne.png"
+# e = "compass/e.png"
+# se = "compass/se.png"
+# s = "compass/s.png"
+# sw = "compass/sw.png"
+# w = "compass/w.png"
+# nw = "compass/nw.png"
+# up = "compass/up.png"
+# down = "compass/down.png"
+# out = "compass/out.png"
+
+# ---- Injury doll ------------------------------------------------------------
+# A base body image plus full-canvas overlays per part and severity
+# (injury1-3, scar1-3). Parts: head, neck, chest, abdomen, back, leftArm,
+# rightArm, leftHand, rightHand, leftLeg, rightLeg, leftEye, rightEye, nsys.
+#
+# [injury_doll]
+# base = "doll/base.png"
+#
+# [injury_doll.head]
+# injury1 = "doll/head_i1.png"
+# injury2 = "doll/head_i2.png"
+# injury3 = "doll/head_i3.png"
+# scar1 = "doll/head_s1.png"
+"##;
+
+/// Create `skins/<name>/` with the commented starter skin.toml. Refuses to
+/// overwrite an existing skin. Returns the manifest path.
+pub fn write_scaffold(name: &str) -> anyhow::Result<PathBuf> {
+    let name = name.trim();
+    anyhow::ensure!(!name.is_empty(), "skin name is required");
+    anyhow::ensure!(
+        name.chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')),
+        "skin names may only use letters, digits, '-' and '_'"
+    );
+    let root = crate::config::Config::skins_dir()?.join(name);
+    let manifest_path = root.join("skin.toml");
+    anyhow::ensure!(
+        !manifest_path.exists(),
+        "skin '{}' already exists at {}",
+        name,
+        manifest_path.display()
+    );
+    std::fs::create_dir_all(&root)?;
+    std::fs::write(&manifest_path, SCAFFOLD_MANIFEST)?;
+    Ok(manifest_path)
 }
 
 /// Read and parse `skins/<name>/skin.toml`. Returns the manifest and the
@@ -919,6 +1077,28 @@ mod tests {
         assert!(art.doll_overlay("leftArm", 3).is_none());
         assert!(!art.is_empty());
         assert!(SkinWidgetArt::default().is_empty());
+    }
+
+    #[test]
+    fn scaffold_manifest_parses_and_is_inert() {
+        // The starter file must parse and, being fully commented out,
+        // define no graphics — activating a fresh scaffold changes nothing.
+        let manifest: SkinManifest =
+            toml::from_str(SCAFFOLD_MANIFEST).expect("scaffold should parse");
+        assert_eq!(manifest.meta.name, "My Skin");
+        assert!(manifest.windows.is_empty());
+        assert!(manifest.icons.is_empty());
+        assert!(manifest.compass.rose.is_none());
+        assert!(manifest.injury_doll.base.is_none());
+    }
+
+    #[test]
+    fn write_scaffold_rejects_bad_names() {
+        assert!(write_scaffold("").is_err());
+        assert!(write_scaffold("   ").is_err());
+        assert!(write_scaffold("no/slashes").is_err());
+        assert!(write_scaffold("no spaces").is_err());
+        assert!(write_scaffold("..").is_err());
     }
 
     #[test]

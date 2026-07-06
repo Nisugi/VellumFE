@@ -292,7 +292,12 @@ pub fn handle_menu_action(
                 frontend.update_theme_cache(theme_id, theme);
                 app_core.needs_render = true;
             }
-            action if action == "action:skins" || action.starts_with("action:setskin:") => {
+            action
+                if action == "action:skins"
+                    || action == "action:reloadskin"
+                    || action.starts_with("action:setskin:")
+                    || action.starts_with("action:makeskin:") =>
+            {
                 // Skins are image-based GUI decoration; the terminal frontend
                 // has no image pipeline, so just point the user at the GUI.
                 app_core.add_system_message(

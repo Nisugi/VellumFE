@@ -35,8 +35,12 @@ Supported image formats: PNG, JPEG, WebP, BMP.
 | `.setskin <name>` | Activate a skin (saved to config) |
 | `.setskin none` | Disable the active skin |
 | `.skin <name>` | Alias for `.setskin` |
+| `.makeskin <name>` | Create a starter skin (commented-out skin.toml) to edit |
+| `.reloadskin` | Force-reload the active skin (needed after editing images) |
 
-The active skin is stored as `active_skin` in `config.toml`.
+The active skin is stored as `active_skin` in `config.toml`. The GUI
+settings editor (`.settings`) has a Skin section with the same picker, an
+"Open skins folder" button, and a "Create" button for new starter skins.
 
 ## Manifest format (`skin.toml`)
 
@@ -144,5 +148,6 @@ windows keep their OS chrome.
   or detached into its own OS window.
 - A bad image path logs one warning and that window falls back to the plain
   theme background; the rest of the skin still applies.
-- Edits to `skin.toml` are picked up by re-activating the skin
-  (`.setskin <name>` again) or restarting.
+- Edits to `skin.toml` hot-reload automatically (checked about once a
+  second). Edited *images* don't touch the manifest, so reload those with
+  `.reloadskin`.

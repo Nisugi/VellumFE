@@ -1756,6 +1756,8 @@ impl AppCore {
             ".skins".to_string(),
             ".setskin".to_string(),
             ".skin".to_string(),
+            ".makeskin".to_string(),
+            ".reloadskin".to_string(),
             // Tab navigation
             ".nexttab".to_string(),
             ".prevtab".to_string(),
@@ -1988,6 +1990,8 @@ impl AppCore {
         self.add_system_message("  .skins                  - List installed GUI skins");
         self.add_system_message("  .setskin <name>         - Activate a GUI skin (.setskin none to disable)");
         self.add_system_message("  .skin <name>            - Alias for .setskin");
+        self.add_system_message("  .makeskin <name>        - Create a starter skin to edit");
+        self.add_system_message("  .reloadskin             - Reload the active skin's images");
         self.add_system_message("");
 
         // Tab navigation
