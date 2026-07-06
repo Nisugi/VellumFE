@@ -2769,15 +2769,27 @@ pub fn run_native_gui(
     // default size would clamp the saved per-window rects (which were laid
     // out against the old geometry) on the first frames.
     let (profile_id, character_id) = VellumGuiApp::resolve_layout_ids(&app_core.config);
-    let saved_viewport = load_layout(&profile_id, &character_id)
-        .ok()
-        .and_then(|layout| layout.main_viewport);
+    let persisted_layout = load_layout(&profile_id, &character_id).ok();
+    // The saved geometry is in egui points measured while the persisted UI
+    // zoom was active. egui-winit multiplies ViewportBuilder sizes by the
+    // *current* zoom factor, but the main window is created before the
+    // first frame applies the persisted zoom (it is still 1.0 here), so
+    // pre-scale ourselves. Without this, a zoomed-out UI grows by 1/zoom
+    // on every restart (and a zoomed-in one shrinks).
+    let saved_zoom = persisted_layout
+        .as_ref()
+        .map(|layout| layout.ui_settings.zoom_factor.clamp(0.5, 3.0))
+        .unwrap_or(1.0);
+    let saved_viewport = persisted_layout.and_then(|layout| layout.main_viewport);
     let mut viewport = ViewportBuilder::default().with_title(window_title.clone());
     match saved_viewport {
         Some(saved) => {
-            viewport = viewport.with_inner_size(saved.inner_size);
+            viewport = viewport.with_inner_size([
+                saved.inner_size[0] * saved_zoom,
+                saved.inner_size[1] * saved_zoom,
+            ]);
             if let Some(pos) = saved.outer_pos {
-                viewport = viewport.with_position(pos);
+                viewport = viewport.with_position([pos[0] * saved_zoom, pos[1] * saved_zoom]);
             }
             if saved.maximized {
                 viewport = viewport.with_maximized(true);
