@@ -1,53 +1,65 @@
 # Configuration
 
-VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`.
+VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
+(override the location with the `VELLUM_FE_DIR` environment variable or `--data-dir`).
 
 ## Configuration Files
 
 | File | Purpose |
 |------|---------|
-| [config.toml](./config-toml.md) | General settings (UI, connection, behavior) |
-| [layout.toml](./layout-toml.md) | Window positions, sizes, and properties |
+| [config.toml](./config-toml.md) | General settings (connection, UI, sound, TTS, web server) |
+| [layout.toml](./layout-toml.md) | Window positions, sizes, and properties (TUI) |
 | [keybinds.toml](./keybinds-toml.md) | Keyboard shortcuts |
-| [highlights.toml](./highlights-toml.md) | Text highlighting rules |
-| [colors.toml](./colors-toml.md) | Color palette definitions |
+| [highlights.toml](./highlights-toml.md) | Text highlighting, sounds, squelch rules |
+| [colors.toml](./colors-toml.md) | Color palette, stream presets, spell colors |
+| [macros.toml](./macros-toml.md) | Macro buttons for the mobile web frontend |
 
-## Per-Character Configuration
-
-When you specify `--character NAME`, VellumFE looks for character-specific files:
+## Directory Layout
 
 ```
 ~/.vellum-fe/
-├── config.toml           # Global defaults
-├── layout.toml           # Global layout
-├── characters/
-│   └── CharName/
-│       ├── config.toml   # Character overrides
-│       └── layout.toml   # Character layout
+├── global/               # Shared settings for all characters
+│   ├── config.toml
+│   ├── keybinds.toml
+│   ├── highlights.toml
+│   ├── colors.toml
+│   ├── macros.toml
+│   └── sounds/           # Sound files for highlight alerts
+├── layouts/              # Saved layouts (.savelayout / .loadlayout)
+├── profiles/
+│   └── CharName/         # Per-character overrides + auto-saved layout.toml
+├── themes/               # Custom themes (.edittheme saves here)
+└── vellum-fe.log
 ```
 
-Character-specific files override global settings.
+Files in `profiles/<name>/` override the matching global file for that character.
 
 ## Editing Configuration
 
-You can edit files directly, or use the in-client menu:
+Most things can be edited in-app without touching files:
 
-1. Press `F1` to open the main menu
-2. Navigate to **Config** submenu
-3. Select the file to edit
+| Command | Opens |
+|---------|-------|
+| `.settings` | Settings editor (connection, UI, sound, theme) |
+| `.highlights` | Highlights browser |
+| `.keybinds` | Keybinds browser |
+| `.colors` | Color palette browser |
+| `.themes` | Theme browser |
 
-Changes to layout are saved automatically. Other config changes require restart.
+If you edit files directly, apply changes without restarting:
+
+```
+.reload              # reload everything
+.reload highlights   # or just one: highlights, keybinds, settings, colors, layout
+.reloadmacros        # macros.toml (also pushes to connected phones)
+```
 
 ## Resetting to Defaults
 
-Delete a configuration file to reset it to defaults on next launch:
+Delete a configuration file and it is recreated with defaults on next launch:
 
 ```bash
-rm ~/.vellum-fe/layout.toml
+rm ~/.vellum-fe/global/keybinds.toml
 ```
 
-Or delete the entire directory for a full reset:
-
-```bash
-rm -rf ~/.vellum-fe
-```
+Or delete the entire directory for a full reset.

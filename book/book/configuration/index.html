@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
-<p>VellumFE uses TOML files for configuration, stored in <code>~/.vellum-fe/</code>.</p>
+<p>VellumFE uses TOML files for configuration, stored in <code>~/.vellum-fe/</code>
+(override the location with the <code>VELLUM_FE_DIR</code> environment variable or <code>--data-dir</code>).</p>
 <h2 id="configuration-files"><a class="header" href="#configuration-files">Configuration Files</a></h2>
 <div class="table-wrapper">
 <table>
@@ -186,46 +187,63 @@
 <tr><th>File</th><th>Purpose</th></tr>
 </thead>
 <tbody>
-<tr><td><a href="./config-toml.html">config.toml</a></td><td>General settings (UI, connection, behavior)</td></tr>
-<tr><td><a href="./layout-toml.html">layout.toml</a></td><td>Window positions, sizes, and properties</td></tr>
+<tr><td><a href="./config-toml.html">config.toml</a></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
+<tr><td><a href="./layout-toml.html">layout.toml</a></td><td>Window positions, sizes, and properties (TUI)</td></tr>
 <tr><td><a href="./keybinds-toml.html">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
-<tr><td><a href="./highlights-toml.html">highlights.toml</a></td><td>Text highlighting rules</td></tr>
-<tr><td><a href="./colors-toml.html">colors.toml</a></td><td>Color palette definitions</td></tr>
+<tr><td><a href="./highlights-toml.html">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
+<tr><td><a href="./colors-toml.html">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><a href="./macros-toml.html">macros.toml</a></td><td>Macro buttons for the mobile web frontend</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="per-character-configuration"><a class="header" href="#per-character-configuration">Per-Character Configuration</a></h2>
-<p>When you specify <code>--character NAME</code>, VellumFE looks for character-specific files:</p>
+<h2 id="directory-layout"><a class="header" href="#directory-layout">Directory Layout</a></h2>
 <pre><code>~/.vellum-fe/
-├── config.toml           # Global defaults
-├── layout.toml           # Global layout
-├── characters/
-│   └── CharName/
-│       ├── config.toml   # Character overrides
-│       └── layout.toml   # Character layout
+├── global/               # Shared settings for all characters
+│   ├── config.toml
+│   ├── keybinds.toml
+│   ├── highlights.toml
+│   ├── colors.toml
+│   ├── macros.toml
+│   └── sounds/           # Sound files for highlight alerts
+├── layouts/              # Saved layouts (.savelayout / .loadlayout)
+├── profiles/
+│   └── CharName/         # Per-character overrides + auto-saved layout.toml
+├── themes/               # Custom themes (.edittheme saves here)
+└── vellum-fe.log
 </code></pre>
-<p>Character-specific files override global settings.</p>
+<p>Files in <code>profiles/&lt;name&gt;/</code> override the matching global file for that character.</p>
 <h2 id="editing-configuration"><a class="header" href="#editing-configuration">Editing Configuration</a></h2>
-<p>You can edit files directly, or use the in-client menu:</p>
-<ol>
-<li>Press <code>F1</code> to open the main menu</li>
-<li>Navigate to <strong>Config</strong> submenu</li>
-<li>Select the file to edit</li>
-</ol>
-<p>Changes to layout are saved automatically. Other config changes require restart.</p>
+<p>Most things can be edited in-app without touching files:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Opens</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.settings</code></td><td>Settings editor (connection, UI, sound, theme)</td></tr>
+<tr><td><code>.highlights</code></td><td>Highlights browser</td></tr>
+<tr><td><code>.keybinds</code></td><td>Keybinds browser</td></tr>
+<tr><td><code>.colors</code></td><td>Color palette browser</td></tr>
+<tr><td><code>.themes</code></td><td>Theme browser</td></tr>
+</tbody>
+</table>
+</div>
+<p>If you edit files directly, apply changes without restarting:</p>
+<pre><code>.reload              # reload everything
+.reload highlights   # or just one: highlights, keybinds, settings, colors, layout
+.reloadmacros        # macros.toml (also pushes to connected phones)
+</code></pre>
 <h2 id="resetting-to-defaults"><a class="header" href="#resetting-to-defaults">Resetting to Defaults</a></h2>
-<p>Delete a configuration file to reset it to defaults on next launch:</p>
-<pre><code class="language-bash">rm ~/.vellum-fe/layout.toml
+<p>Delete a configuration file and it is recreated with defaults on next launch:</p>
+<pre><code class="language-bash">rm ~/.vellum-fe/global/keybinds.toml
 </code></pre>
-<p>Or delete the entire directory for a full reset:</p>
-<pre><code class="language-bash">rm -rf ~/.vellum-fe
-</code></pre>
+<p>Or delete the entire directory for a full reset.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../getting-started/first-launch.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../frontends/web.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -239,7 +257,7 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../getting-started/first-launch.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../frontends/web.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

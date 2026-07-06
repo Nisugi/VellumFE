@@ -8,8 +8,11 @@ Most players use [Lich](https://lichproject.org/) for scripting. Start Lich firs
 vellum-fe --port 8000 --character YourCharacter
 ```
 
-- `--port` - Lich's listening port (default: 8000)
-- `--character` - Your character name (used for per-character layouts)
+- `--port` - Lich's listening port
+- `--character` - Your character name (used for per-character profiles and direct login)
+
+VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
+check `$frontend` get full feature parity.
 
 ## Lich Launcher Integration
 
@@ -34,12 +37,21 @@ Connect without Lich using eAccess authentication:
 ```bash
 vellum-fe --direct \
   --account YOUR_ACCOUNT \
-  --password YOUR_PASSWORD \
   --character YourCharacter \
   --game prime
 ```
 
-Games: `prime`, `platinum`, `fallen`, `test`
+If you omit `--password`, VellumFE prompts for it securely at startup
+(recommended — passwords on the command line end up in shell history).
+Credentials can also be stored in `config.toml` under `[connection]`.
+
+| `--game` value | World |
+|-------|-------|
+| `prime` | GemStone IV Prime |
+| `platinum` | GemStone IV Platinum |
+| `shattered` | GemStone IV Shattered |
+| `test` | GemStone IV Test |
+| `dr`, `dr-platinum`, `dr-fallen`, `dr-test` | DragonRealms worlds |
 
 > **Note**: Direct mode requires OpenSSL on Windows. See [Installation](./installation.md).
 
@@ -57,25 +69,45 @@ On successful connection, you'll see the default layout:
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Basic Controls
+### Default Keys
+
+All of these can be changed in [keybinds.toml](../configuration/keybinds-toml.md).
 
 | Key | Action |
 |-----|--------|
 | `Enter` | Send command |
-| `Page Up/Down` | Scroll main window |
-| `Ctrl+C` | Copy selected text |
-| `Escape` | Close menus / cancel |
-| `F1` | Open main menu |
+| `Up` / `Down` | Command history |
+| `Page Up/Down` | Scroll focused window |
+| `Tab` | Switch focused window |
+| `Ctrl+F` | Search in window (`F3` next match) |
+| `Ctrl+R` | Repeat last command |
+| `Escape` | Close dialogs / cancel |
+| `Ctrl+C` | **Quit VellumFE** |
+| Numpad | Movement macros (`8`=north, `2`=south, ...) |
+
+> **Copying text**: select with the mouse — it's copied to the clipboard on
+> release (`selection_auto_copy`). `Ctrl+C` quits; it does not copy.
 
 ### Mouse Controls
 
 - **Click** links to interact with objects
 - **Right-click** for context menus
 - **Scroll wheel** to scroll windows
-- **Drag** window borders to resize (in edit mode)
+- **Ctrl+drag** to move windows (modifier configurable via `drag_modifier_key`)
+
+### Dot-Commands
+
+Anything starting with `.` is a client command rather than game input.
+Start with:
+
+- `.menu` — open the main menu
+- `.settings` — in-app settings editor
+- `.help` — list every command
+
+See the full [Command Reference](../reference/commands.md).
 
 ## Next Steps
 
 - [Configuration](../configuration/README.md) - Customize settings
 - [Widgets](../widgets/README.md) - Learn about available widgets
-- [Customization](../customization/README.md) - Create custom layouts
+- [Customization](../customization/README.md) - Layouts, highlights, themes

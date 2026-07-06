@@ -4,19 +4,17 @@ Audio notifications for game events.
 
 ## Setup
 
-1. Create sounds directory: `~/.vellum-fe/sounds/`
-2. Add `.wav` files
-3. Reference in highlights
+1. Put sound files in `~/.vellum-fe/global/sounds/`
+2. Reference them in highlights
 
 ## Using Sounds
 
 In `highlights.toml`:
 
 ```toml
-[[highlights]]
-name = "death_alert"
+[death_alert]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 sound = "kill.wav"
 sound_volume = 0.8
 ```
@@ -60,35 +58,30 @@ sounds_enabled = false
 
 Directory structure:
 ```
-~/.vellum-fe/sounds/
+~/.vellum-fe/global/sounds/
 ├── kill.wav
 ├── alert.wav
 ├── whisper.wav
-├── danger.wav
-└── loot.wav
+└── danger.wav
 ```
 
 Highlights:
 ```toml
-[[highlights]]
-name = "kill"
+[kill]
 pattern = "appears dead"
 sound = "kill.wav"
 
-[[highlights]]
-name = "stunned"
+[stunned]
 pattern = "You are stunned"
 sound = "alert.wav"
 sound_volume = 1.0
 
-[[highlights]]
-name = "whisper"
+[whisper]
 pattern = "whispers to you"
 sound = "whisper.wav"
 sound_volume = 0.5
 
-[[highlights]]
-name = "bleeding"
+[bleeding]
 pattern = "Blood runs down"
 sound = "danger.wav"
 ```

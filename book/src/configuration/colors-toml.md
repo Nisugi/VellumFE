@@ -1,93 +1,105 @@
 # colors.toml
 
-Custom color palette definitions.
+The central color file: a named color palette, game-text stream colors,
+prompt colors, UI element colors, and spell-circle colors. Edit in-app with
+`.colors` (palette), `.uicolors`, and `.spellcolors` — or edit the file and
+`.reload colors`.
 
-## Basic Format
+> Themes are a separate system — they control *widget UI* colors and are
+> covered in [Themes](../customization/themes.md). colors.toml controls
+> *game text* and palette colors, and is not switched by `.settheme`.
+
+## Color Palette
+
+Named colors you can reference anywhere a color is accepted
+(highlights `fg`/`bg`, layout `border_color`, theme files, ...):
 
 ```toml
-[colors]
-my_red = "#FF0000"
-soft_blue = "#5588AA"
-dark_bg = "#1a1a1a"
+[[color_palette]]
+name = "Link"
+color = "#477ab3"
+category = "presets"
+slot = 16
 ```
 
-## Using Custom Colors
+- `name` — the name you reference elsewhere (case-insensitive)
+- `color` — hex value
+- `category` — grouping in the `.colors` browser
+- `slot` — optional terminal palette slot (16–231) for 256-color mode
 
-Reference in other config files:
+In `color_mode = "slot"` (see [config.toml](./config-toml.md)), run
+`.setpalette` to load every slotted color into your terminal's palette, and
+`.resetpalette` to undo it. The default palette pre-loads color sets for the
+built-in themes so theme switching works instantly in slot mode.
+
+## Stream Presets
+
+Colors for game text streams. Values can be hex or palette names:
 
 ```toml
-# In highlights.toml
-[[highlights]]
-name = "danger"
-pattern = "attacks you"
-foreground = "my_red"           # Uses color from colors.toml
+[presets.speech]
+fg = "Speech"
 
-# In layout.toml
-[[windows]]
-name = "combat"
-border_color = "soft_blue"
-background_color = "dark_bg"
+[presets.roomName]
+fg = "Room Name"
+bg = "Room Name BG"
+
+[presets.monsterbold]
+fg = "Monsterbold"
 ```
 
-## Preset Colors
+Available presets include `links`, `commands`, `speech`, `whisper`,
+`thought`, `roomName`, `monsterbold`, `familiar`, `voln`, `percWindow`,
+and `target_indicator`.
 
-VellumFE recognizes these named colors without definition:
+## Prompt Colors
 
-| Name | Hex |
-|------|-----|
-| `black` | #000000 |
-| `red` | #FF0000 |
-| `green` | #00FF00 |
-| `yellow` | #FFFF00 |
-| `blue` | #0000FF |
-| `magenta` | #FF00FF |
-| `cyan` | #00FFFF |
-| `white` | #FFFFFF |
-| `gray` / `grey` | #808080 |
-| `orange` | #FFA500 |
-| `purple` | #800080 |
-| `pink` | #FFC0CB |
-
-## Example Palette
+Color individual prompt status characters:
 
 ```toml
-[colors]
-# UI colors
-border_normal = "#404040"
-border_focused = "#5588AA"
-border_alert = "#FF4040"
-
-# Text colors
-text_normal = "#CCCCCC"
-text_dim = "#666666"
-text_bright = "#FFFFFF"
-
-# Creature states
-dead = "#00FF00"
-stunned = "#FFFF00"
-frozen = "#00FFFF"
-
-# Communication
-speech = "#87CEEB"
-whisper = "#DDA0DD"
-thoughts = "#9370DB"
-
-# Combat
-damage_minor = "#FFFF00"
-damage_major = "#FFA500"
-damage_critical = "#FF0000"
+[[prompt_colors]]
+character = "R"   # roundtime
+color = "#ff0000"
 ```
 
-## Color Formats
+Defaults cover `R` (roundtime), `S` (stunned), `H` (hiding), `>` (prompt),
+`!` (bleeding).
 
-All colors must be specified as hex:
+## UI Colors
+
+Default colors for UI elements (per-window overrides live in layout.toml).
+Edit with `.uicolors`:
 
 ```toml
-# Supported formats
-color1 = "#RGB"                 # 3-digit (expanded to 6)
-color2 = "#RRGGBB"              # 6-digit (most common)
+[ui]
+command_echo_color = "#ffffff"
+border_color = "#00ffff"
+focused_border_color = "#ffff00"
+text_color = "#ffffff"
+background_color = "#000000"
+selection_bg_color = "#4a4a4a"
+```
 
-# Not supported
-color3 = "rgb(255, 0, 0)"       # CSS format - won't work
-color4 = "255, 0, 0"            # Raw values - won't work
+## Spell Colors
+
+Color active-spell indicators by spell circle. Edit with `.spellcolors`,
+add with `.addspellcolor`:
+
+```toml
+[[spell_colors]]
+spells = [601, 602, 604, 605, 606]   # spell numbers
+color = "#1c731c"                    # indicator color
+bar_color = "#1c731c"                # progress bar color
+text_color = "#909090"
+bg_color = "#000000"
+```
+
+## Color Values
+
+Anywhere a color is accepted:
+
+```toml
+color1 = "#RRGGBB"      # hex (6-digit)
+color2 = "#abc"         # hex (3-digit, expanded)
+color3 = "Link Blue"    # palette color name from [[color_palette]]
 ```

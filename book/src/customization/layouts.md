@@ -4,28 +4,28 @@ Design custom window arrangements for different playstyles.
 
 ## Using the Window Editor
 
-1. Press F1 → Windows → Edit Window → [window name]
+1. `.menu` → Windows → Edit Window → [window name]
 2. Modify position, size, and properties
 3. Save changes (applied immediately)
 
-Or via command: `.edit windowname`
+Or via command: `.editwindow <name>` (no name opens a picker)
 
 ## Adding Windows
 
 ### Via Menu
 
-F1 → Windows → Add Window → [Category] → [Widget]
+`.menu` → Windows → Add Window → [Category] → [Widget]
 
 ### Via Command
 
 ```
-.addwindow targets
-.addwindow text mywindow
+.addwindow                                  # opens a picker
+.addwindow loot text 100 0 30 10            # name type x y width [height]
 ```
 
 ### Via Config
 
-Edit `~/.vellum-fe/layout.toml`:
+Edit your layout file directly:
 
 ```toml
 [[windows]]
@@ -53,11 +53,18 @@ cols = 60     # Width
 
 Windows can overlap. Later windows in the file render on top.
 
-## Saving
+## Saving and Switching
 
-- **Ctrl+S** - Save current layout
-- **F1 → Config → Save Layout** - Same thing
-- Changes to window positions via drag are saved automatically
+```
+.savelayout hunting     # save to ~/.vellum-fe/layouts/hunting.toml
+.loadlayout hunting
+.layouts                # list saved layouts
+.resize                 # refit layout to the current terminal size
+```
+
+Window positions also auto-save per character. You can switch layouts
+automatically by terminal size with `layout_mappings` in
+[config.toml](../configuration/config-toml.md).
 
 ## Example Layouts
 
@@ -151,10 +158,14 @@ cols = 80
 
 ## Per-Character Layouts
 
-Save layouts per character:
+When you launch with `--character NAME`, the current layout auto-saves to:
 
 ```
-~/.vellum-fe/characters/CharName/layout.toml
+~/.vellum-fe/profiles/CharName/layout.toml
 ```
 
-Use `--character NAME` to load character-specific layout.
+Validate a layout file from the command line:
+
+```bash
+vellum-fe validate-layout hunting.toml
+```

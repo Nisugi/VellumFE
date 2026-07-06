@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,107 +178,50 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="keybind-actions"><a class="header" href="#keybind-actions">Keybind Actions</a></h1>
-<p>Customize keyboard shortcuts for commands and actions.</p>
-<h2 id="basic-keybind"><a class="header" href="#basic-keybind">Basic Keybind</a></h2>
-<pre><code class="language-toml">[keybinds]
-"f2" = { command = "stance offensive" }
+<p>Recipes for common keybind tasks. Full format and action reference:
+<a href="../configuration/keybinds-toml.html">keybinds.toml</a>. The in-app editor
+(<code>.keybinds</code> / <code>.addkeybind</code>) edits the same file.</p>
+<p>Your custom binds go in the <code>[user]</code> section, as <code>"key" = value</code>.</p>
+<h2 id="send-a-command-with-one-key"><a class="header" href="#send-a-command-with-one-key">Send a Command with One Key</a></h2>
+<p>Use <code>macro_text</code>; end with <code>\r</code> to press Enter:</p>
+<pre><code class="language-toml">[user]
+f5 = { macro_text = "stance defensive\r" }
+f6 = { macro_text = "look in my backpack\r" }
+"ctrl+g" = { macro_text = "group\r" }
 </code></pre>
-<h2 id="key-format"><a class="header" href="#key-format">Key Format</a></h2>
-<pre><code>modifier+key
+<p>Omit the <code>\r</code> to type text into the input line without sending — useful
+for prefixes you finish by hand:</p>
+<pre><code class="language-toml">"ctrl+w" = { macro_text = "whisper Rolfard " }
 </code></pre>
-<h3 id="modifiers"><a class="header" href="#modifiers">Modifiers</a></h3>
-<ul>
-<li><code>ctrl</code> - Control key</li>
-<li><code>alt</code> - Alt key</li>
-<li><code>shift</code> - Shift key</li>
-</ul>
-<p>Combine: <code>ctrl+shift+a</code></p>
-<h3 id="key-names"><a class="header" href="#key-names">Key Names</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Keys</th><th>Names</th></tr>
-</thead>
-<tbody>
-<tr><td>Letters</td><td><code>a</code> through <code>z</code></td></tr>
-<tr><td>Numbers</td><td><code>0</code> through <code>9</code></td></tr>
-<tr><td>Function</td><td><code>f1</code> through <code>f12</code></td></tr>
-<tr><td>Arrows</td><td><code>up</code>, <code>down</code>, <code>left</code>, <code>right</code></td></tr>
-<tr><td>Navigation</td><td><code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code></td></tr>
-<tr><td>Numpad</td><td><code>numpad0</code>-<code>numpad9</code>, <code>numpad_add</code>, etc.</td></tr>
-<tr><td>Other</td><td><code>enter</code>, <code>tab</code>, <code>escape</code>, <code>space</code>, <code>backspace</code></td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="action-types"><a class="header" href="#action-types">Action Types</a></h2>
-<h3 id="game-commands"><a class="header" href="#game-commands">Game Commands</a></h3>
-<pre><code class="language-toml">"f2" = { command = "stance offensive" }
-"numpad5" = { command = "look" }
+<h2 id="numpad-movement"><a class="header" href="#numpad-movement">Numpad Movement</a></h2>
+<p>Ships by default; adjust to taste:</p>
+<pre><code class="language-toml">num_8 = { macro_text = "n\r" }
+num_2 = { macro_text = "s\r" }
+num_5 = { macro_text = "out\r" }
+"num_." = { macro_text = "up\r" }
+"num_+" = { macro_text = "look\r" }
 </code></pre>
-<h3 id="macros-multiple-commands"><a class="header" href="#macros-multiple-commands">Macros (Multiple Commands)</a></h3>
-<pre><code class="language-toml">"ctrl+h" = { macro = "hide\npause 2\nstalk" }
+<h2 id="rebind-a-client-action"><a class="header" href="#rebind-a-client-action">Rebind a Client Action</a></h2>
+<pre><code class="language-toml">[user]
+"ctrl+r" = "send_last_command"
+tab = "switch_current_window"
+page_up = "scroll_current_window_up_page"
 </code></pre>
-<h3 id="client-actions"><a class="header" href="#client-actions">Client Actions</a></h3>
-<pre><code class="language-toml">"f1" = "menu"
-"ctrl+c" = "copy"
-"pageup" = "scroll_up"
+<h2 id="change-the-quit--search-keys"><a class="header" href="#change-the-quit--search-keys">Change the Quit / Search Keys</a></h2>
+<p>Application-level keys live in <code>[app]</code>:</p>
+<pre><code class="language-toml">[app]
+quit = "ctrl+q"          # default is ctrl+c
+start_search = "ctrl+f"
 </code></pre>
-<h2 id="available-actions"><a class="header" href="#available-actions">Available Actions</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Action</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>menu</code></td><td>Open main menu</td></tr>
-<tr><td><code>copy</code></td><td>Copy selection</td></tr>
-<tr><td><code>scroll_up</code></td><td>Scroll focused window up</td></tr>
-<tr><td><code>scroll_down</code></td><td>Scroll focused window down</td></tr>
-<tr><td><code>scroll_top</code></td><td>Jump to top</td></tr>
-<tr><td><code>scroll_bottom</code></td><td>Jump to bottom</td></tr>
-<tr><td><code>focus_next</code></td><td>Focus next window</td></tr>
-<tr><td><code>focus_prev</code></td><td>Focus previous window</td></tr>
-<tr><td><code>save_layout</code></td><td>Save current layout</td></tr>
-<tr><td><code>cancel</code></td><td>Close menu/cancel</td></tr>
-<tr><td><code>search</code></td><td>Search in window</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="example-configuration"><a class="header" href="#example-configuration">Example Configuration</a></h2>
-<pre><code class="language-toml">[keybinds]
-# Navigation (numpad)
-"numpad1" = { command = "go sw" }
-"numpad2" = { command = "go s" }
-"numpad3" = { command = "go se" }
-"numpad4" = { command = "go w" }
-"numpad5" = { command = "look" }
-"numpad6" = { command = "go e" }
-"numpad7" = { command = "go nw" }
-"numpad8" = { command = "go n" }
-"numpad9" = { command = "go ne" }
-"numpad_add" = { command = "go out" }
-"numpad_subtract" = { command = "go up" }
-"numpad_multiply" = { command = "go down" }
-
-# Combat stances
-"f2" = { command = "stance offensive" }
-"f3" = { command = "stance defensive" }
-"f4" = { command = "stance guarded" }
-
-# Quick actions
-"f5" = { command = "look in my backpack" }
-"f6" = { command = "inventory" }
-
-# Macros
-"ctrl+h" = { macro = "hide\npause 2\nstalk" }
-"ctrl+l" = { macro = "search\npause 1\nloot" }
-
-# Client
-"f1" = "menu"
-"ctrl+s" = "save_layout"
-"ctrl+c" = "copy"
-"escape" = "cancel"
+<h2 id="swap-keybind-sets"><a class="header" href="#swap-keybind-sets">Swap Keybind Sets</a></h2>
+<pre><code>.savekeybinds hunting
+.loadkeybinds hunting
+.keybindprofiles
 </code></pre>
+<h2 id="when-a-key-doesnt-work"><a class="header" href="#when-a-key-doesnt-work">When a Key Doesn’t Work</a></h2>
+<p>Terminals differ in what they send. Run with <code>RUST_LOG=debug</code>, press the
+key, and look for <code>KEY EVENT</code> lines in the log — then bind exactly that
+name. Classic case: terminals that send <code>delete</code> for backspace.</p>
 
                     </main>
 

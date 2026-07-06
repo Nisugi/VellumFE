@@ -14,7 +14,7 @@ Enable container windows via command:
 .containers
 ```
 
-Or via menu: F1 → Config → Toggle Containers
+Or via menu: `.menu` → Config → Toggle Containers
 
 ## Behavior
 

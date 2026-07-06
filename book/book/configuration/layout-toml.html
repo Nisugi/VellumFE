@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,11 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="layouttoml"><a class="header" href="#layouttoml">layout.toml</a></h1>
-<p>Defines window positions, sizes, and properties.</p>
+<p>Defines window positions, sizes, and properties for the <strong>TUI</strong>. (The
+<a href="../frontends/gui.html">Desktop GUI</a> keeps its own layout separately.)</p>
+<p>Layouts are saved with <code>.savelayout [name]</code> to <code>~/.vellum-fe/layouts/</code>,
+and the current layout auto-saves per character to
+<code>profiles/&lt;name&gt;/layout.toml</code>.</p>
 <h2 id="basic-structure"><a class="header" href="#basic-structure">Basic Structure</a></h2>
 <pre><code class="language-toml">terminal_width = 120
 terminal_height = 40

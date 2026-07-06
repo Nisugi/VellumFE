@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,115 +178,78 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="highlight-patterns"><a class="header" href="#highlight-patterns">Highlight Patterns</a></h1>
-<p>Color and style game text based on patterns.</p>
-<h2 id="basic-highlight"><a class="header" href="#basic-highlight">Basic Highlight</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "player_speech"
-pattern = " says,"
-foreground = "#87CEEB"
-</code></pre>
-<h2 id="pattern-types"><a class="header" href="#pattern-types">Pattern Types</a></h2>
-<h3 id="literal-default"><a class="header" href="#literal-default">Literal (Default)</a></h3>
-<p>Fast exact matching:</p>
-<pre><code class="language-toml">pattern = "appears dead"
-</code></pre>
-<h3 id="regex"><a class="header" href="#regex">Regex</a></h3>
-<p>Flexible pattern matching:</p>
-<pre><code class="language-toml">pattern = "^A .+ attacks"
-is_regex = true
-</code></pre>
-<h2 id="styling-options"><a class="header" href="#styling-options">Styling Options</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "important"
-pattern = "IMPORTANT"
-foreground = "#FF0000"      # Text color
-background = "#330000"      # Background color
-bold = true
-italic = true
-underline = true
-</code></pre>
-<h2 id="sound-alerts"><a class="header" href="#sound-alerts">Sound Alerts</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "whisper_alert"
-pattern = "whispers to you"
-foreground = "#DDA0DD"
-sound = "whisper.wav"       # In ~/.vellum-fe/sounds/
-sound_volume = 0.8          # 0.0 to 1.0
-</code></pre>
-<h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
-<pre><code class="language-toml">[[highlights]]
-name = "shorten"
-pattern = "The death cry of"
-replace = "†"
-foreground = "#FF0000"
-</code></pre>
-<h2 id="stream-redirect"><a class="header" href="#stream-redirect">Stream Redirect</a></h2>
-<p>Route lines to another window:</p>
-<pre><code class="language-toml">[[highlights]]
-name = "loot_redirect"
-pattern = "^You gather"
-is_regex = true
-redirect = "loot"           # Window name
-</code></pre>
-<h2 id="common-patterns"><a class="header" href="#common-patterns">Common Patterns</a></h2>
-<pre><code class="language-toml"># Combat
-[[highlights]]
-name = "creature_dead"
+<p>Recipes for common highlighting tasks. Full field reference:
+<a href="../configuration/highlights-toml.html">highlights.toml</a>. The in-app editor
+(<code>.addhighlight</code>) walks you through the same fields.</p>
+<h2 id="color-important-text"><a class="header" href="#color-important-text">Color Important Text</a></h2>
+<pre><code class="language-toml">[creature_dead]
 pattern = "appears dead"
-foreground = "#00FF00"
+fg = "#00ff00"
 bold = true
-sound = "kill.wav"
+category = "Combat"
 
-[[highlights]]
-name = "you_hit"
-pattern = "^You .+ (swing|slash|thrust)"
-is_regex = true
-foreground = "#FFFF00"
-
-[[highlights]]
-name = "you_miss"
-pattern = "^A clean miss"
-foreground = "#808080"
-
-# Communication
-[[highlights]]
-name = "says"
-pattern = " says,"
-foreground = "#87CEEB"
-
-[[highlights]]
-name = "whisper"
-pattern = "whispers,"
-foreground = "#DDA0DD"
-italic = true
-
-[[highlights]]
-name = "thoughts"
-pattern = "^You hear .+ thinking,"
-is_regex = true
-foreground = "#9370DB"
-
-# Warnings
-[[highlights]]
-name = "stunned"
+[stunned]
 pattern = "You are stunned"
-foreground = "#FF4500"
+fg = "#ff4500"
 bold = true
 sound = "alert.wav"
+category = "Warnings"
+</code></pre>
+<h2 id="highlight-names-friends-and-enemies"><a class="header" href="#highlight-names-friends-and-enemies">Highlight Names (Friends and Enemies)</a></h2>
+<p>Use <code>fast_parse</code> for lists of literal words — it’s much faster than regex:</p>
+<pre><code class="language-toml">[friends]
+pattern = "Mandrill|Monolis|Chiora"
+fg = "#ff00ff"
+bold = true
+fast_parse = true
+category = "Players"
 
-[[highlights]]
-name = "bleeding"
-pattern = "Blood runs down"
-foreground = "#FF0000"
-sound = "danger.wav"
+[enemies]
+pattern = "Sihtric|Ehria"
+fg = "#ffffff"
+bg = "#8b0000"
+bold = true
+fast_parse = true
+category = "Players"
 </code></pre>
-<h2 id="disabling-highlights"><a class="header" href="#disabling-highlights">Disabling Highlights</a></h2>
-<p>In <code>config.toml</code>:</p>
-<pre><code class="language-toml">[highlights]
-sounds_enabled = false      # Disable sounds
-coloring_enabled = false    # Disable colors
-replace_enabled = false     # Disable replacements
+<h2 id="hide-spam-squelch"><a class="header" href="#hide-spam-squelch">Hide Spam (Squelch)</a></h2>
+<pre><code class="language-toml">[ambient_spam]
+pattern = "A cool breeze|The wind blows|A leaf falls"
+fast_parse = true
+squelch = true
+category = "Squelch"
 </code></pre>
+<h2 id="route-lines-to-another-window"><a class="header" href="#route-lines-to-another-window">Route Lines to Another Window</a></h2>
+<pre><code class="language-toml">[loot_lines]
+pattern = "^You gather"
+redirect_to = "loot"
+redirect_mode = "copy"    # "only" to move instead of copy
+</code></pre>
+<h2 id="rewrite-text"><a class="header" href="#rewrite-text">Rewrite Text</a></h2>
+<p>Capture groups from the pattern are available as <code>$1</code>, <code>$2</code>:</p>
+<pre><code class="language-toml">[shorten_deaths]
+pattern = "The death cry of (\\w+)"
+replace = "† $1"
+fg = "#ff0000"
+</code></pre>
+<h2 id="limit-to-one-stream-or-window"><a class="header" href="#limit-to-one-stream-or-window">Limit to One Stream or Window</a></h2>
+<pre><code class="language-toml">[thought_names]
+pattern = "^\\[(\\w+)\\]"
+fg = "#9370db"
+stream = "thoughts"       # only applies to the thoughts stream
+</code></pre>
+<h2 id="test-your-patterns"><a class="header" href="#test-your-patterns">Test Your Patterns</a></h2>
+<p>Don’t wait for the game — inject a line:</p>
+<pre><code>.testline The death cry of Grimswarm echoes!
+</code></pre>
+<h2 id="tips"><a class="header" href="#tips">Tips</a></h2>
+<ul>
+<li>Patterns are regexes: escape literal <code>.</code> <code>(</code> <code>[</code>, use <code>(?i)</code> for
+case-insensitive, anchor with <code>^</code> where you can.</li>
+<li>Use <code>category</code> — the <code>.highlights</code> browser groups by it.</li>
+<li>Save variants per activity: <code>.savehighlights hunting</code>,
+<code>.loadhighlights hunting</code>.</li>
+</ul>
 
                     </main>
 

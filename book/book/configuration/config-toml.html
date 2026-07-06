@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-80a196ba.js";
+            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-621f15b5.js"></script>
+        <script src="../toc-c827af74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,9 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="configtoml"><a class="header" href="#configtoml">config.toml</a></h1>
-<p>General client settings including connection, UI behavior, and sound.</p>
+<p>General client settings: connection, UI behavior, sound, TTS, and the web
+server. Most values can also be changed in-app via <code>.settings</code>. Apply file
+edits with <code>.reload settings</code>.</p>
 <h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
 <pre><code class="language-toml">[connection]
 host = "127.0.0.1"
@@ -188,19 +190,22 @@ character = "YourName"
 # For direct connection (optional - can use CLI instead)
 account = "your_account"
 password = "your_password"  # Stored in plain text!
-game = "prime"              # prime, platinum, shattered, test
+game = "prime"              # prime, platinum, shattered, test, dr, ...
 </code></pre>
 <blockquote>
-<p><strong>Tip</strong>: For security, pass credentials via CLI: <code>--account X --password Y</code></p>
+<p><strong>Tip</strong>: For security, omit <code>password</code> — VellumFE prompts for it securely
+at startup in direct mode. CLI arguments override these values.</p>
 </blockquote>
 <h2 id="user-interface"><a class="header" href="#user-interface">User Interface</a></h2>
 <pre><code class="language-toml">[ui]
-buffer_size = 1000              # Lines kept per window
+buffer_size = 1000              # Default lines kept per window
 border_style = "single"         # single, double, rounded, thick, none
-color_mode = "direct"           # direct (24-bit), indexed (256-color)
+countdown_icon = "█"            # Glyph for RT/CT timer blocks
+color_mode = "direct"           # direct, slot, indexed (see below)
 
 # Text selection
 selection_enabled = true
+selection_respect_window_boundaries = true
 selection_auto_copy = true      # Copy on mouse-up
 
 # Commands
@@ -209,6 +214,9 @@ min_command_length = 3          # Min length to save in history
 
 # Drag modifier for moving windows
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
+
+# Prevent specific server dialogs from auto-opening windows
+open_dialog_blocklist = ["bank", "combat", "injuries"]
 </code></pre>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
@@ -218,8 +226,8 @@ drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 </thead>
 <tbody>
 <tr><td><code>direct</code></td><td>24-bit true color. Use with modern terminals (kitty, alacritty, Windows Terminal)</td></tr>
-<tr><td><code>indexed</code></td><td>256-color with standard palette. Fallback for legacy terminals</td></tr>
-<tr><td><code>slot</code></td><td>256-color with custom palette. For terminals supporting OSC4</td></tr>
+<tr><td><code>slot</code></td><td>256-color with custom palette via <code>.setpalette</code>. For terminals supporting OSC 4</td></tr>
+<tr><td><code>indexed</code></td><td>256-color with standard palette (closest match). Safe fallback</td></tr>
 </tbody>
 </table>
 </div>
@@ -254,7 +262,7 @@ coloring_enabled = true         # Apply color highlighting
 <pre><code class="language-toml">[sound]
 enabled = true
 volume = 0.7                    # 0.0 to 1.0
-cooldown_ms = 500               # Min time between sounds
+cooldown_ms = 500               # Min time between repeated sounds
 startup_music = true
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
@@ -266,33 +274,73 @@ speak_thoughts = true
 speak_speech = true
 speak_main = false              # Usually too noisy
 </code></pre>
+<p>TTS navigation keys are bound in <a href="./keybinds-toml.html">keybinds.toml</a>
+(defaults: <code>Ctrl+Alt+arrows</code>, <code>F7</code>–<code>F11</code>).</p>
+<h2 id="web-server-mobile-frontend"><a class="header" href="#web-server-mobile-frontend">Web Server (Mobile Frontend)</a></h2>
+<p>Embedded HTTP + WebSocket server that lets a phone browser join the
+session. Off by default; see <a href="../frontends/web.html">Mobile Web</a>.</p>
+<pre><code class="language-toml">[web]
+enabled = false
+port = 8040
+bind = "127.0.0.1"    # set "0.0.0.0" to allow phones on your LAN
+</code></pre>
+<blockquote>
+<p><strong>Security</strong>: there is no authentication yet. Only bind to <code>0.0.0.0</code> on a
+trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose the
+port to the open internet.</p>
+</blockquote>
+<h2 id="quickbars"><a class="header" href="#quickbars">Quickbars</a></h2>
+<p>Define custom quickbar windows that send commands:</p>
+<pre><code class="language-toml">[quickbars]
+default = "quick-custom"
+
+[[quickbars.custom]]
+id = "quick-custom"     # must be "quick" or start with "quick-"
+title = "Custom"
+entries = [
+  { type = "link", label = "look", command = "look" },
+  { type = "sep" },
+  { type = "link", label = "inventory", command = "inventory" }
+]
+</code></pre>
 <h2 id="stream-routing"><a class="header" href="#stream-routing">Stream Routing</a></h2>
-<p>Control how unsubscribed text streams are handled:</p>
+<p>Control how text streams without a subscribed window are handled:</p>
 <pre><code class="language-toml">[streams]
-# Streams to silently discard
+# Streams to silently discard (prevents duplicates/noise)
 drop_unsubscribed = [
-  "speech", "whisper", "talk",
-  "targetcount", "playercount"
+  "speech", "whisper", "talk", "conversation",
+  "targetcount", "playercount", "targetlist", "playerlist"
 ]
 
 fallback = "main"               # Route unknown streams here
 room_in_main = true             # Show room text in main (DR only)
 </code></pre>
 <h2 id="logging"><a class="header" href="#logging">Logging</a></h2>
-<p>Capture raw XML for debugging:</p>
+<p>Capture raw XML for debugging (written to <code>profiles/&lt;character&gt;/logs/</code>):</p>
 <pre><code class="language-toml">[logging]
 enabled = false
 # dir = "logs"
 # timestamps = true
+# max_lines_per_file = 30000
+</code></pre>
+<h2 id="layout-mappings"><a class="header" href="#layout-mappings">Layout Mappings</a></h2>
+<p>Automatically switch layouts based on terminal size:</p>
+<pre><code class="language-toml">[[layout_mappings]]
+min_width = 80
+min_height = 24
+max_width = 120
+max_height = 40
+layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
-<p>Regex patterns for countdown timers:</p>
+<p>Regex patterns that drive countdown timers (stun/RT/CT). The defaults
+cover standard stun messages; add your own:</p>
 <pre><code class="language-toml">[event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
-event_type = "stun"
-action = "set"
-duration_capture = 1
-duration_multiplier = 5.0
+event_type = "stun"             # stun, rt, ct
+action = "set"                  # set or clear
+duration_capture = 1            # capture group holding the duration
+duration_multiplier = 5.0       # rounds -&gt; seconds
 enabled = true
 </code></pre>
 
