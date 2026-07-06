@@ -11,7 +11,17 @@ dot-commands, shared history via `record_external_command`), echo/system-message
 mirroring into the sink, reconnect resume (session id + full/resume/gap snapshot
 modes with a missed-output marker), multi-client fan-out. Verified with socket
 integration tests (`tests/web_server.rs`) and live browser sessions against a fake
-Lich feed. Phase 3 (links and menus — menu response routing refactor) next.
+Lich feed.
+Phase 3: origin-tagged menu routing in core (`MenuOrigin` on
+`PendingMenuRequest`; local popup path unchanged) plus link-dispatch parity via
+`AppCore::resolve_link_activation` — `<d>` tags and coord links (exits) execute
+their default command directly, only plain nouns raise a menu, mirroring local
+clicks exactly. `link_tap` → per-client `menu` protocol message; picks execute
+via the ordinary `cmd` path (items carry ready-made commands, so no `menu_pick`
+message was needed). Client: tappable nouns/exits, bottom-sheet menu with four
+dismissal paths (pick, ✕, backdrop, tap anywhere else), no-response and
+stale-response guards; assets served no-cache. Validated against a real game
+session. Phase 4 (real mobile UI) next.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
