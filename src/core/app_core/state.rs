@@ -3289,6 +3289,58 @@ impl AppCore {
         self.request_menu_from(exist_id, noun, crate::core::remote::MenuOrigin::Local)
     }
 
+    /// Resolve a link activation the way a local click does (mirrors the
+    /// dispatch in frontend/tui/input.rs): `<d>` tags send their noun/text
+    /// as a direct command, links with a coord resolve through cmdlist to
+    /// a direct command (exits, default actions), and only plain links
+    /// issue a `_menu` request (tagged with `origin` so the response
+    /// routes back). Returns the command to send upstream, if any.
+    pub fn resolve_link_activation(
+        &mut self,
+        link: &crate::data::LinkData,
+        origin: crate::core::remote::MenuOrigin,
+    ) -> Option<String> {
+        if link.exist_id == "_direct_" {
+            // <d> tag: the noun (cmd attribute) or text IS the command
+            let command = if !link.noun.is_empty() {
+                &link.noun
+            } else {
+                &link.text
+            };
+            tracing::info!("Executing <d> direct command: {}", command);
+            return Some(format!("{}\n", command));
+        }
+
+        if let Some(ref coord) = link.coord {
+            // Coord link: look up the default action in cmdlist and send
+            // it directly - no menu round-trip (e.g. exits move you)
+            let Some(ref cmdlist) = self.cmdlist else {
+                tracing::warn!("Cmdlist not loaded - cannot resolve coord {}", coord);
+                return None;
+            };
+            let Some(entry) = cmdlist.get(coord) else {
+                tracing::warn!("Coord {} not found in cmdlist for '{}'", coord, link.text);
+                return None;
+            };
+            let command = CmdList::substitute_command(
+                &entry.command,
+                &link.noun,
+                &link.exist_id,
+                None,
+            );
+            tracing::info!(
+                "Executing cmdlist command for '{}' (coord: {}): {}",
+                link.text,
+                coord,
+                command.trim()
+            );
+            return Some(format!("{}\n", command));
+        }
+
+        // Plain link: context menu round-trip
+        Some(self.request_menu_from(link.exist_id.clone(), link.noun.clone(), origin))
+    }
+
     /// Request context menu for a link on behalf of an origin (local UI or
     /// a remote web client). The `<menu>` response routes back to the
     /// origin in handle_menu_response.

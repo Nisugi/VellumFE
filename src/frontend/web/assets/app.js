@@ -59,12 +59,16 @@ function renderLine(line) {
     if (seg.fg) span.style.color = seg.fg;
     if (seg.bg) span.style.backgroundColor = seg.bg;
     if (seg.bold) span.classList.add("b");
-    // Tappable noun: a real game object (not a <d> direct tag).
+    // Tappable link. The server decides what a tap does, mirroring a
+    // local click: <d> tags and coord links run their default command
+    // directly (e.g. exits move you); plain nouns get a context menu.
     const link = seg.link_data;
-    if (link && link.exist_id && link.exist_id !== "_direct_") {
+    if (link && link.exist_id) {
       span.classList.add("link");
       span.dataset.existId = link.exist_id;
-      span.dataset.noun = link.noun;
+      span.dataset.noun = link.noun || "";
+      span.dataset.text = link.text || "";
+      if (link.coord) span.dataset.coord = link.coord;
     }
     div.appendChild(span);
   }
@@ -287,19 +291,38 @@ function openSheetLoading(noun) {
 }
 
 sheetBackdrop.addEventListener("click", closeSheet);
+document.getElementById("sheet-close").addEventListener("click", closeSheet);
+
+// Belt and braces: while the sheet is open, tapping anything that is not
+// the sheet itself (and not a link, which retargets the sheet) closes it.
+document.addEventListener("click", (ev) => {
+  if (sheet.hidden) return;
+  if (ev.target.closest("#sheet")) return;
+  if (ev.target.closest("span.link")) return;
+  closeSheet();
+});
 
 pane.addEventListener("click", (ev) => {
   const span = ev.target.closest("span.link");
   if (!span || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   const requestId = ++menuRequestCounter;
-  pendingMenuRequest = requestId;
-  openSheetLoading(span.dataset.noun || span.textContent);
+  // Direct links (<d> tags, coord links like exits) execute immediately
+  // server-side — no menu will come back, so no sheet.
+  const isDirect = span.dataset.existId === "_direct_" || span.dataset.coord;
+  if (isDirect) {
+    closeSheet();
+  } else {
+    pendingMenuRequest = requestId;
+    openSheetLoading(span.dataset.noun || span.textContent);
+  }
   state.ws.send(JSON.stringify({
     t: "link_tap",
     d: {
       request_id: requestId,
       exist_id: span.dataset.existId,
       noun: span.dataset.noun || "",
+      text: span.dataset.text || span.textContent,
+      coord: span.dataset.coord || null,
     },
   }));
 });

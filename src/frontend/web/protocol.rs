@@ -235,12 +235,15 @@ pub enum ClientMessage {
     /// Resume request with the highest text seq the client has rendered
     /// (0 = fresh view).
     Resume { seq: u64 },
-    /// A tapped noun; the server issues `_menu #exist_id` upstream and the
-    /// response comes back as a `menu` message with this request_id.
+    /// A tapped link. Links with a coord (or `<d>` tags) resolve to their
+    /// default command server-side; plain links issue `_menu` upstream and
+    /// the response comes back as a `menu` message with this request_id.
     LinkTap {
         request_id: u64,
         exist_id: String,
         noun: String,
+        text: String,
+        coord: Option<String>,
     },
 }
 
@@ -267,10 +270,24 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let exist_id = msg.d.get("exist_id")?.as_str()?.to_string();
             let noun = msg.d.get("noun")?.as_str()?.to_string();
+            let text = msg
+                .d
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let coord = msg
+                .d
+                .get("coord")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             Some(ClientMessage::LinkTap {
                 request_id,
                 exist_id,
                 noun,
+                text,
+                coord,
             })
         }
         _ => None,

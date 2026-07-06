@@ -258,7 +258,7 @@ async fn link_tap_becomes_remote_event_and_menu_routes_to_requester_only() {
     let (mut other, _) = connect_and_sync(addr, 0).await;
 
     tapper
-        .send_text(r#"{"t":"link_tap","d":{"request_id":7,"exist_id":"12345","noun":"kobold"}}"#)
+        .send_text(r#"{"t":"link_tap","d":{"request_id":7,"exist_id":"12345","noun":"kobold","text":"a kobold","coord":null}}"#)
         .await;
 
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
@@ -270,6 +270,8 @@ async fn link_tap_becomes_remote_event_and_menu_routes_to_requester_only() {
         request_id,
         exist_id,
         noun,
+        text,
+        coord,
     } = event
     else {
         panic!("expected LinkTap event");
@@ -277,6 +279,22 @@ async fn link_tap_becomes_remote_event_and_menu_routes_to_requester_only() {
     assert_eq!(request_id, 7);
     assert_eq!(exist_id, "12345");
     assert_eq!(noun, "kobold");
+    assert_eq!(text, "a kobold");
+    assert_eq!(coord, None);
+
+    // A coord link (e.g. an exit) carries its coord through so the main
+    // loop can resolve the default command instead of raising a menu.
+    tapper
+        .send_text(r#"{"t":"link_tap","d":{"request_id":8,"exist_id":"-10966483","noun":"south","text":"south","coord":"2524,1864"}}"#)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::LinkTap { coord, .. } = event else {
+        panic!("expected LinkTap event");
+    };
+    assert_eq!(coord.as_deref(), Some("2524,1864"));
 
     // Simulate the core answering the tagged menu request.
     sink.push_menu(

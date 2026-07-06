@@ -84,13 +84,17 @@ pub enum RemoteDelta {
 pub enum RemoteEvent {
     /// A command typed on a remote client.
     Command(String),
-    /// A noun tapped on a remote client; the main loop issues the same
-    /// `_menu` request a local link click would, tagged with the origin.
+    /// A link tapped on a remote client. The main loop resolves it exactly
+    /// like a local click (AppCore::resolve_link_activation): `<d>` tags
+    /// and coord links become direct commands; plain links become a
+    /// `_menu` request tagged with the origin.
     LinkTap {
         client_id: u64,
         request_id: u64,
         exist_id: String,
         noun: String,
+        text: String,
+        coord: Option<String>,
     },
 }
 

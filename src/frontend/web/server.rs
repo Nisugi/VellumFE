@@ -70,20 +70,32 @@ pub async fn serve_listener(
     Ok(())
 }
 
-async fn index_html() -> Html<&'static str> {
-    Html(include_str!("assets/index.html"))
+// no-cache: assets are embedded in the binary and change with every
+// rebuild; a phone serving yesterday's cached app.js against today's
+// protocol is much worse than re-fetching a few KB.
+async fn index_html() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-cache")],
+        Html(include_str!("assets/index.html")),
+    )
 }
 
 async fn app_js() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         include_str!("assets/app.js"),
     )
 }
 
 async fn app_css() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         include_str!("assets/app.css"),
     )
 }
@@ -169,6 +181,8 @@ async fn handle_client_message(
             request_id,
             exist_id,
             noun,
+            text,
+            coord,
         } => state
             .handles
             .event_tx
@@ -177,6 +191,8 @@ async fn handle_client_message(
                 request_id,
                 exist_id,
                 noun,
+                text,
+                coord,
             })
             .is_ok(),
     }

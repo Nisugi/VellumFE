@@ -1211,21 +1211,30 @@ impl VellumGuiApp {
                     request_id,
                     exist_id,
                     noun,
+                    text,
+                    coord,
                 } => {
-                    // Same _menu request a local link click makes, but
-                    // tagged so the response routes to that client.
-                    let cmd = self.app_core.request_menu_from(
+                    // Resolved exactly like a local click: <d>/coord links
+                    // become direct commands, plain links a _menu request
+                    // tagged to route back to this client.
+                    let link = crate::data::LinkData {
                         exist_id,
                         noun,
+                        text,
+                        coord,
+                    };
+                    if let Some(cmd) = self.app_core.resolve_link_activation(
+                        &link,
                         crate::core::remote::MenuOrigin::Remote {
                             client_id,
                             request_id,
                         },
-                    );
-                    self.app_core
-                        .perf_stats
-                        .record_bytes_sent((cmd.len() + 1) as u64);
-                    let _ = self.command_tx.send(cmd);
+                    ) {
+                        self.app_core
+                            .perf_stats
+                            .record_bytes_sent((cmd.len() + 1) as u64);
+                        let _ = self.command_tx.send(cmd);
+                    }
                 }
             }
         }
