@@ -174,7 +174,9 @@ impl LauncherProfile {
                     .find(|(value, _)| *value == self.game)
                     .map(|(_, label)| *label)
                     .unwrap_or(self.game.as_str());
-                format!("{} @ {} ({})", self.character, game_label, self.account)
+                // No account name here: this list is on screen (and in
+                // screenshots) constantly — the account stays in the edit form.
+                format!("{} @ {}", self.character, game_label)
             }
             LaunchMode::Lich => {
                 if self.character.is_empty() {

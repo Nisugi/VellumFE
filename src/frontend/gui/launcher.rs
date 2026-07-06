@@ -51,6 +51,8 @@ struct EditForm {
     original_account: String,
     original_password_saved: bool,
     password: String,
+    /// Reveal the password field (eye toggle); resets with the form.
+    show_password: bool,
     save_password: bool,
     web_enabled: bool,
     web_port_text: String,
@@ -66,6 +68,7 @@ impl EditForm {
             original_account: String::new(),
             original_password_saved: false,
             password: String::new(),
+            show_password: false,
             save_password: true,
             web_enabled: false,
             web_port_text: "8484".to_string(),
@@ -80,6 +83,7 @@ impl EditForm {
             original_account: profile.account.clone(),
             original_password_saved: profile.password_saved,
             password: String::new(),
+            show_password: false,
             save_password: profile.password_saved,
             web_enabled: profile.web_port.is_some(),
             web_port_text: profile.web_port.unwrap_or(8484).to_string(),
@@ -94,6 +98,7 @@ impl EditForm {
 struct PasswordPrompt {
     profile_name: String,
     password: String,
+    show_password: bool,
     remember: bool,
 }
 
@@ -158,6 +163,7 @@ impl LauncherApp {
                         self.password_prompt = Some(PasswordPrompt {
                             profile_name: profile.name.clone(),
                             password: String::new(),
+                            show_password: false,
                             remember: true,
                         });
                     }
@@ -422,15 +428,29 @@ impl LauncherApp {
                             ui.end_row();
 
                             ui.label("Password");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut form.password)
-                                    .password(true)
-                                    .hint_text(if form.original_password_saved {
-                                        "(saved - leave blank to keep)"
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut form.password)
+                                        .password(!form.show_password)
+                                        .hint_text(if form.original_password_saved {
+                                            "(saved - leave blank to keep)"
+                                        } else {
+                                            ""
+                                        }),
+                                );
+                                let eye = if form.show_password { "🙈" } else { "👁" };
+                                if ui
+                                    .small_button(eye)
+                                    .on_hover_text(if form.show_password {
+                                        "Hide password"
                                     } else {
-                                        ""
-                                    }),
-                            );
+                                        "Show password"
+                                    })
+                                    .clicked()
+                                {
+                                    form.show_password = !form.show_password;
+                                }
+                            });
                             ui.end_row();
 
                             ui.label("");
@@ -623,15 +643,29 @@ impl LauncherApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut prompt.password)
-                        .password(true)
-                        .desired_width(220.0),
-                );
-                response.request_focus();
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    submit = true;
-                }
+                ui.horizontal(|ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut prompt.password)
+                            .password(!prompt.show_password)
+                            .desired_width(220.0),
+                    );
+                    response.request_focus();
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        submit = true;
+                    }
+                    let eye = if prompt.show_password { "🙈" } else { "👁" };
+                    if ui
+                        .small_button(eye)
+                        .on_hover_text(if prompt.show_password {
+                            "Hide password"
+                        } else {
+                            "Show password"
+                        })
+                        .clicked()
+                    {
+                        prompt.show_password = !prompt.show_password;
+                    }
+                });
                 ui.checkbox(&mut prompt.remember, "Save password")
                     .on_hover_text(help::SAVE_PASSWORD);
                 ui.horizontal(|ui| {
