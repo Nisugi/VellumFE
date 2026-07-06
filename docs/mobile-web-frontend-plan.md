@@ -41,10 +41,18 @@ Phone-side editor: action buttons can be created/edited/deleted from the
 phone (+ button on the rail → manager/editor sheets); edits persist to a
 separate `macros-local.toml` overlay merged at load, so the hand-written
 `macros.toml` is never rewritten. Hand-file buttons are read-only remotely.
-Deferred from Phase 5: menu-button (options) editing on the phone,
-`show_when` context awareness, and script-pushed macro sets; Quickbar
-reconciliation untouched. Phase 5b (session dashboard) and Phase 6
-(security) next.
+Phone editor since gained menu-button (options) editing and per-device
+long-press arranging of rail buttons and stream chips. Deferred from
+Phase 5: `show_when` context awareness and script-pushed macro sets;
+Quickbar reconciliation untouched.
+Phase 5b: `/` is the dashboard (session cards by character, browser
+health-checked, 10s refresh); the client moved to `/play`. Unpinned
+instances port-walk (+20); `pinned = true` binds exactly or fails loudly
+via a Notice system message. Pid-keyed registry files in
+`~/.vellum-fe/web-sessions/`, removed on clean shutdown, pid-liveness
+GC'd after crashes. Verified with two live instances sharing a base port.
+Phase 6 (security: pairing token, .webinfo QR, throttle) is the remaining
+planned phase.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
