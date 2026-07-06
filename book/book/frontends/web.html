@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-c827af74.js"></script>
@@ -182,31 +182,45 @@
 running session</strong>. It’s a sidecar, not a separate mode — the TUI or GUI
 keeps running on your PC, and the phone becomes a second screen and
 controller for the same character.</p>
-<blockquote>
-<p>The web frontend is under active development; details here may evolve.</p>
-</blockquote>
 <h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
 <p>In <code>config.toml</code>:</p>
 <pre><code class="language-toml">[web]
 enabled = true
 port = 8040
 bind = "0.0.0.0"   # required for phones on your LAN (default 127.0.0.1)
+pinned = false     # see "Multiple characters" below
 </code></pre>
 <p>Or one-off from the CLI: <code>--web-port 8040</code> (this enables the server but
 does <strong>not</strong> change <code>bind</code> — set that in config to reach it from a phone).</p>
-<h2 id="connecting-from-your-phone"><a class="header" href="#connecting-from-your-phone">Connecting from Your Phone</a></h2>
-<ol>
-<li>Find your PC’s LAN address (e.g. <code>192.168.1.50</code>).</li>
-<li>Open <code>http://192.168.1.50:8040/</code> in the phone browser.</li>
-<li>Optional: “Add to Home Screen” — the client is a PWA and installs like
-an app.</li>
-</ol>
+<h2 id="pairing-your-phone"><a class="header" href="#pairing-your-phone">Pairing Your Phone</a></h2>
+<p>Access requires a pairing token. In-game:</p>
+<pre><code>.webinfo
+</code></pre>
+<p>This prints the session URL (with the token included) and opens a QR code
+in your browser — scan it with the phone. One pairing covers all your
+characters; the phone remembers the token, so this is a one-time step per
+device. Unpaired connections are refused, and repeated bad attempts are
+locked out temporarily.</p>
 <blockquote>
-<p><strong>Security</strong>: there is <strong>no authentication yet</strong> — anyone who can reach
-the port controls your character. Keep the default <code>127.0.0.1</code> bind
-unless you’re on a trusted LAN, and use Tailscale/WireGuard for off-LAN
-play. Never port-forward it to the internet.</p>
+<p><strong>Security</strong>: pairing keeps strangers out, but the traffic is plain
+HTTP on your LAN. For off-LAN play use Tailscale/WireGuard — never
+expose the port to the open internet.</p>
 </blockquote>
+<h2 id="the-dashboard"><a class="header" href="#the-dashboard">The Dashboard</a></h2>
+<ul>
+<li><code>/</code> is a <strong>dashboard</strong>: one card per running character session, health-
+checked and auto-refreshing — tap a card to play it.</li>
+<li><code>/play</code> is the game client itself.</li>
+<li>“Add to Home Screen” works — the client is a PWA and installs like an app.</li>
+</ul>
+<h2 id="multiple-characters"><a class="header" href="#multiple-characters">Multiple Characters</a></h2>
+<p>Run several VellumFE instances and they share the web setup automatically:
+each instance walks upward from the base port to find a free one, and all
+of them appear on the dashboard. If you want a specific character to have
+a <strong>stable port</strong> (for a direct <code>/play</code> bookmark), set <code>pinned = true</code> in
+that character’s profile config — it then binds exactly that port or
+disables web for the session with a loud warning, never a silent neighbor
+port.</p>
 <h2 id="what-you-can-do-from-the-phone"><a class="header" href="#what-you-can-do-from-the-phone">What You Can Do from the Phone</a></h2>
 <ul>
 <li><strong>Read the game</strong> live, with streams as filter chips (unread badges;
@@ -216,11 +230,15 @@ including dot-commands and command history shared both ways.</li>
 <li><strong>Tap links and nouns</strong> — context menus open in a bottom sheet; tap
 exits in the room bar to move.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
+<li><strong>Active effects</strong> — buffs/debuffs as pills on phones, a sidebar on
+tablets.</li>
+<li><strong>Adjust text size</strong> — the <strong>Aa</strong> control resizes story text, remembered
+per device.</li>
 <li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable floating
 buttons defined in <a href="../configuration/macros-toml.html">macros.toml</a>.</li>
-<li><strong>Create macros on the phone</strong> — the rail’s <strong>+</strong> button; phone-created
-buttons are saved server-side (<code>macros-local.toml</code>) and survive
-restarts. Hand-written buttons are read-only from the phone.</li>
+<li><strong>Create and edit macros on the phone</strong> — the rail’s <strong>+</strong> button;
+phone-created buttons are saved server-side (<code>macros-local.toml</code>) and
+survive restarts. Hand-written buttons are read-only from the phone.</li>
 <li><strong>Reconnect gracefully</strong> — on reconnect the client resumes where it left
 off, with a “missed output” marker if the gap was long. Multiple phones
 can connect at once.</li>
@@ -230,6 +248,9 @@ can connect at once.</li>
 <li>After editing <code>macros.toml</code> on the PC, run <code>.reloadmacros</code> — connected
 phones update instantly.</li>
 <li>The wake-lock toggle in the phone UI keeps the screen on while hunting.</li>
+<li>If the phone can’t connect at all, check <code>bind</code> — the default
+<code>127.0.0.1</code> is reachable only from the PC itself; <code>.webinfo</code> warns
+about this.</li>
 </ul>
 
                     </main>

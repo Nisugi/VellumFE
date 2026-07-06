@@ -82,3 +82,4 @@ command `quit` also saves your settings on the way out.)
 | `.containers` | | Toggle container discovery (LOOK IN a container spawns a window for it) |
 | `.hidecontainers [title]` | | Close container windows (all, or one by title) |
 | `.reloadmacros` | | Reload macros.toml and push to connected phones |
+| `.webinfo` | | Show the phone pairing URL and open its QR code |

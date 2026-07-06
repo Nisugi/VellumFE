@@ -126,13 +126,17 @@ session. Off by default; see [Mobile Web](../frontends/web.md).
 ```toml
 [web]
 enabled = false
-port = 8040
+port = 8040           # base port; instances walk upward unless pinned
 bind = "127.0.0.1"    # set "0.0.0.0" to allow phones on your LAN
+pinned = false        # true = bind exactly this port or fail loudly
 ```
 
-> **Security**: there is no authentication yet. Only bind to `0.0.0.0` on a
-> trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose the
-> port to the open internet.
+Phones must pair once via a token — run `.webinfo` in-game for the URL
+and QR code.
+
+> **Security**: pairing keeps strangers out, but keep the port on a
+> trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose it
+> to the open internet.
 
 ## Quickbars
 

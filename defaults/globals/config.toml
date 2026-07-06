@@ -380,6 +380,8 @@ layout_mappings = []
 #
 # The --web-port CLI flag enables the server and overrides the port.
 #
+# Phones pair once via a token: run .webinfo in-game for the URL + QR.
+#
 # Multiple characters: each instance serves its own session. An unpinned
 # instance starts at `port` and walks upward if it is taken, and every
 # instance serves the session dashboard at / (pick a character by name;

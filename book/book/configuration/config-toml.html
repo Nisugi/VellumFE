@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2dbd0703.js";
+            window.path_to_searchindex_js = "../searchindex-67354920.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-c827af74.js"></script>
@@ -281,13 +281,16 @@ speak_main = false              # Usually too noisy
 session. Off by default; see <a href="../frontends/web.html">Mobile Web</a>.</p>
 <pre><code class="language-toml">[web]
 enabled = false
-port = 8040
+port = 8040           # base port; instances walk upward unless pinned
 bind = "127.0.0.1"    # set "0.0.0.0" to allow phones on your LAN
+pinned = false        # true = bind exactly this port or fail loudly
 </code></pre>
+<p>Phones must pair once via a token — run <code>.webinfo</code> in-game for the URL
+and QR code.</p>
 <blockquote>
-<p><strong>Security</strong>: there is no authentication yet. Only bind to <code>0.0.0.0</code> on a
-trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose the
-port to the open internet.</p>
+<p><strong>Security</strong>: pairing keeps strangers out, but keep the port on a
+trusted LAN; for off-LAN play use Tailscale/WireGuard. Never expose it
+to the open internet.</p>
 </blockquote>
 <h2 id="quickbars"><a class="header" href="#quickbars">Quickbars</a></h2>
 <p>Define custom quickbar windows that send commands:</p>

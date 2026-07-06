@@ -1,6 +1,8 @@
 # Mobile Web Frontend — Implementation Plan
 
-Status: in progress — Phases 0, 1, and 2 complete.
+Status: complete — all planned phases (0–6, incl. 5b) shipped. Remaining
+work is iteration from real play, the deferred sketches noted below, and
+optional Phase 7. User guide: book/src/frontends/web.md.
 Phase 0: serde derives + round-trip test, Color CSS-hex serde, `[web]` config +
 `--web-port` flag, axum dependency.
 Phase 1: remote ring buffer (`data/remote_buffer.rs`) + `RemoteSink` tap in core,
