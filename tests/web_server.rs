@@ -172,6 +172,17 @@ async fn health_and_static_assets_are_served() {
 
     let css = http_get(addr, "/app.css").await;
     assert!(css.contains("text/css"));
+
+    // PWA shell (Phase 4)
+    let manifest = http_get(addr, "/manifest.webmanifest").await;
+    assert!(manifest.contains("application/manifest+json"));
+    assert!(manifest.contains("\"display\": \"standalone\""));
+
+    let sw = http_get(addr, "/sw.js").await;
+    assert!(sw.contains("text/javascript"));
+
+    let icon = http_get(addr, "/icon.svg").await;
+    assert!(icon.contains("image/svg+xml"));
 }
 
 #[tokio::test]

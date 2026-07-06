@@ -1,25 +1,45 @@
-// VellumFE web client v0 — read-only viewer.
+// VellumFE web client — Phase 4 mobile UI.
 // Protocol: JSON envelopes { v, seq, t, d } over /ws. See
 // docs/mobile-web-frontend-plan.md and src/frontend/web/protocol.rs.
 
-const MAX_LINES = 2000;
-// v0 shows the main story stream; other streams arrive but are skipped.
-const VISIBLE_STREAMS = new Set(["main"]);
+const MAX_BUFFER_LINES = 2000; // per stream, mirrors the server ring
+const MAX_DOM_LINES = 1000;    // rendered at once in the pane
+const HISTORY_KEY = "vellum-web-history";
+const HISTORY_MAX = 50;
+
+// Streams shown as chips. Anything not listed gets a chip with its raw id;
+// streams in HIDDEN_STREAMS never render (duplicates of main, or data that
+// feeds dedicated widgets rather than prose).
+const STREAM_LABELS = {
+  main: "Story",
+  thoughts: "Thoughts",
+  familiar: "Familiar",
+  death: "Deaths",
+  logons: "Arrivals",
+};
+const HIDDEN_STREAMS = new Set([
+  "room", "inv", "spells", "percWindow", "bounty", "society", "assess",
+  "speech", "whisper", "talk", "experience",
+]);
 
 const pane = document.getElementById("text-pane");
+const chipsBar = document.getElementById("chips");
 const roomNameEl = document.getElementById("room-name");
 const connEl = document.getElementById("conn");
 const rtFill = document.getElementById("rt-fill");
 const rtLabel = document.getElementById("rt-label");
+const handLeftEl = document.getElementById("hand-left");
+const handRightEl = document.getElementById("hand-right");
+const indicatorsEl = document.getElementById("indicators");
 
 const state = {
-  lastSeq: 0,          // highest text seq rendered (the resume cursor)
+  lastSeq: 0,          // highest text seq seen (the resume cursor)
   session: null,       // server process id; seqs restart when it changes
   ws: null,
   clockOffset: 0,      // serverTime - localTime, seconds
-  rtEnd: null,         // roundtime end, server seconds
-  ctEnd: null,         // casttime end, server seconds
-  rtTotal: 0,          // duration of current RT for the progress bar
+  rtEnd: null,
+  ctEnd: null,
+  rtTotal: 0,
   reconnectDelay: 1000,
 };
 
@@ -32,6 +52,57 @@ function setConnected(up) {
   connEl.className = "conn " + (up ? "conn-up" : "conn-down");
 }
 
+// ---- Per-stream buffers and chips ---------------------------------------
+
+const buffers = new Map(); // stream -> { lines: [], unread: 0, chip, badge }
+let activeStream = "main";
+
+function ensureStream(stream) {
+  let buf = buffers.get(stream);
+  if (buf) return buf;
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "chip";
+  const label = document.createElement("span");
+  label.textContent = STREAM_LABELS[stream] || stream;
+  const badge = document.createElement("span");
+  badge.className = "chip-badge";
+  badge.hidden = true;
+  chip.append(label, badge);
+  chip.addEventListener("click", () => setActiveStream(stream));
+  // Keep Story first, everything else in arrival order.
+  chipsBar.appendChild(chip);
+  buf = { lines: [], unread: 0, chip, badge };
+  buffers.set(stream, buf);
+  updateChips();
+  return buf;
+}
+
+function updateChips() {
+  // Chips bar is pointless with only the story stream.
+  chipsBar.hidden = buffers.size <= 1;
+  for (const [stream, buf] of buffers) {
+    buf.chip.classList.toggle("chip-active", stream === activeStream);
+    buf.badge.hidden = buf.unread === 0;
+    buf.badge.textContent = buf.unread > 99 ? "99+" : String(buf.unread);
+  }
+}
+
+function setActiveStream(stream) {
+  activeStream = stream;
+  const buf = ensureStream(stream);
+  buf.unread = 0;
+  pendingLines.length = 0;
+  const frag = document.createDocumentFragment();
+  for (const line of buf.lines.slice(-MAX_DOM_LINES)) frag.appendChild(renderLine(line));
+  pane.replaceChildren(frag);
+  autoScroll = true;
+  scrollToBottom();
+  updateChips();
+}
+
+// ---- Text pane rendering -------------------------------------------------
+
 function atBottom() {
   return pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 40;
 }
@@ -43,7 +114,7 @@ function scrollToBottom() {
 // Autoscroll stickiness is an explicit flag updated on scroll events, not
 // re-measured per append: measuring mid-flood reads a stale layout and
 // unsticks. The user scrolling up disables it; returning to the bottom
-// (or a snapshot reset) re-enables it.
+// (or a snapshot reset / stream switch) re-enables it.
 let autoScroll = true;
 pane.addEventListener("scroll", () => {
   autoScroll = atBottom();
@@ -75,10 +146,9 @@ function renderLine(line) {
   return div;
 }
 
-// Incoming lines are queued and rendered once per animation frame as a
-// single fragment. Per-line appends force two layout flushes each, which
-// floods the main thread when output scrolls fast (e.g. held-down LOOK)
-// and breaks autoscroll.
+// Incoming lines for the active stream are queued and rendered once per
+// animation frame as a single fragment (per-line appends flood the main
+// thread under fast output and break autoscroll).
 const pendingLines = [];
 let renderScheduled = false;
 
@@ -89,7 +159,7 @@ function flushPendingLines() {
   for (const line of pendingLines) frag.appendChild(renderLine(line));
   pendingLines.length = 0;
   pane.appendChild(frag);
-  while (pane.childElementCount > MAX_LINES) pane.firstChild.remove();
+  while (pane.childElementCount > MAX_DOM_LINES) pane.firstChild.remove();
   if (autoScroll) scrollToBottom();
 }
 
@@ -102,10 +172,27 @@ function scheduleRender() {
 function appendText(seq, stream, line) {
   if (seq <= state.lastSeq) return; // duplicate (snapshot/delta overlap)
   state.lastSeq = seq;
-  if (!VISIBLE_STREAMS.has(stream)) return;
-  pendingLines.push(line);
-  scheduleRender();
+  if (HIDDEN_STREAMS.has(stream)) return;
+  const buf = ensureStream(stream);
+  buf.lines.push(line);
+  if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
+  if (stream === activeStream) {
+    pendingLines.push(line);
+    scheduleRender();
+  } else {
+    buf.unread += 1;
+    updateChips();
+  }
 }
+
+function appendMarker(text) {
+  const div = document.createElement("div");
+  div.className = "line marker";
+  div.textContent = text;
+  pane.appendChild(div);
+}
+
+// ---- Status chrome -------------------------------------------------------
 
 function setVitals(v) {
   for (const [key, id] of [
@@ -142,6 +229,36 @@ function setRoom(room) {
   }
 }
 
+function setHands(d) {
+  handLeftEl.textContent = d.left || "—";
+  handRightEl.textContent = d.right || "—";
+  handLeftEl.classList.toggle("empty", !d.left);
+  handRightEl.classList.toggle("empty", !d.right);
+}
+
+const INDICATOR_BADGES = [
+  ["dead", "DEAD", "ind-red"],
+  ["stunned", "STUN", "ind-yellow"],
+  ["bleeding", "BLEED", "ind-red"],
+  ["webbed", "WEB", "ind-yellow"],
+  ["hidden", "HIDDEN", "ind-dim"],
+  ["invisible", "INVIS", "ind-dim"],
+  ["kneeling", "KNEEL", "ind-dim"],
+  ["sitting", "SIT", "ind-dim"],
+  ["prone", "PRONE", "ind-yellow"],
+];
+
+function setIndicators(d) {
+  indicatorsEl.replaceChildren();
+  for (const [key, label, cls] of INDICATOR_BADGES) {
+    if (!d[key]) continue;
+    const span = document.createElement("span");
+    span.className = `ind ${cls}`;
+    span.textContent = label;
+    indicatorsEl.appendChild(span);
+  }
+}
+
 function setRt(rt) {
   if (typeof rt.server_time === "number" && rt.server_time > 0) {
     state.clockOffset = rt.server_time - Date.now() / 1000;
@@ -167,22 +284,26 @@ function tickRt() {
   }
 }
 
-function appendMarker(text) {
-  const div = document.createElement("div");
-  div.className = "line marker";
-  div.textContent = text;
-  pane.appendChild(div);
-}
+// ---- Message handling ----------------------------------------------------
 
 function handleSnapshot(d) {
   // mode: "full" = fresh view; "resume" = only lines newer than our
   // cursor (keep the pane); "gap" = lines were evicted before we could
   // resume (keep the pane, mark the hole).
   if (d.mode === "full") {
-    pane.replaceChildren();
     state.lastSeq = 0;
     pendingLines.length = 0;
+    for (const [stream, buf] of buffers) {
+      buf.lines.length = 0;
+      buf.unread = 0;
+      if (stream !== "main") {
+        buf.chip.remove();
+        buffers.delete(stream);
+      }
+    }
+    pane.replaceChildren();
     autoScroll = true;
+    updateChips();
   } else if (d.mode === "gap") {
     appendMarker("— missed output —");
   }
@@ -190,6 +311,8 @@ function handleSnapshot(d) {
   flushPendingLines();
   setVitals(d.vitals);
   setRoom(d.room);
+  setHands(d.hands || {});
+  setIndicators(d.indicators || {});
   setRt(d.rt);
   if (autoScroll) scrollToBottom();
 }
@@ -211,11 +334,10 @@ function handleMessage(msg) {
     case "text": appendText(msg.seq, msg.d.stream, msg.d.line); break;
     case "vitals": setVitals(msg.d); break;
     case "room": setRoom(msg.d); break;
+    case "hands": setHands(msg.d); break;
+    case "indicators": setIndicators(msg.d); break;
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
-    case "hands":
-    case "indicators":
-      break; // rendered in a later phase
     default:
       console.debug("unknown message type", msg.t);
   }
@@ -245,10 +367,7 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// ---- Noun-tap bottom-sheet menu ----------------------------------------
-// Tapping a noun sends link_tap; the server issues `_menu` upstream and
-// the response comes back (to this client only) as a `menu` message. A
-// pick just sends the item's ready-made game command via `cmd`.
+// ---- Bottom sheet (noun menus + local pickers) ---------------------------
 
 const sheet = document.getElementById("sheet");
 const sheetBackdrop = document.getElementById("sheet-backdrop");
@@ -266,26 +385,45 @@ function closeSheet() {
   clearTimeout(sheetTimeout);
 }
 
-function openSheetLoading(noun) {
-  sheetTitle.textContent = noun;
+function openSheet(title) {
+  sheetTitle.textContent = title;
   sheetItems.replaceChildren();
-  const loading = document.createElement("div");
-  loading.className = "sheet-empty";
-  loading.textContent = "…";
-  sheetItems.appendChild(loading);
   sheet.hidden = false;
   sheetBackdrop.hidden = false;
+}
+
+function sheetNote(text, dismisses) {
+  const div = document.createElement("div");
+  div.className = "sheet-empty";
+  div.textContent = text;
+  if (dismisses) div.addEventListener("click", closeSheet);
+  sheetItems.appendChild(div);
+  return div;
+}
+
+function sheetButton(text, onPick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "sheet-item";
+  btn.textContent = text;
+  btn.addEventListener("click", () => {
+    onPick();
+    closeSheet();
+  });
+  sheetItems.appendChild(btn);
+  return btn;
+}
+
+function openSheetLoading(noun) {
+  openSheet(noun);
+  sheetNote("…", false);
   // Never leave the sheet spinning if the response is lost (disconnect,
   // stale request id, server restart).
   clearTimeout(sheetTimeout);
   sheetTimeout = setTimeout(() => {
     if (!sheet.hidden && pendingMenuRequest !== null) {
       sheetItems.replaceChildren();
-      const empty = document.createElement("div");
-      empty.className = "sheet-empty";
-      empty.textContent = "No response — tap to dismiss";
-      empty.addEventListener("click", closeSheet);
-      sheetItems.appendChild(empty);
+      sheetNote("No response — tap to dismiss", true);
     }
   }, 5000);
 }
@@ -299,6 +437,7 @@ document.addEventListener("click", (ev) => {
   if (sheet.hidden) return;
   if (ev.target.closest("#sheet")) return;
   if (ev.target.closest("span.link")) return;
+  if (ev.target.closest("#repeat-btn")) return; // long-press opens history
   closeSheet();
 });
 
@@ -344,37 +483,157 @@ function handleMenu(d) {
     }
     // Defense in depth: never execute client-internal sentinels.
     if (!item.command || /^(__|action:|menu:)/.test(item.command)) continue;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "sheet-item";
-    btn.textContent = item.text;
-    btn.addEventListener("click", () => {
-      sendCommand(item.command);
-      closeSheet();
-    });
-    sheetItems.appendChild(btn);
+    sheetButton(item.text, () => sendCommand(item.command));
     rendered += 1;
   }
-  if (rendered === 0) {
-    const empty = document.createElement("div");
-    empty.className = "sheet-empty";
-    empty.textContent = "No actions available";
-    sheetItems.appendChild(empty);
-  }
+  if (rendered === 0) sheetNote("No actions available", true);
 }
 
-// Command input: sends through the same core path as locally typed
-// commands. The echo comes back over the text stream, so we don't render
-// anything locally.
+// ---- Command input, repeat, history ---------------------------------------
+
 const inputForm = document.getElementById("input-row");
 const cmdInput = document.getElementById("cmd-input");
+const repeatBtn = document.getElementById("repeat-btn");
+
+let history = [];
+try {
+  history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+} catch { /* corrupted storage — start fresh */ }
+
+function recordHistory(text) {
+  if (history[0] === text) return;
+  history.unshift(text);
+  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch { /* storage full/blocked — history just won't persist */ }
+}
+
+// The echo comes back over the text stream, so nothing renders locally.
 inputForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = cmdInput.value.trim();
   if (!text) return;
   sendCommand(text);
+  recordHistory(text);
   cmdInput.value = "";
 });
 
+// Repeat button: tap = resend last command; hold = history sheet.
+let repeatHold = null;
+let repeatHeld = false;
+repeatBtn.addEventListener("pointerdown", () => {
+  repeatHeld = false;
+  repeatHold = setTimeout(() => {
+    repeatHeld = true;
+    openSheet("History");
+    if (!history.length) {
+      sheetNote("No commands yet", true);
+      return;
+    }
+    for (const cmd of history) {
+      sheetButton(cmd, () => {
+        sendCommand(cmd);
+        recordHistory(cmd);
+      });
+    }
+  }, 450);
+});
+repeatBtn.addEventListener("pointerup", () => clearTimeout(repeatHold));
+repeatBtn.addEventListener("pointerleave", () => clearTimeout(repeatHold));
+repeatBtn.addEventListener("click", () => {
+  if (repeatHeld) return; // the hold already opened the history sheet
+  if (history[0]) sendCommand(history[0]);
+});
+
+// Hardware keyboard: up/down arrows browse history in the input field.
+let historyIndex = -1;
+cmdInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowUp") {
+    if (historyIndex < history.length - 1) historyIndex += 1;
+    if (history[historyIndex]) cmdInput.value = history[historyIndex];
+    ev.preventDefault();
+  } else if (ev.key === "ArrowDown") {
+    historyIndex -= 1;
+    if (historyIndex < 0) {
+      historyIndex = -1;
+      cmdInput.value = "";
+    } else {
+      cmdInput.value = history[historyIndex] || "";
+    }
+    ev.preventDefault();
+  } else {
+    historyIndex = -1;
+  }
+});
+
+// ---- Soft keyboard / viewport --------------------------------------------
+
+// Pin the app to the *visual* viewport so the soft keyboard never covers
+// the input bar (iOS Safari doesn't resize the layout viewport).
+const vv = window.visualViewport;
+function syncViewport() {
+  if (!vv) return;
+  document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+  if (autoScroll) scrollToBottom();
+}
+if (vv) {
+  vv.addEventListener("resize", syncViewport);
+  vv.addEventListener("scroll", syncViewport);
+  syncViewport();
+}
+
+// ---- Screen wake lock ------------------------------------------------------
+
+const wakeBtn = document.getElementById("wake-btn");
+let wakeLock = null;
+let wakeWanted = false;
+
+async function acquireWakeLock() {
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+      wakeBtn.classList.toggle("wake-on", wakeWanted);
+    });
+  } catch {
+    wakeWanted = false;
+  }
+  wakeBtn.classList.toggle("wake-on", wakeWanted);
+}
+
+if ("wakeLock" in navigator) {
+  wakeBtn.addEventListener("click", () => {
+    wakeWanted = !wakeWanted;
+    if (wakeWanted) {
+      acquireWakeLock();
+    } else {
+      wakeLock?.release();
+      wakeLock = null;
+      wakeBtn.classList.remove("wake-on");
+    }
+  });
+  // The lock drops when the tab is backgrounded; re-acquire on return.
+  document.addEventListener("visibilitychange", () => {
+    if (wakeWanted && document.visibilityState === "visible" && !wakeLock) {
+      acquireWakeLock();
+    }
+  });
+} else {
+  wakeBtn.hidden = true;
+}
+
+// ---- PWA -------------------------------------------------------------------
+
+// Service workers need a secure context; over plain LAN HTTP this silently
+// does nothing (Add to Home Screen still works via the manifest).
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+// ---- Boot ------------------------------------------------------------------
+
+ensureStream("main");
+setActiveStream("main");
 setInterval(tickRt, 100);
 connect();

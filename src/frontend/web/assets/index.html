@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#111318">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vellum">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <title>VellumFE</title>
   <link rel="stylesheet" href="/app.css">
 </head>
@@ -11,15 +18,21 @@
   <div id="app">
     <header id="topbar">
       <span id="room-name">&mdash;</span>
-      <span id="conn" class="conn conn-down">connecting&hellip;</span>
+      <span id="topbar-right">
+        <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
+        <span id="conn" class="conn conn-down">connecting&hellip;</span>
+      </span>
     </header>
+    <nav id="chips"></nav>
     <main id="text-pane"></main>
     <footer id="bottombar">
-      <form id="input-row" autocomplete="off">
-        <input id="cmd-input" type="text" autocomplete="off" autocapitalize="off"
-               autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="command&hellip;">
-        <button id="cmd-send" type="submit">&#10148;</button>
-      </form>
+      <div id="status-row">
+        <span id="hands">
+          <span class="hand"><span class="hand-tag">L</span><span id="hand-left">&mdash;</span></span>
+        <span class="hand"><span class="hand-tag">R</span><span id="hand-right">&mdash;</span></span>
+        </span>
+        <span id="indicators"></span>
+      </div>
       <div id="rt-row">
         <div id="rt-bar"><div id="rt-fill"></div></div>
         <span id="rt-label"></span>
@@ -30,6 +43,13 @@
         <div class="vital" id="v-stamina"><div class="vital-fill"></div><span class="vital-label">ST</span></div>
         <div class="vital" id="v-spirit"><div class="vital-fill"></div><span class="vital-label">SP</span></div>
       </div>
+      <form id="input-row" autocomplete="off">
+        <input id="cmd-input" type="text" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="command&hellip;">
+        <button id="repeat-btn" type="button" aria-label="Repeat last command (hold for history)"
+                title="Repeat last command (hold for history)">&#8635;</button>
+        <button id="cmd-send" type="submit" aria-label="Send">&#10148;</button>
+      </form>
     </footer>
   </div>
   <div id="sheet-backdrop" hidden></div>

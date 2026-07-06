@@ -61,6 +61,9 @@ pub async fn serve_listener(
         .route("/", get(index_html))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/sw.js", get(sw_js))
+        .route("/icon.svg", get(icon_svg))
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
@@ -97,6 +100,36 @@ async fn app_css() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-cache"),
         ],
         include_str!("assets/app.css"),
+    )
+}
+
+async fn manifest() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/manifest.webmanifest"),
+    )
+}
+
+async fn sw_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/sw.js"),
+    )
+}
+
+async fn icon_svg() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "max-age=86400"),
+        ],
+        include_str!("assets/icon.svg"),
     )
 }
 

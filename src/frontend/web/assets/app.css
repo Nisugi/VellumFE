@@ -28,7 +28,9 @@ html, body {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* Pinned to the visual viewport (set from JS) so the soft keyboard
+     never covers the input bar; falls back to full height. */
+  height: var(--vvh, 100%);
   /* Keep chrome clear of notches / home indicators when installed as PWA */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -71,9 +73,77 @@ html, body {
   background: var(--fg-dim);
 }
 
+#topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .conn { font-size: 11px; }
 .conn-up { color: #6fbf73; }
 .conn-down { color: var(--hp); }
+
+#wake-btn {
+  padding: 2px 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+#wake-btn.wake-on {
+  color: var(--st);
+  border-color: var(--st);
+}
+
+/* Stream chips */
+#chips {
+  display: flex;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+#chips::-webkit-scrollbar { display: none; }
+
+#chips[hidden] { display: none; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+}
+
+.chip-active {
+  color: var(--fg);
+  background: var(--border);
+}
+
+.chip-badge {
+  min-width: 16px;
+  padding: 0 4px;
+  background: var(--hp);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+
+.chip-badge[hidden] { display: none; }
 
 #text-pane {
   flex: 1;
@@ -98,10 +168,72 @@ html, body {
   padding: 6px 10px 8px;
 }
 
+/* Hands + status indicators */
+#status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  min-height: 16px;
+}
+
+#hands {
+  display: flex;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.hand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hand-tag {
+  color: var(--fg-dim);
+  font-weight: bold;
+}
+
+.hand .empty { color: var(--fg-dim); }
+
+#indicators {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.ind {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.ind-red { background: var(--hp); color: #fff; }
+.ind-yellow { background: var(--st); color: #0b0d10; }
+.ind-dim { background: var(--border); color: var(--fg); }
+
 #input-row {
   display: flex;
   gap: 6px;
-  margin-bottom: 6px;
+}
+
+#repeat-btn {
+  padding: 0 12px;
+  background: var(--border);
+  color: var(--fg);
+  border: none;
+  border-radius: 6px;
+  font-size: 17px;
+}
+
+#repeat-btn:active {
+  background: var(--fg-dim);
 }
 
 #cmd-input {
@@ -273,6 +405,7 @@ html, body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
+  margin-bottom: 6px;
 }
 
 .vital {
