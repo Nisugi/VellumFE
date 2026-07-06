@@ -39,6 +39,33 @@ static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
 struct WebState {
     handles: RemoteServerHandles,
+    /// Pairing token every WS connection must present first.
+    auth_token: String,
+    /// Timestamps of recent auth failures, for throttling.
+    auth_failures: std::sync::Mutex<Vec<std::time::Instant>>,
+}
+
+/// After this many failures inside AUTH_WINDOW, reject connections until
+/// the window drains.
+const AUTH_MAX_FAILURES: usize = 5;
+const AUTH_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long a client gets to present its token.
+const AUTH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+impl WebState {
+    fn auth_locked_out(&self) -> bool {
+        let mut failures = self.auth_failures.lock().expect("auth lock poisoned");
+        let now = std::time::Instant::now();
+        failures.retain(|t| now.duration_since(*t) < AUTH_WINDOW);
+        failures.len() >= AUTH_MAX_FAILURES
+    }
+
+    fn record_auth_failure(&self) {
+        self.auth_failures
+            .lock()
+            .expect("auth lock poisoned")
+            .push(std::time::Instant::now());
+    }
 }
 
 /// How many ports above the base an unpinned instance will try.
@@ -105,8 +132,19 @@ pub async fn serve(
     // list sessions by character. Best-effort; the dashboard also
     // health-checks each port, so a stale entry only costs a hidden card.
     registry::write_entry(bound_port, &session_label);
+    let _ = handles.bound_port.set(bound_port);
 
-    serve_listener(listener, handles).await
+    let auth_token = match crate::config::Config::load_or_create_web_token() {
+        Ok(token) => token,
+        Err(e) => {
+            let message = format!("Web server disabled: pairing token unavailable ({e:#})");
+            tracing::error!("{message}");
+            let _ = handles.event_tx.send(RemoteEvent::Notice(message.clone()));
+            anyhow::bail!(message);
+        }
+    };
+
+    serve_listener_with_token(listener, handles, auth_token).await
 }
 
 /// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
@@ -193,12 +231,18 @@ pub mod registry {
     }
 }
 
-/// Serve on an already-bound listener (integration tests bind port 0).
-pub async fn serve_listener(
+/// Serve on an already-bound listener with a fixed token (integration
+/// tests bind port 0 and pass a known token).
+pub async fn serve_listener_with_token(
     listener: tokio::net::TcpListener,
     handles: RemoteServerHandles,
+    auth_token: String,
 ) -> Result<()> {
-    let state = Arc::new(WebState { handles });
+    let state = Arc::new(WebState {
+        handles,
+        auth_token,
+        auth_failures: std::sync::Mutex::new(Vec::new()),
+    });
     let router = Router::new()
         .route("/", get(dashboard_html))
         .route("/play", get(index_html))
@@ -366,6 +410,8 @@ async fn handle_client_message(
     msg: ClientMessage,
 ) -> bool {
     match msg {
+        // Already authenticated; a stray re-auth is harmless.
+        ClientMessage::Auth { .. } => true,
         ClientMessage::Cmd { text } => {
             // Forward into the main loop; it runs the same path as local
             // input. Send fails only if the app is shutting down.
@@ -431,7 +477,40 @@ async fn handle_client_message(
     }
 }
 
+/// The pairing gate: the very first message must be `auth { token }`.
+/// Wrong/missing token or an active lockout gets a `denied` message and
+/// a closed socket. Returns true when the client may proceed.
+async fn authenticate(socket: &mut WebSocket, state: &WebState) -> bool {
+    // Read the first message even when locked out: closing with unread
+    // bytes in the receive buffer RSTs the connection on Windows and the
+    // client never sees the denied frame.
+    let first = tokio::time::timeout(AUTH_WAIT, socket.recv()).await;
+    if state.auth_locked_out() {
+        tracing::warn!("web auth locked out; dropping connection");
+        let _ = socket.send(Message::Text(protocol::denied().into())).await;
+        return false;
+    }
+    let ok = matches!(
+        first,
+        Ok(Some(Ok(Message::Text(ref text))))
+            if matches!(
+                protocol::parse_client_message(text),
+                Some(ClientMessage::Auth { ref token }) if *token == state.auth_token
+            )
+    );
+    if !ok {
+        state.record_auth_failure();
+        tracing::warn!("web client failed pairing auth");
+        let _ = socket.send(Message::Text(protocol::denied().into())).await;
+    }
+    ok
+}
+
 async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
+    if !authenticate(&mut socket, &state).await {
+        return;
+    }
+
     let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
 
     // Subscribe BEFORE building any snapshot so no delta can fall in the

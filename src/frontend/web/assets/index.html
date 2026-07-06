@@ -60,6 +60,16 @@
       </form>
     </footer>
   </div>
+  <div id="pair-overlay" hidden>
+    <form id="pair-form">
+      <h2>Pair with VellumFE</h2>
+      <p>Run <code>.webinfo</code> in Vellum and scan the QR code, or type
+         the pairing token here.</p>
+      <input id="pair-token" type="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="pairing token">
+      <button type="submit">Connect</button>
+    </form>
+  </div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" hidden>
     <div id="sheet-titlebar">

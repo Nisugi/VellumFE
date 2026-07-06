@@ -233,9 +233,17 @@ pub fn macros(m: &RemoteMacros, seq: u64) -> String {
     encode("macros", seq, m)
 }
 
+/// Sent right before closing an unauthenticated connection, so the client
+/// can show its pairing prompt instead of retry-looping.
+pub fn denied() -> String {
+    encode("denied", 0, serde_json::json!({}))
+}
+
 /// Messages a client may send. Unknown types are ignored (forward compat).
 #[derive(Debug, PartialEq)]
 pub enum ClientMessage {
+    /// Pairing token; must be the first message on every connection.
+    Auth { token: String },
     /// A typed command destined for the game (or a dot-command).
     Cmd { text: String },
     /// Resume request with the highest text seq the client has rendered
@@ -289,6 +297,10 @@ struct RawClientMessage {
 pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
     let msg: RawClientMessage = serde_json::from_str(raw).ok()?;
     match msg.t.as_str() {
+        "auth" => {
+            let token = msg.d.get("token")?.as_str()?.to_string();
+            Some(ClientMessage::Auth { token })
+        }
         "cmd" => {
             let text = msg.d.get("text")?.as_str()?.to_string();
             Some(ClientMessage::Cmd { text })

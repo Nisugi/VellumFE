@@ -534,6 +534,52 @@ html, body {
   margin: 2px 0;
 }
 
+/* Pairing prompt */
+#pair-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+#pair-overlay[hidden] { display: none; }
+
+#pair-form {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#pair-form h2 { color: var(--st); font-size: 18px; }
+#pair-form p { color: var(--fg-dim); font-size: 13px; line-height: 1.5; }
+#pair-form code { color: var(--fg); }
+
+#pair-form input {
+  padding: 10px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+}
+
+#pair-form button {
+  padding: 10px;
+  background: var(--border);
+  color: var(--fg);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+}
+
 /* Tappable nouns (game links) */
 .line .link {
   text-decoration: underline dotted;

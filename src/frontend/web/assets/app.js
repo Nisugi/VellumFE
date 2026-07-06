@@ -95,6 +95,43 @@ function setConnected(up) {
   connEl.className = "conn " + (up ? "conn-up" : "conn-down");
 }
 
+// ---- Pairing token ---------------------------------------------------------
+// The token arrives via the .webinfo URL fragment (#token=...) on first
+// visit and persists in localStorage. Sent as the first WS message; a
+// `denied` reply opens the pairing prompt instead of retry-looping.
+
+const TOKEN_KEY = "vellum-token";
+
+function loadToken() {
+  const match = location.hash.match(/token=([0-9a-f]+)/i);
+  if (match) {
+    try {
+      localStorage.setItem(TOKEN_KEY, match[1]);
+    } catch { /* private mode — works for this visit only */ }
+    // Don't leave the token sitting in the address bar / history.
+    history.replaceState(null, "", location.pathname);
+    return match[1];
+  }
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+let pairingToken = loadToken();
+let authDenied = false;
+
+const pairOverlay = document.getElementById("pair-overlay");
+document.getElementById("pair-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const token = document.getElementById("pair-token").value.trim();
+  if (!token) return;
+  pairingToken = token;
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch { /* private mode */ }
+  authDenied = false;
+  pairOverlay.hidden = true;
+  connect();
+});
+
 // ---- Per-stream buffers and chips ---------------------------------------
 
 const buffers = new Map(); // stream -> { lines: [], unread: 0, chip, badge }
@@ -461,6 +498,15 @@ function handleMessage(msg) {
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
+    case "denied":
+      // Wrong/missing token: stop reconnecting, ask for a pairing token.
+      authDenied = true;
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+      } catch { /* nothing to clear */ }
+      pairOverlay.hidden = false;
+      document.getElementById("pair-token").focus();
+      break;
     default:
       console.debug("unknown message type", msg.t);
   }
@@ -472,6 +518,8 @@ function connect() {
   state.ws = ws;
 
   ws.onopen = () => {
+    // Pairing token first; everything else follows the hello.
+    ws.send(JSON.stringify({ t: "auth", d: { token: pairingToken } }));
     setConnected(true);
     state.reconnectDelay = 1000;
   };
@@ -484,6 +532,7 @@ function connect() {
   };
   ws.onclose = () => {
     setConnected(false);
+    if (authDenied) return; // pairing prompt is up; reconnect on submit
     setTimeout(connect, state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 2, 10000);
   };
@@ -1089,18 +1138,18 @@ const inputForm = document.getElementById("input-row");
 const cmdInput = document.getElementById("cmd-input");
 const repeatBtn = document.getElementById("repeat-btn");
 
-let history = [];
+let cmdHistory = [];
 try {
-  history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  cmdHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
 } catch { /* corrupted storage — start fresh */ }
 
 function recordHistory(text) {
-  if (history[0] === text) return;
-  history.unshift(text);
-  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  if (cmdHistory[0] === text) return;
+  cmdHistory.unshift(text);
+  if (cmdHistory.length > HISTORY_MAX) cmdHistory.length = HISTORY_MAX;
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  } catch { /* storage full/blocked — history just won't persist */ }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(cmdHistory));
+  } catch { /* storage full/blocked — cmdHistory just won't persist */ }
 }
 
 // The echo comes back over the text stream, so nothing renders locally.
@@ -1113,7 +1162,7 @@ inputForm.addEventListener("submit", (ev) => {
   cmdInput.value = "";
 });
 
-// Repeat button: tap = resend last command; hold = history sheet.
+// Repeat button: tap = resend last command; hold = cmdHistory sheet.
 let repeatHold = null;
 let repeatHeld = false;
 repeatBtn.addEventListener("pointerdown", () => {
@@ -1121,11 +1170,11 @@ repeatBtn.addEventListener("pointerdown", () => {
   repeatHold = setTimeout(() => {
     repeatHeld = true;
     openSheet("History");
-    if (!history.length) {
+    if (!cmdHistory.length) {
       sheetNote("No commands yet", true);
       return;
     }
-    for (const cmd of history) {
+    for (const cmd of cmdHistory) {
       sheetButton(cmd, () => {
         sendCommand(cmd);
         recordHistory(cmd);
@@ -1138,16 +1187,16 @@ repeatBtn.addEventListener("pointerleave", () => clearTimeout(repeatHold));
 repeatBtn.addEventListener("pointercancel", () => clearTimeout(repeatHold));
 repeatBtn.addEventListener("contextmenu", (ev) => ev.preventDefault());
 repeatBtn.addEventListener("click", () => {
-  if (repeatHeld) return; // the hold already opened the history sheet
-  if (history[0]) sendCommand(history[0]);
+  if (repeatHeld) return; // the hold already opened the cmdHistory sheet
+  if (cmdHistory[0]) sendCommand(cmdHistory[0]);
 });
 
-// Hardware keyboard: up/down arrows browse history in the input field.
+// Hardware keyboard: up/down arrows browse cmdHistory in the input field.
 let historyIndex = -1;
 cmdInput.addEventListener("keydown", (ev) => {
   if (ev.key === "ArrowUp") {
-    if (historyIndex < history.length - 1) historyIndex += 1;
-    if (history[historyIndex]) cmdInput.value = history[historyIndex];
+    if (historyIndex < cmdHistory.length - 1) historyIndex += 1;
+    if (cmdHistory[historyIndex]) cmdInput.value = cmdHistory[historyIndex];
     ev.preventDefault();
   } else if (ev.key === "ArrowDown") {
     historyIndex -= 1;
@@ -1155,7 +1204,7 @@ cmdInput.addEventListener("keydown", (ev) => {
       historyIndex = -1;
       cmdInput.value = "";
     } else {
-      cmdInput.value = history[historyIndex] || "";
+      cmdInput.value = cmdHistory[historyIndex] || "";
     }
     ev.preventDefault();
   } else {

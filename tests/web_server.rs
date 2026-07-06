@@ -17,6 +17,8 @@ use vellum_fe::core::GameState;
 use vellum_fe::data::widget::{StyledLine, TextSegment};
 use vellum_fe::frontend::web::server;
 
+const TEST_TOKEN: &str = "test-token";
+
 async fn start_server(
     sink_capacity: usize,
 ) -> (
@@ -30,7 +32,8 @@ async fn start_server(
         .expect("bind ephemeral port");
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        let _ = server::serve_listener(listener, handles).await;
+        let _ =
+            server::serve_listener_with_token(listener, handles, TEST_TOKEN.to_string()).await;
     });
     (sink, event_rx, addr)
 }
@@ -58,7 +61,17 @@ struct WsClient {
 }
 
 impl WsClient {
+    /// Handshake + pairing auth (the normal path for every test client).
     async fn connect(addr: std::net::SocketAddr) -> Self {
+        let mut client = Self::connect_unauthenticated(addr).await;
+        client
+            .send_text(&format!(r#"{{"t":"auth","d":{{"token":"{TEST_TOKEN}"}}}}"#))
+            .await;
+        client
+    }
+
+    /// Handshake only — for tests exercising the auth gate itself.
+    async fn connect_unauthenticated(addr: std::net::SocketAddr) -> Self {
         let mut stream = TcpStream::connect(addr).await.expect("connect ws");
         let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
              Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
@@ -414,6 +427,48 @@ async fn macros_flow_definitions_out_taps_in() {
     let update = read_json_timeout(&mut client).await;
     assert_eq!(update["t"], "macros");
     assert_eq!(update["d"]["groups"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn wrong_token_is_denied_and_disconnected() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    sink.push_text("main", styled("secret", "main"));
+
+    let mut client = WsClient::connect_unauthenticated(addr).await;
+    client
+        .send_text(r#"{"t":"auth","d":{"token":"wrong"}}"#)
+        .await;
+    let reply = read_json_timeout(&mut client).await;
+    assert_eq!(reply["t"], "denied", "wrong token gets denied, not hello");
+
+    // And a non-auth first message is equally denied.
+    let mut client = WsClient::connect_unauthenticated(addr).await;
+    client.send_text(r#"{"t":"cmd","d":{"text":"look"}}"#).await;
+    let reply = read_json_timeout(&mut client).await;
+    assert_eq!(reply["t"], "denied");
+}
+
+#[tokio::test]
+async fn auth_failures_throttle_further_attempts() {
+    let (_sink, _event_rx, addr) = start_server(100).await;
+
+    for _ in 0..5 {
+        let mut client = WsClient::connect_unauthenticated(addr).await;
+        client
+            .send_text(r#"{"t":"auth","d":{"token":"wrong"}}"#)
+            .await;
+        let reply = read_json_timeout(&mut client).await;
+        assert_eq!(reply["t"], "denied");
+    }
+
+    // Locked out: even the correct token is refused until the window
+    // drains.
+    let mut client = WsClient::connect_unauthenticated(addr).await;
+    client
+        .send_text(&format!(r#"{{"t":"auth","d":{{"token":"{TEST_TOKEN}"}}}}"#))
+        .await;
+    let reply = read_json_timeout(&mut client).await;
+    assert_eq!(reply["t"], "denied", "lockout rejects even valid tokens");
 }
 
 #[tokio::test]

@@ -284,6 +284,9 @@ pub struct RemoteServerHandles {
     /// Identifies this process instance. Sent in `hello`; clients discard
     /// their resume cursor when it changes (seqs restart with the process).
     pub session: String,
+    /// Set by the server task once it binds (unpinned instances may walk
+    /// past the configured port). Read by `.webinfo`.
+    pub bound_port: Arc<std::sync::OnceLock<u16>>,
 }
 
 /// Core-side producer for remote clients.
@@ -292,6 +295,7 @@ pub struct RemoteSink {
     delta_tx: broadcast::Sender<RemoteDelta>,
     state_tx: watch::Sender<RemoteStateSnapshot>,
     macros_tx: watch::Sender<Arc<RemoteMacros>>,
+    bound_port: Arc<std::sync::OnceLock<u16>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
 }
@@ -317,6 +321,7 @@ impl RemoteSink {
                 .map(|d| d.as_millis())
                 .unwrap_or(0)
         );
+        let bound_port = Arc::new(std::sync::OnceLock::new());
         let handles = RemoteServerHandles {
             buffer: buffer.clone(),
             delta_tx: delta_tx.clone(),
@@ -324,6 +329,7 @@ impl RemoteSink {
             event_tx,
             macros_rx,
             session,
+            bound_port: bound_port.clone(),
         };
         (
             Self {
@@ -331,11 +337,18 @@ impl RemoteSink {
                 delta_tx,
                 state_tx,
                 macros_tx,
+                bound_port,
                 last: RemoteStateSnapshot::default(),
             },
             handles,
             event_rx,
         )
+    }
+
+    /// The port the server actually bound (may differ from config when an
+    /// unpinned instance walked past a taken port). None until bound.
+    pub fn bound_port(&self) -> Option<u16> {
+        self.bound_port.get().copied()
     }
 
     /// Publish macro definitions: stored for connect-time delivery and

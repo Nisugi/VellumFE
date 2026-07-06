@@ -124,6 +124,70 @@ impl AppCore {
         Ok(command)
     }
 
+    /// `.webinfo`: the phone-onboarding pairing URL and QR code.
+    fn show_webinfo(&mut self) {
+        if !self.config.web.enabled {
+            self.add_system_message(
+                "Web server is disabled. Enable [web] in config.toml or pass --web-port.",
+            );
+            return;
+        }
+        let Some(port) = self
+            .message_processor
+            .remote
+            .as_ref()
+            .and_then(|remote| remote.bound_port())
+        else {
+            self.add_system_message("Web server is not running (bind failed or still starting)");
+            return;
+        };
+        let token = match crate::config::Config::load_or_create_web_token() {
+            Ok(token) => token,
+            Err(e) => {
+                self.add_system_message(&format!("Pairing token unavailable: {e:#}"));
+                return;
+            }
+        };
+        let host = if self.config.web.bind == "127.0.0.1" {
+            "127.0.0.1".to_string()
+        } else {
+            Self::local_lan_ip().unwrap_or_else(|| self.config.web.bind.clone())
+        };
+        let url = format!("http://{host}:{port}/#token={token}");
+        self.add_system_message(&format!("Web session URL: {url}"));
+        if self.config.web.bind == "127.0.0.1" {
+            self.add_system_message(
+                "Note: bind = \"127.0.0.1\" is this PC only. Set [web] bind = \"0.0.0.0\" so phones on your LAN can connect.",
+            );
+        }
+        self.add_system_message(
+            "Off-LAN play: use Tailscale/WireGuard. Never expose this port to the open internet.",
+        );
+        match qrcode::QrCode::new(url.as_bytes()) {
+            Ok(code) => {
+                // Inverted so QR-dark modules render as the (dark) window
+                // background and QR-light as bright text blocks.
+                let rendered = code
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                    .build();
+                for line in rendered.lines() {
+                    self.add_system_message(line);
+                }
+            }
+            Err(e) => tracing::warn!("webinfo QR render failed: {e}"),
+        }
+    }
+
+    /// Best-effort LAN IP: route lookup via an unconnected UDP socket
+    /// (no packets are sent).
+    fn local_lan_ip() -> Option<String> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        socket.connect("8.8.8.8:80").ok()?;
+        Some(socket.local_addr().ok()?.ip().to_string())
+    }
+
     /// Handle dot commands (local client commands)
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
@@ -165,6 +229,11 @@ impl AppCore {
                         self.add_system_message(&format!("Failed to reload macros.toml: {e:#}"));
                     }
                 }
+            }
+
+            // Web frontend: show the pairing URL + QR for phone onboarding
+            "webinfo" => {
+                self.show_webinfo();
             }
 
             // Layout commands
