@@ -1,0 +1,58 @@
+# ------------------------------------------------------------
+# MACRO BUTTONS (web / phone frontend)
+# ------------------------------------------------------------
+# Buttons shown on the phone client. Two shapes:
+#
+#   - action button:  has `command` -> fires immediately on tap
+#   - menu button:    has [[group.button.option]] entries -> tap opens a
+#                     bottom-sheet picker
+#
+# `command` can be anything you could type, including Lich `;scripts`.
+# Optional per button/option:
+#   color   = "#rrggbb"   button face color
+#   confirm = true        ask before sending (for dangerous commands)
+#
+# [[group]] sets appear in the macro rail; switch groups from the rail's
+# left-hand button. [[floating]] buttons are always-visible overlay
+# buttons on the text pane - tap to fire, hold and drag to reposition
+# (positions are remembered per device, not in this file).
+#
+# Reload in-game with `.reloadmacros` after editing this file.
+# Per-character overrides: copy this file to your profile directory
+# (profiles/<name>/macros.toml replaces this one wholesale).
+
+[[group]]
+name = "Basics"
+
+  [[group.button]]
+  label = "Look"
+  command = "look"
+
+  [[group.button]]
+  label = "Health"
+  command = "health"
+
+  [[group.button]]
+  label = "Experience"
+  command = "experience"
+
+# Example menu button and floating button (uncomment and adjust):
+#
+#   [[group.button]]
+#   label = "Travel"
+#   color = "#d9b44f"
+#
+#     [[group.button.option]]
+#     label = "To the bank"
+#     command = ";go2 bank"
+#
+#     [[group.button.option]]
+#     label = "To the gate"
+#     command = ";go2 gate"
+#
+# [[floating]]
+# label = "Atk"
+# color = "#d9534f"
+# command = ";bigshot"
+# x = 0.85
+# y = 0.6

@@ -17,6 +17,7 @@ pub mod wrayth_import;
 mod colors;
 mod highlights;
 mod io;
+mod macros;
 mod paths;
 mod keybinds;
 mod layout;
@@ -31,6 +32,7 @@ pub use keybinds::{
     parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
+pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{DialogPosition, SavedDialogPositions};
 pub use settings::{
     ConnectionConfig, FocusConfig, HighlightsConfig, LoggingConfig, SoundConfig, StreamsConfig,
@@ -57,6 +59,7 @@ const DEFAULT_CONFIG: &str = include_str!("../defaults/globals/config.toml");
 const DEFAULT_COLORS: &str = include_str!("../defaults/globals/colors.toml");
 const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/globals/highlights.toml");
 const DEFAULT_KEYBINDS: &str = include_str!("../defaults/globals/keybinds.toml");
+const DEFAULT_MACROS: &str = include_str!("../defaults/globals/macros.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/globals/cmdlist1.xml");
 const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/globals/spell_abbrev.toml");
 const DEFAULT_LAYOUT_TEMPLATE: &str = include_str!("../defaults/globals/templates/layout_template.toml");
@@ -240,6 +243,8 @@ pub struct Config {
     pub quickbars: QuickbarsConfig, // Custom quickbar definitions and defaults
     #[serde(default)]
     pub web: WebConfig, // Embedded web server for the mobile web frontend
+    #[serde(skip)] // Loaded from separate macros.toml file
+    pub macros: MacrosConfig, // Macro buttons for the web frontend
 }
 
 
