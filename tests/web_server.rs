@@ -543,6 +543,45 @@ async fn macro_save_and_delete_arrive_as_events() {
 }
 
 #[tokio::test]
+async fn effects_flow_in_snapshot_and_deltas() {
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let mut gs = GameState::new();
+    gs.effects.insert(
+        "Buffs".to_string(),
+        vellum_fe::data::widget::ActiveEffectsContent {
+            category: "Buffs".to_string(),
+            effects: vec![vellum_fe::data::widget::ActiveEffect {
+                id: "509".to_string(),
+                text: "Strength of the Bull".to_string(),
+                value: 92,
+                time: "0:24:10".to_string(),
+                bar_color: None,
+                text_color: None,
+            }],
+            generation: 1,
+        },
+    );
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
+
+    // Snapshot carries the effects.
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert_eq!(snapshot["d"]["effects"][0]["category"], "Buffs");
+    assert_eq!(
+        snapshot["d"]["effects"][0]["effects"][0]["text"],
+        "Strength of the Bull"
+    );
+
+    // A change broadcasts an effects delta.
+    gs.effects.get_mut("Buffs").unwrap().effects[0].time = "0:20:00".to_string();
+    gs.effects.get_mut("Buffs").unwrap().generation += 1;
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "effects");
+    assert_eq!(delta["d"][0]["effects"][0]["time"], "0:20:00");
+}
+
+#[tokio::test]
 async fn resume_replays_only_missed_lines() {
     let (mut sink, _event_rx, addr) = start_server(100).await;
 

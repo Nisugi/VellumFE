@@ -1496,21 +1496,50 @@ impl MessageProcessor {
                     _ => return, // Unknown category
                 };
 
+                let spell_style = id
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|spell_id| self.config.get_spell_color_style(spell_id));
+                let default_style = SpellColorStyle {
+                    bar_color: None,
+                    text_color: None,
+                };
+                let style = spell_style.unwrap_or(default_style);
+
+                // Always store in game state, independent of the local
+                // layout: remote clients (and windows added mid-session)
+                // need effects even when no effects window exists.
+                let store = game_state
+                    .effects
+                    .entry(category.clone())
+                    .or_insert_with(|| crate::data::ActiveEffectsContent {
+                        category: category.clone(),
+                        effects: Vec::new(),
+                        generation: 0,
+                    });
+                if let Some(effect) = store.effects.iter_mut().find(|e| e.id == *id) {
+                    effect.text = text.clone();
+                    effect.value = *value;
+                    effect.time = time.clone();
+                    effect.bar_color = style.bar_color.clone();
+                    effect.text_color = style.text_color.clone();
+                } else {
+                    store.effects.push(crate::data::ActiveEffect {
+                        id: id.clone(),
+                        text: text.clone(),
+                        value: *value,
+                        time: time.clone(),
+                        bar_color: style.bar_color.clone(),
+                        text_color: style.text_color.clone(),
+                    });
+                }
+                store.generation += 1;
+
                 // Update the window content if it exists
                 if let Some(window) = ui_state.get_window_mut(window_name) {
                     if let crate::data::WindowContent::ActiveEffects(ref mut effects_content) =
                         window.content
                     {
-                        let spell_style = id
-                            .parse::<u32>()
-                            .ok()
-                            .and_then(|spell_id| self.config.get_spell_color_style(spell_id));
-                        let default_style = SpellColorStyle {
-                            bar_color: None,
-                            text_color: None,
-                        };
-                        let style = spell_style.unwrap_or(default_style);
-
                         // Find existing effect or add new one
                         if let Some(effect) =
                             effects_content.effects.iter_mut().find(|e| e.id == *id)
@@ -1547,6 +1576,12 @@ impl MessageProcessor {
                     "ActiveSpells" => "active_spells",
                     _ => return, // Unknown category
                 };
+
+                // Clear the game-state store too (see ActiveEffect above)
+                if let Some(store) = game_state.effects.get_mut(category.as_str()) {
+                    store.effects.clear();
+                    store.generation += 1;
+                }
 
                 // Clear the window content if it exists
                 if let Some(window) = ui_state.get_window_mut(window_name) {

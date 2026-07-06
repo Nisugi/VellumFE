@@ -85,6 +85,13 @@ pub struct GameState {
     /// Active effects/buffs
     pub active_effects: Vec<String>,
 
+    /// Active effects by category ("ActiveSpells", "Buffs", "Debuffs",
+    /// "Cooldowns"), stored unconditionally so remote clients (and any
+    /// window added mid-session) see them even when the local layout has
+    /// no effects windows. The per-window copies in ui_state remain the
+    /// widgets' source of truth.
+    pub effects: HashMap<String, crate::data::ActiveEffectsContent>,
+
     /// Compass directions
     pub compass_dirs: Vec<String>,
 
@@ -712,6 +719,7 @@ impl GameState {
             left_hand: None,
             right_hand: None,
             active_effects: Vec::new(),
+            effects: HashMap::new(),
             compass_dirs: Vec::new(),
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),

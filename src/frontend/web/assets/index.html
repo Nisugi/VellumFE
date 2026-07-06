@@ -27,6 +27,7 @@
     <nav id="chips"></nav>
     <main id="pane-wrap">
       <div id="text-pane"></div>
+      <aside id="effects-panel"></aside>
       <div id="floating-layer"></div>
     </main>
     <footer id="bottombar">
@@ -43,7 +44,11 @@
           <span class="hand"><span class="hand-tag">L</span><span id="hand-left">&mdash;</span></span>
           <span class="hand"><span class="hand-tag">R</span><span id="hand-right">&mdash;</span></span>
         </span>
-        <span id="indicators"></span>
+        <span id="status-right">
+          <button id="fx-buffs" class="fx-pill" type="button" hidden></button>
+          <button id="fx-debuffs" class="fx-pill fx-bad" type="button" hidden></button>
+          <span id="indicators"></span>
+        </span>
       </div>
       <div id="vitals">
         <div class="vital" id="v-health"><div class="vital-fill"></div><span class="vital-label">HP</span></div>

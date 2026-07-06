@@ -403,6 +403,151 @@ function setIndicators(d) {
   }
 }
 
+// ---- Active effects --------------------------------------------------------
+// Two pills in the status row: ✦ = spells+buffs (count + soonest expiry,
+// urgency-colored), ⚠ = debuffs+cooldowns (only rendered when non-empty).
+// Tap either for the full sheet; wide viewports show a persistent
+// sidebar instead (CSS hides the pills there).
+
+const fxBuffsPill = document.getElementById("fx-buffs");
+const fxDebuffsPill = document.getElementById("fx-debuffs");
+const effectsPanel = document.getElementById("effects-panel");
+
+const CATEGORY_LABELS = {
+  ActiveSpells: "Active Spells",
+  Buffs: "Buffs",
+  Debuffs: "Debuffs",
+  Cooldowns: "Cooldowns",
+};
+
+// Categories as last received, each effect annotated with an absolute
+// local expiry (so remaining time ticks between server refreshes).
+let effectCategories = [];
+
+function parseEffectSeconds(time) {
+  const parts = String(time).split(":").map(n => parseInt(n, 10));
+  if (!parts.length || parts.some(isNaN)) return null;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function setEffects(categories) {
+  const now = Date.now();
+  effectCategories = (categories || []).map(cat => ({
+    category: cat.category,
+    effects: cat.effects.map(e => {
+      const seconds = parseEffectSeconds(e.time);
+      return { ...e, expiresAt: seconds === null ? null : now + seconds * 1000 };
+    }),
+  }));
+  renderEffects();
+}
+
+function fmtRemaining(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+    : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function soonestExpiry(categories) {
+  let soonest = null;
+  for (const cat of categories) {
+    for (const e of cat.effects) {
+      if (e.expiresAt !== null && (soonest === null || e.expiresAt < soonest)) {
+        soonest = e.expiresAt;
+      }
+    }
+  }
+  return soonest;
+}
+
+function renderPill(pill, categories, icon) {
+  const count = categories.reduce((n, c) => n + c.effects.length, 0);
+  if (!count) {
+    pill.hidden = true;
+    return;
+  }
+  const soonest = soonestExpiry(categories);
+  const remaining = soonest === null ? null : soonest - Date.now();
+  pill.hidden = false;
+  pill.textContent =
+    remaining === null ? `${icon}${count}` : `${icon}${count} ${fmtRemaining(remaining)}`;
+  pill.classList.toggle("fx-crit", remaining !== null && remaining < 30_000);
+  pill.classList.toggle(
+    "fx-warn",
+    remaining !== null && remaining >= 30_000 && remaining < 120_000
+  );
+}
+
+function buildEffectRows(target) {
+  target.replaceChildren();
+  const now = Date.now();
+  for (const cat of effectCategories) {
+    if (!cat.effects.length) continue;
+    const header = document.createElement("div");
+    header.className = "sheet-header";
+    header.textContent = CATEGORY_LABELS[cat.category] || cat.category;
+    target.appendChild(header);
+    const sorted = [...cat.effects].sort(
+      (a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity)
+    );
+    for (const e of sorted) {
+      const row = document.createElement("div");
+      row.className = "effect-row";
+      const line = document.createElement("div");
+      line.className = "fx-line";
+      const name = document.createElement("span");
+      name.textContent = e.text;
+      if (e.text_color) name.style.color = e.text_color;
+      const time = document.createElement("span");
+      time.className = "fx-time";
+      time.textContent = e.expiresAt === null ? e.time : fmtRemaining(e.expiresAt - now);
+      line.append(name, time);
+      const bar = document.createElement("div");
+      bar.className = "fx-bar";
+      const fill = document.createElement("div");
+      fill.className = "fx-fill";
+      fill.style.width = `${Math.max(0, Math.min(100, e.value))}%`;
+      if (e.bar_color) fill.style.background = e.bar_color;
+      bar.appendChild(fill);
+      row.append(line, bar);
+      target.appendChild(row);
+    }
+  }
+}
+
+let effectsSheetOpen = false;
+
+function renderEffects() {
+  const good = effectCategories.filter(
+    c => c.category === "ActiveSpells" || c.category === "Buffs"
+  );
+  const bad = effectCategories.filter(
+    c => c.category === "Debuffs" || c.category === "Cooldowns"
+  );
+  renderPill(fxBuffsPill, good, "✦");
+  renderPill(fxDebuffsPill, bad, "⚠");
+  buildEffectRows(effectsPanel);
+  if (effectsSheetOpen && !sheet.hidden) buildEffectRows(sheetItems);
+}
+
+function openEffectsSheet() {
+  openSheet("Effects");
+  effectsSheetOpen = true;
+  buildEffectRows(sheetItems);
+}
+
+fxBuffsPill.addEventListener("click", openEffectsSheet);
+fxDebuffsPill.addEventListener("click", openEffectsSheet);
+
+// Tick displayed times locally between server refreshes.
+setInterval(() => {
+  if (effectCategories.length) renderEffects();
+}, 1000);
+
 function setRt(rt) {
   // Every rt message recalibrates the clock (the server sends one per
   // prompt): a roundtime that was flushed ahead of its paired prompt
@@ -472,6 +617,7 @@ function handleSnapshot(d) {
   setRoom(d.room);
   setHands(d.hands || {});
   setIndicators(d.indicators || {});
+  setEffects(d.effects || []);
   setRt(d.rt);
   if (autoScroll) scrollToBottom();
 }
@@ -495,6 +641,7 @@ function handleMessage(msg) {
     case "room": setRoom(msg.d); break;
     case "hands": setHands(msg.d); break;
     case "indicators": setIndicators(msg.d); break;
+    case "effects": setEffects(msg.d); break;
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
@@ -554,12 +701,14 @@ function closeSheet() {
   sheet.hidden = true;
   sheetBackdrop.hidden = true;
   pendingMenuRequest = null;
+  effectsSheetOpen = false;
   clearTimeout(sheetTimeout);
 }
 
 function openSheet(title) {
   sheetTitle.textContent = title;
   sheetItems.replaceChildren();
+  effectsSheetOpen = false;
   sheet.hidden = false;
   sheetBackdrop.hidden = false;
 }
@@ -617,6 +766,7 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#repeat-btn")) return; // long-press opens history
   if (ev.target.closest("#macro-rail")) return; // rail taps retarget the sheet
   if (ev.target.closest("#chips")) return; // long-press opens arrange
+  if (ev.target.closest(".fx-pill")) return; // opens the effects sheet
   if (ev.target.closest(".float-btn")) return;
   closeSheet();
 });

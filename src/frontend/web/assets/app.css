@@ -461,10 +461,86 @@ html, body {
 
 .hand .empty { color: var(--fg-dim); }
 
+#status-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 #indicators {
   display: flex;
   gap: 5px;
   flex-shrink: 0;
+}
+
+/* Effects pills: ✦ spells+buffs (count + soonest expiry), ⚠ debuffs+
+   cooldowns (only exists when something is wrong). */
+.fx-pill {
+  padding: 2px 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fx-pill[hidden] { display: none; }
+.fx-pill.fx-warn { border-color: var(--st); color: var(--st); }
+.fx-pill.fx-crit { border-color: var(--hp); color: var(--hp); }
+.fx-pill.fx-bad { border-color: var(--hp); color: var(--hp); }
+
+/* Effects list rows (bottom sheet + tablet sidebar) */
+.effect-row {
+  padding: 7px 16px 8px;
+}
+
+.effect-row .fx-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.effect-row .fx-time {
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+.effect-row .fx-bar {
+  margin-top: 4px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.effect-row .fx-fill {
+  height: 100%;
+  background: var(--mp);
+}
+
+/* Tablet/desktop: persistent effects sidebar; the pills hide (the list
+   is already visible). */
+#effects-panel {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  #effects-panel {
+    display: block;
+    width: 260px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    border-left: 1px solid var(--border);
+    background: var(--bg-panel);
+    padding-bottom: 8px;
+  }
+  #effects-panel:empty { display: none; }
+  #effects-panel .sheet-header { padding: 10px 16px 4px; }
+  .fx-pill { display: none; }
 }
 
 .ind {

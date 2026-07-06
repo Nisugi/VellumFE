@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::remote::{RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteStateSnapshot};
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
-use crate::data::widget::StyledLine;
+use crate::data::widget::{ActiveEffectsContent, StyledLine};
 
 pub const PROTOCOL_VERSION: u8 = 1;
 
@@ -107,6 +107,7 @@ struct SnapshotPayload {
     hands: HandsPayload,
     indicators: StatusInfo,
     rt: RtPayload,
+    effects: Vec<ActiveEffectsContent>,
     text: Vec<SnapshotLine>,
 }
 
@@ -154,6 +155,7 @@ pub fn snapshot(
             casttime_end: state.casttime_end,
             server_time: state.server_time,
         },
+        effects: state.effects.clone(),
         text: lines
             .into_iter()
             .map(|l| SnapshotLine {
@@ -225,6 +227,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Macros(m) => macros(m, last_seq),
+        RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
     }
 }
 

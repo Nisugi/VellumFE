@@ -183,6 +183,9 @@ pub enum RemoteDelta {
     },
     /// Macro definitions changed (`.reloadmacros`); sent to every client.
     Macros(Arc<RemoteMacros>),
+    /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
+    /// category order.
+    Effects(Vec<crate::data::ActiveEffectsContent>),
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -248,7 +251,12 @@ pub struct RemoteStateSnapshot {
     pub roundtime_end: Option<i64>,
     pub casttime_end: Option<i64>,
     pub server_time: i64,
+    /// Active effects in fixed category order (empty categories omitted).
+    pub effects: Vec<crate::data::ActiveEffectsContent>,
 }
+
+/// Category display order for effects sent to clients.
+pub const EFFECT_CATEGORIES: [&str; 4] = ["ActiveSpells", "Buffs", "Debuffs", "Cooldowns"];
 
 impl RemoteStateSnapshot {
     /// The parts sourced directly from GameState. Callers layer on the
@@ -267,6 +275,11 @@ impl RemoteStateSnapshot {
             roundtime_end: game_state.roundtime_end,
             casttime_end: game_state.casttime_end,
             server_time: game_state.game_time,
+            effects: EFFECT_CATEGORIES
+                .iter()
+                .filter_map(|category| game_state.effects.get(*category))
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -421,6 +434,11 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Indicators(snap.indicators.clone()));
+        }
+        if snap.effects != self.last.effects {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Effects(snap.effects.clone()));
         }
         // Send on RT/CT end changes AND on every prompt (server_time
         // tick). The per-prompt resend matters: a <roundTime> can be
