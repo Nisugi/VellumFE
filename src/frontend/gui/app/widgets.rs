@@ -876,42 +876,118 @@ impl VellumGuiApp {
             .map(|direction| direction.to_ascii_lowercase())
             .collect();
 
-        let grid_rows: [[&str; 3]; 3] = [["nw", "n", "ne"], ["w", "", "e"], ["sw", "s", "se"]];
-        egui::Grid::new("gui_compass_grid")
-            .num_columns(3)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                for row in grid_rows {
-                    for direction in row {
-                        if direction.is_empty() {
-                            ui.label("");
-                            continue;
-                        }
-                        let is_available = available.contains(direction);
-                        let label = direction.to_ascii_uppercase();
-                        let response = ui.add_enabled(
-                            is_available,
-                            egui::Button::new(label).min_size(Vec2::splat(26.0)),
-                        );
-                        if is_available && response.clicked() && clicked_link.is_none() {
-                            clicked_link = Some(Self::gui_link_click_from_response(
-                                &response,
-                                ui,
-                                Self::direct_command_link(direction.to_string()),
-                            ));
-                        }
+        ui.horizontal_centered(|ui| {
+            // Rose square: whatever height we have, leaving room for the
+            // up/down/in/out column to the right.
+            let side = ui
+                .available_height()
+                .min(ui.available_width() - 46.0)
+                .max(40.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+            if let Some(click) = Self::paint_compass_rose(ui, rect, &available) {
+                clicked_link = Some(click);
+            }
+
+            ui.vertical(|ui| {
+                for (direction, label) in
+                    [("up", "▲ Up"), ("down", "▼ Dn"), ("out", "⊙ Out"), ("in", "⊚ In")]
+                {
+                    let is_available = available.contains(direction);
+                    let response =
+                        ui.add_enabled(is_available, egui::Button::new(RichText::new(label).small()));
+                    if is_available && response.clicked() && clicked_link.is_none() {
+                        clicked_link = Some(Self::gui_link_click_from_response(
+                            &response,
+                            ui,
+                            Self::direct_command_link(direction.to_string()),
+                        ));
                     }
-                    ui.end_row();
                 }
             });
+        });
 
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            for direction in ["up", "down", "out", "in"] {
-                let is_available = available.contains(direction);
-                let label = direction.to_ascii_uppercase();
-                let response = ui.add_enabled(is_available, egui::Button::new(label));
-                if is_available && response.clicked() && clicked_link.is_none() {
+        clicked_link
+    }
+
+    /// Draw a vector compass rose into `rect`: eight arrows around a hub,
+    /// available exits filled with the theme link color, the rest as faint
+    /// outlines. Arrows are clickable and send the movement command, same
+    /// as the old button grid. Scales with the window and needs no assets.
+    fn paint_compass_rose(
+        ui: &mut egui::Ui,
+        rect: Rect,
+        available: &HashSet<String>,
+    ) -> Option<GuiLinkClick> {
+        const DIRECTIONS: [(&str, &str); 8] = [
+            ("n", "north"),
+            ("ne", "northeast"),
+            ("e", "east"),
+            ("se", "southeast"),
+            ("s", "south"),
+            ("sw", "southwest"),
+            ("w", "west"),
+            ("nw", "northwest"),
+        ];
+
+        let mut clicked_link = None;
+        let painter = ui.painter().with_clip_rect(rect);
+        let center = rect.center();
+        let radius = rect.width().min(rect.height()) * 0.5 - 2.0;
+        if radius < 8.0 {
+            return None;
+        }
+
+        let visuals = ui.visuals().clone();
+        let available_fill = visuals.hyperlink_color;
+        let hover_fill = Self::lighten(available_fill, 0.35);
+        let idle_stroke = visuals.widgets.noninteractive.bg_stroke.color;
+
+        for (index, (direction, full_name)) in DIRECTIONS.iter().enumerate() {
+            let is_cardinal = index % 2 == 0;
+            let angle = index as f32 * std::f32::consts::FRAC_PI_4;
+            let dir = Vec2::new(angle.sin(), -angle.cos());
+            let perp = Vec2::new(-dir.y, dir.x);
+
+            let tip_r = if is_cardinal { radius } else { radius * 0.78 };
+            let base_r = radius * 0.3;
+            let half_w = if is_cardinal { radius * 0.15 } else { radius * 0.11 };
+            let points = vec![
+                center + dir * tip_r,
+                center + dir * base_r + perp * half_w,
+                center + dir * base_r - perp * half_w,
+            ];
+
+            let is_available = available.contains(*direction);
+            let hit_center = center + dir * ((tip_r + base_r) * 0.5);
+            let hit_rect =
+                Rect::from_center_size(hit_center, Vec2::splat((radius * 0.4).max(12.0)));
+            let response = ui.interact(
+                hit_rect,
+                ui.id().with(("compass_rose", direction)),
+                if is_available {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                },
+            );
+
+            let (fill, stroke) = if !is_available {
+                (
+                    Color32::TRANSPARENT,
+                    egui::Stroke::new(1.0, idle_stroke),
+                )
+            } else if response.hovered() {
+                (hover_fill, egui::Stroke::new(1.0, hover_fill))
+            } else {
+                (available_fill, egui::Stroke::new(1.0, available_fill))
+            };
+            painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+
+            if is_available {
+                let response = response
+                    .on_hover_text(*full_name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() && clicked_link.is_none() {
                     clicked_link = Some(Self::gui_link_click_from_response(
                         &response,
                         ui,
@@ -919,9 +995,29 @@ impl VellumGuiApp {
                     ));
                 }
             }
-        });
+        }
+
+        // Hub over the arrow bases.
+        painter.circle(
+            center,
+            radius * 0.14,
+            visuals.window_fill(),
+            egui::Stroke::new(1.0, idle_stroke),
+        );
 
         clicked_link
+    }
+
+    /// Blend a color toward white by `t` (0..=1), preserving alpha.
+    fn lighten(color: Color32, t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        let channel = |c: u8| c.saturating_add(((255 - c) as f32 * t) as u8);
+        Color32::from_rgba_unmultiplied(
+            channel(color.r()),
+            channel(color.g()),
+            channel(color.b()),
+            color.a(),
+        )
     }
 
     pub(super) fn render_hand_content(
