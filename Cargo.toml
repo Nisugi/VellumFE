@@ -68,6 +68,11 @@ sysinfo = "0.30"
 # URL opening (for LaunchURL)
 open = "5"
 
+# OS credential store for launcher profiles (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service). Best-effort: launcher falls back
+# to prompting when no secure store is available (headless, WSL, bare WMs).
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "vendored"] }
+
 [features]
 default = ["sound"]
 sound = ["dep:rodio"]

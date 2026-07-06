@@ -19,6 +19,7 @@ mod highlights;
 mod io;
 mod macros;
 mod paths;
+pub mod profiles;
 mod keybinds;
 mod layout;
 mod settings;
