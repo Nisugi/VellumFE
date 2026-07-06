@@ -34,7 +34,7 @@ pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use paths::{DialogPosition, SavedDialogPositions};
 pub use settings::{
     ConnectionConfig, FocusConfig, HighlightsConfig, LoggingConfig, SoundConfig, StreamsConfig,
-    TargetListConfig, TtsConfig, UiConfig,
+    TargetListConfig, TtsConfig, UiConfig, WebConfig,
 };
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
 pub use widgets::{
@@ -238,6 +238,8 @@ pub struct Config {
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
     #[serde(default)]
     pub quickbars: QuickbarsConfig, // Custom quickbar definitions and defaults
+    #[serde(default)]
+    pub web: WebConfig, // Embedded web server for the mobile web frontend
 }
 
 

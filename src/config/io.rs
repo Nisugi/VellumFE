@@ -560,6 +560,7 @@ impl Default for Config {
             streams: StreamsConfig::default(), // Stream routing config
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
+            web: WebConfig::default(), // Web server off by default
             event_patterns: HashMap::new(), // Empty by default - user adds via config
             layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options

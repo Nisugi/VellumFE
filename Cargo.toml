@@ -39,6 +39,9 @@ rpassword = "7"
 # openssl = "0.10"  # For local builds with system OpenSSL
 openssl = { version = "0.10", features = ["vendored"] }  # For CI builds - compiles OpenSSL from source
 
+# Web server (mobile web frontend) - HTTP + WebSocket sidecar
+axum = { version = "0.8", features = ["ws"] }
+
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
 

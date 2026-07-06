@@ -366,3 +366,21 @@ enabled = true
 # layout = "fullscreen"
 
 layout_mappings = []
+
+
+# ------------------------------------------------------------
+# WEB SERVER (mobile web frontend)
+# ------------------------------------------------------------
+# Embedded HTTP + WebSocket server that lets a phone browser join the
+# session. Off by default; when disabled it costs nothing.
+#
+# bind = "127.0.0.1" only allows this machine. To reach the server from a
+# phone on your LAN, consciously set bind = "0.0.0.0". Do not expose the
+# port to the open internet; for off-LAN play use Tailscale/WireGuard.
+#
+# The --web-port CLI flag enables the server and overrides the port.
+
+[web]
+enabled = false
+port = 8040
+bind = "127.0.0.1"

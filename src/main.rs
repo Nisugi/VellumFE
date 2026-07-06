@@ -92,6 +92,10 @@ struct Cli {
     #[arg(long, value_enum)]
     color_mode: Option<config::ColorMode>,
 
+    /// Enable the embedded web server on this port (overrides [web] in config.toml)
+    #[arg(long, value_name = "PORT")]
+    web_port: Option<u16>,
+
     /// Setup terminal palette on startup using .setpalette (use with --color-mode slot)
     #[arg(long)]
     setup_palette: bool,
@@ -384,6 +388,10 @@ fn main() -> Result<()> {
     }
     if let Some(mode) = cli.color_mode {
         config.ui.color_mode = mode;
+    }
+    if let Some(web_port) = cli.web_port {
+        config.web.enabled = true;
+        config.web.port = web_port;
     }
     // Store setup_palette flag for frontend to use after initialization
     let setup_palette = cli.setup_palette;
