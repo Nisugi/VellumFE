@@ -380,6 +380,8 @@ fn main() -> Result<()> {
     // Launcher mode: explicit --launcher, or a bare double-click/no-args
     // start. Sessions are spawned from there as separate processes.
     if cli.launcher || std::env::args_os().len() <= 1 {
+        #[cfg(windows)]
+        detach_exclusive_console();
         return frontend::gui::launcher::run_launcher();
     }
 
@@ -444,7 +446,11 @@ fn main() -> Result<()> {
         FrontendType::Tui => {
             frontend::tui::run(config, character, direct_config, setup_palette, login_key)?
         }
-        FrontendType::Gui => run_gui(config, direct_config, login_key)?,
+        FrontendType::Gui => {
+            #[cfg(windows)]
+            detach_exclusive_console();
+            run_gui(config, direct_config, login_key)?
+        }
     }
 
     // Clean shutdown: drop this instance's entry from the web session
@@ -452,6 +458,24 @@ fn main() -> Result<()> {
     frontend::web::shutdown();
 
     Ok(())
+}
+
+/// Drop the console Windows auto-creates for a double-clicked console-
+/// subsystem exe, so no empty black window sits behind the launcher/GUI.
+/// Only detaches when this process is the console's sole owner - launching
+/// from a terminal keeps that terminal attached (count > 1), so prompts and
+/// --help output still work there.
+#[cfg(windows)]
+fn detach_exclusive_console() {
+    use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+    // SAFETY: plain Win32 queries; a 2-slot buffer suffices because only
+    // "exactly one attached process" matters.
+    unsafe {
+        let mut pids = [0u32; 2];
+        if GetConsoleProcessList(&mut pids) == 1 {
+            let _ = FreeConsole();
+        }
+    }
 }
 
 /// Apply a saved launcher profile onto the parsed CLI arguments.
