@@ -68,6 +68,8 @@ command `quit` also saves your settings on the way out.)
 | `.edittheme` | | Edit the current theme |
 | `.skins` | | List installed GUI skins |
 | `.setskin <name>` | `.skin` | Apply a skin (`.setskin none` disables; GUI only) |
+| `.makeskin <name>` | | Create a starter skin to edit |
+| `.reloadskin` | | Force-reload the active skin (after editing images) |
 | `.colors` | `.colorpalette` | Browse the color palette |
 | `.addcolor` | `.createcolor` | Add a palette color |
 | `.uicolors` | | Edit UI element colors |

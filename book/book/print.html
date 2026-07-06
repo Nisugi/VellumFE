@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-eb7e7760.js";
+            window.path_to_searchindex_js = "searchindex-97ed8572.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-03608cc9.js"></script>
@@ -310,7 +310,9 @@ file</strong> and never appears on a command line. Passwords are keyed by
 account, so several profiles on the same account share one saved
 password.</p>
 <p>If you don’t save it, the launcher prompts when you hit Launch (terminal
-sessions ask in their own console instead).</p>
+sessions ask in their own console instead). Account names are masked in
+the profile list, and the password field has a show/hide toggle — safe
+to open at a convention table.</p>
 <h2 id="how-sessions-launch"><a class="header" href="#how-sessions-launch">How Sessions Launch</a></h2>
 <p>Each <strong>Launch</strong> spawns a separate <code>vellum-fe --launch-profile NAME</code>
 process — exactly the same startup path as a hand-typed command line, so
@@ -2962,8 +2964,19 @@ load) falls back to that.</p>
 .setskin parchment
 .setskin none     # back to plain theme rendering
 </code></pre>
-<p>The active skin is remembered in your config. <code>.skin</code> is an alias.</p>
+<p>The active skin is remembered in your config. <code>.skin</code> is an alias. The
+GUI settings editor (<code>.settings</code>) has a Skin section with the same
+picker, an “Open skins folder” button, and a “Create” button.</p>
 <h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>The quickest start:</p>
+<pre><code>.makeskin myskin
+</code></pre>
+<p>This creates <code>~/.vellum-fe/skins/myskin/skin.toml</code> with <strong>every section
+present but commented out</strong> — uncomment a line, point it at a PNG, done.
+It never overwrites an existing skin.</p>
+<p>While a skin is active, edits to its <code>skin.toml</code> <strong>hot-reload within a
+second</strong>. Edited <em>images</em> don’t touch the manifest, so after swapping an
+image file run <code>.reloadskin</code> to force a full reload.</p>
 <p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
 <code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
 <pre><code>~/.vellum-fe/skins/parchment/
@@ -3015,7 +3028,7 @@ positioning lives in the art:</p>
 rose = "compass/rose.png"
 n = "compass/n.png"
 ne = "compass/ne.png"
-# ... e, se, s, sw, w, nw
+# ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 </code></pre>
 <h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
 <p>A base body image plus full-canvas overlays per body part and severity.
@@ -3129,6 +3142,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.edittheme</code></td><td></td><td>Edit the current theme</td></tr>
 <tr><td><code>.skins</code></td><td></td><td>List installed GUI skins</td></tr>
 <tr><td><code>.setskin &lt;name&gt;</code></td><td><code>.skin</code></td><td>Apply a skin (<code>.setskin none</code> disables; GUI only)</td></tr>
+<tr><td><code>.makeskin &lt;name&gt;</code></td><td></td><td>Create a starter skin to edit</td></tr>
+<tr><td><code>.reloadskin</code></td><td></td><td>Force-reload the active skin (after editing images)</td></tr>
 <tr><td><code>.colors</code></td><td><code>.colorpalette</code></td><td>Browse the color palette</td></tr>
 <tr><td><code>.addcolor</code></td><td><code>.createcolor</code></td><td>Add a palette color</td></tr>
 <tr><td><code>.uicolors</code></td><td></td><td>Edit UI element colors</td></tr>

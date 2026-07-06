@@ -29,7 +29,9 @@ account, so several profiles on the same account share one saved
 password.
 
 If you don't save it, the launcher prompts when you hit Launch (terminal
-sessions ask in their own console instead).
+sessions ask in their own console instead). Account names are masked in
+the profile list, and the password field has a show/hide toggle — safe
+to open at a convention table.
 
 ## How Sessions Launch
 

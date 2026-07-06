@@ -17,9 +17,25 @@ load) falls back to that.
 .setskin none     # back to plain theme rendering
 ```
 
-The active skin is remembered in your config. `.skin` is an alias.
+The active skin is remembered in your config. `.skin` is an alias. The
+GUI settings editor (`.settings`) has a Skin section with the same
+picker, an "Open skins folder" button, and a "Create" button.
 
 ## Making a Skin
+
+The quickest start:
+
+```
+.makeskin myskin
+```
+
+This creates `~/.vellum-fe/skins/myskin/skin.toml` with **every section
+present but commented out** — uncomment a line, point it at a PNG, done.
+It never overwrites an existing skin.
+
+While a skin is active, edits to its `skin.toml` **hot-reload within a
+second**. Edited *images* don't touch the manifest, so after swapping an
+image file run `.reloadskin` to force a full reload.
 
 A skin is a folder under `~/.vellum-fe/skins/<name>/` containing a
 `skin.toml` manifest plus image files (PNG, JPEG, WebP, or BMP):
@@ -86,7 +102,7 @@ positioning lives in the art:
 rose = "compass/rose.png"
 n = "compass/n.png"
 ne = "compass/ne.png"
-# ... e, se, s, sw, w, nw
+# ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 ```
 
 ## Sprite Injury Paperdoll
