@@ -377,6 +377,12 @@ fn main() -> Result<()> {
         tracing::info!("Using data directory from VELLUM_FE_DIR: {}", env_dir);
     }
 
+    // Launcher mode: explicit --launcher, or a bare double-click/no-args
+    // start. Sessions are spawned from there as separate processes.
+    if cli.launcher || std::env::args_os().len() <= 1 {
+        return frontend::gui::launcher::run_launcher();
+    }
+
     // Apply a saved launcher profile: fills the same fields the equivalent
     // CLI switches would have set (explicit CLI switches win over profile
     // values). Returns the resolved game code for direct connections.

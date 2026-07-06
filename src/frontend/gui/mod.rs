@@ -20,6 +20,7 @@
 //! See docs/GUI_AUDIT.md for the feature-parity roadmap.
 
 pub mod app;
+pub mod launcher;
 pub mod persistence;
 pub mod tab_id;
 
