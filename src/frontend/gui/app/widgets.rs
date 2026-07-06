@@ -934,6 +934,27 @@ impl VellumGuiApp {
         } else {
             Color32::from_rgb(0x55, 0x55, 0x55)
         };
+        // Standard indicators draw as pictograms (dimmed when inactive,
+        // Wrayth-style); custom ids keep the text label.
+        if super::status_icons::supported(&indicator.indicator_id) {
+            let side = ui
+                .available_width()
+                .min(ui.available_height())
+                .clamp(10.0, 96.0);
+            ui.centered_and_justified(|ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                super::status_icons::paint(
+                    ui.painter(),
+                    rect,
+                    &indicator.indicator_id,
+                    color,
+                    ui.visuals().window_fill(),
+                );
+                response.on_hover_text(text.to_string());
+            });
+            return;
+        }
         ui.centered_and_justified(|ui| {
             ui.label(RichText::new(text).color(color).strong());
         });
@@ -1747,6 +1768,9 @@ impl VellumGuiApp {
             ui.weak("No active status.");
             return;
         }
+        // Icons scale with the window's text size; ids without a pictogram
+        // (custom indicators) keep the old colored text label.
+        let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
         ui.horizontal_wrapped(|ui| {
             for (id, value) in active {
                 let color = match value {
@@ -1754,7 +1778,20 @@ impl VellumGuiApp {
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
                 };
-                ui.label(RichText::new(id).color(color).strong());
+                if super::status_icons::supported(id) {
+                    let (rect, response) = ui
+                        .allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
+                    super::status_icons::paint(
+                        ui.painter(),
+                        rect,
+                        id,
+                        color,
+                        ui.visuals().window_fill(),
+                    );
+                    response.on_hover_text(super::status_icons::display_name(id));
+                } else {
+                    ui.label(RichText::new(id).color(color).strong());
+                }
             }
         });
     }

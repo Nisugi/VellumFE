@@ -25,6 +25,7 @@ mod dialogs;
 mod dock;
 mod editors;
 mod menus;
+mod status_icons;
 mod theme;
 mod widgets;
 mod zones;
