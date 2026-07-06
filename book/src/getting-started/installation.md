@@ -24,15 +24,12 @@ cargo build --release
 
 The binary will be at `target/release/vellum-fe`.
 
-### Windows: OpenSSL for Direct Mode
+### TLS Dependencies
 
-Direct eAccess authentication requires OpenSSL. Install via [vcpkg](https://vcpkg.io/):
-
-```powershell
-vcpkg install openssl:x64-windows
-set VCPKG_ROOT=C:\path\to\vcpkg
-cargo build --release
-```
+Direct eAccess authentication uses your operating system's native TLS stack
+(SChannel on Windows, Security.framework on macOS) — no extra setup needed.
+On Linux, a bundled OpenSSL is compiled automatically during the build; it
+only requires Perl, which virtually every distro ships by default.
 
 ## Verify Installation
 

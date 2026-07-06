@@ -694,7 +694,7 @@ impl VellumGuiApp {
 
         // Swallow all pointer interaction while the move is active so hovers
         // and the placement press never reach window content.
-        let screen_rect = ctx.screen_rect();
+        let screen_rect = ctx.content_rect();
         egui::Area::new(egui::Id::new("gui_window_move_catcher"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen_rect.min)
@@ -823,6 +823,7 @@ impl VellumGuiApp {
                 if let Some(accent) = self.accent_color_for_tab(&tab.id.key) {
                     window_frame.stroke.color = accent;
                 }
+                self.apply_skin_border_to_frame(&tab.window_name, &mut window_frame);
                 // Advance by what actually rendered, not by the intended slot:
                 // any disagreement between our chrome math and egui's real
                 // window chrome then shows up as a slightly different next-y
@@ -889,6 +890,7 @@ impl VellumGuiApp {
                         .inner
                     })
                 {
+                    self.paint_skin_border(ctx, &tab.window_name, &inner.response);
                     clicked_link = inner.inner.flatten();
                     let rendered_bottom = inner.response.rect.max.y;
                     if rendered_bottom.is_finite() && rendered_bottom > slot_rect.min.y {
@@ -1047,6 +1049,7 @@ impl VellumGuiApp {
             if let Some(accent) = self.accent_color_for_tab(&tab.id.key) {
                 docked_window_frame.stroke.color = accent;
             }
+            self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
             let mut window_builder = egui::Window::new(self.window_display_title(&tab))
                 .id(window_id)
                 .default_size(if zone == GuiShellZone::Center {
@@ -1097,6 +1100,7 @@ impl VellumGuiApp {
                     })
                     .inner
                 }) {
+                self.paint_skin_border(ctx, &tab.window_name, &inner.response);
                 if is_hand_widget {
                     let handle_rect = Rect::from_min_max(
                         Pos2::new(

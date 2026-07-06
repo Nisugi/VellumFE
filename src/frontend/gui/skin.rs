@@ -60,6 +60,28 @@ pub struct SkinMeta {
 pub struct WindowSkin {
     #[serde(default)]
     pub background: Option<BackgroundSpec>,
+    #[serde(default)]
+    pub border: Option<BorderSpec>,
+}
+
+/// Nine-slice border image: the `slice` insets (source pixels, top/right/
+/// bottom/left) split the image into corners (drawn fixed), edges
+/// (stretched along one axis), and a center (skipped — the window fill or
+/// background image shows through).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BorderSpec {
+    /// Image path, relative to the skin directory (absolute allowed).
+    pub image: String,
+    /// Slice insets in source pixels: [top, right, bottom, left].
+    pub slice: [f32; 4],
+    /// Multiplier from source pixels to on-screen points for the border
+    /// thickness (1.0 = native size).
+    #[serde(default = "default_border_scale")]
+    pub scale: f32,
+}
+
+fn default_border_scale() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -114,6 +136,16 @@ pub struct ResolvedBackground {
     pub scrim_alpha: u8,
 }
 
+/// Everything needed to paint one window's nine-slice border.
+#[derive(Debug, Clone)]
+pub struct ResolvedBorder {
+    pub texture: egui::TextureId,
+    pub tex_size: egui::Vec2,
+    /// Slice insets in source pixels: [top, right, bottom, left].
+    pub slice: [f32; 4],
+    pub scale: f32,
+}
+
 /// Runtime skin state owned by the GUI app: the active manifest plus its
 /// loaded textures. Textures live for as long as the skin stays active.
 #[derive(Default)]
@@ -160,8 +192,14 @@ impl SkinState {
             .manifest
             .windows
             .values()
-            .filter_map(|window| window.background.as_ref())
-            .map(|bg| bg.image.clone())
+            .flat_map(|window| {
+                window
+                    .background
+                    .as_ref()
+                    .map(|bg| bg.image.clone())
+                    .into_iter()
+                    .chain(window.border.as_ref().map(|border| border.image.clone()))
+            })
             .collect();
         for image in images {
             if self.textures.contains_key(&image) {
@@ -193,6 +231,20 @@ impl SkinState {
             scrim_alpha: (spec.scrim.clamp(0.0, 1.0) * 255.0).round() as u8,
         })
     }
+
+    /// Resolve the nine-slice border for a window, falling back to the
+    /// manifest's "default" entry (independently of the background, so a
+    /// window can override one without losing the other).
+    pub fn border_for(&self, window_name: &str) -> Option<ResolvedBorder> {
+        let spec = window_field(&self.manifest, window_name, |window| window.border.as_ref())?;
+        let texture = self.textures.get(&spec.image)?.as_ref()?;
+        Some(ResolvedBorder {
+            texture: texture.id(),
+            tex_size: texture.size_vec2(),
+            slice: spec.slice,
+            scale: spec.scale.max(0.05),
+        })
+    }
 }
 
 /// Manifest lookup for a window: exact name, then case-insensitive, then
@@ -201,6 +253,17 @@ fn window_background<'a>(
     manifest: &'a SkinManifest,
     window_name: &str,
 ) -> Option<&'a BackgroundSpec> {
+    window_field(manifest, window_name, |window| window.background.as_ref())
+}
+
+/// Per-field manifest lookup: the window's own entry (exact name, then
+/// case-insensitive), falling back to the "default" entry when the window
+/// has no entry or its entry doesn't set this field.
+fn window_field<'a, T>(
+    manifest: &'a SkinManifest,
+    window_name: &str,
+    field: impl Fn(&'a WindowSkin) -> Option<&'a T>,
+) -> Option<&'a T> {
     let entry = manifest.windows.get(window_name).or_else(|| {
         manifest
             .windows
@@ -209,13 +272,8 @@ fn window_background<'a>(
             .map(|(_, window)| window)
     });
     entry
-        .and_then(|window| window.background.as_ref())
-        .or_else(|| {
-            manifest
-                .windows
-                .get("default")
-                .and_then(|window| window.background.as_ref())
-        })
+        .and_then(&field)
+        .or_else(|| manifest.windows.get("default").and_then(&field))
 }
 
 /// Read and parse `skins/<name>/skin.toml`. Returns the manifest and the
@@ -340,6 +398,75 @@ pub fn paint_background(
         );
         painter.rect_filled(rect, 0.0, scrim);
     }
+}
+
+/// Paint a nine-slice border into `rect`: corners at fixed size, edges
+/// stretched along their axis, center left empty so the window fill or
+/// background image shows through.
+pub fn paint_nine_slice(painter: &egui::Painter, rect: egui::Rect, border: &ResolvedBorder) {
+    let full_alpha = egui::Color32::WHITE;
+    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect) {
+        painter.image(border.texture, dest, uv, full_alpha);
+    }
+}
+
+/// The eight border patches as (destination rect, UV rect) pairs. Slice
+/// insets larger than the destination shrink proportionally so opposite
+/// borders never overlap. Degenerate patches (zero-size) are skipped.
+fn nine_slice_patches(
+    tex: egui::Vec2,
+    slice: [f32; 4],
+    scale: f32,
+    rect: egui::Rect,
+) -> Vec<(egui::Rect, egui::Rect)> {
+    if tex.x <= 0.0 || tex.y <= 0.0 || !rect.is_positive() {
+        return Vec::new();
+    }
+    let [top, right, bottom, left] = slice.map(|inset| inset.max(0.0));
+
+    // On-screen border thicknesses, shrunk if the rect is too small.
+    let mut dt = top * scale;
+    let mut db = bottom * scale;
+    if dt + db > rect.height() {
+        let shrink = rect.height() / (dt + db);
+        dt *= shrink;
+        db *= shrink;
+    }
+    let mut dl = left * scale;
+    let mut dr = right * scale;
+    if dl + dr > rect.width() {
+        let shrink = rect.width() / (dl + dr);
+        dl *= shrink;
+        dr *= shrink;
+    }
+
+    // Column/row boundaries in destination space and UV space.
+    let dx = [rect.min.x, rect.min.x + dl, rect.max.x - dr, rect.max.x];
+    let dy = [rect.min.y, rect.min.y + dt, rect.max.y - db, rect.max.y];
+    let ux = [0.0, (left / tex.x).min(1.0), 1.0 - (right / tex.x).min(1.0), 1.0];
+    let uy = [0.0, (top / tex.y).min(1.0), 1.0 - (bottom / tex.y).min(1.0), 1.0];
+
+    let mut patches = Vec::with_capacity(8);
+    for row in 0..3 {
+        for col in 0..3 {
+            if row == 1 && col == 1 {
+                continue; // center stays empty
+            }
+            let dest = egui::Rect::from_min_max(
+                egui::pos2(dx[col], dy[row]),
+                egui::pos2(dx[col + 1], dy[row + 1]),
+            );
+            let uv = egui::Rect::from_min_max(
+                egui::pos2(ux[col], uy[row]),
+                egui::pos2(ux[col + 1], uy[row + 1]),
+            );
+            if dest.width() > 0.0 && dest.height() > 0.0 && uv.width() > 0.0 && uv.height() > 0.0
+            {
+                patches.push((dest, uv));
+            }
+        }
+    }
+    patches
 }
 
 /// UV rect that crops the texture to the destination's aspect ratio so the
@@ -474,6 +601,70 @@ mod tests {
         assert!((dest.width() - 100.0).abs() < 1e-4);
         assert!((dest.height() - 50.0).abs() < 1e-4);
         assert!((dest.min.y - 25.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn manifest_parses_border_spec() {
+        let manifest = manifest(
+            r#"
+            [window.default.border]
+            image = "border/brass.png"
+            slice = [8.0, 8.0, 8.0, 8.0]
+
+            [window.main]
+            background = { image = "main.png" }
+            "#,
+        );
+        let border = manifest.windows["default"].border.as_ref().unwrap();
+        assert_eq!(border.image, "border/brass.png");
+        assert_eq!(border.slice, [8.0, 8.0, 8.0, 8.0]);
+        assert_eq!(border.scale, 1.0);
+        // Per-field fallback: main sets only a background, so its border
+        // comes from default.
+        assert_eq!(
+            window_field(&manifest, "main", |w| w.border.as_ref())
+                .unwrap()
+                .image,
+            "border/brass.png"
+        );
+    }
+
+    #[test]
+    fn nine_slice_patches_cover_border_not_center() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        assert_eq!(patches.len(), 8);
+
+        // Top-left corner: fixed 8x8 at the origin, UV = top-left quarter.
+        let (dest, uv) = patches[0];
+        assert_eq!(dest, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(8.0, 8.0)));
+        assert_eq!(uv, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.25, 0.25)));
+
+        // No patch covers the center point.
+        let center = rect.center();
+        assert!(patches.iter().all(|(dest, _)| !dest.contains(center)));
+    }
+
+    #[test]
+    fn nine_slice_patches_shrink_when_rect_is_small() {
+        // 8px insets at scale 1 into a 10px-tall rect: top+bottom shrink to
+        // 5px each instead of overlapping.
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 10.0));
+        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        let max_bottom_of_top_row = patches
+            .iter()
+            .filter(|(dest, _)| dest.min.y == 0.0)
+            .map(|(dest, _)| dest.max.y)
+            .fold(0.0f32, f32::max);
+        assert!((max_bottom_of_top_row - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn nine_slice_patches_empty_on_degenerate_input() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect).is_empty());
+        let empty_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0));
+        assert!(nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect).is_empty());
     }
 
     #[test]

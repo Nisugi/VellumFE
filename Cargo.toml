@@ -37,8 +37,12 @@ aho-corasick = "1"  # Fast literal string matching for highlights
 quick-xml = "0.36"  # XML parsing
 include_dir = "0.7"  # Embed default config files
 rpassword = "7"
-# openssl = "0.10"  # For local builds with system OpenSSL
-openssl = { version = "0.10", features = ["vendored"] }  # For CI builds - compiles OpenSSL from source
+# eAccess login TLS via the OS stack: SChannel (Windows), Security.framework
+# (macOS), system OpenSSL (Linux). No vendored OpenSSL build, no Perl, no vcpkg.
+# NOTE: rustls cannot replace this — eaccess.play.net only speaks TLS 1.2 with
+# static-RSA key exchange (AES128-GCM-SHA256), which rustls refuses to implement.
+native-tls = "0.2"
+getrandom = "0.3"  # Web pairing token generation
 
 # Web server (mobile web frontend) - HTTP + WebSocket sidecar
 axum = { version = "0.8", features = ["ws"] }
@@ -78,6 +82,12 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 default = ["sound"]
 sound = ["dep:rodio"]
 
+# Linux: statically link a vendored OpenSSL so release binaries don't depend
+# on the user's libssl. (Perl is needed to build it, but it's universal on
+# Linux — the vendored-build pain this swap removed was Windows-only.)
+[target.'cfg(target_os = "linux")'.dependencies]
+native-tls = { version = "0.2", features = ["vendored"] }
+
 # Platform-specific dependencies for window position persistence
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -99,4 +109,4 @@ tempfile = "3.24.0"
 
 [patch.crates-io]
 egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui" }
-gpu-allocator = { path = "vendor/gpu-allocator-0.27.0" }
+gpu-allocator = { path = "vendor/gpu-allocator-0.28.0" }

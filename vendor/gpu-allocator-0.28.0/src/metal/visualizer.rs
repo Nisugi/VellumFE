@@ -41,26 +41,6 @@ impl AllocatorVisualizer {
     }
 
     pub fn render_memory_block_ui(&mut self, ui: &mut egui::Ui, alloc: &Allocator) {
-        ui.label(format!(
-            "buffer image granularity: {:?}",
-            alloc.buffer_image_granularity
-        ));
-
-        ui.collapsing(
-            format!("Memory Heaps ({} heaps)", alloc.memory_heaps.len()),
-            |ui| {
-                for (i, heap) in alloc.memory_heaps.iter().enumerate() {
-                    ui.collapsing(format!("Heap: {}", i), |ui| {
-                        ui.label(format!("flags: {:?}", heap.flags));
-                        ui.label(format!(
-                            "size:  {} MiB",
-                            heap.size as f64 / (1024 * 1024) as f64
-                        ));
-                    });
-                }
-            },
-        );
-
         ui.collapsing(
             format!("Memory Types: ({} types)", alloc.memory_types.len()),
             |ui| {
@@ -86,36 +66,22 @@ impl AllocatorVisualizer {
                                 .filter(|block| block.is_some())
                                 .count();
 
-                            ui.label(format!("properties: {:?}", mem_type.memory_properties));
-                            ui.label(format!("heap index: {}", mem_type.heap_index));
+                            ui.label(format!("properties: {:?}", mem_type.heap_properties));
+                            ui.label(format!("memory type index: {}", mem_type.memory_type_index));
                             ui.label(format!("total block size: {} KiB", total_block_size / 1024));
                             ui.label(format!("total allocated:  {} KiB", total_allocated / 1024));
-                            ui.label(format!("block count: {}", active_block_count));
+                            ui.label(format!("block count: {active_block_count}"));
 
                             for (block_idx, block) in mem_type.memory_blocks.iter().enumerate() {
                                 let Some(block) = block else { continue };
 
-                                ui.collapsing(format!("Block: {}", block_idx), |ui| {
-                                    use ash::vk::Handle;
-
+                                ui.collapsing(format!("Block: {block_idx}"), |ui| {
                                     ui.label(format!("size: {} KiB", block.size / 1024));
                                     ui.label(format!(
                                         "allocated: {} KiB",
                                         block.sub_allocator.allocated() / 1024
                                     ));
-                                    ui.label(format!(
-                                        "vk device memory: 0x{:x}",
-                                        block.device_memory.as_raw()
-                                    ));
-                                    if let Some(mapped_ptr) = block.mapped_ptr {
-                                        ui.label(format!(
-                                            "mapped pointer: {:#p}",
-                                            mapped_ptr.0.as_ptr()
-                                        ));
-                                    }
-                                    if block.dedicated_allocation {
-                                        ui.label("Dedicated Allocation");
-                                    }
+                                    ui.label(format!("Heap: {:?}", &block.heap));
 
                                     block.sub_allocator.draw_base_info(ui);
 

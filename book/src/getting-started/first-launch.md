@@ -57,7 +57,7 @@ Credentials can also be stored in `config.toml` under `[connection]`.
 | `test` | GemStone IV Test |
 | `dr`, `dr-platinum`, `dr-fallen`, `dr-test` | DragonRealms worlds |
 
-> **Note**: Direct mode requires OpenSSL on Windows. See [Installation](./installation.md).
+> **Note**: Direct mode uses your operating system's native TLS stack — no extra setup on Windows or macOS. On Linux, see [Installation](./installation.md).
 
 ## The Interface
 

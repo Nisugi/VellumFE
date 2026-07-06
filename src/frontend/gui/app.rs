@@ -180,6 +180,9 @@ pub struct VellumGuiApp {
     /// that failed to load is absent and falls back to Proportional
     /// (an unbound FontFamily::Name panics inside egui).
     registered_font_families: HashSet<String>,
+    /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
+    /// `None` until the first sync so startup always pushes the initial set.
+    numpad_capture_keys: Option<HashSet<String>>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -473,6 +476,7 @@ impl VellumGuiApp {
             ui_font,
             fonts_applied: false,
             registered_font_families: HashSet::new(),
+            numpad_capture_keys: None,
             ui_settings,
             tab_settings,
             tab_groups,
@@ -1081,6 +1085,39 @@ impl VellumGuiApp {
         }
     }
 
+    /// Adjust a docked window's frame when the active skin draws this
+    /// window's border: drop the stroke (the nine-slice replaces it) and
+    /// widen the inner margin so content clears the border art.
+    fn apply_skin_border_to_frame(&self, window_name: &str, frame: &mut egui::Frame) {
+        let Some(border) = self.skin_state.border_for(window_name) else {
+            return;
+        };
+        frame.stroke = egui::Stroke::NONE;
+        let side = |inset: f32| (inset * border.scale).ceil().clamp(0.0, 127.0) as i8;
+        let margin = &mut frame.inner_margin;
+        margin.top = margin.top.max(side(border.slice[0]));
+        margin.right = margin.right.max(side(border.slice[1]));
+        margin.bottom = margin.bottom.max(side(border.slice[2]));
+        margin.left = margin.left.max(side(border.slice[3]));
+    }
+
+    /// Paint the skin's nine-slice border over a rendered window, on the
+    /// window's own layer so it moves and stacks with the window.
+    fn paint_skin_border(
+        &self,
+        ctx: &egui::Context,
+        window_name: &str,
+        response: &egui::Response,
+    ) {
+        if let Some(border) = self.skin_state.border_for(window_name) {
+            skin::paint_nine_slice(
+                &ctx.layer_painter(response.layer_id),
+                response.rect,
+                &border,
+            );
+        }
+    }
+
     /// Accent (border) color for a window, if the user set one.
     fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
         self.tab_settings
@@ -1532,10 +1569,12 @@ impl VellumGuiApp {
             .numpad_keys()
             .iter()
             .filter_map(|numpad_key| {
-                if !numpad_key.pressed || numpad_key.numlock_on {
+                if !numpad_key.pressed || numpad_key.repeat {
                     return None;
                 }
 
+                // keybind_name() is Some only for events eframe consumed (egui
+                // never saw them), so dispatch can't double-act with text input.
                 let code = Self::numpad_binding_name_to_frontend_code(numpad_key.keybind_name()?)?;
                 let modifiers = numpad_key.modifiers;
                 let key_event = crate::data::input::KeyEvent::new(
@@ -1556,6 +1595,73 @@ impl VellumGuiApp {
     #[cfg(target_arch = "wasm32")]
     fn collect_numpad_key_events(_frame: &eframe::Frame) -> Vec<GuiKeyPress> {
         Vec::new()
+    }
+
+    /// Tell eframe which numpad keys actually have bindings, so unbound keys
+    /// keep their native behavior (typing digits, NumpadEnter submitting text).
+    /// Cheap when nothing changed; call every frame so edits from the keybind
+    /// editor and dot-commands are picked up wherever they happen.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn sync_numpad_capture_keys(&mut self, frame: &mut eframe::Frame) {
+        let keys = self.bound_numpad_capture_keys();
+        if self.numpad_capture_keys.as_ref() != Some(&keys) {
+            frame.set_numpad_capture_keys(Some(keys.clone()));
+            self.numpad_capture_keys = Some(keys);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn sync_numpad_capture_keys(&mut self, _frame: &mut eframe::Frame) {}
+
+    /// Numpad keybind names ("num_1", "num_plus", …) with a user binding or an
+    /// app shortcut, i.e. the keys `handle_global_input` can actually dispatch.
+    fn bound_numpad_capture_keys(&self) -> HashSet<String> {
+        let mut keys: HashSet<String> = self
+            .app_core
+            .keybind_map
+            .keys()
+            .filter_map(|event| Self::frontend_code_to_numpad_binding_name(event.code))
+            .map(str::to_string)
+            .collect();
+
+        let app_keybinds = &self.app_core.config.app_keybinds;
+        for binding in [
+            &app_keybinds.quit,
+            &app_keybinds.start_search,
+            &app_keybinds.close_window,
+        ] {
+            if let Some((code, _)) = crate::config::parse_key_string(binding) {
+                if let Some(name) = Self::frontend_code_to_numpad_binding_name(code) {
+                    keys.insert(name.to_string());
+                }
+            }
+        }
+        keys
+    }
+
+    fn frontend_code_to_numpad_binding_name(
+        code: crate::data::input::KeyCode,
+    ) -> Option<&'static str> {
+        let name = match code {
+            crate::data::input::KeyCode::Keypad0 => "num_0",
+            crate::data::input::KeyCode::Keypad1 => "num_1",
+            crate::data::input::KeyCode::Keypad2 => "num_2",
+            crate::data::input::KeyCode::Keypad3 => "num_3",
+            crate::data::input::KeyCode::Keypad4 => "num_4",
+            crate::data::input::KeyCode::Keypad5 => "num_5",
+            crate::data::input::KeyCode::Keypad6 => "num_6",
+            crate::data::input::KeyCode::Keypad7 => "num_7",
+            crate::data::input::KeyCode::Keypad8 => "num_8",
+            crate::data::input::KeyCode::Keypad9 => "num_9",
+            crate::data::input::KeyCode::KeypadPlus => "num_plus",
+            crate::data::input::KeyCode::KeypadMinus => "num_minus",
+            crate::data::input::KeyCode::KeypadMultiply => "num_multiply",
+            crate::data::input::KeyCode::KeypadDivide => "num_divide",
+            crate::data::input::KeyCode::KeypadEnter => "num_enter",
+            crate::data::input::KeyCode::KeypadPeriod => "num_decimal",
+            _ => return None,
+        };
+        Some(name)
     }
 
     fn numpad_binding_name_to_frontend_code(
@@ -2432,7 +2538,7 @@ impl eframe::App for VellumGuiApp {
         // While an item drag is in flight, sweeping the pointer across text
         // must not select it.
         let dragging_item = egui::DragAndDrop::has_any_payload(&ctx);
-        ctx.style_mut(|style| style.interaction.selectable_labels = !dragging_item);
+        ctx.global_style_mut(|style| style.interaction.selectable_labels = !dragging_item);
         if !self.fonts_applied {
             self.fonts_applied = true;
             let window_fonts: Vec<FontRef> = self
@@ -2466,6 +2572,7 @@ impl eframe::App for VellumGuiApp {
             return;
         }
 
+        self.sync_numpad_capture_keys(frame);
         self.handle_global_input(&ctx, frame);
 
         if self.close_requested {
@@ -2481,10 +2588,10 @@ impl eframe::App for VellumGuiApp {
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
 
-        egui::TopBottomPanel::top("gui_shell_toolbar")
+        egui::Panel::top("gui_shell_toolbar")
             .resizable(false)
-            .exact_height(30.0)
-            .show(&ctx, |ui| {
+            .exact_size(30.0)
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("VellumFE GUI");
                     let connection_text = if self.app_core.game_state.connected {
@@ -2592,7 +2699,7 @@ impl eframe::App for VellumGuiApp {
                                         };
                                         if ui.selectable_label(is_current, target_label).clicked() {
                                             zone_assignments.push((key.clone(), target));
-                                            ui.close_menu();
+                                            ui.close();
                                         }
                                     }
                                 });
@@ -2603,15 +2710,15 @@ impl eframe::App for VellumGuiApp {
             });
 
         if self.shell_layout.header_visible {
-            egui::TopBottomPanel::top("gui_shell_header")
+            egui::Panel::top("gui_shell_header")
                 .resizable(false)
-                .exact_height(self.shell_layout.header_height)
+                .exact_size(self.shell_layout.header_height)
                 .frame(
                     egui::Frame::default()
                         .inner_margin(egui::Margin::ZERO)
                         .outer_margin(egui::Margin::ZERO),
                 )
-                .show(&ctx, |ui| {
+                .show(ui, |ui| {
                     let header_zone_rect = ui.max_rect();
                     visible_zone_rects.push((GuiShellZone::Header, header_zone_rect));
                     let header_handle_h = 10.0;
@@ -2653,7 +2760,7 @@ impl eframe::App for VellumGuiApp {
                 });
         }
 
-        egui::TopBottomPanel::bottom("gui_command_input").show(&ctx, |ui| {
+        egui::Panel::bottom("gui_command_input").show(ui, |ui| {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.command_input)
                     .hint_text("Enter command...")
@@ -2669,15 +2776,15 @@ impl eframe::App for VellumGuiApp {
         });
 
         if self.shell_layout.footer_visible {
-            egui::TopBottomPanel::bottom("gui_shell_footer")
+            egui::Panel::bottom("gui_shell_footer")
                 .resizable(false)
-                .exact_height(self.shell_layout.footer_height)
+                .exact_size(self.shell_layout.footer_height)
                 .frame(
                     egui::Frame::default()
                         .inner_margin(egui::Margin::ZERO)
                         .outer_margin(egui::Margin::ZERO),
                 )
-                .show(&ctx, |ui| {
+                .show(ui, |ui| {
                     let footer_zone_rect = ui.max_rect();
                     visible_zone_rects.push((GuiShellZone::Footer, footer_zone_rect));
                     let footer_handle_h = 10.0;
@@ -2725,7 +2832,7 @@ impl eframe::App for VellumGuiApp {
                     .inner_margin(egui::Margin::ZERO)
                     .outer_margin(egui::Margin::ZERO),
             )
-            .show(&ctx, |ui| {
+            .show(ui, |ui| {
             let root = ui.max_rect();
             if !root.is_finite() || root.width() <= 24.0 || root.height() <= 24.0 {
                 return;

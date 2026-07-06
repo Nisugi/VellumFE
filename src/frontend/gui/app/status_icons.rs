@@ -241,8 +241,8 @@ mod tests {
         // Run one headless egui frame and paint each icon; catches geometry
         // panics (bad polygons, zero-size strokes) without a GPU.
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(24.0));
                 for id in SUPPORTED {
                     assert!(

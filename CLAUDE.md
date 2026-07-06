@@ -137,7 +137,7 @@ Defaults embedded from `defaults/` directory via `include_dir` crate.
 
 Direct mode connects to GemStone IV without Lich proxy. Implementation in `src/network.rs`:
 
-1. **TLS Handshake**: `eaccess.play.net:7910` with SNI disabled, session caching disabled
+1. **TLS Handshake**: `eaccess.play.net:7910` via `native-tls` (OS-native stack) with SNI disabled. The server only speaks TLS 1.2 with static-RSA key exchange (`AES128-GCM-SHA256`), so rustls cannot be used — it refuses to implement non-forward-secret suites.
 2. **Challenge-Response**: Send "K", receive 32-byte hash key, obfuscate password: `((password[i] - 32) ^ hashkey[i]) + 32`
 3. **Session**: Login payload `A\t{account}\t{encoded_password}\n`
 
@@ -153,10 +153,7 @@ vellum-fe --port 8000 --character NAME
 
 ## Dependencies
 
-Direct mode requires OpenSSL via vcpkg. On Windows set `VCPKG_ROOT`:
-```bash
-set VCPKG_ROOT=C:\path\to\vcpkg
-```
+TLS uses the OS-native stack via `native-tls` (SChannel on Windows, Security.framework on macOS) — no OpenSSL, Perl, or vcpkg needed there. Linux statically links a vendored OpenSSL (needs Perl, universal on Linux) so release binaries have no libssl runtime dependency.
 
 ## Troubleshooting
 

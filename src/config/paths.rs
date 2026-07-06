@@ -283,7 +283,7 @@ impl Config {
             }
         }
         let mut bytes = [0u8; 16];
-        openssl::rand::rand_bytes(&mut bytes).context("Failed to generate web token")?;
+        getrandom::fill(&mut bytes).context("Failed to generate web token")?;
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

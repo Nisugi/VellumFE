@@ -57,7 +57,7 @@ cargo build --release
 
 **Requirements:**
 - Rust 1.70+ (stable)
-- OpenSSL (for direct mode) - install via vcpkg on Windows
+- No TLS setup needed: Windows/macOS use the OS-native stack; Linux builds a bundled OpenSSL automatically (requires Perl, preinstalled on virtually all distros)
 
 ## Documentation
 
