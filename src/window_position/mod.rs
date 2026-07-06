@@ -35,6 +35,13 @@ pub struct WindowRect {
 }
 
 impl WindowRect {
+    /// A plausible terminal window. ConPTY pseudo-windows and other broken
+    /// handles yield zero/absurd rects; persisting or applying those would
+    /// shrink a real window to nothing.
+    pub fn is_sane(&self) -> bool {
+        self.width >= 100 && self.height >= 100
+    }
+
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
         Self {
             x,

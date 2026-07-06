@@ -16,8 +16,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    SetWindowPos, HWND_TOP, SWP_NOZORDER,
+    EnumWindows, GetClassNameW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindowVisible, SetWindowPos, HWND_TOP, SWP_NOZORDER,
 };
 
 use super::{ScreenInfo, WindowPositioner, WindowRect};
@@ -48,10 +48,17 @@ impl WindowsPositioner {
 
         // ConPTY delegation (e.g. Windows Terminal as the default host, with
         // no WT ancestor - launcher-spawned sessions): GetConsoleWindow is a
-        // hidden pseudo-window, and moving it moves nothing visible. Find
-        // the host's real window by mirroring a unique console title.
-        if !hwnd.0.is_null() && !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            if let Some(host) = find_host_window_by_title(hwnd) {
+        // fake "PseudoConsoleWindow" - it even claims to be visible, but has
+        // no pixels, and moving it moves nothing. A real console is class
+        // "ConsoleWindowClass". For the fake, the owning process is the
+        // host's console broker (OpenConsole/conhost), so walk its parent
+        // chain to the process that owns a real visible window. Falls back
+        // to mirroring a unique console title for hosts with a different
+        // process shape.
+        if !hwnd.0.is_null() && is_pseudo_console_window(hwnd) {
+            if let Some(host) = find_host_window_by_process(hwnd)
+                .or_else(|| find_host_window_by_title(hwnd))
+            {
                 tracing::debug!("Console is ConPTY-hosted; using host window {:?}", host);
                 return Self {
                     hwnd: host,
@@ -68,12 +75,74 @@ impl WindowsPositioner {
     }
 }
 
-/// Locate the terminal window hosting our ConPTY console: set a unique
-/// console title, find the visible top-level window that mirrors it, then
-/// restore the original title. Hosts propagate the title into the tab and
-/// window title asynchronously, so poll briefly. Fails (None) when the
-/// session's tab is not the active one - the window title shows the active
-/// tab - which is fine: positioning a shared window would be wrong anyway.
+/// True when GetConsoleWindow returned ConPTY's stand-in window rather than
+/// a real console window. The stand-in reports itself visible, so the class
+/// name is the reliable signal; a zero-size rect or invisibility count too.
+fn is_pseudo_console_window(hwnd: HWND) -> bool {
+    unsafe {
+        let mut class = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut class) as usize;
+        if len > 0 {
+            let name = String::from_utf16_lossy(&class[..len.min(class.len())]);
+            if name == "PseudoConsoleWindow" {
+                return true;
+            }
+        }
+        if !IsWindowVisible(hwnd).as_bool() {
+            return true;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            return rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0;
+        }
+    }
+    false
+}
+
+/// Locate the terminal window hosting our ConPTY console by ownership: the
+/// hidden pseudo-window belongs to the host's console broker process
+/// (OpenConsole.exe under Windows Terminal), whose parent chain leads to
+/// the process owning the visible terminal window.
+fn find_host_window_by_process(pseudo: HWND) -> Option<HWND> {
+    let mut owner_pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(pseudo, Some(&mut owner_pid));
+    }
+    if owner_pid == 0 {
+        return None;
+    }
+
+    let own_pid = unsafe { GetCurrentProcessId() };
+    let mut search_pid = owner_pid;
+    for _ in 0..5 {
+        // Never adopt a window from our own process (or the pseudo-window's
+        // broker itself having none) - keep walking upward.
+        if search_pid != own_pid {
+            if let Some(hwnd) = find_window_for_process(search_pid) {
+                tracing::debug!(
+                    "ConPTY host window found via process {} (broker {})",
+                    search_pid,
+                    owner_pid
+                );
+                return Some(hwnd);
+            }
+        }
+        match get_parent_process(search_pid) {
+            Some((parent_pid, _)) if parent_pid != 0 && parent_pid != search_pid => {
+                search_pid = parent_pid;
+            }
+            _ => break,
+        }
+    }
+    None
+}
+
+/// Fallback: set a unique console title, find the visible top-level window
+/// that mirrors it, then restore the original title. Hosts propagate the
+/// title into the tab and window title asynchronously, so poll briefly.
+/// Fails (None) when the session's tab is not the active one - the window
+/// title shows the active tab - which is fine: positioning a shared window
+/// would be wrong anyway.
 fn find_host_window_by_title(exclude: HWND) -> Option<HWND> {
     unsafe {
         let mut original = [0u16; 512];

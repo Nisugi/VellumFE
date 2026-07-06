@@ -219,8 +219,17 @@ async fn async_run(
     let mut frontend = TuiFrontend::new()?;
 
     // Restore window position for this character (if saved)
-    if let Some(positioner) = crate::window_position::create_positioner() {
-        if let Ok(Some(saved)) = crate::window_position::load(character.as_deref()) {
+    // One positioner for the whole session: restore now, then the main loop
+    // saves geometry periodically. Exit-time saving alone is not enough -
+    // closing the window with the X (or a crash) tears the host window down
+    // before any handler can read its position.
+    let positioner = crate::window_position::create_positioner();
+    if let Some(positioner) = positioner.as_deref() {
+        // Guard against files written by older builds that captured the
+        // ConPTY pseudo-window (zero-size rects would collapse the window).
+        if let Ok(Some(saved)) = crate::window_position::load(character.as_deref())
+            .map(|config| config.filter(|c| c.window.is_sane()))
+        {
             use crate::window_position::WindowPositionerExt;
             let rect = if positioner.is_visible(&saved.window) {
                 saved.window
@@ -236,6 +245,9 @@ async fn async_run(
             }
         }
     }
+    let mut last_geometry_check = Instant::now();
+    let mut last_saved_window: Option<crate::window_position::WindowRect> = None;
+    let mut last_saved_cells: Option<(u16, u16)> = None;
 
     // Ensure frontend theme cache matches whatever layout/theme AppCore activated
     let initial_theme_id = app_core.config.active_theme.clone();
@@ -332,6 +344,37 @@ async fn async_run(
 
     // Main event loop
     while app_core.running {
+        // Persist window geometry when it changes (checked at a slow tick).
+        // This is the primary save path: it survives every way a session
+        // can end, including the console X button and crashes.
+        if last_geometry_check.elapsed().as_secs() >= 3 {
+            last_geometry_check = Instant::now();
+            if let Some(positioner) = positioner.as_deref() {
+                if let Ok(rect) = positioner.get_position() {
+                    if rect.is_sane() && last_saved_window.as_ref() != Some(&rect) {
+                        if let Ok(screens) = positioner.get_screen_bounds() {
+                            let config = crate::window_position::WindowPositionConfig {
+                                window: rect.clone(),
+                                monitors: screens,
+                            };
+                            if crate::window_position::save(character.as_deref(), &config).is_ok()
+                            {
+                                last_saved_window = Some(rect);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(profile) = console_size_profile.as_deref() {
+                if let Ok(cells) = crossterm::terminal::size() {
+                    if last_saved_cells != Some(cells) {
+                        save_console_size(profile);
+                        last_saved_cells = Some(cells);
+                    }
+                }
+            }
+        }
+
         // Poll for frontend events (keyboard, mouse, resize)
         let events = frontend.poll_events()?;
         app_core
@@ -599,8 +642,10 @@ async fn async_run(
         tracing::warn!("Failed to save command history: {}", e);
     }
 
-    // Save window position for this character
-    if let Some(positioner) = crate::window_position::create_positioner() {
+    // Final geometry save on clean exit (the loop's periodic save may be up
+    // to one tick stale). Reuses the session positioner - its handle is
+    // still valid here, unlike in close-event handlers.
+    if let Some(positioner) = positioner.as_deref() {
         if let Ok(rect) = positioner.get_position() {
             if let Ok(screens) = positioner.get_screen_bounds() {
                 let config = crate::window_position::WindowPositionConfig {
