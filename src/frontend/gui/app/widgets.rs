@@ -793,8 +793,8 @@ impl VellumGuiApp {
     /// Wrayth-style paperdoll drawn with painter geometry: each body part is
     /// a shape filled by its injury color, with a hover tooltip naming the
     /// part and severity. Back and nervous system have no spot on a front
-    /// silhouette, so they render as labeled badges beside the body. Scales
-    /// with the window and needs no image assets.
+    /// silhouette, so they render as "B"/"N" letters in the bottom corners
+    /// (Wrayth-style). Scales with the window and needs no image assets.
     pub(super) fn render_injury_doll(
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
@@ -843,24 +843,27 @@ impl VellumGuiApp {
             Circle { c: (f32, f32), r: f32 },
             Block { min: (f32, f32), max: (f32, f32) },
             Line { a: (f32, f32), b: (f32, f32), w: f32 },
-            Badge { c: (f32, f32), label: &'static str },
+            Letter { c: (f32, f32), letter: &'static str },
         }
         use PartShape::*;
+        // Back and nervous system have no spot on a front silhouette; like
+        // Wrayth's paperdoll they render as "B" and "N" letters in the
+        // bottom corners, colored by severity.
         const PARTS: &[(&str, &str, PartShape)] = &[
-            ("head", "head", Circle { c: (0.36, 0.105), r: 0.085 }),
-            ("leftEye", "left eye", Circle { c: (0.325, 0.09), r: 0.018 }),
-            ("rightEye", "right eye", Circle { c: (0.395, 0.09), r: 0.018 }),
-            ("neck", "neck", Block { min: (0.325, 0.19), max: (0.395, 0.235) }),
-            ("chest", "chest", Block { min: (0.24, 0.235), max: (0.48, 0.41) }),
-            ("abdomen", "abdomen", Block { min: (0.255, 0.41), max: (0.465, 0.525) }),
-            ("leftArm", "left arm", Line { a: (0.225, 0.26), b: (0.125, 0.47), w: 0.045 }),
-            ("rightArm", "right arm", Line { a: (0.495, 0.26), b: (0.595, 0.47), w: 0.045 }),
-            ("leftHand", "left hand", Circle { c: (0.11, 0.515), r: 0.033 }),
-            ("rightHand", "right hand", Circle { c: (0.61, 0.515), r: 0.033 }),
-            ("leftLeg", "left leg", Line { a: (0.30, 0.53), b: (0.27, 0.90), w: 0.055 }),
-            ("rightLeg", "right leg", Line { a: (0.42, 0.53), b: (0.45, 0.90), w: 0.055 }),
-            ("back", "back", Badge { c: (0.82, 0.31), label: "Back" }),
-            ("nsys", "nervous system", Badge { c: (0.82, 0.47), label: "Nerves" }),
+            ("head", "head", Circle { c: (0.50, 0.105), r: 0.085 }),
+            ("leftEye", "left eye", Circle { c: (0.465, 0.09), r: 0.018 }),
+            ("rightEye", "right eye", Circle { c: (0.535, 0.09), r: 0.018 }),
+            ("neck", "neck", Block { min: (0.465, 0.19), max: (0.535, 0.235) }),
+            ("chest", "chest", Block { min: (0.38, 0.235), max: (0.62, 0.41) }),
+            ("abdomen", "abdomen", Block { min: (0.395, 0.41), max: (0.605, 0.525) }),
+            ("leftArm", "left arm", Line { a: (0.365, 0.26), b: (0.265, 0.47), w: 0.045 }),
+            ("rightArm", "right arm", Line { a: (0.635, 0.26), b: (0.735, 0.47), w: 0.045 }),
+            ("leftHand", "left hand", Circle { c: (0.25, 0.515), r: 0.033 }),
+            ("rightHand", "right hand", Circle { c: (0.75, 0.515), r: 0.033 }),
+            ("leftLeg", "left leg", Line { a: (0.44, 0.53), b: (0.41, 0.90), w: 0.055 }),
+            ("rightLeg", "right leg", Line { a: (0.56, 0.53), b: (0.59, 0.90), w: 0.055 }),
+            ("back", "back", Letter { c: (0.12, 0.93), letter: "B" }),
+            ("nsys", "nervous system", Letter { c: (0.88, 0.93), letter: "N" }),
         ];
 
         // Fit an aspect-stable doll rect into the available space, centered
@@ -880,7 +883,7 @@ impl VellumGuiApp {
         let at = |x: f32, y: f32| rect.min + Vec2::new(x * rect.width(), y * rect.height());
         let scale = rect.height();
 
-        let badge_font = egui::FontId::proportional((scale * 0.055).clamp(9.0, 16.0));
+        let letter_font = egui::FontId::proportional((scale * 0.09).clamp(10.0, 18.0));
         for (key, display, shape) in PARTS {
             let level = injuries.get(*key).copied().unwrap_or(0);
             let fill = Self::injury_level_color(level);
@@ -902,25 +905,16 @@ impl VellumGuiApp {
                     painter.line_segment([a, b], egui::Stroke::new(w * scale, fill));
                     Rect::from_two_pos(a, b).expand(w * scale * 0.5)
                 }
-                Badge { c, label } => {
+                Letter { c, letter } => {
                     let center = at(c.0, c.1);
-                    let badge_rect = Rect::from_center_size(
-                        center,
-                        Vec2::new(scale * 0.30, scale * 0.10),
-                    );
-                    painter.rect(badge_rect, scale * 0.03, fill, outline, egui::StrokeKind::Middle);
                     painter.text(
                         center,
                         egui::Align2::CENTER_CENTER,
-                        *label,
-                        badge_font.clone(),
-                        if level == 0 {
-                            ui.visuals().weak_text_color()
-                        } else {
-                            Color32::WHITE
-                        },
+                        *letter,
+                        letter_font.clone(),
+                        fill,
                     );
-                    badge_rect
+                    Rect::from_center_size(center, Vec2::splat(scale * 0.11))
                 }
             };
 
@@ -1037,10 +1031,11 @@ impl VellumGuiApp {
 
         ui.horizontal_centered(|ui| {
             // Rose square: whatever height we have, leaving room for the
-            // up/down/in/out column to the right.
+            // up/down arrow column to the right. Out is the rose's hub.
+            let arrow_side = (ui.available_height() * 0.28).clamp(14.0, 30.0);
             let side = ui
                 .available_height()
-                .min(ui.available_width() - 46.0)
+                .min(ui.available_width() - arrow_side - 8.0)
                 .max(40.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
             if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
@@ -1048,24 +1043,83 @@ impl VellumGuiApp {
             }
 
             ui.vertical(|ui| {
-                for (direction, label) in
-                    [("up", "▲ Up"), ("down", "▼ Dn"), ("out", "⊙ Out"), ("in", "⊚ In")]
-                {
-                    let is_available = available.contains(direction);
-                    let response =
-                        ui.add_enabled(is_available, egui::Button::new(RichText::new(label).small()));
-                    if is_available && response.clicked() && clicked_link.is_none() {
-                        clicked_link = Some(Self::gui_link_click_from_response(
-                            &response,
-                            ui,
-                            Self::direct_command_link(direction.to_string()),
-                        ));
+                for (direction, points_up) in [("up", true), ("down", false)] {
+                    if let Some(click) =
+                        Self::paint_vertical_arrow(ui, arrow_side, direction, points_up, &available)
+                    {
+                        if clicked_link.is_none() {
+                            clicked_link = Some(click);
+                        }
                     }
                 }
             });
         });
 
         clicked_link
+    }
+
+    /// One up/down movement arrow beside the compass rose: a triangle in
+    /// the same color language as the rose (link color when the exit is
+    /// available, faint outline otherwise), clickable like a rose arrow.
+    fn paint_vertical_arrow(
+        ui: &mut egui::Ui,
+        side: f32,
+        direction: &str,
+        points_up: bool,
+        available: &HashSet<String>,
+    ) -> Option<GuiLinkClick> {
+        let is_available = available.contains(direction);
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::splat(side),
+            if is_available {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+
+        let visuals = ui.visuals();
+        let available_fill = visuals.hyperlink_color;
+        let idle_stroke = visuals.widgets.noninteractive.bg_stroke.color;
+        let (fill, stroke) = if !is_available {
+            (Color32::TRANSPARENT, egui::Stroke::new(1.0, idle_stroke))
+        } else if response.hovered() {
+            let hover = Self::lighten(available_fill, 0.35);
+            (hover, egui::Stroke::new(1.0, hover))
+        } else {
+            (available_fill, egui::Stroke::new(1.0, available_fill))
+        };
+
+        let inner = rect.shrink(side * 0.18);
+        let points = if points_up {
+            vec![
+                Pos2::new(inner.center().x, inner.min.y),
+                Pos2::new(inner.min.x, inner.max.y),
+                Pos2::new(inner.max.x, inner.max.y),
+            ]
+        } else {
+            vec![
+                Pos2::new(inner.min.x, inner.min.y),
+                Pos2::new(inner.max.x, inner.min.y),
+                Pos2::new(inner.center().x, inner.max.y),
+            ]
+        };
+        ui.painter()
+            .add(egui::Shape::convex_polygon(points, fill, stroke));
+
+        if is_available {
+            let response = response
+                .on_hover_text(direction.to_string())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                return Some(Self::gui_link_click_from_response(
+                    &response,
+                    ui,
+                    Self::direct_command_link(direction.to_string()),
+                ));
+            }
+        }
+        None
     }
 
     /// Draw the compass rose into `rect`. Sprite mode (skin `[compass]`
@@ -1103,8 +1157,12 @@ impl VellumGuiApp {
         if let Some(rose) = &rose_sprite {
             let dest = crate::frontend::gui::skin::sprite_dest(rose, rect);
             crate::frontend::gui::skin::paint_sprite(&painter, dest, rose, Color32::WHITE);
-            for (direction, _) in &DIRECTIONS {
-                if !available.contains(*direction) {
+            let overlay_dirs = DIRECTIONS
+                .iter()
+                .map(|(direction, _)| *direction)
+                .chain(["up", "down", "out"]);
+            for direction in overlay_dirs {
+                if !available.contains(direction) {
                     continue;
                 }
                 if let Some(overlay) = skin_art.and_then(|art| art.compass_dir(direction)) {
@@ -1180,14 +1238,40 @@ impl VellumGuiApp {
             }
         }
 
+        // Hub over the arrow bases doubles as the OUT exit: lit and
+        // clickable when the room has one, a plain hub otherwise.
+        let out_available = available.contains("out");
+        let hub_radius = radius * 0.18;
+        let hub_response = ui.interact(
+            Rect::from_center_size(center, Vec2::splat(hub_radius * 2.0)),
+            ui.id().with(("compass_rose", "out")),
+            if out_available {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
         if rose_sprite.is_none() {
-            // Hub over the arrow bases.
-            painter.circle(
-                center,
-                radius * 0.14,
-                visuals.window_fill(),
-                egui::Stroke::new(1.0, idle_stroke),
-            );
+            let hub_fill = if !out_available {
+                visuals.window_fill()
+            } else if hub_response.hovered() {
+                hover_fill
+            } else {
+                available_fill
+            };
+            painter.circle(center, hub_radius, hub_fill, egui::Stroke::new(1.0, idle_stroke));
+        }
+        if out_available {
+            let hub_response = hub_response
+                .on_hover_text("out")
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if hub_response.clicked() && clicked_link.is_none() {
+                clicked_link = Some(Self::gui_link_click_from_response(
+                    &hub_response,
+                    ui,
+                    Self::direct_command_link("out".to_string()),
+                ));
+            }
         }
 
         clicked_link

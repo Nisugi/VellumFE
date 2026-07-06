@@ -79,7 +79,7 @@ stunned = "icons/stunned.png"
 rose = "compass/rose.png"
 n = "compass/n_lit.png"
 ne = "compass/ne_lit.png"
-# ... e, se, s, sw, w, nw
+# ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 
 # Sprite injury doll: base body plus full-canvas overlays per part and
 # severity (injury1-3, scar1-3). Parts use the protocol names: head,
@@ -130,9 +130,10 @@ windows keep their OS chrome.
   in single indicator widgets they dim when the state is inactive.
   Indicator ids without a sprite fall back to the built-in vector
   pictogram, then to a text label.
-- `[compass]`: the rose replaces the vector rose; the eight direction
-  overlays light up per available exit. Click regions and tooltips are
-  unchanged. Up/Down/Out/In remain buttons.
+- `[compass]`: the rose replaces the vector rose; direction overlays
+  (the eight rose directions plus `up`/`down`/`out`) light up per
+  available exit. Click regions and tooltips are unchanged: the hub is
+  the out exit, and up/down arrows sit beside the rose.
 - `[injury_doll]`: overlays stack on the base image in author-canvas
   alignment; hovering shows a summary of current wounds. Without a `base`
   the vector paperdoll renders instead.
