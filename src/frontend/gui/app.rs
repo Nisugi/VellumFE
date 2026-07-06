@@ -77,6 +77,9 @@ pub(super) struct WidgetRenderSettings {
     /// Skin background image for this window, if the active skin defines
     /// one. Resolved here so detached viewports can paint it too.
     background: Option<skin::ResolvedBackground>,
+    /// Widget sprite art from the active skin (status icons, compass,
+    /// injury doll); None = draw the built-in vector graphics.
+    skin_art: Option<std::sync::Arc<skin::SkinWidgetArt>>,
 }
 
 impl WidgetRenderSettings {
@@ -924,6 +927,7 @@ impl VellumGuiApp {
                 .available_tabs
                 .get(key)
                 .and_then(|tab| self.skin_state.background_for(&tab.window_name)),
+            skin_art: self.skin_state.widget_art(),
         }
     }
 

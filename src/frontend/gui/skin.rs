@@ -46,6 +46,43 @@ pub struct SkinManifest {
     /// applies to windows without their own entry.
     #[serde(default, rename = "window")]
     pub windows: HashMap<String, WindowSkin>,
+    /// Status icon sprites keyed by indicator id ("kneeling", "STUNNED",
+    /// ...; case-insensitive). Replace the built-in vector pictograms in
+    /// the dashboard and indicator widgets.
+    #[serde(default)]
+    pub icons: HashMap<String, String>,
+    /// Sprite compass replacing the vector rose.
+    #[serde(default)]
+    pub compass: CompassSkin,
+    /// Sprite paperdoll replacing the vector injury doll.
+    #[serde(default)]
+    pub injury_doll: InjuryDollSkin,
+}
+
+/// Sprite compass: a full-square rose image plus one full-square overlay
+/// per direction, drawn only while that exit is available. Overlays are
+/// authored at the same canvas size as the rose, so positioning lives in
+/// the art, not the manifest.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CompassSkin {
+    #[serde(default)]
+    pub rose: Option<String>,
+    /// Direction key ("n", "ne", ... "nw") -> lit overlay image.
+    #[serde(flatten)]
+    pub directions: HashMap<String, String>,
+}
+
+/// Sprite injury doll: a base body image plus full-canvas overlays per
+/// part and severity. Overlay tables are keyed by body part (protocol
+/// names: head, neck, chest, ..., leftArm, nsys) with entries injury1-3
+/// and scar1-3.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InjuryDollSkin {
+    #[serde(default)]
+    pub base: Option<String>,
+    /// part -> { injury1 = "...", scar2 = "...", ... }
+    #[serde(flatten)]
+    pub parts: HashMap<String, HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -136,6 +173,67 @@ pub struct ResolvedBackground {
     pub scrim_alpha: u8,
 }
 
+/// One loaded skin texture: id plus native size.
+#[derive(Debug, Clone, Copy)]
+pub struct SkinTexture {
+    pub texture: egui::TextureId,
+    pub size: egui::Vec2,
+}
+
+/// Widget sprite art resolved from the active skin. Shared into
+/// `WidgetRenderSettings` behind an Arc so every render path (including
+/// detached viewports) reads the same lookup tables.
+#[derive(Debug, Default)]
+pub struct SkinWidgetArt {
+    /// Indicator id (stored UPPERCASE) -> icon sprite.
+    icons: HashMap<String, SkinTexture>,
+    pub compass_rose: Option<SkinTexture>,
+    /// Direction key (lowercase "n".."nw", "up", ...) -> lit overlay.
+    compass_dirs: HashMap<String, SkinTexture>,
+    pub doll_base: Option<SkinTexture>,
+    /// Body part (lowercase) -> severity level (1-6) -> overlay.
+    doll_parts: HashMap<String, HashMap<u8, SkinTexture>>,
+}
+
+impl SkinWidgetArt {
+    pub fn icon(&self, id: &str) -> Option<SkinTexture> {
+        self.icons.get(&id.to_ascii_uppercase()).copied()
+    }
+
+    pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
+        self.compass_dirs.get(direction).copied()
+    }
+
+    pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
+        self.doll_parts
+            .get(&part.to_ascii_lowercase())
+            .and_then(|levels| levels.get(&level))
+            .copied()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.icons.is_empty()
+            && self.compass_rose.is_none()
+            && self.compass_dirs.is_empty()
+            && self.doll_base.is_none()
+            && self.doll_parts.is_empty()
+    }
+}
+
+/// Severity level for an injury-doll overlay key: injury1-3 -> 1-3,
+/// scar1-3 -> 4-6.
+fn severity_level_from_key(key: &str) -> Option<u8> {
+    match key {
+        "injury1" => Some(1),
+        "injury2" => Some(2),
+        "injury3" => Some(3),
+        "scar1" => Some(4),
+        "scar2" => Some(5),
+        "scar3" => Some(6),
+        _ => None,
+    }
+}
+
 /// Everything needed to paint one window's nine-slice border.
 #[derive(Debug, Clone)]
 pub struct ResolvedBorder {
@@ -157,6 +255,8 @@ pub struct SkinState {
     /// Loaded textures keyed by manifest image path. `None` records a load
     /// failure so a bad path warns once instead of retrying every frame.
     textures: HashMap<String, Option<egui::TextureHandle>>,
+    /// Widget sprite lookups built once per skin load.
+    widget_art: Option<std::sync::Arc<SkinWidgetArt>>,
     applied: bool,
 }
 
@@ -171,6 +271,7 @@ impl SkinState {
         self.loaded_id = active.map(str::to_owned);
         self.manifest = SkinManifest::default();
         self.textures.clear();
+        self.widget_art = None;
 
         let Some(name) = active else {
             return;
@@ -180,6 +281,7 @@ impl SkinState {
                 self.manifest = manifest;
                 self.root = root;
                 self.load_textures(ctx, name);
+                self.widget_art = self.build_widget_art();
             }
             Err(err) => {
                 tracing::warn!("Failed to load skin '{}': {:#}", name, err);
@@ -187,8 +289,65 @@ impl SkinState {
         }
     }
 
+    /// Sprite lookups for widget renderers; None when the skin defines no
+    /// widget art (renderers then use their vector drawings).
+    pub fn widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
+        self.widget_art.clone()
+    }
+
+    fn build_widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
+        let tex = |path: &String| {
+            self.textures
+                .get(path)
+                .and_then(|handle| handle.as_ref())
+                .map(|handle| SkinTexture {
+                    texture: handle.id(),
+                    size: handle.size_vec2(),
+                })
+        };
+
+        let mut art = SkinWidgetArt::default();
+        for (id, path) in &self.manifest.icons {
+            if let Some(texture) = tex(path) {
+                art.icons.insert(id.to_ascii_uppercase(), texture);
+            }
+        }
+        art.compass_rose = self.manifest.compass.rose.as_ref().and_then(tex);
+        for (direction, path) in &self.manifest.compass.directions {
+            if let Some(texture) = tex(path) {
+                art.compass_dirs
+                    .insert(direction.to_ascii_lowercase(), texture);
+            }
+        }
+        art.doll_base = self.manifest.injury_doll.base.as_ref().and_then(tex);
+        for (part, levels) in &self.manifest.injury_doll.parts {
+            for (key, path) in levels {
+                let Some(level) = severity_level_from_key(key) else {
+                    tracing::warn!(
+                        "Skin injury_doll.{}: unknown severity key '{}' (expected injury1-3/scar1-3)",
+                        part,
+                        key
+                    );
+                    continue;
+                };
+                if let Some(texture) = tex(path) {
+                    art.doll_parts
+                        .entry(part.to_ascii_lowercase())
+                        .or_default()
+                        .insert(level, texture);
+                }
+            }
+        }
+
+        if art.is_empty() {
+            None
+        } else {
+            Some(std::sync::Arc::new(art))
+        }
+    }
+
     fn load_textures(&mut self, ctx: &egui::Context, skin_name: &str) {
-        let images: Vec<String> = self
+        let mut images: Vec<String> = self
             .manifest
             .windows
             .values()
@@ -201,6 +360,17 @@ impl SkinState {
                     .chain(window.border.as_ref().map(|border| border.image.clone()))
             })
             .collect();
+        images.extend(self.manifest.icons.values().cloned());
+        images.extend(self.manifest.compass.rose.iter().cloned());
+        images.extend(self.manifest.compass.directions.values().cloned());
+        images.extend(self.manifest.injury_doll.base.iter().cloned());
+        images.extend(
+            self.manifest
+                .injury_doll
+                .parts
+                .values()
+                .flat_map(|levels| levels.values().cloned()),
+        );
         for image in images {
             if self.textures.contains_key(&image) {
                 continue;
@@ -398,6 +568,25 @@ pub fn paint_background(
         );
         painter.rect_filled(rect, 0.0, scrim);
     }
+}
+
+/// Largest rect with the sprite's aspect ratio centered inside `rect`.
+/// Layered sprites (compass rose + overlays, doll base + overlays) should
+/// all be painted into the dest computed from the *base* sprite so
+/// same-canvas art stays aligned.
+pub fn sprite_dest(sprite: &SkinTexture, rect: egui::Rect) -> egui::Rect {
+    contain_dest(sprite.size, rect)
+}
+
+/// Paint a sprite stretched into `dest` (use `sprite_dest` for aspect fit).
+pub fn paint_sprite(
+    painter: &egui::Painter,
+    dest: egui::Rect,
+    sprite: &SkinTexture,
+    tint: egui::Color32,
+) {
+    let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    painter.image(sprite.texture, dest, full_uv, tint);
 }
 
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
@@ -665,6 +854,71 @@ mod tests {
         assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect).is_empty());
         let empty_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0));
         assert!(nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect).is_empty());
+    }
+
+    #[test]
+    fn manifest_parses_widget_art_sections() {
+        let manifest = manifest(
+            r#"
+            [icons]
+            kneeling = "icons/kneel.png"
+            STUNNED = "icons/stunned.png"
+
+            [compass]
+            rose = "compass/rose.png"
+            n = "compass/n.png"
+            up = "compass/up.png"
+
+            [injury_doll]
+            base = "doll/base.png"
+
+            [injury_doll.head]
+            injury1 = "doll/head_i1.png"
+            scar3 = "doll/head_s3.png"
+            "#,
+        );
+        assert_eq!(manifest.icons["kneeling"], "icons/kneel.png");
+        assert_eq!(manifest.icons["STUNNED"], "icons/stunned.png");
+        assert_eq!(manifest.compass.rose.as_deref(), Some("compass/rose.png"));
+        assert_eq!(manifest.compass.directions["n"], "compass/n.png");
+        assert_eq!(manifest.compass.directions["up"], "compass/up.png");
+        assert_eq!(manifest.injury_doll.base.as_deref(), Some("doll/base.png"));
+        assert_eq!(manifest.injury_doll.parts["head"]["injury1"], "doll/head_i1.png");
+        assert_eq!(manifest.injury_doll.parts["head"]["scar3"], "doll/head_s3.png");
+    }
+
+    #[test]
+    fn severity_levels_map_injuries_then_scars() {
+        assert_eq!(severity_level_from_key("injury1"), Some(1));
+        assert_eq!(severity_level_from_key("injury3"), Some(3));
+        assert_eq!(severity_level_from_key("scar1"), Some(4));
+        assert_eq!(severity_level_from_key("scar3"), Some(6));
+        assert_eq!(severity_level_from_key("injury4"), None);
+        assert_eq!(severity_level_from_key("base"), None);
+    }
+
+    #[test]
+    fn widget_art_lookups_normalize_case() {
+        let mut art = SkinWidgetArt::default();
+        let texture = SkinTexture {
+            texture: egui::TextureId::default(),
+            size: egui::vec2(16.0, 16.0),
+        };
+        art.icons.insert("KNEELING".to_string(), texture);
+        art.compass_dirs.insert("ne".to_string(), texture);
+        art.doll_parts
+            .entry("leftarm".to_string())
+            .or_default()
+            .insert(2, texture);
+
+        assert!(art.icon("kneeling").is_some());
+        assert!(art.icon("Kneeling").is_some());
+        assert!(art.icon("HIDDEN").is_none());
+        assert!(art.compass_dir("ne").is_some());
+        assert!(art.doll_overlay("leftArm", 2).is_some());
+        assert!(art.doll_overlay("leftArm", 3).is_none());
+        assert!(!art.is_empty());
+        assert!(SkinWidgetArt::default().is_empty());
     }
 
     #[test]

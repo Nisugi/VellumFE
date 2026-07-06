@@ -65,6 +65,33 @@ scrim = 0.5
 image = "border/brass.png"
 slice = [8.0, 8.0, 8.0, 8.0]
 scale = 1.0
+
+# Status icon sprites (dashboard + indicator widgets), keyed by
+# indicator id (case-insensitive). Replace the built-in pictograms.
+[icons]
+kneeling = "icons/kneel.png"
+stunned = "icons/stunned.png"
+
+# Sprite compass: a rose image plus one overlay per direction, drawn only
+# while that exit is available. Author all images on the same canvas —
+# overlays are aligned to the rose, so positioning lives in the art.
+[compass]
+rose = "compass/rose.png"
+n = "compass/n_lit.png"
+ne = "compass/ne_lit.png"
+# ... e, se, s, sw, w, nw
+
+# Sprite injury doll: base body plus full-canvas overlays per part and
+# severity (injury1-3, scar1-3). Parts use the protocol names: head,
+# neck, chest, abdomen, back, leftArm, rightArm, leftHand, rightHand,
+# leftLeg, rightLeg, leftEye, rightEye, nsys.
+[injury_doll]
+base = "doll/base.png"
+
+[injury_doll.head]
+injury1 = "doll/head_i1.png"
+injury2 = "doll/head_i2.png"
+scar1 = "doll/head_s1.png"
 ```
 
 ### Background options
@@ -96,6 +123,19 @@ margin widens to clear the border art. Background and border fall back to
 the `default` entry independently, so a window can override one without
 losing the other. Borders currently apply to docked windows; detached
 windows keep their OS chrome.
+
+### Widget sprite art
+
+- `[icons]`: sprites draw as-is (aspect-fit) at the dashboard icon size;
+  in single indicator widgets they dim when the state is inactive.
+  Indicator ids without a sprite fall back to the built-in vector
+  pictogram, then to a text label.
+- `[compass]`: the rose replaces the vector rose; the eight direction
+  overlays light up per available exit. Click regions and tooltips are
+  unchanged. Up/Down/Out/In remain buttons.
+- `[injury_doll]`: overlays stack on the base image in author-canvas
+  alignment; hovering shows a summary of current wounds. Without a `base`
+  the vector paperdoll renders instead.
 
 ### Notes
 

@@ -795,7 +795,47 @@ impl VellumGuiApp {
     /// part and severity. Back and nervous system have no spot on a front
     /// silhouette, so they render as labeled badges beside the body. Scales
     /// with the window and needs no image assets.
-    pub(super) fn render_injury_doll(ui: &mut egui::Ui, injuries: &HashMap<String, u8>) {
+    pub(super) fn render_injury_doll(
+        ui: &mut egui::Ui,
+        injuries: &HashMap<String, u8>,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
+        // Sprite mode: skin-supplied base body plus per-part severity
+        // overlays, authored on the same canvas so they stack in place.
+        if let Some(base) = skin_art.and_then(|art| art.doll_base) {
+            let art = skin_art.unwrap();
+            let avail = ui.available_size();
+            let (outer, response) = ui.allocate_exact_size(
+                Vec2::new(avail.x.max(40.0), avail.y.max(60.0)),
+                egui::Sense::hover(),
+            );
+            let painter = ui.painter().with_clip_rect(outer);
+            let dest = crate::frontend::gui::skin::sprite_dest(&base, outer);
+            crate::frontend::gui::skin::paint_sprite(&painter, dest, &base, Color32::WHITE);
+            let mut wounds: Vec<String> = Vec::new();
+            for (part, level) in injuries {
+                if *level == 0 {
+                    continue;
+                }
+                if let Some(overlay) = art.doll_overlay(part, *level) {
+                    crate::frontend::gui::skin::paint_sprite(
+                        &painter,
+                        dest,
+                        &overlay,
+                        Color32::WHITE,
+                    );
+                }
+                wounds.push(format!("{}: {}", part, Self::injury_severity_text(*level)));
+            }
+            if wounds.is_empty() {
+                response.on_hover_text("uninjured");
+            } else {
+                wounds.sort();
+                response.on_hover_text(wounds.join("\n"));
+            }
+            return;
+        }
+
         // (key, display name, shape) in unit coordinates: x/y are fractions
         // of the doll rect; radii and line widths are fractions of its
         // height. Head must precede eyes so the eyes paint on top.
@@ -906,7 +946,11 @@ impl VellumGuiApp {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
-                    Self::render_injury_doll(ui, &popup.injuries);
+                    Self::render_injury_doll(
+                        ui,
+                        &popup.injuries,
+                        self.skin_state.widget_art().as_deref(),
+                    );
                 });
             });
         if !open {
@@ -918,6 +962,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         label: &str,
         indicator: &crate::data::IndicatorData,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
         let text = if label.is_empty() {
             &indicator.indicator_id
@@ -934,9 +979,10 @@ impl VellumGuiApp {
         } else {
             Color32::from_rgb(0x55, 0x55, 0x55)
         };
-        // Standard indicators draw as pictograms (dimmed when inactive,
-        // Wrayth-style); custom ids keep the text label.
-        if super::status_icons::supported(&indicator.indicator_id) {
+        // Skin sprite first, then the built-in pictogram (dimmed when
+        // inactive, Wrayth-style); custom ids without art keep the text.
+        let sprite = skin_art.and_then(|art| art.icon(&indicator.indicator_id));
+        if sprite.is_some() || super::status_icons::supported(&indicator.indicator_id) {
             let side = ui
                 .available_width()
                 .min(ui.available_height())
@@ -944,13 +990,25 @@ impl VellumGuiApp {
             ui.centered_and_justified(|ui| {
                 let (rect, response) =
                     ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-                super::status_icons::paint(
-                    ui.painter(),
-                    rect,
-                    &indicator.indicator_id,
-                    color,
-                    ui.visuals().window_fill(),
-                );
+                if let Some(sprite) = sprite {
+                    // Sprites carry their own colors: full-color when
+                    // active, dimmed toward gray when inactive.
+                    let tint = if indicator.active {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 70)
+                    };
+                    let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
+                    crate::frontend::gui::skin::paint_sprite(ui.painter(), dest, &sprite, tint);
+                } else {
+                    super::status_icons::paint(
+                        ui.painter(),
+                        rect,
+                        &indicator.indicator_id,
+                        color,
+                        ui.visuals().window_fill(),
+                    );
+                }
                 response.on_hover_text(text.to_string());
             });
             return;
@@ -964,6 +1022,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         compass_data: &crate::data::CompassData,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
         let source_directions: &[String] = if compass_data.directions.is_empty() {
@@ -984,7 +1043,7 @@ impl VellumGuiApp {
                 .min(ui.available_width() - 46.0)
                 .max(40.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-            if let Some(click) = Self::paint_compass_rose(ui, rect, &available) {
+            if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
                 clicked_link = Some(click);
             }
 
@@ -1009,14 +1068,17 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    /// Draw a vector compass rose into `rect`: eight arrows around a hub,
-    /// available exits filled with the theme link color, the rest as faint
-    /// outlines. Arrows are clickable and send the movement command, same
-    /// as the old button grid. Scales with the window and needs no assets.
+    /// Draw the compass rose into `rect`. Sprite mode (skin `[compass]`
+    /// with a rose image) paints the rose plus a lit overlay per available
+    /// direction, all aspect-fit to the same canvas. Vector mode draws
+    /// eight arrows around a hub, available exits filled with the theme
+    /// link color, the rest as faint outlines. Both modes share the same
+    /// clickable hit regions and send the same movement commands.
     fn paint_compass_rose(
         ui: &mut egui::Ui,
         rect: Rect,
         available: &HashSet<String>,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         const DIRECTIONS: [(&str, &str); 8] = [
             ("n", "north"),
@@ -1037,6 +1099,25 @@ impl VellumGuiApp {
             return None;
         }
 
+        let rose_sprite = skin_art.and_then(|art| art.compass_rose);
+        if let Some(rose) = &rose_sprite {
+            let dest = crate::frontend::gui::skin::sprite_dest(rose, rect);
+            crate::frontend::gui::skin::paint_sprite(&painter, dest, rose, Color32::WHITE);
+            for (direction, _) in &DIRECTIONS {
+                if !available.contains(*direction) {
+                    continue;
+                }
+                if let Some(overlay) = skin_art.and_then(|art| art.compass_dir(direction)) {
+                    crate::frontend::gui::skin::paint_sprite(
+                        &painter,
+                        dest,
+                        &overlay,
+                        Color32::WHITE,
+                    );
+                }
+            }
+        }
+
         let visuals = ui.visuals().clone();
         let available_fill = visuals.hyperlink_color;
         let hover_fill = Self::lighten(available_fill, 0.35);
@@ -1051,11 +1132,6 @@ impl VellumGuiApp {
             let tip_r = if is_cardinal { radius } else { radius * 0.78 };
             let base_r = radius * 0.3;
             let half_w = if is_cardinal { radius * 0.15 } else { radius * 0.11 };
-            let points = vec![
-                center + dir * tip_r,
-                center + dir * base_r + perp * half_w,
-                center + dir * base_r - perp * half_w,
-            ];
 
             let is_available = available.contains(*direction);
             let hit_center = center + dir * ((tip_r + base_r) * 0.5);
@@ -1071,17 +1147,24 @@ impl VellumGuiApp {
                 },
             );
 
-            let (fill, stroke) = if !is_available {
-                (
-                    Color32::TRANSPARENT,
-                    egui::Stroke::new(1.0, idle_stroke),
-                )
-            } else if response.hovered() {
-                (hover_fill, egui::Stroke::new(1.0, hover_fill))
-            } else {
-                (available_fill, egui::Stroke::new(1.0, available_fill))
-            };
-            painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            if rose_sprite.is_none() {
+                let points = vec![
+                    center + dir * tip_r,
+                    center + dir * base_r + perp * half_w,
+                    center + dir * base_r - perp * half_w,
+                ];
+                let (fill, stroke) = if !is_available {
+                    (
+                        Color32::TRANSPARENT,
+                        egui::Stroke::new(1.0, idle_stroke),
+                    )
+                } else if response.hovered() {
+                    (hover_fill, egui::Stroke::new(1.0, hover_fill))
+                } else {
+                    (available_fill, egui::Stroke::new(1.0, available_fill))
+                };
+                painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            }
 
             if is_available {
                 let response = response
@@ -1097,13 +1180,15 @@ impl VellumGuiApp {
             }
         }
 
-        // Hub over the arrow bases.
-        painter.circle(
-            center,
-            radius * 0.14,
-            visuals.window_fill(),
-            egui::Stroke::new(1.0, idle_stroke),
-        );
+        if rose_sprite.is_none() {
+            // Hub over the arrow bases.
+            painter.circle(
+                center,
+                radius * 0.14,
+                visuals.window_fill(),
+                egui::Stroke::new(1.0, idle_stroke),
+            );
+        }
 
         clicked_link
     }
@@ -1758,7 +1843,11 @@ impl VellumGuiApp {
             });
     }
 
-    pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
+    pub(super) fn render_dashboard_content(
+        ui: &mut egui::Ui,
+        indicators: &[(String, u8)],
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
             .iter()
@@ -1768,8 +1857,8 @@ impl VellumGuiApp {
             ui.weak("No active status.");
             return;
         }
-        // Icons scale with the window's text size; ids without a pictogram
-        // (custom indicators) keep the old colored text label.
+        // Icons scale with the window's text size. Skin sprites win over
+        // the built-in pictograms; ids with neither keep the text label.
         let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
         ui.horizontal_wrapped(|ui| {
             for (id, value) in active {
@@ -1778,16 +1867,27 @@ impl VellumGuiApp {
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
                 };
-                if super::status_icons::supported(id) {
+                let sprite = skin_art.and_then(|art| art.icon(id));
+                if sprite.is_some() || super::status_icons::supported(id) {
                     let (rect, response) = ui
                         .allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
-                    super::status_icons::paint(
-                        ui.painter(),
-                        rect,
-                        id,
-                        color,
-                        ui.visuals().window_fill(),
-                    );
+                    if let Some(sprite) = sprite {
+                        let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
+                        crate::frontend::gui::skin::paint_sprite(
+                            ui.painter(),
+                            dest,
+                            &sprite,
+                            Color32::WHITE,
+                        );
+                    } else {
+                        super::status_icons::paint(
+                            ui.painter(),
+                            rect,
+                            id,
+                            color,
+                            ui.visuals().window_fill(),
+                        );
+                    }
                     response.on_hover_text(super::status_icons::display_name(id));
                 } else {
                     ui.label(RichText::new(id).color(color).strong());
@@ -2435,7 +2535,9 @@ impl VellumGuiApp {
                 Self::render_single_progress_content(ui, data, &settings);
                 None
             }
-            WindowContent::Compass(compass) => Self::render_compass_content(app_core, ui, compass),
+            WindowContent::Compass(compass) => {
+                Self::render_compass_content(app_core, ui, compass, settings.skin_art.as_deref())
+            }
             WindowContent::Hand { item, link } => {
                 let hand_prefix = if window.name.to_ascii_lowercase().contains("left") {
                     "L"
@@ -2509,15 +2611,20 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Indicator(indicator) => {
-                Self::render_indicator_content(ui, &tab.id.title, indicator);
+                Self::render_indicator_content(
+                    ui,
+                    &tab.id.title,
+                    indicator,
+                    settings.skin_art.as_deref(),
+                );
                 None
             }
             WindowContent::InjuryDoll(doll) => {
-                Self::render_injury_doll(ui, &doll.injuries);
+                Self::render_injury_doll(ui, &doll.injuries, settings.skin_art.as_deref());
                 None
             }
             WindowContent::Dashboard { indicators } => {
-                Self::render_dashboard_content(ui, indicators);
+                Self::render_dashboard_content(ui, indicators, settings.skin_art.as_deref());
                 None
             }
             WindowContent::GS4Experience => {
