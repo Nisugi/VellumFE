@@ -208,7 +208,7 @@ fn flush_log_buffer(
 
 impl DirectConnectConfig {
     /// Convert game name to game code
-    fn game_name_to_code(name: &str) -> &'static str {
+    pub(crate) fn game_name_to_code(name: &str) -> &'static str {
         match name.to_lowercase().as_str() {
             // GemStone IV
             "prime" | "gs3" => "GS3",

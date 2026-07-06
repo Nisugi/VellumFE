@@ -21,6 +21,11 @@ const LAUNCHER_FILE: &str = "launcher.toml";
 /// Keyring service identifier (the "folder" credentials appear under).
 const KEYRING_SERVICE: &str = "vellum-fe";
 
+/// Environment variable the launcher uses to hand a just-prompted password
+/// to a spawned GUI session. Never placed on a command line (process lists
+/// are world-readable); the child consumes and removes it immediately.
+pub const PASSWORD_ENV: &str = "VELLUM_FE_PASSWORD";
+
 /// Shared help text: used both for clap `--help` and launcher tooltips so
 /// the two can never drift apart.
 pub mod help {
