@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>colors.toml - VellumFE User Guide</title>
+        <title>Skins (GUI Graphics) - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,95 +177,105 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="colorstoml"><a class="header" href="#colorstoml">colors.toml</a></h1>
-<p>The central color file: a named color palette, game-text stream colors,
-prompt colors, UI element colors, and spell-circle colors. Edit in-app with
-<code>.colors</code> (palette), <code>.uicolors</code>, and <code>.spellcolors</code> — or edit the file and
-<code>.reload colors</code>.</p>
+                        <h1 id="skins-gui-graphics"><a class="header" href="#skins-gui-graphics">Skins (GUI Graphics)</a></h1>
+<p>Skins layer <strong>your own images</strong> on top of the GUI: window backgrounds,
+nine-slice window borders, status icon sprites, a sprite compass, and a
+sprite injury paperdoll. Themes own colors and fonts; skins own graphics.</p>
+<p>Skins apply to the <a href="../frontends/gui.html">Desktop GUI</a> only — the terminal
+has no image pipeline. Without a skin, the GUI uses its built-in vector
+graphics and theme colors, and anything a skin doesn’t cover (or fails to
+load) falls back to that.</p>
+<h2 id="using-skins"><a class="header" href="#using-skins">Using Skins</a></h2>
+<pre><code>.skins            # list installed skins
+.setskin parchment
+.setskin none     # back to plain theme rendering
+</code></pre>
+<p>The active skin is remembered in your config. <code>.skin</code> is an alias.</p>
+<h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
+<code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
+<pre><code>~/.vellum-fe/skins/parchment/
+├── skin.toml
+└── bg/
+    ├── paper.png
+    └── vellum.png
+</code></pre>
+<pre><code class="language-toml">[meta]
+name = "Parchment"
+description = "Warm paper backgrounds for text windows"
+
+# Applies to every window without its own [window.&lt;name&gt;] entry.
+[window.default.background]
+image = "bg/paper.png"   # relative to the skin folder (absolute paths allowed)
+fit = "cover"            # stretch | cover | contain | tile | center
+opacity = 0.85           # 0.0-1.0
+tint = "#c0a878"         # optional multiply tint
+scrim = 0.3              # 0.0-1.0 theme-colored overlay for text readability
+
+# Windows are matched by their layout window name ("main", "thoughts", ...).
+[window.main.background]
+image = "bg/vellum.png"
+scrim = 0.5
+</code></pre>
 <blockquote>
-<p>Themes are a separate system — they control <em>widget UI</em> colors and are
-covered in <a href="../customization/themes.html">Themes</a>. colors.toml controls
-<em>game text</em> and palette colors, and is not switched by <code>.settheme</code>.</p>
+<p><strong>Tip</strong>: <code>scrim</code> paints a theme-colored wash over the image so text
+stays readable — start around <code>0.3</code> and adjust.</p>
 </blockquote>
-<h2 id="color-palette"><a class="header" href="#color-palette">Color Palette</a></h2>
-<p>Named colors you can reference anywhere a color is accepted
-(highlights <code>fg</code>/<code>bg</code>, layout <code>border_color</code>, theme files, …):</p>
-<pre><code class="language-toml">[[color_palette]]
-name = "Link"
-color = "#477ab3"
-category = "presets"
-slot = 16
+<h2 id="window-borders-nine-slice"><a class="header" href="#window-borders-nine-slice">Window Borders (Nine-Slice)</a></h2>
+<pre><code class="language-toml">[window.main.border]
+image = "borders/frame.png"
+slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
+scale = 1.0                # source pixels -&gt; screen points
 </code></pre>
+<h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
+<p>Replace the built-in vector pictograms in the dashboard and indicator
+widgets, keyed by indicator id (case-insensitive):</p>
+<pre><code class="language-toml">[icons]
+kneeling = "icons/kneeling.png"
+stunned = "icons/stunned.png"
+hidden = "icons/hidden.png"
+</code></pre>
+<h2 id="sprite-compass"><a class="header" href="#sprite-compass">Sprite Compass</a></h2>
+<p>A rose image plus one overlay per direction, drawn only while that exit
+exists. Author every overlay at the same canvas size as the rose, so
+positioning lives in the art:</p>
+<pre><code class="language-toml">[compass]
+rose = "compass/rose.png"
+n = "compass/n.png"
+ne = "compass/ne.png"
+# ... e, se, s, sw, w, nw
+</code></pre>
+<h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
+<p>A base body image plus full-canvas overlays per body part and severity.
+Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>, <code>back</code>,
+<code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>, <code>rightLeg</code>,
+<code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>), each with <code>injury1</code>–<code>injury3</code> and
+<code>scar1</code>–<code>scar3</code> entries:</p>
+<pre><code class="language-toml">[injury_doll]
+base = "doll/body.png"
+
+[injury_doll.head]
+injury1 = "doll/head_i1.png"
+injury2 = "doll/head_i2.png"
+injury3 = "doll/head_i3.png"
+scar1 = "doll/head_s1.png"
+</code></pre>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>
-<li><code>name</code> — the name you reference elsewhere (case-insensitive)</li>
-<li><code>color</code> — hex value</li>
-<li><code>category</code> — grouping in the <code>.colors</code> browser</li>
-<li><code>slot</code> — optional terminal palette slot (16–231) for 256-color mode</li>
+<li>Absolute image paths are allowed on purpose, so a skin can point at art
+from another install (e.g. your local Wrayth graphics) without copying.</li>
+<li>Every piece is optional — a skin can be nothing but one background.</li>
 </ul>
-<p>In <code>color_mode = "slot"</code> (see <a href="./config-toml.html">config.toml</a>), run
-<code>.setpalette</code> to load every slotted color into your terminal’s palette, and
-<code>.resetpalette</code> to undo it. The default palette pre-loads color sets for the
-built-in themes so theme switching works instantly in slot mode.</p>
-<h2 id="stream-presets"><a class="header" href="#stream-presets">Stream Presets</a></h2>
-<p>Colors for game text streams. Values can be hex or palette names:</p>
-<pre><code class="language-toml">[presets.speech]
-fg = "Speech"
-
-[presets.roomName]
-fg = "Room Name"
-bg = "Room Name BG"
-
-[presets.monsterbold]
-fg = "Monsterbold"
-</code></pre>
-<p>Available presets include <code>links</code>, <code>commands</code>, <code>speech</code>, <code>whisper</code>,
-<code>thought</code>, <code>roomName</code>, <code>monsterbold</code>, <code>familiar</code>, <code>voln</code>, <code>percWindow</code>,
-and <code>target_indicator</code>.</p>
-<h2 id="prompt-colors"><a class="header" href="#prompt-colors">Prompt Colors</a></h2>
-<p>Color individual prompt status characters:</p>
-<pre><code class="language-toml">[[prompt_colors]]
-character = "R"   # roundtime
-color = "#ff0000"
-</code></pre>
-<p>Defaults cover <code>R</code> (roundtime), <code>S</code> (stunned), <code>H</code> (hiding), <code>&gt;</code> (prompt),
-<code>!</code> (bleeding).</p>
-<h2 id="ui-colors"><a class="header" href="#ui-colors">UI Colors</a></h2>
-<p>Default colors for UI elements (per-window overrides live in layout.toml).
-Edit with <code>.uicolors</code>:</p>
-<pre><code class="language-toml">[ui]
-command_echo_color = "#ffffff"
-border_color = "#00ffff"
-focused_border_color = "#ffff00"
-text_color = "#ffffff"
-background_color = "#000000"
-selection_bg_color = "#4a4a4a"
-</code></pre>
-<h2 id="spell-colors"><a class="header" href="#spell-colors">Spell Colors</a></h2>
-<p>Color active-spell indicators by spell circle. Edit with <code>.spellcolors</code>,
-add with <code>.addspellcolor</code>:</p>
-<pre><code class="language-toml">[[spell_colors]]
-spells = [601, 602, 604, 605, 606]   # spell numbers
-color = "#1c731c"                    # indicator color
-bar_color = "#1c731c"                # progress bar color
-text_color = "#909090"
-bg_color = "#000000"
-</code></pre>
-<h2 id="color-values"><a class="header" href="#color-values">Color Values</a></h2>
-<p>Anywhere a color is accepted:</p>
-<pre><code class="language-toml">color1 = "#RRGGBB"      # hex (6-digit)
-color2 = "#abc"         # hex (3-digit, expanded)
-color3 = "Link Blue"    # palette color name from [[color_palette]]
-</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../configuration/highlights-toml.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../customization/themes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../configuration/macros-toml.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/commands.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -275,11 +285,11 @@ color3 = "Link Blue"    # palette color name from [[color_palette]]
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../configuration/highlights-toml.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../customization/themes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../configuration/macros-toml.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/commands.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

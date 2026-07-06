@@ -66,6 +66,8 @@ command `quit` also saves your settings on the way out.)
 | `.themes` | | Browse and apply themes |
 | `.settheme <name>` | `.theme` | Switch theme by name |
 | `.edittheme` | | Edit the current theme |
+| `.skins` | | List installed GUI skins |
+| `.setskin <name>` | `.skin` | Apply a skin (`.setskin none` disables; GUI only) |
 | `.colors` | `.colorpalette` | Browse the color palette |
 | `.addcolor` | `.createcolor` | Add a palette color |
 | `.uicolors` | | Edit UI element colors |

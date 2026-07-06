@@ -61,3 +61,6 @@ Two separate systems:
 | Switch | `.settheme`, instant | Edited in place (`.uicolors`, `.spellcolors`, `.colors`) |
 
 Switching a theme does not change your game-text colors, and vice versa.
+
+For image-based decoration in the GUI (background art, icon sprites),
+see [Skins](./skins.md) — themes own colors, skins own graphics.

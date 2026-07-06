@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-6028f454.js";
+            window.path_to_searchindex_js = "searchindex-eb7e7760.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0d437a7c.js"></script>
+        <script src="toc-03608cc9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -270,12 +270,11 @@ cd VellumFE
 cargo build --release
 </code></pre>
 <p>The binary will be at <code>target/release/vellum-fe</code>.</p>
-<h3 id="windows-openssl-for-direct-mode"><a class="header" href="#windows-openssl-for-direct-mode">Windows: OpenSSL for Direct Mode</a></h3>
-<p>Direct eAccess authentication requires OpenSSL. Install via <a href="https://vcpkg.io/">vcpkg</a>:</p>
-<pre><code class="language-powershell">vcpkg install openssl:x64-windows
-set VCPKG_ROOT=C:\path\to\vcpkg
-cargo build --release
-</code></pre>
+<h3 id="tls-dependencies"><a class="header" href="#tls-dependencies">TLS Dependencies</a></h3>
+<p>Direct eAccess authentication uses your operating system’s native TLS stack
+(SChannel on Windows, Security.framework on macOS) — no extra setup needed.
+On Linux, a bundled OpenSSL is compiled automatically during the build; it
+only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
@@ -379,7 +378,7 @@ Credentials can also be stored in <code>config.toml</code> under <code>[connecti
 </table>
 </div>
 <blockquote>
-<p><strong>Note</strong>: Direct mode requires OpenSSL on Windows. See <a href="#installation">Installation</a>.</p>
+<p><strong>Note</strong>: Direct mode uses your operating system’s native TLS stack — no extra setup on Windows or macOS. On Linux, see <a href="#installation">Installation</a>.</p>
 </blockquote>
 <h2 id="the-interface"><a class="header" href="#the-interface">The Interface</a></h2>
 <p>On successful connection, you’ll see the default layout:</p>
@@ -523,6 +522,18 @@ light/dark bar text for contrast.</li>
 <li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
 </ul>
 <p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="graphics"><a class="header" href="#graphics">Graphics</a></h2>
+<p>The GUI draws real graphics where the terminal uses characters:</p>
+<ul>
+<li><strong>Compass rose</strong> — a vector rose with lit direction markers.</li>
+<li><strong>Injury paperdoll</strong> — a vector body diagram colored by wound/scar
+severity.</li>
+<li><strong>Status icons</strong> — vector pictograms for stance, hidden, stunned, and
+the rest of the dashboard/indicator set.</li>
+</ul>
+<p>All of it can be reskinned with your own images — window background art,
+nine-slice borders, icon sprites, a sprite compass and paperdoll. See
+<a href="#skins-gui-graphics">Skins</a>.</p>
 <h2 id="differences-from-the-tui"><a class="header" href="#differences-from-the-tui">Differences from the TUI</a></h2>
 <ul>
 <li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>.</li>
@@ -640,6 +651,7 @@ about this.</li>
 ├── profiles/
 │   └── CharName/         # Per-character overrides + auto-saved layout.toml
 ├── themes/               # Custom themes (.edittheme saves here)
+├── skins/                # GUI skins (one folder per skin: skin.toml + images)
 └── vellum-fe.log
 </code></pre>
 <p>Files in <code>profiles/&lt;name&gt;/</code> override the matching global file for that character.</p>
@@ -2934,6 +2946,98 @@ save under a new name.</p>
 </table>
 </div>
 <p>Switching a theme does not change your game-text colors, and vice versa.</p>
+<p>For image-based decoration in the GUI (background art, icon sprites),
+see <a href="#skins-gui-graphics">Skins</a> — themes own colors, skins own graphics.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="skins-gui-graphics"><a class="header" href="#skins-gui-graphics">Skins (GUI Graphics)</a></h1>
+<p>Skins layer <strong>your own images</strong> on top of the GUI: window backgrounds,
+nine-slice window borders, status icon sprites, a sprite compass, and a
+sprite injury paperdoll. Themes own colors and fonts; skins own graphics.</p>
+<p>Skins apply to the <a href="#desktop-gui">Desktop GUI</a> only — the terminal
+has no image pipeline. Without a skin, the GUI uses its built-in vector
+graphics and theme colors, and anything a skin doesn’t cover (or fails to
+load) falls back to that.</p>
+<h2 id="using-skins"><a class="header" href="#using-skins">Using Skins</a></h2>
+<pre><code>.skins            # list installed skins
+.setskin parchment
+.setskin none     # back to plain theme rendering
+</code></pre>
+<p>The active skin is remembered in your config. <code>.skin</code> is an alias.</p>
+<h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
+<code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
+<pre><code>~/.vellum-fe/skins/parchment/
+├── skin.toml
+└── bg/
+    ├── paper.png
+    └── vellum.png
+</code></pre>
+<pre><code class="language-toml">[meta]
+name = "Parchment"
+description = "Warm paper backgrounds for text windows"
+
+# Applies to every window without its own [window.&lt;name&gt;] entry.
+[window.default.background]
+image = "bg/paper.png"   # relative to the skin folder (absolute paths allowed)
+fit = "cover"            # stretch | cover | contain | tile | center
+opacity = 0.85           # 0.0-1.0
+tint = "#c0a878"         # optional multiply tint
+scrim = 0.3              # 0.0-1.0 theme-colored overlay for text readability
+
+# Windows are matched by their layout window name ("main", "thoughts", ...).
+[window.main.background]
+image = "bg/vellum.png"
+scrim = 0.5
+</code></pre>
+<blockquote>
+<p><strong>Tip</strong>: <code>scrim</code> paints a theme-colored wash over the image so text
+stays readable — start around <code>0.3</code> and adjust.</p>
+</blockquote>
+<h2 id="window-borders-nine-slice"><a class="header" href="#window-borders-nine-slice">Window Borders (Nine-Slice)</a></h2>
+<pre><code class="language-toml">[window.main.border]
+image = "borders/frame.png"
+slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
+scale = 1.0                # source pixels -&gt; screen points
+</code></pre>
+<h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
+<p>Replace the built-in vector pictograms in the dashboard and indicator
+widgets, keyed by indicator id (case-insensitive):</p>
+<pre><code class="language-toml">[icons]
+kneeling = "icons/kneeling.png"
+stunned = "icons/stunned.png"
+hidden = "icons/hidden.png"
+</code></pre>
+<h2 id="sprite-compass"><a class="header" href="#sprite-compass">Sprite Compass</a></h2>
+<p>A rose image plus one overlay per direction, drawn only while that exit
+exists. Author every overlay at the same canvas size as the rose, so
+positioning lives in the art:</p>
+<pre><code class="language-toml">[compass]
+rose = "compass/rose.png"
+n = "compass/n.png"
+ne = "compass/ne.png"
+# ... e, se, s, sw, w, nw
+</code></pre>
+<h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
+<p>A base body image plus full-canvas overlays per body part and severity.
+Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>, <code>back</code>,
+<code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>, <code>rightLeg</code>,
+<code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>), each with <code>injury1</code>–<code>injury3</code> and
+<code>scar1</code>–<code>scar3</code> entries:</p>
+<pre><code class="language-toml">[injury_doll]
+base = "doll/body.png"
+
+[injury_doll.head]
+injury1 = "doll/head_i1.png"
+injury2 = "doll/head_i2.png"
+injury3 = "doll/head_i3.png"
+scar1 = "doll/head_s1.png"
+</code></pre>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>Absolute image paths are allowed on purpose, so a skin can point at art
+from another install (e.g. your local Wrayth graphics) without copying.</li>
+<li>Every piece is optional — a skin can be nothing but one background.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
 <p>Anything you type starting with <code>.</code> is handled by VellumFE instead of being
@@ -3023,6 +3127,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.themes</code></td><td></td><td>Browse and apply themes</td></tr>
 <tr><td><code>.settheme &lt;name&gt;</code></td><td><code>.theme</code></td><td>Switch theme by name</td></tr>
 <tr><td><code>.edittheme</code></td><td></td><td>Edit the current theme</td></tr>
+<tr><td><code>.skins</code></td><td></td><td>List installed GUI skins</td></tr>
+<tr><td><code>.setskin &lt;name&gt;</code></td><td><code>.skin</code></td><td>Apply a skin (<code>.setskin none</code> disables; GUI only)</td></tr>
 <tr><td><code>.colors</code></td><td><code>.colorpalette</code></td><td>Browse the color palette</td></tr>
 <tr><td><code>.addcolor</code></td><td><code>.createcolor</code></td><td>Add a palette color</td></tr>
 <tr><td><code>.uicolors</code></td><td></td><td>Edit UI element colors</td></tr>

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6028f454.js";
+            window.path_to_searchindex_js = "../searchindex-eb7e7760.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0d437a7c.js"></script>
+        <script src="../toc-03608cc9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,12 +200,11 @@ cd VellumFE
 cargo build --release
 </code></pre>
 <p>The binary will be at <code>target/release/vellum-fe</code>.</p>
-<h3 id="windows-openssl-for-direct-mode"><a class="header" href="#windows-openssl-for-direct-mode">Windows: OpenSSL for Direct Mode</a></h3>
-<p>Direct eAccess authentication requires OpenSSL. Install via <a href="https://vcpkg.io/">vcpkg</a>:</p>
-<pre><code class="language-powershell">vcpkg install openssl:x64-windows
-set VCPKG_ROOT=C:\path\to\vcpkg
-cargo build --release
-</code></pre>
+<h3 id="tls-dependencies"><a class="header" href="#tls-dependencies">TLS Dependencies</a></h3>
+<p>Direct eAccess authentication uses your operating system’s native TLS stack
+(SChannel on Windows, Security.framework on macOS) — no extra setup needed.
+On Linux, a bundled OpenSSL is compiled automatically during the build; it
+only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>

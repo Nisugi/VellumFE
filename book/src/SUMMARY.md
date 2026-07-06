@@ -49,6 +49,7 @@
   - [Keybind Actions](./customization/keybinds.md)
   - [Sound Alerts](./customization/sounds.md)
   - [Themes](./customization/themes.md)
+  - [Skins (GUI Graphics)](./customization/skins.md)
 
 ---
 
