@@ -1,12 +1,17 @@
 # Mobile Web Frontend — Implementation Plan
 
-Status: in progress — Phases 0 and 1 complete. Phase 0: serde derives + round-trip
-test, Color CSS-hex serde, `[web]` config + `--web-port` flag, axum dependency.
+Status: in progress — Phases 0, 1, and 2 complete.
+Phase 0: serde derives + round-trip test, Color CSS-hex serde, `[web]` config +
+`--web-port` flag, axum dependency.
 Phase 1: remote ring buffer (`data/remote_buffer.rs`) + `RemoteSink` tap in core,
 axum sidecar (`frontend/web/`) with JSON protocol, phone client v0 (text pane,
-vitals, RT), wired into both TUI and GUI loops; verified end-to-end with socket
-integration tests (`tests/web_server.rs`) and a live browser smoke test against a
-fake Lich feed. Phase 2 (input and dual control) next.
+vitals, RT), wired into both TUI and GUI loops.
+Phase 2: client input bar feeding the same command path as local input (echo,
+dot-commands, shared history via `record_external_command`), echo/system-message
+mirroring into the sink, reconnect resume (session id + full/resume/gap snapshot
+modes with a missed-output marker), multi-client fan-out. Verified with socket
+integration tests (`tests/web_server.rs`) and live browser sessions against a fake
+Lich feed. Phase 3 (links and menus — menu response routing refactor) next.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
