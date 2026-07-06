@@ -1236,6 +1236,20 @@ impl VellumGuiApp {
                         let _ = self.command_tx.send(cmd);
                     }
                 }
+                crate::core::remote::RemoteEvent::Macro { id } => {
+                    // Resolve the id against config; the command runs the
+                    // same dispatch as typed input (echo, dot-commands).
+                    match self.app_core.config.macros.resolve(&id).map(String::from) {
+                        Some(command) => {
+                            tracing::debug!("remote macro '{}': '{}'", id, command);
+                            self.dispatch_command(command);
+                        }
+                        None => tracing::warn!(
+                            "remote macro id '{}' did not resolve (stale client?)",
+                            id
+                        ),
+                    }
+                }
             }
         }
 

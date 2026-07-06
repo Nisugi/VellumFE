@@ -228,6 +228,11 @@ async fn handle_client_message(
                 coord,
             })
             .is_ok(),
+        ClientMessage::Macro { id } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::Macro { id })
+            .is_ok(),
     }
 }
 
@@ -269,6 +274,16 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
             if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
                 return;
             }
+        }
+    }
+
+    // Macro definitions follow the snapshot; updates arrive as deltas.
+    {
+        let macros = state.handles.macros_rx.borrow().clone();
+        let (_, _, last_seq) = gather_snapshot(&state);
+        let msg = protocol::macros(&macros, last_seq);
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            return;
         }
     }
 

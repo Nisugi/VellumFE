@@ -304,6 +304,24 @@ async fn async_run(
                             let _ = command_tx.send(cmd);
                         }
                     }
+                    crate::core::remote::RemoteEvent::Macro { id } => {
+                        // Resolve the id against config; the resulting
+                        // command runs the same path as typed input (echo,
+                        // dot-commands) but skips history — button spam
+                        // shouldn't bury real typed commands.
+                        let Some(command) = app_core.config.macros.resolve(&id).map(String::from)
+                        else {
+                            tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id);
+                            continue;
+                        };
+                        tracing::debug!("remote macro '{}': '{}'", id, command);
+                        if let Some(cmd) = frontend.handle_command_submission(command, &mut app_core)? {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
                 }
             }
         }

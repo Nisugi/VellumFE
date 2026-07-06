@@ -142,6 +142,27 @@ impl AppCore {
                 self.show_version();
             }
 
+            // Web frontend: reload macros.toml and push to connected phones
+            "reloadmacros" => {
+                match crate::config::MacrosConfig::load(self.config.character.as_deref()) {
+                    Ok(macros) => {
+                        let groups = macros.groups.len();
+                        let floating = macros.floating.len();
+                        self.config.macros = macros;
+                        if let Some(remote) = self.message_processor.remote.as_mut() {
+                            remote.set_macros(&self.config.macros);
+                        }
+                        self.add_system_message(&format!(
+                            "Reloaded macros.toml: {} group(s), {} floating button(s)",
+                            groups, floating
+                        ));
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Failed to reload macros.toml: {e:#}"));
+                    }
+                }
+            }
+
             // Layout commands
             "savelayout" => {
                 let name = parts.get(1).unwrap_or(&"default");

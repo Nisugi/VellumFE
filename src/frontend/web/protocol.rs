@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::remote::{RemoteDelta, RemoteMenuItem, RemoteStateSnapshot};
+use crate::core::remote::{RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteStateSnapshot};
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
 use crate::data::widget::StyledLine;
@@ -224,7 +224,13 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 items,
             },
         ),
+        RemoteDelta::Macros(m) => macros(m, last_seq),
     }
+}
+
+/// Macro definitions; sent on connect and after `.reloadmacros`.
+pub fn macros(m: &RemoteMacros, seq: u64) -> String {
+    encode("macros", seq, m)
 }
 
 /// Messages a client may send. Unknown types are ignored (forward compat).
@@ -245,6 +251,9 @@ pub enum ClientMessage {
         text: String,
         coord: Option<String>,
     },
+    /// A macro button/option tap; the id is resolved to its command
+    /// server-side (the client never sends macro command text).
+    Macro { id: String },
 }
 
 #[derive(Deserialize)]
@@ -289,6 +298,10 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 text,
                 coord,
             })
+        }
+        "macro" => {
+            let id = msg.d.get("id")?.as_str()?.to_string();
+            Some(ClientMessage::Macro { id })
         }
         _ => None,
     }

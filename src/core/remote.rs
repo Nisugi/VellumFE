@@ -20,6 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::config::MacrosConfig;
 use crate::data::remote_buffer::{RemoteBuffer, RemoteLine};
 use crate::data::widget::StyledLine;
 
@@ -46,6 +47,91 @@ pub struct RemoteMenuItem {
     pub text: String,
     pub command: String,
     pub disabled: bool,
+}
+
+/// Macro buttons serialized for remote clients: ids and labels only —
+/// commands stay server-side and are resolved by id on activation
+/// (`MacrosConfig::resolve`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteMacros {
+    pub groups: Vec<RemoteMacroGroup>,
+    pub floating: Vec<RemoteMacroButton>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMacroGroup {
+    pub name: String,
+    pub buttons: Vec<RemoteMacroButton>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMacroButton {
+    /// Index path into the current config (e.g. "g:0:b:2", "f:1").
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    pub confirm: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<RemoteMacroOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMacroOption {
+    pub id: String,
+    pub label: String,
+    pub confirm: bool,
+}
+
+impl RemoteMacros {
+    pub fn from_config(config: &MacrosConfig) -> Self {
+        fn wire_button(button: &crate::config::MacroButton, id: String) -> RemoteMacroButton {
+            RemoteMacroButton {
+                options: button
+                    .options
+                    .iter()
+                    .enumerate()
+                    .map(|(oi, option)| RemoteMacroOption {
+                        id: format!("{id}:o:{oi}"),
+                        label: option.label.clone(),
+                        confirm: option.confirm,
+                    })
+                    .collect(),
+                id,
+                label: button.label.clone(),
+                color: button.color.clone(),
+                confirm: button.confirm,
+                x: button.x,
+                y: button.y,
+            }
+        }
+        Self {
+            groups: config
+                .groups
+                .iter()
+                .enumerate()
+                .map(|(gi, group)| RemoteMacroGroup {
+                    name: group.name.clone(),
+                    buttons: group
+                        .buttons
+                        .iter()
+                        .enumerate()
+                        .map(|(bi, b)| wire_button(b, format!("g:{gi}:b:{bi}")))
+                        .collect(),
+                })
+                .collect(),
+            floating: config
+                .floating
+                .iter()
+                .enumerate()
+                .map(|(fi, b)| wire_button(b, format!("f:{fi}")))
+                .collect(),
+        }
+    }
 }
 
 /// A state change broadcast to all connected remote clients.
@@ -75,6 +161,8 @@ pub enum RemoteDelta {
         noun: String,
         items: Vec<RemoteMenuItem>,
     },
+    /// Macro definitions changed (`.reloadmacros`); sent to every client.
+    Macros(Arc<RemoteMacros>),
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -96,6 +184,10 @@ pub enum RemoteEvent {
         text: String,
         coord: Option<String>,
     },
+    /// A macro button/option tapped on a remote client. The main loop
+    /// resolves the id against config (MacrosConfig::resolve) and runs
+    /// the command through the same dispatch as typed input.
+    Macro { id: String },
 }
 
 /// Latest coalesced game state, published via `watch` so the server can
@@ -122,6 +214,8 @@ pub struct RemoteServerHandles {
     pub state_rx: watch::Receiver<RemoteStateSnapshot>,
     /// Client input flowing toward the main loop.
     pub event_tx: mpsc::UnboundedSender<RemoteEvent>,
+    /// Latest macro definitions, for connect-time delivery.
+    pub macros_rx: watch::Receiver<Arc<RemoteMacros>>,
     /// Identifies this process instance. Sent in `hello`; clients discard
     /// their resume cursor when it changes (seqs restart with the process).
     pub session: String,
@@ -132,6 +226,7 @@ pub struct RemoteSink {
     buffer: Arc<Mutex<RemoteBuffer>>,
     delta_tx: broadcast::Sender<RemoteDelta>,
     state_tx: watch::Sender<RemoteStateSnapshot>,
+    macros_tx: watch::Sender<Arc<RemoteMacros>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
 }
@@ -147,6 +242,7 @@ impl RemoteSink {
         let buffer = Arc::new(Mutex::new(RemoteBuffer::new(max_lines_per_stream)));
         let (delta_tx, _) = broadcast::channel(DELTA_CHANNEL_CAPACITY);
         let (state_tx, state_rx) = watch::channel(RemoteStateSnapshot::default());
+        let (macros_tx, macros_rx) = watch::channel(Arc::new(RemoteMacros::default()));
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let session = format!(
             "{}-{}",
@@ -161,6 +257,7 @@ impl RemoteSink {
             delta_tx: delta_tx.clone(),
             state_rx,
             event_tx,
+            macros_rx,
             session,
         };
         (
@@ -168,11 +265,21 @@ impl RemoteSink {
                 buffer,
                 delta_tx,
                 state_tx,
+                macros_tx,
                 last: RemoteStateSnapshot::default(),
             },
             handles,
             event_rx,
         )
+    }
+
+    /// Publish macro definitions: stored for connect-time delivery and
+    /// broadcast to already-connected clients. Called on enable and by
+    /// `.reloadmacros`.
+    pub fn set_macros(&mut self, config: &MacrosConfig) {
+        let macros = Arc::new(RemoteMacros::from_config(config));
+        self.macros_tx.send_replace(macros.clone());
+        let _ = self.delta_tx.send(RemoteDelta::Macros(macros));
     }
 
     /// Record a finalized (highlighted, unwrapped) line and broadcast it.

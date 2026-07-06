@@ -719,7 +719,8 @@ impl AppCore {
 
     /// Attach the remote client sink (web frontend sidecar).
     /// Called by the runtime after it spawns the web server task.
-    pub fn enable_remote(&mut self, sink: crate::core::remote::RemoteSink) {
+    pub fn enable_remote(&mut self, mut sink: crate::core::remote::RemoteSink) {
+        sink.set_macros(&self.config.macros);
         self.message_processor.remote = Some(sink);
     }
 
