@@ -65,6 +65,15 @@ pub struct TabSettings {
     #[serde(default)]
     pub font_secondary: FontRef,
 
+    /// Text size override for this window; None uses the global text size
+    #[serde(default)]
+    pub text_size: Option<f32>,
+
+    /// Accent color for this window's border, as "#rrggbb"; None uses the
+    /// theme's window border color
+    #[serde(default)]
+    pub accent_color: Option<String>,
+
     /// Whether to wrap text at window boundary
     #[serde(default = "default_wrap_text")]
     pub wrap_text: bool,
@@ -83,8 +92,223 @@ impl Default for TabSettings {
         Self {
             font_primary: FontRef::SystemDefault,
             font_secondary: FontRef::SystemDefault,
+            text_size: None,
+            accent_color: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
+        }
+    }
+}
+
+/// One of the bars the vitals window can display.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VitalKind {
+    Health,
+    Mana,
+    Stamina,
+    Spirit,
+    /// Mind state (GS4 experience absorption)
+    Mind,
+    Encumbrance,
+    /// Progress toward next level (GS4)
+    NextLevel,
+    /// Blood points (GS4 Betrayer)
+    Blood,
+}
+
+impl VitalKind {
+    pub fn all() -> [VitalKind; 8] {
+        [
+            VitalKind::Health,
+            VitalKind::Mana,
+            VitalKind::Stamina,
+            VitalKind::Spirit,
+            VitalKind::Mind,
+            VitalKind::Encumbrance,
+            VitalKind::NextLevel,
+            VitalKind::Blood,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            VitalKind::Health => "Health",
+            VitalKind::Mana => "Mana",
+            VitalKind::Stamina => "Stamina",
+            VitalKind::Spirit => "Spirit",
+            VitalKind::Mind => "Mind",
+            VitalKind::Encumbrance => "Encumbrance",
+            VitalKind::NextLevel => "Next Level",
+            VitalKind::Blood => "Blood",
+        }
+    }
+}
+
+/// How the vitals window arranges its bars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VitalsOrientation {
+    /// All bars in one row (Wrayth-style)
+    #[default]
+    Horizontal,
+    /// Bars stacked top to bottom
+    Vertical,
+}
+
+/// Text drawn on each vitals bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VitalsTextFormat {
+    /// "Health: 191/193"
+    #[default]
+    LabelValueMax,
+    /// "Health: 99%"
+    LabelPercent,
+    /// "191/193"
+    ValueMax,
+    /// "99%"
+    Percent,
+    /// Bar only, no text
+    None,
+}
+
+/// Vitals window configuration: which bars, their order, and how they render.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VitalsConfig {
+    #[serde(default)]
+    pub orientation: VitalsOrientation,
+
+    /// Height of one vitals bar, in points
+    #[serde(default = "default_vitals_bar_height")]
+    pub bar_height: f32,
+
+    #[serde(default)]
+    pub text_format: VitalsTextFormat,
+
+    /// Enabled bars, in display order
+    #[serde(default = "default_vital_bars")]
+    pub bars: Vec<VitalKind>,
+}
+
+fn default_vitals_bar_height() -> f32 {
+    18.0
+}
+
+fn default_vital_bars() -> Vec<VitalKind> {
+    vec![
+        VitalKind::Health,
+        VitalKind::Mana,
+        VitalKind::Stamina,
+        VitalKind::Spirit,
+    ]
+}
+
+impl Default for VitalsConfig {
+    fn default() -> Self {
+        Self {
+            orientation: VitalsOrientation::default(),
+            bar_height: default_vitals_bar_height(),
+            text_format: VitalsTextFormat::default(),
+            bars: default_vital_bars(),
+        }
+    }
+}
+
+/// A group of windows locked together and rendered as one window.
+///
+/// The first member is the leader: the group renders in the leader's slot
+/// and zone. Members split the content area along `orientation`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TabGroup {
+    pub members: Vec<TabKey>,
+    /// true = members side by side; false = stacked vertically
+    #[serde(default)]
+    pub horizontal: bool,
+}
+
+/// Application-wide GUI sizing/accessibility settings.
+///
+/// Defaults approximate Wrayth's compact look; every value is user-adjustable
+/// (Settings → GUI) because players range from dense-layout veterans to
+/// low-vision users who need everything larger.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GuiUiSettings {
+    /// Global UI zoom (egui zoom_factor). Also driven by Ctrl+= / Ctrl+- / Ctrl+0.
+    #[serde(default = "default_zoom_factor")]
+    pub zoom_factor: f32,
+
+    /// Default text size for window content, in points.
+    #[serde(default = "default_text_size")]
+    pub text_size: f32,
+
+    /// Title bar text size, in points; title bar height follows it.
+    #[serde(default = "default_title_font_size")]
+    pub title_font_size: f32,
+
+    /// Height of one active-effect bar row, in points.
+    #[serde(default = "default_effects_bar_height")]
+    pub effects_bar_height: f32,
+
+    /// Spacing/padding scale: 1.0 = egui defaults, lower = denser
+    /// (Wrayth-like), higher = more comfortable.
+    #[serde(default = "default_density")]
+    pub density: f32,
+
+    /// Corner radius for all progress bars (vitals, effects, experience,
+    /// encumbrance, ...). 0 = square Wrayth-style corners.
+    #[serde(default = "default_bar_corner_radius")]
+    pub bar_corner_radius: f32,
+
+    /// Automatically switch bar text between light and dark when the
+    /// configured color would be unreadable against the bar fill.
+    #[serde(default = "default_true")]
+    pub auto_contrast_bar_text: bool,
+
+    /// Vitals window layout and bar selection.
+    #[serde(default)]
+    pub vitals: VitalsConfig,
+}
+
+fn default_zoom_factor() -> f32 {
+    1.0
+}
+
+fn default_text_size() -> f32 {
+    14.0
+}
+
+fn default_title_font_size() -> f32 {
+    13.0
+}
+
+fn default_effects_bar_height() -> f32 {
+    18.0
+}
+
+fn default_density() -> f32 {
+    0.8
+}
+
+fn default_bar_corner_radius() -> f32 {
+    2.0
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for GuiUiSettings {
+    fn default() -> Self {
+        Self {
+            zoom_factor: default_zoom_factor(),
+            text_size: default_text_size(),
+            title_font_size: default_title_font_size(),
+            effects_bar_height: default_effects_bar_height(),
+            density: default_density(),
+            bar_corner_radius: default_bar_corner_radius(),
+            auto_contrast_bar_text: default_true(),
+            vitals: VitalsConfig::default(),
         }
     }
 }
@@ -144,6 +368,24 @@ impl ViewportState {
     }
 }
 
+/// Saved geometry of the main OS window, in logical points.
+///
+/// Restored at launch so per-window rects (saved against this geometry)
+/// are not clamped into a smaller default viewport on the first frames.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MainViewportState {
+    /// Outer window position [x, y]; None lets the OS place the window
+    #[serde(default)]
+    pub outer_pos: Option<[f32; 2]>,
+
+    /// Inner (client area) size [width, height]
+    pub inner_size: [f32; 2],
+
+    /// Whether the window was maximized
+    #[serde(default)]
+    pub maximized: bool,
+}
+
 /// Per-tab settings entry for serialization.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabSettingsEntry {
@@ -169,8 +411,8 @@ pub struct GuiLayoutFileV1 {
     /// When this layout was saved (RFC3339 format)
     pub saved_at_utc: String,
 
-    /// Serialized egui_dock DockState as JSON value.
-    /// This is opaque to our code - egui_dock handles deserialization.
+    /// Serialized `DockStateSnapshot` (visible tabs, window rects, zones,
+    /// title-bar flags, shell layout) as a JSON value.
     pub dock_state_json: serde_json::Value,
 
     /// Tabs that are hidden (not displayed but not destroyed)
@@ -186,9 +428,17 @@ pub struct GuiLayoutFileV1 {
     #[serde(default)]
     pub ui_font: FontRef,
 
+    /// Application-wide sizing/accessibility settings (zoom, text sizes).
+    #[serde(default)]
+    pub ui_settings: GuiUiSettings,
+
     /// Detached viewport state keyed by viewport ID string
     #[serde(default)]
     pub detached_viewports: HashMap<String, ViewportState>,
+
+    /// Main OS window geometry, restored at launch
+    #[serde(default)]
+    pub main_viewport: Option<MainViewportState>,
 }
 
 impl GuiLayoutFileV1 {
@@ -203,7 +453,9 @@ impl GuiLayoutFileV1 {
             hidden_tabs: Vec::new(),
             tab_settings: Vec::new(),
             ui_font: FontRef::default(),
+            ui_settings: GuiUiSettings::default(),
             detached_viewports: HashMap::new(),
+            main_viewport: None,
         }
     }
 
@@ -515,6 +767,8 @@ mod tests {
         let settings = TabSettings {
             font_primary: FontRef::Named("JetBrains Mono".to_string()),
             font_secondary: FontRef::SystemDefault,
+            text_size: None,
+            accent_color: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
         };
@@ -731,6 +985,8 @@ mod tests {
             TabSettings {
                 font_primary: FontRef::Named("Fira Code".to_string()),
                 font_secondary: FontRef::Named("Consolas".to_string()),
+                text_size: Some(16.0),
+                accent_color: Some("#4784d9".to_string()),
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
             },

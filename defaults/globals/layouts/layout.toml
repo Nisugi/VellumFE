@@ -3,6 +3,7 @@ terminal_height = 40
 
 [[windows]]
 name = "main"
+title = "Story"
 widget_type = "text"
 streams = ["main"]
 row = 0

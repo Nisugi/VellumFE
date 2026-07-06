@@ -47,8 +47,20 @@ pub enum TabKey {
     /// Vitals bars (health, mana, stamina, etc.)
     Vitals,
 
-    /// Countdown timers (roundtime, casttime)
-    Countdown,
+    /// A single progress-bar window (stance, individual health/mana bars)
+    ProgressBar {
+        /// Window name (e.g., "stance")
+        id: String,
+    },
+
+    /// A single countdown-timer window (roundtime, casttime, stuntime).
+    /// The id is the window name; the serde default keeps layouts saved
+    /// before timers were per-window loading (as an empty id, which then
+    /// matches no window and is dropped).
+    Countdown {
+        #[serde(default)]
+        id: String,
+    },
 
     /// Navigation compass
     Compass,
@@ -96,13 +108,20 @@ impl TabKey {
     /// This is only used as a fallback - users can rename tabs freely.
     pub fn default_title(&self) -> String {
         match self {
-            TabKey::TextMain => "Main".to_string(),
+            TabKey::TextMain => "Story".to_string(),
             TabKey::TextByName { id } => id.clone(),
             TabKey::Inventory { id } => format!("Inventory ({})", id),
             TabKey::ActiveEffects { id } => format!("Effects ({})", id),
             TabKey::Quickbar { id } => format!("Quickbar ({})", id),
             TabKey::Vitals => "Vitals".to_string(),
-            TabKey::Countdown => "Timers".to_string(),
+            TabKey::ProgressBar { id } => id.clone(),
+            TabKey::Countdown { id } => {
+                if id.is_empty() {
+                    "Timers".to_string()
+                } else {
+                    id.clone()
+                }
+            }
             TabKey::Compass => "Compass".to_string(),
             TabKey::LeftHand => "Left Hand".to_string(),
             TabKey::RightHand => "Right Hand".to_string(),
@@ -130,7 +149,8 @@ impl TabKey {
             TabKey::ActiveEffects { id } => format!("fx:{}", id),
             TabKey::Quickbar { id } => format!("qb:{}", id),
             TabKey::Vitals => "vitals".to_string(),
-            TabKey::Countdown => "countdown".to_string(),
+            TabKey::ProgressBar { id } => format!("bar:{}", id),
+            TabKey::Countdown { id } => format!("countdown:{}", id),
             TabKey::Compass => "compass".to_string(),
             TabKey::LeftHand => "left_hand".to_string(),
             TabKey::RightHand => "right_hand".to_string(),
@@ -248,7 +268,7 @@ mod tests {
     #[test]
     fn test_tab_id_rename() {
         let mut tab = TabId::new(TabKey::TextMain);
-        assert_eq!(tab.title, "Main");
+        assert_eq!(tab.title, "Story");
 
         tab.rename("Game Output");
         assert_eq!(tab.title, "Game Output");
@@ -278,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_tab_key_default_titles() {
-        assert_eq!(TabKey::TextMain.default_title(), "Main");
+        assert_eq!(TabKey::TextMain.default_title(), "Story");
         assert_eq!(TabKey::Compass.default_title(), "Compass");
         assert_eq!(
             TabKey::TextByName {
@@ -320,7 +340,9 @@ mod tests {
                 id: "1".to_string(),
             },
             TabKey::Vitals,
-            TabKey::Countdown,
+            TabKey::Countdown {
+                id: "roundtime".to_string(),
+            },
             TabKey::Compass,
             TabKey::LeftHand,
             TabKey::RightHand,

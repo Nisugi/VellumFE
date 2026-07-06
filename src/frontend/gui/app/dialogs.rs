@@ -26,10 +26,14 @@ impl VellumGuiApp {
                     ui.label(&label.value);
                 }
                 for bar in &dialog.progress_bars {
-                    ui.add(
-                        egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
-                            .text(bar.text.clone()),
-                    );
+                    let mut progress = egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
+                        .text(bar.text.clone())
+                        .corner_radius(self.ui_settings.bar_corner_radius.clamp(0.0, 12.0));
+                    if bar.value == 0 {
+                        // Suppress egui's minimum-width fill sliver on empty bars.
+                        progress = progress.fill(ui.visuals().extreme_bg_color);
+                    }
+                    ui.add(progress);
                 }
 
                 // Input fields, paired positionally with their labels.

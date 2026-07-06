@@ -1,4 +1,7 @@
-use super::persistence::{load_layout, save_layout, FontRef, GuiLayoutFileV1, ViewportState};
+use super::persistence::{
+    load_layout, save_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
+    TabSettings, TabSettingsEntry, ViewportState,
+};
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
@@ -11,13 +14,12 @@ use crate::network::{LichConnection, RawLogger, ServerMessage};
 use anyhow::{anyhow, Context, Result};
 use eframe::egui;
 use eframe::egui::{Color32, Pos2, Rect, RichText, Vec2, ViewportBuilder};
-use egui_dock::tab_viewer::OnCloseResponse;
-use egui_dock::{DockArea, DockState, Surface, SurfaceIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod detached;
 mod dialogs;
 mod dock;
 mod editors;
@@ -26,15 +28,16 @@ mod theme;
 mod widgets;
 mod zones;
 
+use detached::{DetachedMenuState, DetachedWindowState};
 use dock::{DockStateSnapshot, MainWindowRectSnapshot};
 use menus::GuiWindowMenuRequest;
 use zones::{
-    GuiShellZone, GuiZoneDragState, GuiZoneWindowRect, ShellLayoutSnapshot, TabZoneSnapshot,
+    GuiShellZone, GuiWindowMoveState, GuiZoneDragState, GuiZoneWindowRect, ShellLayoutSnapshot,
+    TabZoneSnapshot,
 };
 
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
 const INITIAL_LAYOUT_HEIGHT: u16 = 50;
-const DEFAULT_FONT_SIZE: f32 = 14.0;
 const MAX_RENDERED_LINES: usize = 2000;
 const MIN_VISIBLE_VIEWPORT_PX: f32 = 48.0;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
@@ -48,6 +51,37 @@ const LAYOUT_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
 struct GuiTab {
     id: TabId,
     window_name: String,
+}
+
+/// Resolved per-window sizing values passed into content renderers.
+#[derive(Clone, Debug)]
+pub(super) struct WidgetRenderSettings {
+    /// Effective text size for this window (per-tab override or global).
+    text_size: f32,
+    /// Effective font family for this window's proportional text.
+    font_family: egui::FontFamily,
+    /// Height of one active-effect bar row.
+    effects_bar_height: f32,
+    /// Corner radius for progress bars; 0 = square.
+    bar_corner_radius: f32,
+    /// Swap bar text to light/dark when the configured color is unreadable
+    /// against the fill.
+    auto_contrast_bar_text: bool,
+    /// Wrap long lines at the window edge; false = one row per line with
+    /// horizontal scrolling (useful for inventory/container lists).
+    wrap_text: bool,
+    /// Vitals window layout and bar selection (global config).
+    vitals: super::persistence::VitalsConfig,
+}
+
+impl WidgetRenderSettings {
+    /// The proportional font for this window's text.
+    fn font_id(&self) -> egui::FontId {
+        egui::FontId {
+            size: self.text_size,
+            family: self.font_family.clone(),
+        }
+    }
 }
 
 /// Per-frame interactions collected while rendering zone surfaces.
@@ -109,7 +143,12 @@ pub struct VellumGuiApp {
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
     close_requested: bool,
-    dock_state: Option<DockState<GuiTab>>,
+    detached_tabs: HashMap<TabKey, DetachedWindowState>,
+    detached_context_menu: Option<DetachedMenuState>,
+    /// Which detached tab's viewport hosts the game popup menus. The menu
+    /// stack renders inside that OS window (at its local click coords);
+    /// None means the root window hosts them.
+    popup_menu_host: Option<TabKey>,
     available_tabs: HashMap<TabKey, GuiTab>,
     hidden_tabs: HashSet<TabKey>,
     main_window_rects: HashMap<TabKey, [f32; 4]>,
@@ -119,12 +158,32 @@ pub struct VellumGuiApp {
     shell_layout: ShellLayoutSnapshot,
     layout_profile: String,
     layout_character: String,
+    /// Dimensions passed to `AppCore::init_windows`; new core windows
+    /// (containers, dialog-driven additions) are positioned in this space.
+    core_layout_size: (u16, u16),
     layout_dirty: bool,
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
     current_theme: crate::theme::AppTheme,
     ui_font: FontRef,
     fonts_applied: bool,
+    /// Named font families actually registered with egui; a per-tab font
+    /// that failed to load is absent and falls back to Proportional
+    /// (an unbound FontFamily::Name panics inside egui).
+    registered_font_families: HashSet<String>,
+    ui_settings: GuiUiSettings,
+    tab_settings: HashMap<TabKey, TabSettings>,
+    /// Windows locked together; each group renders as one window in the
+    /// leader's (first member's) slot.
+    tab_groups: Vec<TabGroup>,
+    /// Zoom factor pushed to egui at startup; afterwards egui owns it
+    /// (Ctrl+= / Ctrl+- / Ctrl+0) and we persist changes back.
+    zoom_applied: bool,
+    /// Title font size currently applied to the egui style; None forces
+    /// a re-apply on the next frame.
+    applied_title_font_size: Option<f32>,
+    /// Spacing density currently applied to the egui style.
+    applied_density: Option<f32>,
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
@@ -144,10 +203,21 @@ pub struct VellumGuiApp {
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
     layout_save_worker: Option<std::thread::JoinHandle<()>>,
     window_context_menu: Option<GuiWindowMenuRequest>,
+    /// Move mode (right-click menu → Move Window): the window follows the
+    /// cursor until a click places it or Esc cancels.
+    window_move_state: Option<GuiWindowMoveState>,
+    /// True on the frame the window context menu was opened. The opening
+    /// right-click is still "a click" that frame, and near screen edges the
+    /// menu area gets shifted to stay on screen, putting the click position
+    /// outside the menu rect — without this guard the close-on-click-outside
+    /// check would dismiss the menu on the same frame it appeared.
+    window_context_menu_just_opened: bool,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
-    pending_detached_viewports: Vec<ViewportState>,
     last_monitor_bounds: Option<[f32; 4]>,
+    /// Latest main OS window geometry, persisted so the next launch opens
+    /// at the same size (per-window rects are saved against this geometry).
+    main_viewport_state: Option<MainViewportState>,
 }
 
 impl VellumGuiApp {
@@ -158,10 +228,8 @@ impl VellumGuiApp {
         initial_width: f32,
         initial_height: f32,
     ) -> Result<Self> {
-        app_core.init_windows(
-            initial_width.max(1.0) as u16,
-            initial_height.max(1.0) as u16,
-        );
+        let core_layout_size = (initial_width.max(1.0) as u16, initial_height.max(1.0) as u16);
+        app_core.init_windows(core_layout_size.0, core_layout_size.1);
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
         let (server_tx, mut network_rx) =
@@ -231,9 +299,20 @@ impl VellumGuiApp {
         });
 
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
+        let main_viewport_state = persisted_layout
+            .as_ref()
+            .and_then(|layout| layout.main_viewport.clone());
         let ui_font = persisted_layout
             .as_ref()
             .map(|layout| layout.ui_font.clone())
+            .unwrap_or_default();
+        let ui_settings = persisted_layout
+            .as_ref()
+            .map(|layout| layout.ui_settings.clone())
+            .unwrap_or_default();
+        let tab_settings = persisted_layout
+            .as_ref()
+            .map(|layout| layout.tab_settings_map())
             .unwrap_or_default();
 
         let available_tabs = Self::collect_available_tabs(&app_core);
@@ -292,26 +371,28 @@ impl VellumGuiApp {
             .unwrap_or_default();
         shell_layout.sanitize(initial_width.max(1.0));
 
-        let detached_viewports = persisted_layout
+        let tab_groups = Self::sanitize_tab_groups(
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.tab_groups.clone())
+                .unwrap_or_default(),
+            &available_tabs,
+        );
+
+        let detached_tabs: HashMap<TabKey, DetachedWindowState> = persisted_layout
             .as_ref()
             .map(|layout| {
                 Self::detached_viewports_from_layout(layout, &available_tabs, &hidden_tabs)
             })
-            .unwrap_or_default();
-        let mut dock_state = if detached_viewports.is_empty() {
-            None
-        } else {
-            Some(DockState::new(Vec::new()))
-        };
-        if let Some(dock_state) = &mut dock_state {
-            let initial_bounds = [0.0, 0.0, initial_width.max(1.0), initial_height.max(1.0)];
-            Self::attach_detached_windows(
-                dock_state,
-                &available_tabs,
-                &detached_viewports,
-                Some(initial_bounds),
-            );
-        }
+            .unwrap_or_default()
+            .into_iter()
+            .map(|viewport| {
+                let viewport = Self::sanitize_viewport_state(&viewport);
+                let key = viewport.tab.clone();
+                let state = DetachedWindowState::new(&key, viewport);
+                (key, state)
+            })
+            .collect();
 
         Ok(Self {
             app_core,
@@ -321,7 +402,9 @@ impl VellumGuiApp {
             network_handle: Some(network_handle),
             command_input: String::new(),
             close_requested: false,
-            dock_state,
+            detached_tabs,
+            detached_context_menu: None,
+            popup_menu_host: None,
             available_tabs,
             hidden_tabs,
             main_window_rects,
@@ -331,12 +414,20 @@ impl VellumGuiApp {
             shell_layout,
             layout_profile,
             layout_character,
+            core_layout_size,
             layout_dirty: false,
             layout_dirty_since: None,
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
             ui_font,
             fonts_applied: false,
+            registered_font_families: HashSet::new(),
+            ui_settings,
+            tab_settings,
+            tab_groups,
+            zoom_applied: false,
+            applied_title_font_size: None,
+            applied_density: None,
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
@@ -353,10 +444,12 @@ impl VellumGuiApp {
             layout_save_tx: Some(layout_save_tx),
             layout_save_worker: Some(layout_save_worker),
             window_context_menu: None,
+            window_move_state: None,
+            window_context_menu_just_opened: false,
             zone_drag_state: None,
             hand_resize_tab: None,
-            pending_detached_viewports: detached_viewports,
             last_monitor_bounds: None,
+            main_viewport_state,
         })
     }
 
@@ -388,8 +481,15 @@ impl VellumGuiApp {
                 continue;
             };
 
+            // The main story window keeps its canonical title regardless of the
+            // layout's window name (legacy layouts call it "main"/"primary").
+            let title = if tab_key == TabKey::TextMain {
+                tab_key.default_title()
+            } else {
+                window.name.clone()
+            };
             tabs.entry(tab_key.clone()).or_insert_with(|| GuiTab {
-                id: TabId::with_title(tab_key, window.name.clone()),
+                id: TabId::with_title(tab_key, title),
                 window_name: name.clone(),
             });
         }
@@ -418,8 +518,22 @@ impl VellumGuiApp {
             WidgetType::Quickbar => TabKey::Quickbar {
                 id: name.to_string(),
             },
-            WidgetType::MiniVitals | WidgetType::Progress => TabKey::Vitals,
-            WidgetType::Countdown => TabKey::Countdown,
+            WidgetType::MiniVitals => TabKey::Vitals,
+            WidgetType::Progress => {
+                // Legacy layouts use a Progress-typed window named "vitals"
+                // for the multi-bar cluster; standalone bars (stance, single
+                // health/mana bars) each get their own tab.
+                if name.eq_ignore_ascii_case("vitals") || name.eq_ignore_ascii_case("minivitals") {
+                    TabKey::Vitals
+                } else {
+                    TabKey::ProgressBar {
+                        id: name.to_string(),
+                    }
+                }
+            }
+            WidgetType::Countdown => TabKey::Countdown {
+                id: name.to_string(),
+            },
             WidgetType::Compass => TabKey::Compass,
             WidgetType::Indicator => TabKey::Indicators,
             WidgetType::Targets => TabKey::Targets,
@@ -527,7 +641,7 @@ impl VellumGuiApp {
                 .entry(key.clone())
                 .or_insert_with(|| Self::default_zone_for_tab_key(key));
         }
-        self.rebuild_dock_state();
+        self.prune_detached_tabs();
         self.layout_dirty = true;
     }
 
@@ -622,24 +736,19 @@ impl VellumGuiApp {
 
     fn hide_tab(&mut self, key: TabKey) {
         if self.hidden_tabs.insert(key) {
-            self.rebuild_dock_state();
+            self.prune_detached_tabs();
             self.layout_dirty = true;
         }
     }
 
     fn restore_tab(&mut self, key: TabKey) {
         if self.hidden_tabs.remove(&key) {
-            self.rebuild_dock_state();
             self.layout_dirty = true;
         }
     }
 
     fn windows_for_menu(&self) -> Vec<(TabKey, String, bool, bool, GuiShellZone)> {
-        let detached_tabs = self
-            .dock_state
-            .as_ref()
-            .map(Self::collect_detached_tab_keys)
-            .unwrap_or_default();
+        let detached_tabs = self.detached_tab_keys();
         let mut entries: Vec<(TabKey, String, bool, bool, GuiShellZone)> = self
             .available_tabs
             .iter()
@@ -654,6 +763,251 @@ impl VellumGuiApp {
         entries
     }
 
+    /// Drop group members that no longer exist, groups that shrink below
+    /// two members, and duplicate memberships (first group wins).
+    fn sanitize_tab_groups(
+        groups: Vec<TabGroup>,
+        available_tabs: &HashMap<TabKey, GuiTab>,
+    ) -> Vec<TabGroup> {
+        let mut seen: HashSet<TabKey> = HashSet::new();
+        groups
+            .into_iter()
+            .filter_map(|mut group| {
+                group
+                    .members
+                    .retain(|key| available_tabs.contains_key(key) && seen.insert(key.clone()));
+                (group.members.len() >= 2).then_some(group)
+            })
+            .collect()
+    }
+
+    /// The group a tab belongs to, if any.
+    fn group_for_tab(&self, key: &TabKey) -> Option<&TabGroup> {
+        self.tab_groups
+            .iter()
+            .find(|group| group.members.contains(key))
+    }
+
+    /// True when this tab is in a group but is not its leader (first member):
+    /// such tabs render inside the leader's window, never on their own.
+    fn is_grouped_follower(&self, key: &TabKey) -> bool {
+        self.group_for_tab(key)
+            .is_some_and(|group| group.members.first() != Some(key))
+    }
+
+    /// Remove a tab from its group, dissolving groups left with one member.
+    fn ungroup_tab(&mut self, key: &TabKey) {
+        if self.group_for_tab(key).is_none() {
+            return;
+        }
+        for group in &mut self.tab_groups {
+            group.members.retain(|member| member != key);
+        }
+        self.tab_groups.retain(|group| group.members.len() >= 2);
+        self.layout_dirty = true;
+    }
+
+    /// Add `other` to `leader`'s group (creating one if needed) and move it
+    /// into the leader's zone so the group renders on one surface.
+    fn group_tabs(&mut self, leader: &TabKey, other: TabKey) {
+        if leader == &other {
+            return;
+        }
+        self.ungroup_tab(&other);
+        let leader_zone = self.zone_for_tab(leader);
+        if let Some(index) = self
+            .tab_groups
+            .iter()
+            .position(|group| group.members.contains(leader))
+        {
+            self.tab_groups[index].members.push(other.clone());
+        } else {
+            self.tab_groups.push(TabGroup {
+                members: vec![leader.clone(), other.clone()],
+                horizontal: false,
+            });
+        }
+        self.tab_zones.insert(other, leader_zone);
+        self.layout_dirty = true;
+    }
+
+    /// Effective text size for a window: per-tab override or the global size.
+    fn effective_text_size(&self, key: &TabKey) -> f32 {
+        self.tab_settings
+            .get(key)
+            .and_then(|settings| settings.text_size)
+            .unwrap_or(self.ui_settings.text_size)
+            .clamp(6.0, 72.0)
+    }
+
+    /// Effective proportional font family for a window: the per-tab font
+    /// (registered as a named family during font setup) or egui's default.
+    fn effective_font_family(&self, key: &TabKey) -> egui::FontFamily {
+        self.tab_settings
+            .get(key)
+            .and_then(|settings| theme::font_ref_key(&settings.font_primary))
+            .filter(|font_key| self.registered_font_families.contains(font_key))
+            .map(|font_key| egui::FontFamily::Name(font_key.into()))
+            .unwrap_or(egui::FontFamily::Proportional)
+    }
+
+    /// Resolve the sizing values a window's content renderer needs.
+    fn widget_render_settings(&self, key: &TabKey) -> WidgetRenderSettings {
+        WidgetRenderSettings {
+            text_size: self.effective_text_size(key),
+            font_family: self.effective_font_family(key),
+            effects_bar_height: self.ui_settings.effects_bar_height.clamp(10.0, 60.0),
+            bar_corner_radius: self.ui_settings.bar_corner_radius.clamp(0.0, 12.0),
+            auto_contrast_bar_text: self.ui_settings.auto_contrast_bar_text,
+            wrap_text: self
+                .tab_settings
+                .get(key)
+                .map(|settings| settings.wrap_text)
+                .unwrap_or(true),
+            vitals: self.ui_settings.vitals.clone(),
+        }
+    }
+
+    /// Display title for a docked window: grouped leaders show all member
+    /// titles joined; everything else shows its own title.
+    fn window_display_title(&self, tab: &GuiTab) -> String {
+        match self.group_for_tab(&tab.id.key) {
+            Some(group) if group.members.first() == Some(&tab.id.key) => group
+                .members
+                .iter()
+                .filter_map(|key| self.available_tabs.get(key))
+                .map(|member| member.id.title.as_str())
+                .collect::<Vec<_>>()
+                .join(" + "),
+            _ => tab.id.title.clone(),
+        }
+    }
+
+    /// Render a window's content, or — when the window leads a group — all
+    /// member contents split along the group's orientation.
+    fn render_window_or_group_content(
+        &self,
+        ui: &mut egui::Ui,
+        tab: &GuiTab,
+    ) -> Option<GuiLinkClick> {
+        let members: Vec<GuiTab> = match self.group_for_tab(&tab.id.key) {
+            Some(group) => group
+                .members
+                .iter()
+                .filter(|key| !self.hidden_tabs.contains(*key))
+                .filter(|key| !self.detached_tabs.contains_key(*key))
+                .filter_map(|key| self.available_tabs.get(key).cloned())
+                .collect(),
+            None => Vec::new(),
+        };
+        if members.len() < 2 {
+            return Self::render_window_content(
+                &self.app_core,
+                ui,
+                tab,
+                self.widget_render_settings(&tab.id.key),
+            );
+        }
+        let horizontal = self
+            .group_for_tab(&tab.id.key)
+            .map(|group| group.horizontal)
+            .unwrap_or(false);
+
+        let mut clicked = None;
+        if horizontal {
+            ui.columns(members.len(), |columns| {
+                for (column, member) in columns.iter_mut().zip(members.iter()) {
+                    column.push_id(&member.id.key, |ui| {
+                        if let Some(click) = Self::render_window_content(
+                            &self.app_core,
+                            ui,
+                            member,
+                            self.widget_render_settings(&member.id.key),
+                        ) {
+                            clicked = Some(click);
+                        }
+                    });
+                }
+            });
+        } else {
+            let gap = ui.spacing().item_spacing.y;
+            let member_count = members.len() as f32;
+            let each_height = ((ui.available_height() - gap * (member_count - 1.0))
+                / member_count)
+                .max(24.0);
+            let width = ui.available_width().max(1.0);
+            for member in &members {
+                ui.push_id(&member.id.key, |ui| {
+                    ui.allocate_ui(Vec2::new(width, each_height), |ui| {
+                        ui.set_min_size(Vec2::new(width, each_height));
+                        ui.set_max_height(each_height);
+                        if let Some(click) = Self::render_window_content(
+                            &self.app_core,
+                            ui,
+                            member,
+                            self.widget_render_settings(&member.id.key),
+                        ) {
+                            clicked = Some(click);
+                        }
+                    });
+                });
+            }
+        }
+        clicked
+    }
+
+    /// Accent (border) color for a window, if the user set one.
+    fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
+        self.tab_settings
+            .get(key)
+            .and_then(|settings| settings.accent_color.as_deref())
+            .and_then(widgets::parse_hex_color)
+    }
+
+    /// Apply zoom and title-bar sizing. Zoom is pushed to egui once at
+    /// startup; afterwards egui owns it (Ctrl+= / Ctrl+- / Ctrl+0 via
+    /// zoom_with_keyboard) and changes are persisted back into settings.
+    /// Title bar height follows the Heading text style, so resizing titles
+    /// is a style update; `docked_inner_size_for_outer` stays in sync
+    /// because it resolves Heading from the same style.
+    fn apply_ui_sizing(&mut self, ctx: &egui::Context) {
+        if !self.zoom_applied {
+            self.zoom_applied = true;
+            ctx.options_mut(|options| options.zoom_with_keyboard = true);
+            let zoom = self.ui_settings.zoom_factor.clamp(0.5, 3.0);
+            if (ctx.zoom_factor() - zoom).abs() > 0.001 {
+                ctx.set_zoom_factor(zoom);
+            }
+        } else {
+            let zoom = ctx.zoom_factor();
+            if (zoom - self.ui_settings.zoom_factor).abs() > 0.001 {
+                self.ui_settings.zoom_factor = zoom;
+                self.layout_dirty = true;
+            }
+        }
+
+        let title_size = self.ui_settings.title_font_size.clamp(8.0, 40.0);
+        let density = self.ui_settings.density.clamp(0.5, 2.0);
+        if self.applied_title_font_size != Some(title_size) || self.applied_density != Some(density)
+        {
+            self.applied_title_font_size = Some(title_size);
+            self.applied_density = Some(density);
+            ctx.global_style_mut(|style| {
+                if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Heading) {
+                    font.size = title_size;
+                }
+                // Scale spacing from egui's defaults (not the current values,
+                // so repeated applies don't compound).
+                let defaults = egui::style::Spacing::default();
+                style.spacing.item_spacing = defaults.item_spacing * density;
+                style.spacing.button_padding = defaults.button_padding * density;
+                style.spacing.window_margin = defaults.window_margin * density;
+                style.spacing.menu_margin = defaults.menu_margin * density;
+                style.spacing.interact_size = defaults.interact_size * density;
+            });
+        }
+    }
+
     /// Assemble the persistable layout snapshot. Returns None when the dock
     /// snapshot fails to serialize (never persist a null layout).
     fn build_layout_snapshot(&mut self) -> Option<GuiLayoutFileV1> {
@@ -663,6 +1017,19 @@ impl VellumGuiApp {
         hidden_tabs.sort_by_key(|key| key.short_id());
         layout.hidden_tabs = hidden_tabs;
         layout.ui_font = self.ui_font.clone();
+        layout.ui_settings = self.ui_settings.clone();
+        layout.tab_settings = {
+            let mut entries: Vec<TabSettingsEntry> = self
+                .tab_settings
+                .iter()
+                .map(|(key, settings)| TabSettingsEntry {
+                    key: key.clone(),
+                    settings: settings.clone(),
+                })
+                .collect();
+            entries.sort_by_key(|entry| entry.key.short_id());
+            entries
+        };
 
         let snapshot = DockStateSnapshot {
             visible_tabs: self.current_main_surface_tab_keys(),
@@ -703,6 +1070,7 @@ impl VellumGuiApp {
                 keys
             },
             shell_layout: self.shell_layout.clone(),
+            tab_groups: Self::sanitize_tab_groups(self.tab_groups.clone(), &self.available_tabs),
         };
         layout.dock_state_json = match serde_json::to_value(snapshot) {
             Ok(value) => value,
@@ -713,12 +1081,55 @@ impl VellumGuiApp {
                 return None;
             }
         };
-        if let Some(dock_state) = &mut self.dock_state {
-            layout.detached_viewports =
-                Self::collect_detached_viewports_for_save(dock_state, self.last_monitor_bounds);
-        }
+        layout.detached_viewports = self
+            .detached_tabs
+            .iter()
+            .map(|(key, state)| (key.short_id(), state.current.clone()))
+            .collect();
+        layout.main_viewport = self.main_viewport_state.clone();
         layout.touch();
         Some(layout)
+    }
+
+    /// Record the main OS window's current geometry. Not marked layout-dirty:
+    /// it rides along with the next save (including the on-exit flush), so
+    /// pure moves/resizes of the OS window don't churn the writer thread.
+    fn capture_main_viewport(&mut self, ctx: &egui::Context) {
+        let (inner_rect, outer_rect, maximized) = ctx.input(|i| {
+            let viewport = i.viewport();
+            (
+                viewport.inner_rect,
+                viewport.outer_rect,
+                viewport.maximized.unwrap_or(false),
+            )
+        });
+        let Some(inner_rect) = inner_rect else {
+            return;
+        };
+        if !inner_rect.is_finite() || inner_rect.width() < 1.0 || inner_rect.height() < 1.0 {
+            return;
+        }
+        if maximized {
+            // Keep the last un-maximized geometry as the restore size.
+            match &mut self.main_viewport_state {
+                Some(state) => state.maximized = true,
+                None => {
+                    self.main_viewport_state = Some(MainViewportState {
+                        outer_pos: None,
+                        inner_size: [inner_rect.width(), inner_rect.height()],
+                        maximized: true,
+                    });
+                }
+            }
+        } else {
+            self.main_viewport_state = Some(MainViewportState {
+                outer_pos: outer_rect
+                    .filter(|rect| rect.is_finite())
+                    .map(|rect| [rect.min.x, rect.min.y]),
+                inner_size: [inner_rect.width(), inner_rect.height()],
+                maximized: false,
+            });
+        }
     }
 
     /// Persist the layout. Serialization happens here on the UI thread (it is
@@ -752,6 +1163,7 @@ impl VellumGuiApp {
     }
 
     fn pump_server_messages(&mut self) {
+        let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
             match message {
                 ServerMessage::Text(line) => {
@@ -763,6 +1175,7 @@ impl VellumGuiApp {
                             .add_system_message(&format!("GUI parse error: {}", err));
                     }
                     self.app_core.needs_render = true;
+                    received_text = true;
                 }
                 ServerMessage::Connected => {
                     self.app_core.game_state.connected = true;
@@ -773,6 +1186,37 @@ impl VellumGuiApp {
                     self.app_core.needs_render = true;
                 }
             }
+        }
+
+        // Post-processing the TUI runtime also performs after server data:
+        // content-driven resizes, container discovery windows, and windows
+        // queued by openDialog events (stance, inventory, experience, ...).
+        if received_text {
+            self.app_core.adjust_content_driven_windows();
+            let (layout_width, layout_height) = self.core_layout_size;
+            if self.app_core.ui_state.container_discovery_mode {
+                if let Some((id, title)) = self
+                    .app_core
+                    .message_processor
+                    .newly_registered_container
+                    .take()
+                {
+                    tracing::info!(
+                        "Container discovery: creating window for '{}' (id={})",
+                        title,
+                        id
+                    );
+                    self.app_core.create_ephemeral_container_window(
+                        &title,
+                        layout_width,
+                        layout_height,
+                    );
+                }
+            } else {
+                self.app_core.message_processor.newly_registered_container = None;
+            }
+            self.app_core
+                .process_pending_window_additions(layout_width, layout_height);
         }
 
         // Play sounds queued by highlight processing.
@@ -1022,6 +1466,11 @@ impl VellumGuiApp {
     }
 
     fn handle_close_window_shortcut(&mut self) {
+        // Move mode owns Esc: the move overlay cancels and restores the
+        // window's original position later this frame.
+        if self.window_move_state.is_some() {
+            return;
+        }
         if self.window_context_menu.is_some() {
             self.window_context_menu = None;
             return;
@@ -1695,7 +2144,9 @@ impl VellumGuiApp {
         (x, y)
     }
 
-    fn handle_link_click(&mut self, click: GuiLinkClick) {
+    /// `origin` names the detached tab whose viewport the click came from
+    /// (None for the root window); a resulting popup menu renders there.
+    fn handle_link_click(&mut self, click: GuiLinkClick, origin: Option<TabKey>) {
         if click.link_data.exist_id == Self::QUICKBAR_SWITCH_SENTINEL {
             self.app_core.ui_state.active_quickbar_id = Some(click.link_data.noun.clone());
             return;
@@ -1733,6 +2184,7 @@ impl VellumGuiApp {
         let outbound = match dispatch {
             GuiLinkDispatch::NetworkCommand(command) => command,
             GuiLinkDispatch::MenuRequest { exist_id, noun } => {
+                self.popup_menu_host = origin;
                 self.app_core.request_menu(exist_id, noun, click.click_pos)
             }
         };
@@ -1744,6 +2196,7 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
+        self.capture_main_viewport(&ctx);
         // Publish the configured item-drag modifier for link renderers.
         ctx.data_mut(|data| {
             data.insert_temp(
@@ -1757,17 +2210,29 @@ impl eframe::App for VellumGuiApp {
         ctx.style_mut(|style| style.interaction.selectable_labels = !dragging_item);
         if !self.fonts_applied {
             self.fonts_applied = true;
-            if let Some(fonts) = theme::font_definitions_from_ref(&self.ui_font) {
-                ctx.set_fonts(fonts);
-            }
+            let window_fonts: Vec<FontRef> = self
+                .tab_settings
+                .values()
+                .map(|settings| settings.font_primary.clone())
+                .collect();
+            let fonts = theme::build_font_definitions(&self.ui_font, &window_fonts);
+            self.registered_font_families = fonts
+                .families
+                .keys()
+                .filter_map(|family| match family {
+                    egui::FontFamily::Name(name) => Some(name.to_string()),
+                    _ => None,
+                })
+                .collect();
+            ctx.set_fonts(fonts);
         }
         self.apply_theme_if_changed(&ctx);
+        self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
         self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();
         let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);
         self.last_monitor_bounds = Some(monitor_bounds);
-        self.apply_pending_detached_viewports(monitor_bounds);
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1781,16 +2246,11 @@ impl eframe::App for VellumGuiApp {
             return;
         }
 
-        let detached_before_frame = self
-            .dock_state
-            .as_ref()
-            .map(Self::collect_detached_tab_keys)
-            .unwrap_or_default();
+        let detached_before_frame = self.detached_tab_keys();
         let mut visibility_toggles: Vec<TabKey> = Vec::new();
+        let mut window_additions: Vec<String> = Vec::new();
         let mut zone_assignments: Vec<(TabKey, GuiShellZone)> = Vec::new();
         let mut zone_actions = GuiWindowActions::default();
-        let mut closed_tabs = Vec::new();
-        let mut detached_link_clicks = Vec::new();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
 
@@ -1859,6 +2319,25 @@ impl eframe::App for VellumGuiApp {
                     }
 
                     ui.menu_button("Windows", |ui| {
+                        ui.menu_button("Add Window", |ui| {
+                            let groups = self.app_core.addable_window_templates();
+                            if groups.is_empty() {
+                                ui.label("All windows already added");
+                                return;
+                            }
+                            for (category, entries) in groups {
+                                ui.menu_button(category, |ui| {
+                                    for (template_name, display_name) in entries {
+                                        if ui.button(display_name).clicked() {
+                                            window_additions.push(template_name.clone());
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        ui.separator();
+
                         let windows = self.windows_for_menu();
                         if windows.is_empty() {
                             ui.label("No windows available");
@@ -2158,11 +2637,13 @@ impl eframe::App for VellumGuiApp {
                     &mut zone_window_rects,
                 ));
             }
-            (closed_tabs, detached_link_clicks) = self.render_detached_window_host(ui);
         });
+
+        let detached_link_clicks = self.render_detached_viewports(&ctx);
 
         let zone_drop_result =
             self.render_zone_drop_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
+        self.render_window_move_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
         self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
         for key in visibility_toggles {
@@ -2172,6 +2653,21 @@ impl eframe::App for VellumGuiApp {
                 self.hide_tab(key);
             }
         }
+        if !window_additions.is_empty() {
+            for name in window_additions {
+                if !self
+                    .app_core
+                    .ui_state
+                    .pending_window_additions
+                    .contains(&name)
+                {
+                    self.app_core.ui_state.pending_window_additions.push(name);
+                }
+            }
+            let (layout_width, layout_height) = self.core_layout_size;
+            self.app_core
+                .process_pending_window_additions(layout_width, layout_height);
+        }
         for (key, zone) in zone_assignments {
             self.set_tab_zone(key, zone);
         }
@@ -2179,18 +2675,18 @@ impl eframe::App for VellumGuiApp {
             self.apply_zone_drop(drop_result);
         }
         if let Some(request) = zone_actions.window_menu_request {
-            self.close_all_popup_menus();
-            self.window_context_menu = Some(request);
+            // While a window is in Move mode the pointer belongs to placement.
+            if self.window_move_state.is_none() {
+                self.close_all_popup_menus();
+                self.window_context_menu = Some(request);
+                self.window_context_menu_just_opened = true;
+            }
         }
-        let mut link_clicks = zone_actions.link_clicks;
-        link_clicks.extend(detached_link_clicks);
-
-        for key in closed_tabs {
-            self.hide_tab(key);
+        for click in zone_actions.link_clicks {
+            self.handle_link_click(click, None);
         }
-        self.hide_removed_detached_tabs(&detached_before_frame);
-        for click in link_clicks {
-            self.handle_link_click(click);
+        for (origin, click) in detached_link_clicks {
+            self.handle_link_click(click, Some(origin));
         }
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
@@ -2269,9 +2765,28 @@ pub fn run_native_gui(
         .or(app_core.config.character.as_deref())
         .map(|character| format!("VellumFE - {}", character))
         .unwrap_or_else(|| "VellumFE".to_string());
-    let viewport = ViewportBuilder::default()
-        .with_inner_size([1200.0, 800.0])
-        .with_title(window_title.clone());
+    // Restore the last session's OS window geometry. Opening at a smaller
+    // default size would clamp the saved per-window rects (which were laid
+    // out against the old geometry) on the first frames.
+    let (profile_id, character_id) = VellumGuiApp::resolve_layout_ids(&app_core.config);
+    let saved_viewport = load_layout(&profile_id, &character_id)
+        .ok()
+        .and_then(|layout| layout.main_viewport);
+    let mut viewport = ViewportBuilder::default().with_title(window_title.clone());
+    match saved_viewport {
+        Some(saved) => {
+            viewport = viewport.with_inner_size(saved.inner_size);
+            if let Some(pos) = saved.outer_pos {
+                viewport = viewport.with_position(pos);
+            }
+            if saved.maximized {
+                viewport = viewport.with_maximized(true);
+            }
+        }
+        None => {
+            viewport = viewport.with_inner_size([1200.0, 800.0]);
+        }
+    }
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()

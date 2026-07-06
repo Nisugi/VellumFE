@@ -22,7 +22,7 @@ tui-textarea = "0.7"
 # GUI (numpad-aware fork)
 egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui" }
 eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "eframe", default-features = false, features = ["default_fonts", "wgpu"] }
-egui_dock = { git = "https://github.com/Adanos020/egui_dock.git" }
+fontdb = "0.23"  # System font discovery for per-window font selection
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

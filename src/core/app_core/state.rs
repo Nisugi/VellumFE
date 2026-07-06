@@ -3656,6 +3656,39 @@ impl AppCore {
             .collect()
     }
 
+    /// Addable window templates grouped by category, as
+    /// `(category display name, [(template name, display name)])`, for
+    /// frontends that render native menus instead of the popup-menu stack.
+    pub fn addable_window_templates(&self) -> Vec<(String, Vec<(String, String)>)> {
+        let categories_map = crate::config::Config::get_addable_templates_by_category(
+            &self.layout,
+            self.game_type(),
+        );
+        let mut categories: Vec<_> = categories_map.into_iter().collect();
+        categories.sort_by_key(|(category, _)| category.clone());
+        categories
+            .into_iter()
+            .map(|(category, templates)| {
+                let mut entries: Vec<(String, String)> = templates
+                    .into_iter()
+                    .filter(|name| {
+                        self.layout
+                            .get_window(name)
+                            .map(|w| !w.base().visible)
+                            .unwrap_or(true)
+                    })
+                    .map(|name| {
+                        let display = self.get_window_display_name(&name);
+                        (name, display)
+                    })
+                    .collect();
+                entries.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+                (category.display_name().to_string(), entries)
+            })
+            .filter(|(_, entries)| !entries.is_empty())
+            .collect()
+    }
+
     /// Build category submenu showing available windows of that type
     pub fn build_add_window_category_menu(
         &self,

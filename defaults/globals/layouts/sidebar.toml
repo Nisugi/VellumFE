@@ -33,6 +33,7 @@ prompt_icon = ">"
 [[windows]]
 widget_type = "tabbedtext"
 name = "primary"
+title = "Story"
 row = 13
 col = 22
 rows = 41

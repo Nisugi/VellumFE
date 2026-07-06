@@ -23,8 +23,9 @@ impl VellumGuiApp {
         visuals: &egui::Visuals,
         is_link: bool,
         search_match: bool,
+        font_id: &egui::FontId,
     ) -> RichText {
-        Self::styled_rich_text(&segment.text, segment, visuals, is_link, search_match)
+        Self::styled_rich_text(&segment.text, segment, visuals, is_link, search_match, font_id)
     }
 
     /// Build rich text with a segment's styling for an arbitrary slice of its
@@ -35,6 +36,7 @@ impl VellumGuiApp {
         visuals: &egui::Visuals,
         is_link: bool,
         search_match: bool,
+        font_id: &egui::FontId,
     ) -> RichText {
         let foreground = segment
             .fg
@@ -58,7 +60,10 @@ impl VellumGuiApp {
         };
 
         let mut rich = RichText::new(text)
-            .size(DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 })
+            .font(egui::FontId {
+                size: font_id.size + if segment.bold { 0.5 } else { 0.0 },
+                family: font_id.family.clone(),
+            })
             .color(foreground)
             .background_color(background);
 
@@ -66,6 +71,7 @@ impl VellumGuiApp {
             rich = rich.strong();
         }
         if segment.mono {
+            // Overrides the family only; the size above is kept.
             rich = rich.monospace();
         }
         rich
@@ -145,6 +151,7 @@ impl VellumGuiApp {
         segment: &TextSegment,
         visuals: &egui::Visuals,
         search_match: bool,
+        font_id: &egui::FontId,
     ) -> egui::TextFormat {
         let color = segment
             .fg
@@ -162,11 +169,11 @@ impl VellumGuiApp {
         };
         egui::TextFormat {
             font_id: egui::FontId {
-                size: DEFAULT_FONT_SIZE + if segment.bold { 0.5 } else { 0.0 },
+                size: font_id.size + if segment.bold { 0.5 } else { 0.0 },
                 family: if segment.mono {
                     egui::FontFamily::Monospace
                 } else {
-                    egui::FontFamily::Proportional
+                    font_id.family.clone()
                 },
             },
             color,
@@ -191,6 +198,8 @@ impl VellumGuiApp {
         line: &StyledLine,
         visuals: &egui::Visuals,
         search_query: Option<&str>,
+        font_id: &egui::FontId,
+        wrap: bool,
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
 
@@ -198,8 +207,13 @@ impl VellumGuiApp {
             // Keep inter-widget spacing at zero so links don't introduce
             // artificial spaces around punctuation.
             ui.spacing_mut().item_spacing.x = 0.0;
+            if !wrap {
+                // One line stays one row; the enclosing scroll area provides
+                // horizontal scrolling.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            }
 
-            ui.horizontal_wrapped(|ui| {
+            let row = |ui: &mut egui::Ui| {
                 // Consecutive non-link segments accumulate into one LayoutJob;
                 // links flush it and render as their own clickable widgets.
                 let mut job = egui::text::LayoutJob::default();
@@ -219,8 +233,13 @@ impl VellumGuiApp {
                         // held with the mouse button down, the label is not
                         // selectable text, so starting an item drag never
                         // starts a text selection.
-                        let rich =
-                            Self::segment_to_rich_text(segment, visuals, is_link, search_match);
+                        let rich = Self::segment_to_rich_text(
+                            segment,
+                            visuals,
+                            is_link,
+                            search_match,
+                            font_id,
+                        );
                         let response = ui
                             .add(
                                 egui::Label::new(rich)
@@ -252,23 +271,142 @@ impl VellumGuiApp {
                             job.append(
                                 piece,
                                 0.0,
-                                Self::segment_text_format(segment, visuals, is_match),
+                                Self::segment_text_format(segment, visuals, is_match, font_id),
                             );
                         }
                     } else {
                         job.append(
                             &segment.text,
                             0.0,
-                            Self::segment_text_format(segment, visuals, false),
+                            Self::segment_text_format(segment, visuals, false, font_id),
                         );
                     }
                 }
 
                 Self::flush_text_job(ui, &mut job);
-            });
+            };
+            if wrap {
+                ui.horizontal_wrapped(row);
+            } else {
+                ui.horizontal(row);
+            }
         });
 
         clicked_link
+    }
+
+    /// WCAG relative luminance (0 = black, 1 = white).
+    fn relative_luminance(color: Color32) -> f32 {
+        fn channel(value: u8) -> f32 {
+            let value = value as f32 / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+    }
+
+    /// WCAG contrast ratio between two colors (1.0 to 21.0).
+    fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+        let la = Self::relative_luminance(a);
+        let lb = Self::relative_luminance(b);
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// Pick a readable text color for text painted over `background`.
+    /// Keeps `preferred` when it has enough contrast; otherwise falls back
+    /// to near-black or near-white, whichever contrasts with the background.
+    pub(super) fn readable_text_color(
+        preferred: Color32,
+        background: Color32,
+        auto_contrast: bool,
+    ) -> Color32 {
+        // 3.0 is the WCAG minimum for large text; bar labels are short and
+        // bold enough that this is a reasonable floor.
+        if !auto_contrast || Self::contrast_ratio(preferred, background) >= 3.0 {
+            return preferred;
+        }
+        if Self::relative_luminance(background) > 0.35 {
+            Color32::from_rgb(0x14, 0x14, 0x14)
+        } else {
+            Color32::from_rgb(0xf2, 0xf2, 0xf2)
+        }
+    }
+
+    /// Paint a galley twice, clipped at `boundary_x` (the bar's fill edge):
+    /// glyphs left of the boundary use `over_fill`, glyphs right of it use
+    /// `over_trough`, so text straddling the edge stays readable on both
+    /// sides. Single paint when the colors agree. The galley must be laid
+    /// out with `Color32::PLACEHOLDER` so the per-side color applies.
+    fn paint_split_galley(
+        painter: &egui::Painter,
+        clip: Rect,
+        pos: Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        boundary_x: f32,
+        over_fill: Color32,
+        over_trough: Color32,
+    ) {
+        if over_fill == over_trough {
+            painter.with_clip_rect(clip).galley(pos, galley, over_fill);
+            return;
+        }
+        let left = Rect::from_min_max(
+            clip.min,
+            Pos2::new(boundary_x.clamp(clip.min.x, clip.max.x), clip.max.y),
+        );
+        let right = Rect::from_min_max(
+            Pos2::new(boundary_x.clamp(clip.min.x, clip.max.x), clip.min.y),
+            clip.max,
+        );
+        if left.width() > 0.0 {
+            painter
+                .with_clip_rect(left)
+                .galley(pos, galley.clone(), over_fill);
+        }
+        if right.width() > 0.0 {
+            painter.with_clip_rect(right).galley(pos, galley, over_trough);
+        }
+    }
+
+    /// A progress bar with the user's corner radius and readable centered
+    /// text. Centered text sits over the fill once the bar is half full and
+    /// over the trough below that, so contrast is checked against whichever
+    /// is behind it.
+    fn styled_progress_bar(
+        ui: &egui::Ui,
+        settings: &WidgetRenderSettings,
+        fraction: f32,
+        fill: Color32,
+        text: String,
+    ) -> egui::ProgressBar {
+        // egui's ProgressBar clamps the fill to a minimum width of twice the
+        // corner radius, which paints a colored sliver even at zero. Painting
+        // the "fill" in the trough color hides it for genuinely empty bars.
+        let fill = if fraction <= f32::EPSILON {
+            ui.visuals().extreme_bg_color
+        } else {
+            fill
+        };
+        let mut bar = egui::ProgressBar::new(fraction)
+            .fill(fill)
+            .corner_radius(settings.bar_corner_radius);
+        if !text.is_empty() {
+            let behind = if fraction >= 0.5 {
+                fill
+            } else {
+                ui.visuals().extreme_bg_color
+            };
+            let color = Self::readable_text_color(
+                ui.visuals().text_color(),
+                behind,
+                settings.auto_contrast_bar_text,
+            );
+            bar = bar.text(RichText::new(text).color(color));
+        }
+        bar
     }
 
     pub(super) fn progress_fraction(value: u32, max: u32) -> f32 {
@@ -322,7 +460,81 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn render_vitals_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    /// Bar text for a vital with a true value/max pair (the core four).
+    fn vital_bar_text(
+        format: crate::frontend::gui::persistence::VitalsTextFormat,
+        label: &str,
+        value: u32,
+        max: u32,
+        percent: u32,
+        has_value_max: bool,
+    ) -> String {
+        use crate::frontend::gui::persistence::VitalsTextFormat as F;
+        match format {
+            F::LabelValueMax if has_value_max => format!("{}: {}/{}", label, value, max),
+            F::LabelValueMax | F::LabelPercent => format!("{}: {}%", label, percent),
+            F::ValueMax if has_value_max => format!("{}/{}", value, max),
+            F::ValueMax | F::Percent => format!("{}%", percent),
+            F::None => String::new(),
+        }
+    }
+
+    /// Bar text for a percent-style vital that carries a status string
+    /// ("clear as a bell", "None") instead of a value/max pair.
+    fn vital_status_text(
+        format: crate::frontend::gui::persistence::VitalsTextFormat,
+        label: &str,
+        percent: u32,
+        status: &str,
+    ) -> String {
+        use crate::frontend::gui::persistence::VitalsTextFormat as F;
+        let status = status.trim();
+        match format {
+            F::LabelValueMax if !status.is_empty() => format!("{}: {}", label, status),
+            F::LabelValueMax | F::LabelPercent => format!("{}: {}%", label, percent),
+            F::ValueMax if !status.is_empty() => status.to_string(),
+            F::ValueMax | F::Percent => format!("{}%", percent),
+            F::None => String::new(),
+        }
+    }
+
+    /// A standalone progress-bar window (stance, individual vital bars).
+    /// Data arrives via dialog progressBar updates matched on `progress_id`.
+    pub(super) fn render_single_progress_content(
+        ui: &mut egui::Ui,
+        data: &crate::data::ProgressData,
+        settings: &WidgetRenderSettings,
+    ) {
+        let fraction = if data.max > 0 {
+            Self::progress_fraction(data.value, data.max)
+        } else {
+            // Percent-style feeds (e.g. stance) report 0-100 with no max.
+            (data.value.min(100) as f32) / 100.0
+        };
+        let fill = data
+            .color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| ui.visuals().selection.bg_fill);
+        let text = if data.label.is_empty() {
+            format!("{}%", (fraction * 100.0).round() as u32)
+        } else {
+            data.label.clone()
+        };
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        let fraction = Self::animated_fraction(ui, &data.progress_id, fraction);
+        let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
+        ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+    }
+
+    pub(super) fn render_vitals_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+    ) {
+        use crate::frontend::gui::persistence::{VitalKind, VitalsOrientation};
+
+        let config = &settings.vitals;
         let minivitals = &app_core.game_state.minivitals;
         let fallback_vitals = &app_core.game_state.vitals;
         let has_full_vital_values = minivitals.health.max > 0
@@ -330,64 +542,161 @@ impl VellumGuiApp {
             || minivitals.stamina.max > 0
             || minivitals.spirit.max > 0;
 
-        let bars = [
-            (
-                "Health",
-                minivitals.health.value,
-                minivitals.health.max,
-                fallback_vitals.health as u32,
-                Color32::from_rgb(0xcd, 0x4d, 0x4d),
-            ),
-            (
-                "Mana",
-                minivitals.mana.value,
-                minivitals.mana.max,
-                fallback_vitals.mana as u32,
-                Color32::from_rgb(0x47, 0x84, 0xd9),
-            ),
-            (
-                "Stamina",
-                minivitals.stamina.value,
-                minivitals.stamina.max,
-                fallback_vitals.stamina as u32,
-                Color32::from_rgb(0x55, 0xb8, 0x6c),
-            ),
-            (
-                "Spirit",
-                minivitals.spirit.value,
-                minivitals.spirit.max,
-                fallback_vitals.spirit as u32,
-                Color32::from_rgb(0xcb, 0xa9, 0x42),
-            ),
-        ];
-
-        let bar_height = ui.spacing().interact_size.y.max(16.0);
-
-        ui.columns(4, |columns| {
-            for (column, (label, value, max, fallback_pct, fill_color)) in
-                columns.iter_mut().zip(bars.into_iter())
-            {
-                let (fraction, text) = if has_full_vital_values && max > 0 {
-                    (
-                        Self::progress_fraction(value, max),
-                        format!("{}: {}/{}", label, value, max),
-                    )
-                } else {
-                    let clamped_pct = fallback_pct.min(100);
-                    (
-                        clamped_pct as f32 / 100.0,
-                        format!("{}: {}%", label, clamped_pct),
-                    )
-                };
-                let fraction = Self::animated_fraction(column, label, fraction);
-                column.add_sized(
-                    [column.available_width().max(40.0), bar_height],
-                    egui::ProgressBar::new(fraction)
-                        .text(text)
-                        .fill(fill_color),
-                );
+        let core_vital = |kind: VitalKind| -> (&'static str, u32, u32, u32, Color32) {
+            match kind {
+                VitalKind::Health => (
+                    "Health",
+                    minivitals.health.value,
+                    minivitals.health.max,
+                    fallback_vitals.health as u32,
+                    Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                ),
+                VitalKind::Mana => (
+                    "Mana",
+                    minivitals.mana.value,
+                    minivitals.mana.max,
+                    fallback_vitals.mana as u32,
+                    Color32::from_rgb(0x47, 0x84, 0xd9),
+                ),
+                VitalKind::Stamina => (
+                    "Stamina",
+                    minivitals.stamina.value,
+                    minivitals.stamina.max,
+                    fallback_vitals.stamina as u32,
+                    Color32::from_rgb(0x55, 0xb8, 0x6c),
+                ),
+                VitalKind::Spirit => (
+                    "Spirit",
+                    minivitals.spirit.value,
+                    minivitals.spirit.max,
+                    fallback_vitals.spirit as u32,
+                    Color32::from_rgb(0xcb, 0xa9, 0x42),
+                ),
+                _ => unreachable!("core_vital called with a status vital"),
             }
-        });
+        };
+
+        // (animation id, fraction, bar text, fill color) per enabled bar.
+        let bars: Vec<(&'static str, f32, String, Color32)> = config
+            .bars
+            .iter()
+            .map(|kind| match kind {
+                VitalKind::Health | VitalKind::Mana | VitalKind::Stamina | VitalKind::Spirit => {
+                    let (label, value, max, fallback_pct, fill) = core_vital(*kind);
+                    let (fraction, percent, usable_max) = if has_full_vital_values && max > 0 {
+                        (
+                            Self::progress_fraction(value, max),
+                            (Self::progress_fraction(value, max) * 100.0).round() as u32,
+                            true,
+                        )
+                    } else {
+                        (fallback_pct.min(100) as f32 / 100.0, fallback_pct.min(100), false)
+                    };
+                    let text = Self::vital_bar_text(
+                        config.text_format,
+                        label,
+                        value,
+                        max,
+                        percent,
+                        usable_max,
+                    );
+                    (label, fraction, text, fill)
+                }
+                VitalKind::Mind => {
+                    let exp = &app_core.game_state.gs4_experience;
+                    let percent = exp.mind_state_value.min(100);
+                    let text = Self::vital_status_text(
+                        config.text_format,
+                        "Mind",
+                        percent,
+                        &exp.mind_state_text,
+                    );
+                    (
+                        "Mind",
+                        percent as f32 / 100.0,
+                        text,
+                        Color32::from_rgb(0x7d, 0x8f, 0xb3),
+                    )
+                }
+                VitalKind::Encumbrance => {
+                    let encumbrance = &app_core.game_state.encumbrance;
+                    let percent = encumbrance.value.min(100);
+                    let text = Self::vital_status_text(
+                        config.text_format,
+                        "Encum",
+                        percent,
+                        &encumbrance.text,
+                    );
+                    (
+                        "Encumbrance",
+                        percent as f32 / 100.0,
+                        text,
+                        Color32::from_rgb(0xc0, 0x7f, 0x3f),
+                    )
+                }
+                VitalKind::NextLevel => {
+                    let exp = &app_core.game_state.gs4_experience;
+                    let percent = exp.next_level_value.min(100);
+                    let text = Self::vital_status_text(
+                        config.text_format,
+                        "Next",
+                        percent,
+                        &exp.next_level_text,
+                    );
+                    (
+                        "Next Level",
+                        percent as f32 / 100.0,
+                        text,
+                        Color32::from_rgb(0x3f, 0xa7, 0xa0),
+                    )
+                }
+                VitalKind::Blood => {
+                    let betrayer = &app_core.game_state.betrayer;
+                    let percent = betrayer.value.min(100);
+                    let text = Self::vital_bar_text(
+                        config.text_format,
+                        "Blood",
+                        betrayer.value,
+                        100,
+                        percent,
+                        false,
+                    );
+                    (
+                        "Blood",
+                        percent as f32 / 100.0,
+                        text,
+                        Color32::from_rgb(0x8a, 0x1f, 0x1f),
+                    )
+                }
+            })
+            .collect();
+
+        if bars.is_empty() {
+            ui.label("No vitals selected (Settings → GUI → Vitals).");
+            return;
+        }
+
+        let bar_height = config.bar_height.clamp(8.0, 60.0);
+        match config.orientation {
+            VitalsOrientation::Horizontal => {
+                ui.columns(bars.len(), |columns| {
+                    for (column, (id, fraction, text, fill)) in
+                        columns.iter_mut().zip(bars.into_iter())
+                    {
+                        let fraction = Self::animated_fraction(column, id, fraction);
+                        let bar = Self::styled_progress_bar(column, settings, fraction, fill, text);
+                        column.add_sized([column.available_width().max(40.0), bar_height], bar);
+                    }
+                });
+            }
+            VitalsOrientation::Vertical => {
+                for (id, fraction, text, fill) in bars {
+                    let fraction = Self::animated_fraction(ui, id, fraction);
+                    let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
+                    ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+                }
+            }
+        }
     }
 
     /// Remaining whole seconds on a countdown, adjusted for server clock drift.
@@ -413,6 +722,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         countdown: &crate::data::CountdownData,
+        settings: &WidgetRenderSettings,
     ) {
         let now_f = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -450,10 +760,8 @@ impl VellumGuiApp {
         } else {
             format!("{}: {}", countdown.label, remaining)
         };
-        ui.add_sized(
-            [bar_width, bar_height],
-            egui::ProgressBar::new(fraction).text(text).fill(fill),
-        );
+        let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
+        ui.add_sized([bar_width, bar_height], bar);
     }
 
     /// Body-part glyph grid mirroring the TUI injury doll (col, glyph, part).
@@ -697,7 +1005,11 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(super) fn render_gs4_experience_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    pub(super) fn render_gs4_experience_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+    ) {
         let exp = &app_core.game_state.gs4_experience;
         if exp.level_text.is_empty() && exp.mind_state_text.is_empty() && exp.next_level_text.is_empty() {
             ui.weak("No experience data yet.");
@@ -711,22 +1023,26 @@ impl VellumGuiApp {
         if !exp.mind_state_text.is_empty() {
             let fraction =
                 Self::animated_fraction(ui, "gs4_mind", exp.mind_state_value.min(100) as f32 / 100.0);
-            ui.add_sized(
-                [ui.available_width().max(40.0), bar_height],
-                egui::ProgressBar::new(fraction)
-                    .text(format!("Mind: {}", exp.mind_state_text))
-                    .fill(Color32::from_rgb(0x47, 0x84, 0xd9)),
+            let bar = Self::styled_progress_bar(
+                ui,
+                settings,
+                fraction,
+                Color32::from_rgb(0x47, 0x84, 0xd9),
+                format!("Mind: {}", exp.mind_state_text),
             );
+            ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         }
         if !exp.next_level_text.is_empty() {
             let fraction =
                 Self::animated_fraction(ui, "gs4_next", exp.next_level_value.min(100) as f32 / 100.0);
-            ui.add_sized(
-                [ui.available_width().max(40.0), bar_height],
-                egui::ProgressBar::new(fraction)
-                    .text(format!("Next: {}", exp.next_level_text))
-                    .fill(Color32::from_rgb(0x55, 0xb8, 0x6c)),
+            let bar = Self::styled_progress_bar(
+                ui,
+                settings,
+                fraction,
+                Color32::from_rgb(0x55, 0xb8, 0x6c),
+                format!("Next: {}", exp.next_level_text),
             );
+            ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         }
     }
 
@@ -750,7 +1066,11 @@ impl VellumGuiApp {
             });
     }
 
-    pub(super) fn render_encumbrance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    pub(super) fn render_encumbrance_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+    ) {
         let enc = &app_core.game_state.encumbrance;
         let value = enc.value.min(100);
         let fill = match value {
@@ -765,18 +1085,18 @@ impl VellumGuiApp {
         };
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let fraction = Self::animated_fraction(ui, "encumbrance", value as f32 / 100.0);
-        ui.add_sized(
-            [ui.available_width().max(40.0), bar_height],
-            egui::ProgressBar::new(fraction)
-                .text(text)
-                .fill(fill),
-        );
+        let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
+        ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         if !enc.blurb.is_empty() {
             ui.weak(&enc.blurb);
         }
     }
 
-    pub(super) fn render_betrayer_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    pub(super) fn render_betrayer_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        settings: &WidgetRenderSettings,
+    ) {
         let betrayer = &app_core.game_state.betrayer;
         let text = if betrayer.text.is_empty() {
             format!("Blood Points: {}", betrayer.value)
@@ -786,12 +1106,14 @@ impl VellumGuiApp {
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let fraction =
             Self::animated_fraction(ui, "betrayer", betrayer.value.min(100) as f32 / 100.0);
-        ui.add_sized(
-            [ui.available_width().max(40.0), bar_height],
-            egui::ProgressBar::new(fraction)
-                .text(text)
-                .fill(Color32::from_rgb(0xcd, 0x4d, 0x4d)),
+        let bar = Self::styled_progress_bar(
+            ui,
+            settings,
+            fraction,
+            Color32::from_rgb(0xcd, 0x4d, 0x4d),
+            text,
         );
+        ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         if !betrayer.items.is_empty() {
             let max_height = ui.available_height().max(1.0);
             egui::ScrollArea::vertical()
@@ -895,6 +1217,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         container_title: &str,
+        wrap: bool,
     ) {
         let Some(container) = app_core.game_state.container_cache.find_by_title(container_title)
         else {
@@ -908,12 +1231,20 @@ impl VellumGuiApp {
         }
 
         let max_height = ui.available_height().max(1.0);
-        egui::ScrollArea::vertical()
+        let scroll_area = if wrap {
+            egui::ScrollArea::vertical()
+        } else {
+            egui::ScrollArea::both()
+        };
+        scroll_area
             .id_salt(format!("container_scroll_{}", container.id))
             .auto_shrink([false, false])
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
+                if !wrap {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                }
                 for item in &container.items {
                     ui.label(item);
                 }
@@ -1292,15 +1623,22 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    /// Wrayth/TUI-style effect rows: each effect is a single fixed-height
+    /// bar whose fill tracks remaining duration, with the name overlaid on
+    /// the left and the time on the right. Row height and text size are
+    /// user-adjustable (Settings → GUI, per-window text size).
     pub(super) fn render_active_effects_content(
         ui: &mut egui::Ui,
         effects_content: &crate::data::ActiveEffectsContent,
+        settings: WidgetRenderSettings,
     ) {
         if effects_content.effects.is_empty() {
             ui.label(format!("No active {}.", effects_content.category));
             return;
         }
 
+        let row_height = settings.effects_bar_height;
+        let text_size = settings.text_size.min(row_height - 2.0).max(6.0);
         let max_height = ui.available_height().max(1.0);
         egui::ScrollArea::vertical()
             .id_salt(format!("active_effects_{}", effects_content.category))
@@ -1308,28 +1646,113 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
                 for effect in &effects_content.effects {
-                    ui.horizontal(|ui| {
-                        let mut text = RichText::new(effect.text.as_str());
-                        if let Some(color) = effect.text_color.as_deref().and_then(parse_hex_color)
-                        {
-                            text = text.color(color);
-                        }
-                        ui.label(text);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if !effect.time.trim().is_empty() {
-                                ui.label(RichText::new(effect.time.as_str()).small().weak());
-                            }
-                        });
-                    });
-
-                    let mut bar = egui::ProgressBar::new((effect.value.min(100) as f32) / 100.0)
-                        .text(format!("{}%", effect.value.min(100)));
-                    if let Some(fill) = effect.bar_color.as_deref().and_then(parse_hex_color) {
-                        bar = bar.fill(fill);
+                    let desired = Vec2::new(ui.available_width().max(1.0), row_height);
+                    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
+                    if !ui.is_rect_visible(rect) {
+                        continue;
                     }
-                    ui.add(bar);
-                    ui.add_space(4.0);
+
+                    let visuals = ui.visuals();
+                    let bg = visuals.extreme_bg_color;
+                    let fill = effect
+                        .bar_color
+                        .as_deref()
+                        .and_then(parse_hex_color)
+                        .unwrap_or(visuals.selection.bg_fill);
+                    let preferred_text_color = effect
+                        .text_color
+                        .as_deref()
+                        .and_then(parse_hex_color)
+                        .unwrap_or_else(|| visuals.text_color());
+
+                    let corner_radius = settings.bar_corner_radius;
+                    let painter = ui.painter_at(rect);
+                    painter.rect_filled(rect, corner_radius, bg);
+                    let fraction = (effect.value.min(100) as f32) / 100.0;
+                    if fraction > 0.0 {
+                        let fill_rect = Rect::from_min_size(
+                            rect.min,
+                            Vec2::new(rect.width() * fraction, rect.height()),
+                        );
+                        painter.rect_filled(fill_rect, corner_radius, fill);
+                    }
+
+                    // Text is painted in two clipped passes split at the fill
+                    // edge, so a duration straddling the boundary is
+                    // contrast-checked against the fill on its left half and
+                    // the trough on its right half.
+                    let boundary_x = rect.left() + rect.width() * fraction;
+                    let over_fill = Self::readable_text_color(
+                        preferred_text_color,
+                        fill,
+                        settings.auto_contrast_bar_text,
+                    );
+                    let over_trough = Self::readable_text_color(
+                        preferred_text_color,
+                        bg,
+                        settings.auto_contrast_bar_text,
+                    );
+
+                    // Time on the right; the name is clipped so it never
+                    // paints under the time.
+                    let font = egui::FontId {
+                        size: text_size,
+                        family: settings.font_family.clone(),
+                    };
+                    let time = effect.time.trim();
+                    let mut name_clip = rect.shrink2(Vec2::new(4.0, 0.0));
+                    if !time.is_empty() {
+                        let time_galley = painter.layout_no_wrap(
+                            time.to_string(),
+                            font.clone(),
+                            Color32::PLACEHOLDER,
+                        );
+                        let time_pos = Pos2::new(
+                            rect.right() - 4.0 - time_galley.size().x,
+                            rect.center().y - time_galley.size().y / 2.0,
+                        );
+                        Self::paint_split_galley(
+                            &painter,
+                            rect,
+                            time_pos,
+                            time_galley.clone(),
+                            boundary_x,
+                            over_fill,
+                            over_trough,
+                        );
+                        name_clip.max.x =
+                            (rect.right() - 8.0 - time_galley.size().x).max(name_clip.min.x);
+                    }
+                    let name_galley = painter.layout_no_wrap(
+                        effect.text.clone(),
+                        font,
+                        Color32::PLACEHOLDER,
+                    );
+                    let name_pos = Pos2::new(
+                        name_clip.min.x,
+                        rect.center().y - name_galley.size().y / 2.0,
+                    );
+                    Self::paint_split_galley(
+                        &painter,
+                        name_clip,
+                        name_pos,
+                        name_galley,
+                        boundary_x,
+                        over_fill,
+                        over_trough,
+                    );
+
+                    // Narrow windows clip the name; hover shows the full text.
+                    if !effect.text.is_empty() {
+                        let hover = if time.is_empty() {
+                            effect.text.clone()
+                        } else {
+                            format!("{} — {}", effect.text, time)
+                        };
+                        response.on_hover_text(hover);
+                    }
                 }
             });
     }
@@ -1505,6 +1928,7 @@ impl VellumGuiApp {
         line: &StyledLine,
         visuals: &egui::Visuals,
         wrap_width: f32,
+        font_id: &egui::FontId,
     ) -> f32 {
         let mut job = egui::text::LayoutJob {
             wrap: egui::text::TextWrapping {
@@ -1520,15 +1944,13 @@ impl VellumGuiApp {
             job.append(
                 &segment.text,
                 0.0,
-                Self::segment_text_format(segment, visuals, false),
+                Self::segment_text_format(segment, visuals, false, font_id),
             );
         }
         if job.is_empty() {
             // Blank line: renders as an empty row; estimate one text row and
             // let the on-render correction settle the exact value.
-            return ctx.fonts_mut(|fonts| {
-                fonts.row_height(&egui::FontId::proportional(DEFAULT_FONT_SIZE))
-            });
+            return ctx.fonts_mut(|fonts| fonts.row_height(font_id));
         }
         ctx.fonts_mut(|fonts| fonts.layout_job(job)).size().y
     }
@@ -1544,8 +1966,10 @@ impl VellumGuiApp {
         rendered_count: usize,
         wrap_width: f32,
         visuals: &egui::Visuals,
+        font_id: &egui::FontId,
     ) {
-        let width_changed = (cache.wrap_width - wrap_width).abs() > 0.5;
+        let width_changed =
+            (cache.wrap_width - wrap_width).abs() > 0.5 || cache.font_id != *font_id;
         let delta = content.generation.wrapping_sub(cache.generation) as usize;
         let incremental = !width_changed
             && content.generation >= cache.generation
@@ -1558,21 +1982,22 @@ impl VellumGuiApp {
                 cache.heights.drain(..drop_front.min(cache.heights.len()));
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
-                    cache
-                        .heights
-                        .push(Self::measure_line_height(ctx, line, visuals, wrap_width));
+                    cache.heights.push(Self::measure_line_height(
+                        ctx, line, visuals, wrap_width, font_id,
+                    ));
                 }
             }
         } else {
             cache.heights.clear();
             cache.heights.reserve(rendered_count);
             for line in content.lines.iter().skip(start) {
-                cache
-                    .heights
-                    .push(Self::measure_line_height(ctx, line, visuals, wrap_width));
+                cache.heights.push(Self::measure_line_height(
+                    ctx, line, visuals, wrap_width, font_id,
+                ));
             }
         }
         cache.wrap_width = wrap_width;
+        cache.font_id = font_id.clone();
         cache.generation = content.generation;
         debug_assert_eq!(cache.heights.len(), rendered_count);
     }
@@ -1582,6 +2007,8 @@ impl VellumGuiApp {
         content: &TextContent,
         scroll_id: &str,
         search_query: Option<&str>,
+        font_id: &egui::FontId,
+        wrap: bool,
     ) -> Option<GuiLinkClick> {
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
@@ -1592,7 +2019,12 @@ impl VellumGuiApp {
         let max_height = ui.available_height().max(1.0);
         let cache_id = egui::Id::new(("text_row_heights", scroll_id));
 
-        egui::ScrollArea::vertical()
+        let scroll_area = if wrap {
+            egui::ScrollArea::vertical()
+        } else {
+            egui::ScrollArea::both()
+        };
+        scroll_area
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
@@ -1603,7 +2035,11 @@ impl VellumGuiApp {
                     return;
                 }
                 let ctx = ui.ctx().clone();
-                let wrap_width = ui.available_width().max(1.0);
+                let wrap_width = if wrap {
+                    ui.available_width().max(1.0)
+                } else {
+                    f32::INFINITY
+                };
                 let spacing_y = ui.spacing().item_spacing.y;
 
                 // The cache lives in egui temp data so renderers stay
@@ -1625,6 +2061,7 @@ impl VellumGuiApp {
                     rendered_count,
                     wrap_width,
                     &visuals,
+                    font_id,
                 );
 
                 // Visible index range from cumulative strides (height +
@@ -1667,7 +2104,8 @@ impl VellumGuiApp {
                     .enumerate()
                 {
                     let before = ui.cursor().min.y;
-                    if let Some(link) = Self::render_styled_line(ui, line, &visuals, search_query)
+                    if let Some(link) =
+                        Self::render_styled_line(ui, line, &visuals, search_query, font_id, wrap)
                     {
                         clicked_link = Some(link);
                     }
@@ -1698,6 +2136,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         lines: &[StyledLine],
         scroll_id: &str,
+        font_id: &egui::FontId,
     ) -> Option<GuiLinkClick> {
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
@@ -1712,7 +2151,9 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show(ui, |ui| {
                 for line in lines {
-                    if let Some(link) = Self::render_styled_line(ui, line, &visuals, None) {
+                    if let Some(link) =
+                        Self::render_styled_line(ui, line, &visuals, None, font_id, true)
+                    {
                         clicked_link = Some(link);
                     }
                 }
@@ -1725,21 +2166,52 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         tab: &GuiTab,
+        settings: WidgetRenderSettings,
     ) -> Option<GuiLinkClick> {
         let Some(window) = app_core.ui_state.windows.get(&tab.window_name) else {
             ui.label("This tab's source window is no longer available.");
             return None;
         };
 
+        // Scale the label-driven text styles so list/grid widgets (targets,
+        // players, dashboards, ...) follow the window's text size and font,
+        // not just the segment-based text renderers below.
+        let text_size = settings.text_size;
+        let font_id = settings.font_id();
+        {
+            let styles = &mut ui.style_mut().text_styles;
+            if let Some(font) = styles.get_mut(&egui::TextStyle::Body) {
+                font.size = text_size;
+                font.family = font_id.family.clone();
+            }
+            if let Some(font) = styles.get_mut(&egui::TextStyle::Monospace) {
+                font.size = text_size;
+            }
+            if let Some(font) = styles.get_mut(&egui::TextStyle::Small) {
+                font.size = (text_size - 4.0).max(8.0);
+            }
+        }
+
         match &window.content {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
             | WindowContent::Spells(content) => {
                 let query = Self::active_search_query(app_core);
-                Self::render_text_content(ui, content, &tab.window_name, query.as_deref())
+                Self::render_text_content(
+                    ui,
+                    content,
+                    &tab.window_name,
+                    query.as_deref(),
+                    &font_id,
+                    settings.wrap_text,
+                )
             }
-            WindowContent::Progress(_) | WindowContent::MiniVitals => {
-                Self::render_vitals_content(app_core, ui);
+            WindowContent::MiniVitals => {
+                Self::render_vitals_content(app_core, ui, &settings);
+                None
+            }
+            WindowContent::Progress(data) => {
+                Self::render_single_progress_content(ui, data, &settings);
                 None
             }
             WindowContent::Compass(compass) => Self::render_compass_content(app_core, ui, compass),
@@ -1768,6 +2240,8 @@ impl VellumGuiApp {
                         &active.content,
                         &scroll_id,
                         query.as_deref(),
+                        &font_id,
+                        settings.wrap_text,
                     ) {
                         clicked_link.get_or_insert(link);
                     }
@@ -1777,10 +2251,23 @@ impl VellumGuiApp {
                 clicked_link
             }
             WindowContent::Room(room) => {
-                ui.heading(&room.name);
+                // Explicit size: room names track the window's text size, not
+                // the Heading style (which the title-bar size setting owns).
+                ui.label(
+                    RichText::new(&room.name)
+                        .font(egui::FontId {
+                            size: text_size + 2.0,
+                            family: font_id.family.clone(),
+                        })
+                        .strong(),
+                );
                 ui.separator();
-                let mut clicked_link =
-                    Self::render_room_description(ui, &room.description, &tab.window_name);
+                let mut clicked_link = Self::render_room_description(
+                    ui,
+                    &room.description,
+                    &tab.window_name,
+                    &font_id,
+                );
                 if let Some(exit_click) = Self::render_room_exits(ui, &room.exits) {
                     if clicked_link.is_none() {
                         clicked_link = Some(exit_click);
@@ -1791,13 +2278,13 @@ impl VellumGuiApp {
                 clicked_link
             }
             WindowContent::ActiveEffects(content) => {
-                Self::render_active_effects_content(ui, content);
+                Self::render_active_effects_content(ui, content, settings);
                 None
             }
             WindowContent::Targets => Self::render_targets_content(app_core, ui),
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {
-                Self::render_countdown_content(app_core, ui, countdown);
+                Self::render_countdown_content(app_core, ui, countdown, &settings);
                 None
             }
             WindowContent::Indicator(indicator) => {
@@ -1813,7 +2300,7 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::GS4Experience => {
-                Self::render_gs4_experience_content(app_core, ui);
+                Self::render_gs4_experience_content(app_core, ui, &settings);
                 None
             }
             WindowContent::Experience => {
@@ -1821,11 +2308,11 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Encumbrance => {
-                Self::render_encumbrance_content(app_core, ui);
+                Self::render_encumbrance_content(app_core, ui, &settings);
                 None
             }
             WindowContent::Betrayer => {
-                Self::render_betrayer_content(app_core, ui);
+                Self::render_betrayer_content(app_core, ui, &settings);
                 None
             }
             WindowContent::Perception(perception) => {
@@ -1833,7 +2320,7 @@ impl VellumGuiApp {
             }
             WindowContent::Items => Self::render_items_content(app_core, ui),
             WindowContent::Container { container_title } => {
-                Self::render_container_content(app_core, ui, container_title);
+                Self::render_container_content(app_core, ui, container_title, settings.wrap_text);
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
@@ -1860,6 +2347,7 @@ impl VellumGuiApp {
 #[derive(Default)]
 pub(super) struct RowHeightCache {
     wrap_width: f32,
+    font_id: egui::FontId,
     generation: u64,
     heights: Vec<f32>,
 }

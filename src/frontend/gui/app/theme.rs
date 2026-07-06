@@ -48,45 +48,135 @@ pub(super) fn visuals_from_theme(theme: &AppTheme) -> egui::Visuals {
     visuals
 }
 
-/// Build font definitions for a configured UI font. Returns None for the
-/// system default (or when the font can't be loaded), leaving egui's
-/// built-in fonts in place.
-pub(super) fn font_definitions_from_ref(
+/// Lazily-loaded system font database, shared by name resolution and the
+/// per-window font picker. Scanning system font dirs is done once.
+fn system_font_db() -> &'static fontdb::Database {
+    static DB: std::sync::OnceLock<fontdb::Database> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        tracing::info!("Loaded {} system font faces", db.len());
+        db
+    })
+}
+
+/// Sorted, de-duplicated system font family names for the font picker.
+pub(super) fn system_font_families() -> &'static [String] {
+    static FAMILIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let db = system_font_db();
+        let mut families: Vec<String> = db
+            .faces()
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
+        families.sort();
+        families.dedup();
+        families
+    })
+}
+
+/// Load raw font data for a font reference. Named fonts resolve through the
+/// system font database; custom fonts read from the given file path.
+fn font_data_from_ref(
     font: &crate::frontend::gui::persistence::FontRef,
-) -> Option<egui::FontDefinitions> {
+) -> Option<egui::FontData> {
     use crate::frontend::gui::persistence::FontRef;
 
-    let path = match font {
-        FontRef::SystemDefault => return None,
+    match font {
+        FontRef::SystemDefault => None,
         FontRef::Named(name) => {
-            tracing::warn!(
-                "Named font '{}' is not supported yet; set ui_font to a custom file path instead",
-                name
-            );
-            return None;
+            let db = system_font_db();
+            let id = db.query(&fontdb::Query {
+                families: &[fontdb::Family::Name(name)],
+                ..Default::default()
+            })?;
+            let (source, index) = db.face_source(id)?;
+            let bytes = match source {
+                fontdb::Source::Binary(data) | fontdb::Source::SharedFile(_, data) => {
+                    data.as_ref().as_ref().to_vec()
+                }
+                fontdb::Source::File(path) => match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to read font '{}' from {}: {}",
+                            name,
+                            path.display(),
+                            err
+                        );
+                        return None;
+                    }
+                },
+            };
+            let mut data = egui::FontData::from_owned(bytes);
+            data.index = index;
+            Some(data)
         }
-        FontRef::Custom(path) => path,
-    };
+        FontRef::Custom(path) => match std::fs::read(path) {
+            Ok(bytes) => Some(egui::FontData::from_owned(bytes)),
+            Err(err) => {
+                tracing::warn!("Failed to load font file '{}': {}", path, err);
+                None
+            }
+        },
+    }
+}
 
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            tracing::warn!("Failed to load UI font '{}': {}", path, err);
-            return None;
-        }
-    };
+/// Registration key for a font reference inside `FontDefinitions`; None for
+/// the system default (nothing to register).
+pub(super) fn font_ref_key(font: &crate::frontend::gui::persistence::FontRef) -> Option<String> {
+    use crate::frontend::gui::persistence::FontRef;
+    match font {
+        FontRef::SystemDefault => None,
+        FontRef::Named(name) => Some(format!("vellum-named:{}", name)),
+        FontRef::Custom(path) => Some(format!("vellum-file:{}", path)),
+    }
+}
 
+/// Build the full font definitions: egui's built-ins, the app-wide UI font
+/// (prepended to the default families), and every per-window font registered
+/// as its own named family (falling back to the proportional stack for
+/// missing glyphs).
+pub(super) fn build_font_definitions(
+    ui_font: &crate::frontend::gui::persistence::FontRef,
+    window_fonts: &[crate::frontend::gui::persistence::FontRef],
+) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "vellum-custom".to_string(),
-        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-    );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        if let Some(list) = fonts.families.get_mut(&family) {
-            list.insert(0, "vellum-custom".to_string());
+
+    if let Some(data) = font_data_from_ref(ui_font) {
+        fonts
+            .font_data
+            .insert("vellum-custom".to_string(), std::sync::Arc::new(data));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.insert(0, "vellum-custom".to_string());
+            }
         }
     }
-    Some(fonts)
+
+    for font in window_fonts {
+        let Some(key) = font_ref_key(font) else {
+            continue;
+        };
+        let family = egui::FontFamily::Name(key.clone().into());
+        if fonts.families.contains_key(&family) {
+            continue;
+        }
+        let Some(data) = font_data_from_ref(font) else {
+            tracing::warn!("Window font {:?} could not be loaded; using default", font);
+            continue;
+        };
+        fonts
+            .font_data
+            .insert(key.clone(), std::sync::Arc::new(data));
+        let mut list = vec![key];
+        if let Some(fallbacks) = fonts.families.get(&egui::FontFamily::Proportional) {
+            list.extend(fallbacks.iter().cloned());
+        }
+        fonts.families.insert(family, list);
+    }
+
+    fonts
 }
 
 impl VellumGuiApp {

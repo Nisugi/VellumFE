@@ -29,10 +29,17 @@ pub(in super::super) struct SettingsEditorState {
     sound_cooldown_ms: u64,
     active_theme: String,
     theme_names: Vec<String>,
+    /// GUI sizing settings; persisted in the per-character GUI layout file,
+    /// not config.toml.
+    gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
 }
 
 impl SettingsEditorState {
-    fn from_config(config: &crate::config::Config, theme_names: Vec<String>) -> Self {
+    fn from_config(
+        config: &crate::config::Config,
+        theme_names: Vec<String>,
+        gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
+    ) -> Self {
         Self {
             host: config.connection.host.clone(),
             port: config.connection.port,
@@ -46,6 +53,7 @@ impl SettingsEditorState {
             sound_cooldown_ms: config.sound.cooldown_ms,
             active_theme: config.active_theme.clone(),
             theme_names,
+            gui_settings,
         }
     }
 
@@ -79,6 +87,7 @@ impl VellumGuiApp {
         self.settings_editor = Some(SettingsEditorState::from_config(
             &self.app_core.config,
             theme_names,
+            self.ui_settings.clone(),
         ));
     }
 
@@ -152,6 +161,179 @@ impl VellumGuiApp {
                             );
                         });
 
+                        ui.collapsing("GUI", |ui| {
+                            ui.label(
+                                "Sizing applies to the GUI only and is saved per character. \
+                                 Ctrl+= / Ctrl+- / Ctrl+0 also adjust zoom anytime.",
+                            );
+                            egui::Grid::new("settings_gui_grid").num_columns(2).show(
+                                ui,
+                                |ui| {
+                                    ui.label("UI zoom");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.zoom_factor,
+                                            0.5..=3.0,
+                                        )
+                                        .step_by(0.05),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Text size");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.text_size,
+                                            8.0..=32.0,
+                                        )
+                                        .step_by(0.5),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Title bar size");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.title_font_size,
+                                            8.0..=40.0,
+                                        )
+                                        .step_by(0.5),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Effect bar height");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.effects_bar_height,
+                                            10.0..=60.0,
+                                        )
+                                        .step_by(1.0),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Density");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.density,
+                                            0.5..=2.0,
+                                        )
+                                        .step_by(0.05),
+                                    )
+                                    .on_hover_text(
+                                        "Spacing and padding scale. Lower = denser \
+                                         (Wrayth-like), higher = more comfortable.",
+                                    );
+                                    ui.end_row();
+                                    ui.label("Bar corners");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut state.gui_settings.bar_corner_radius,
+                                            0.0..=12.0,
+                                        )
+                                        .step_by(0.5),
+                                    )
+                                    .on_hover_text(
+                                        "Corner radius for all progress bars. \
+                                         0 = square (Wrayth-style).",
+                                    );
+                                    ui.end_row();
+                                    ui.label("Bar text contrast");
+                                    ui.checkbox(
+                                        &mut state.gui_settings.auto_contrast_bar_text,
+                                        "Auto light/dark",
+                                    )
+                                    .on_hover_text(
+                                        "Switch bar text to light or dark when its \
+                                         configured color would be unreadable against \
+                                         the bar fill.",
+                                    );
+                                    ui.end_row();
+                                },
+                            );
+
+                            ui.separator();
+                            ui.label("Vitals window");
+                            egui::Grid::new("settings_vitals_grid").num_columns(2).show(
+                                ui,
+                                |ui| {
+                                    use crate::frontend::gui::persistence::{
+                                        VitalsOrientation, VitalsTextFormat,
+                                    };
+                                    let vitals = &mut state.gui_settings.vitals;
+                                    ui.label("Layout");
+                                    egui::ComboBox::from_id_salt("settings_vitals_orientation")
+                                        .selected_text(match vitals.orientation {
+                                            VitalsOrientation::Horizontal => "One row",
+                                            VitalsOrientation::Vertical => "Stacked",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut vitals.orientation,
+                                                VitalsOrientation::Horizontal,
+                                                "One row",
+                                            );
+                                            ui.selectable_value(
+                                                &mut vitals.orientation,
+                                                VitalsOrientation::Vertical,
+                                                "Stacked",
+                                            );
+                                        });
+                                    ui.end_row();
+                                    ui.label("Bar height");
+                                    ui.add(
+                                        egui::Slider::new(&mut vitals.bar_height, 8.0..=60.0)
+                                            .step_by(1.0),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Bar text");
+                                    egui::ComboBox::from_id_salt("settings_vitals_text")
+                                        .selected_text(match vitals.text_format {
+                                            VitalsTextFormat::LabelValueMax => "Health: 191/193",
+                                            VitalsTextFormat::LabelPercent => "Health: 99%",
+                                            VitalsTextFormat::ValueMax => "191/193",
+                                            VitalsTextFormat::Percent => "99%",
+                                            VitalsTextFormat::None => "No text",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for (format, label) in [
+                                                (
+                                                    VitalsTextFormat::LabelValueMax,
+                                                    "Health: 191/193",
+                                                ),
+                                                (VitalsTextFormat::LabelPercent, "Health: 99%"),
+                                                (VitalsTextFormat::ValueMax, "191/193"),
+                                                (VitalsTextFormat::Percent, "99%"),
+                                                (VitalsTextFormat::None, "No text"),
+                                            ] {
+                                                ui.selectable_value(
+                                                    &mut vitals.text_format,
+                                                    format,
+                                                    label,
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+                                },
+                            );
+                            ui.label("Bars shown:");
+                            {
+                                use crate::frontend::gui::persistence::VitalKind;
+                                let bars = &mut state.gui_settings.vitals.bars;
+                                for kind in VitalKind::all() {
+                                    let mut enabled = bars.contains(&kind);
+                                    if ui.checkbox(&mut enabled, kind.label()).changed() {
+                                        if enabled {
+                                            bars.push(kind);
+                                            // Keep display order canonical regardless
+                                            // of toggle order.
+                                            bars.sort_by_key(|entry| {
+                                                VitalKind::all()
+                                                    .iter()
+                                                    .position(|k| k == entry)
+                                                    .unwrap_or(usize::MAX)
+                                            });
+                                        } else {
+                                            bars.retain(|entry| entry != &kind);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+
                         ui.collapsing("Sound", |ui| {
                             ui.checkbox(&mut state.sound_enabled, "Sounds enabled");
                             ui.horizontal(|ui| {
@@ -201,6 +383,13 @@ impl VellumGuiApp {
                     .app_core
                     .add_system_message(&format!("Failed to save settings: {}", err)),
             }
+            // GUI sizing lives in the per-character layout file; force the
+            // zoom/title-bar values to re-apply on the next frame.
+            self.ui_settings = state.gui_settings.clone();
+            self.zoom_applied = false;
+            self.applied_title_font_size = None;
+            self.applied_density = None;
+            self.layout_dirty = true;
             // Theme changes take effect via apply_theme_if_changed next frame.
             self.settings_editor = None;
             return;
