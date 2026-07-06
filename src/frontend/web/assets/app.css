@@ -78,6 +78,50 @@ html, body {
   padding: 6px 10px 8px;
 }
 
+#input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+#cmd-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  /* 16px stops iOS Safari from zooming the page on focus */
+  font-size: 16px;
+}
+
+#cmd-input:focus {
+  outline: none;
+  border-color: var(--fg-dim);
+}
+
+#cmd-send {
+  padding: 0 14px;
+  background: var(--border);
+  color: var(--fg);
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+}
+
+#cmd-send:active {
+  background: var(--fg-dim);
+}
+
+.line.marker {
+  color: var(--fg-dim);
+  text-align: center;
+  font-style: italic;
+  margin: 2px 0;
+}
+
 #rt-row {
   display: flex;
   align-items: center;

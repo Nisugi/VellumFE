@@ -77,6 +77,12 @@ impl AppCore {
                 stream: String::from("main"),
             };
 
+            // Echo bypasses the message pipeline, so mirror it to remote
+            // clients explicitly (they see the same echo as local windows)
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
+            }
+
             // Add the styled line to each subscriber window
             for window_name in subscribers {
                 if let Some(window) = self.ui_state.windows.get_mut(&window_name) {

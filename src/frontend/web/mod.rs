@@ -12,20 +12,28 @@ pub mod protocol;
 pub mod server;
 
 use crate::config::WebConfig;
-use crate::core::remote::RemoteSink;
+use crate::core::remote::{RemoteEvent, RemoteSink};
 use crate::data::remote_buffer::DEFAULT_MAX_LINES_PER_STREAM;
 
 /// Create the remote plumbing and spawn the web server task on the current
 /// tokio runtime. Must be called from within a runtime. Bind errors are
 /// reported by the spawned task via tracing (the game session continues
 /// without the web server).
-pub fn start(config: &WebConfig) -> RemoteSink {
-    let (sink, handles) = RemoteSink::new(DEFAULT_MAX_LINES_PER_STREAM);
+///
+/// Returns the sink to attach to `AppCore` and the receiver of remote
+/// client input, which the frontend's main loop must drain.
+pub fn start(
+    config: &WebConfig,
+) -> (
+    RemoteSink,
+    tokio::sync::mpsc::UnboundedReceiver<RemoteEvent>,
+) {
+    let (sink, handles, event_rx) = RemoteSink::new(DEFAULT_MAX_LINES_PER_STREAM);
     let config = config.clone();
     tokio::spawn(async move {
         if let Err(e) = server::serve(config, handles).await {
             tracing::error!("web server error: {e:#}");
         }
     });
-    sink
+    (sink, event_rx)
 }

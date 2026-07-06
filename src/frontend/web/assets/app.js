@@ -13,7 +13,9 @@ const rtFill = document.getElementById("rt-fill");
 const rtLabel = document.getElementById("rt-label");
 
 const state = {
-  lastSeq: 0,          // highest text seq rendered (dedupe across snapshot/deltas)
+  lastSeq: 0,          // highest text seq rendered (the resume cursor)
+  session: null,       // server process id; seqs restart when it changes
+  ws: null,
   clockOffset: 0,      // serverTime - localTime, seconds
   rtEnd: null,         // roundtime end, server seconds
   ctEnd: null,         // casttime end, server seconds
@@ -139,24 +141,45 @@ function tickRt() {
   }
 }
 
+function appendMarker(text) {
+  const div = document.createElement("div");
+  div.className = "line marker";
+  div.textContent = text;
+  pane.appendChild(div);
+}
+
 function handleSnapshot(d) {
-  pane.replaceChildren();
-  // A snapshot resets the text pane; render its scrollback from scratch.
-  state.lastSeq = 0;
-  pendingLines.length = 0;
-  autoScroll = true;
+  // mode: "full" = fresh view; "resume" = only lines newer than our
+  // cursor (keep the pane); "gap" = lines were evicted before we could
+  // resume (keep the pane, mark the hole).
+  if (d.mode === "full") {
+    pane.replaceChildren();
+    state.lastSeq = 0;
+    pendingLines.length = 0;
+    autoScroll = true;
+  } else if (d.mode === "gap") {
+    appendMarker("— missed output —");
+  }
   for (const item of d.text) appendText(item.seq, item.stream, item.line);
   flushPendingLines();
   setVitals(d.vitals);
   setRoom(d.room);
   setRt(d.rt);
-  scrollToBottom();
+  if (autoScroll) scrollToBottom();
 }
 
 function handleMessage(msg) {
   switch (msg.t) {
     case "hello":
       if (msg.d.character) document.title = `${msg.d.character} — VellumFE`;
+      // Seqs restart when the server process changes; drop the cursor.
+      if (msg.d.session !== state.session) {
+        state.session = msg.d.session;
+        state.lastSeq = 0;
+      }
+      // Answer with our resume cursor; the server replies with a
+      // full/resume/gap snapshot accordingly.
+      state.ws.send(JSON.stringify({ t: "resume", d: { seq: state.lastSeq } }));
       break;
     case "snapshot": handleSnapshot(msg.d); break;
     case "text": appendText(msg.seq, msg.d.stream, msg.d.line); break;
@@ -174,6 +197,7 @@ function handleMessage(msg) {
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  state.ws = ws;
 
   ws.onopen = () => {
     setConnected(true);
@@ -193,6 +217,19 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+// Command input: sends through the same core path as locally typed
+// commands. The echo comes back over the text stream, so we don't render
+// anything locally.
+const inputForm = document.getElementById("input-row");
+const cmdInput = document.getElementById("cmd-input");
+inputForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const text = cmdInput.value.trim();
+  if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ t: "cmd", d: { text } }));
+  cmdInput.value = "";
+});
 
 setInterval(tickRt, 100);
 connect();

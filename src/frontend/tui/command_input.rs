@@ -176,6 +176,10 @@ impl CommandInput {
         self.model.submit()
     }
 
+    pub fn record_external_command(&mut self, command: &str) {
+        self.model.record_external_command(command);
+    }
+
     pub fn history_previous(&mut self) {
         self.model.history_previous();
     }

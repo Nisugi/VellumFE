@@ -115,6 +115,14 @@ impl TuiFrontend {
             .submit()
     }
 
+    /// Record a remotely-submitted command into local history so desk
+    /// up-arrow reaches phone-typed commands.
+    pub fn command_input_record_external(&mut self, window_name: &str, command: &str) {
+        if let Some(cmd_input) = self.widget_manager.command_inputs.get_mut(window_name) {
+            cmd_input.record_external_command(command);
+        }
+    }
+
     /// Load command history for a character
     pub fn command_input_load_history(
         &mut self,

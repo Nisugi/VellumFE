@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::remote::{RemoteDelta, RemoteStateSnapshot};
 use crate::core::state::{StatusInfo, Vitals};
@@ -40,6 +40,23 @@ fn encode<T: Serialize>(t: &'static str, seq: u64, d: T) -> String {
 struct HelloPayload {
     character: Option<String>,
     streams: Vec<String>,
+    /// Process-instance id; seqs restart when it changes, so clients must
+    /// drop their resume cursor on mismatch.
+    session: String,
+}
+
+/// How the text in a snapshot relates to what the client already has.
+#[derive(Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SnapshotMode {
+    /// Fresh view: client clears its pane and renders from scratch.
+    Full,
+    /// Successful resume: text contains only lines newer than the client's
+    /// cursor; the client keeps its pane and appends.
+    Resume,
+    /// Resume failed (lines evicted): client keeps its pane, shows a
+    /// "missed output" marker, then appends the snapshot tail.
+    Gap,
 }
 
 #[derive(Serialize)]
@@ -76,6 +93,7 @@ struct SnapshotLine {
 
 #[derive(Serialize)]
 struct SnapshotPayload {
+    mode: SnapshotMode,
     character: Option<String>,
     vitals: Vitals,
     room: RoomPayload,
@@ -86,14 +104,33 @@ struct SnapshotPayload {
 }
 
 /// First message on every connection.
-pub fn hello(character: Option<String>, streams: Vec<String>, seq: u64) -> String {
-    encode("hello", seq, HelloPayload { character, streams })
+pub fn hello(
+    character: Option<String>,
+    streams: Vec<String>,
+    session: String,
+    seq: u64,
+) -> String {
+    encode(
+        "hello",
+        seq,
+        HelloPayload {
+            character,
+            streams,
+            session,
+        },
+    )
 }
 
-/// Full state + recent scrollback; sent on connect and when a client lags
-/// too far behind the broadcast channel.
-pub fn snapshot(state: &RemoteStateSnapshot, lines: Vec<RemoteLine>, seq: u64) -> String {
+/// Full state + scrollback (or resume replay, per `mode`); sent after the
+/// client's `resume`, and when a client lags too far behind the broadcast.
+pub fn snapshot(
+    state: &RemoteStateSnapshot,
+    lines: Vec<RemoteLine>,
+    mode: SnapshotMode,
+    seq: u64,
+) -> String {
     let payload = SnapshotPayload {
+        mode,
         character: state.character.clone(),
         vitals: state.vitals.clone(),
         room: RoomPayload {
@@ -168,10 +205,59 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
     }
 }
 
+/// Messages a client may send. Unknown types are ignored (forward compat).
+#[derive(Debug, PartialEq)]
+pub enum ClientMessage {
+    /// A typed command destined for the game (or a dot-command).
+    Cmd { text: String },
+    /// Resume request with the highest text seq the client has rendered
+    /// (0 = fresh view).
+    Resume { seq: u64 },
+}
+
+#[derive(Deserialize)]
+struct RawClientMessage {
+    t: String,
+    #[serde(default)]
+    d: serde_json::Value,
+}
+
+/// Parse a client frame. Returns None for malformed or unknown messages.
+pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
+    let msg: RawClientMessage = serde_json::from_str(raw).ok()?;
+    match msg.t.as_str() {
+        "cmd" => {
+            let text = msg.d.get("text")?.as_str()?.to_string();
+            Some(ClientMessage::Cmd { text })
+        }
+        "resume" => {
+            let seq = msg.d.get("seq")?.as_u64()?;
+            Some(ClientMessage::Resume { seq })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::widget::TextSegment;
+
+    #[test]
+    fn parse_client_cmd_and_resume() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"cmd","d":{"text":"look"}}"#),
+            Some(ClientMessage::Cmd {
+                text: "look".to_string()
+            })
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"resume","d":{"seq":41}}"#),
+            Some(ClientMessage::Resume { seq: 41 })
+        );
+        assert_eq!(parse_client_message(r#"{"t":"unknown","d":{}}"#), None);
+        assert_eq!(parse_client_message("not json"), None);
+    }
 
     #[test]
     fn text_delta_uses_line_seq_and_expected_shape() {
@@ -205,8 +291,10 @@ mod tests {
                 stream: "main".to_string(),
             }),
         }];
-        let json: serde_json::Value = serde_json::from_str(&snapshot(&state, lines, 7)).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&snapshot(&state, lines, SnapshotMode::Full, 7)).unwrap();
         assert_eq!(json["t"], "snapshot");
+        assert_eq!(json["d"]["mode"], "full");
         assert_eq!(json["d"]["character"], "Testy");
         assert_eq!(json["d"]["vitals"]["health"], 73);
         assert_eq!(json["d"]["text"][0]["seq"], 7);

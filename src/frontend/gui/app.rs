@@ -140,6 +140,8 @@ pub struct VellumGuiApp {
     _runtime: tokio::runtime::Runtime,
     command_tx: mpsc::UnboundedSender<String>,
     server_rx: mpsc::Receiver<ServerMessage>,
+    /// Commands typed on remote web clients (empty when web is disabled).
+    remote_rx: mpsc::UnboundedReceiver<crate::core::remote::RemoteEvent>,
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
     close_requested: bool,
@@ -235,11 +237,14 @@ impl VellumGuiApp {
 
         // Start the web frontend sidecar if enabled (off by default); it
         // runs on this GUI-owned runtime.
-        if app_core.config.web.enabled {
+        let web_event_rx = if app_core.config.web.enabled {
             let _guard = runtime.enter();
-            let sink = crate::frontend::web::start(&app_core.config.web);
+            let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web);
             app_core.enable_remote(sink);
-        }
+            Some(event_rx)
+        } else {
+            None
+        };
 
         let (server_tx, mut network_rx) =
             mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
@@ -263,6 +268,26 @@ impl VellumGuiApp {
                 }
             }
         });
+
+        // Same waking hop for remote web-client commands: forward them and
+        // wake the event loop so phone input isn't stuck waiting for the
+        // next idle repaint. With web disabled the sender drops immediately
+        // and the receiver just sits empty.
+        let (remote_forward_tx, remote_rx) =
+            mpsc::unbounded_channel::<crate::core::remote::RemoteEvent>();
+        if let Some(mut event_rx) = web_event_rx {
+            let waker_ctx = std::sync::Arc::clone(&repaint_ctx);
+            runtime.spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    if remote_forward_tx.send(event).is_err() {
+                        break;
+                    }
+                    if let Some(ctx) = waker_ctx.lock().ok().and_then(|slot| slot.clone()) {
+                        ctx.request_repaint();
+                    }
+                }
+            });
+        }
 
         let host = app_core.config.connection.host.clone();
         let port = app_core.config.connection.port;
@@ -408,6 +433,7 @@ impl VellumGuiApp {
             _runtime: runtime,
             command_tx,
             server_rx,
+            remote_rx,
             network_handle: Some(network_handle),
             command_input: String::new(),
             close_requested: false,
@@ -1172,6 +1198,17 @@ impl VellumGuiApp {
     }
 
     fn pump_server_messages(&mut self) {
+        // Commands from remote web clients run the same dispatch path as
+        // the local input bar.
+        while let Ok(event) = self.remote_rx.try_recv() {
+            match event {
+                crate::core::remote::RemoteEvent::Command(text) => {
+                    tracing::debug!("remote command: '{}'", text);
+                    self.dispatch_command(text);
+                }
+            }
+        }
+
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
             match message {
@@ -1604,7 +1641,14 @@ impl VellumGuiApp {
 
     fn submit_command(&mut self) {
         let input = std::mem::take(&mut self.command_input);
-        let command = input.trim_end().to_string();
+        self.dispatch_command(input);
+    }
+
+    /// Run a command through the shared core path (echo, dot-commands,
+    /// quit interception). Used by the local input bar and by commands
+    /// arriving from remote web clients.
+    fn dispatch_command(&mut self, command: String) {
+        let command = command.trim_end().to_string();
         if command.is_empty() {
             return;
         }

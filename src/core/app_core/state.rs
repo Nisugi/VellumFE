@@ -1737,6 +1737,12 @@ impl AppCore {
             stream: String::from("main"),
         };
 
+        // System messages bypass the message pipeline, so mirror them to
+        // remote clients explicitly (dot-command feedback, errors, ...)
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text("main", std::sync::Arc::new(line.clone()));
+        }
+
         // First try window named "main" (backward compatibility)
         if let Some(main_window) = self.ui_state.get_window_mut("main") {
             if let WindowContent::Text(ref mut content) = main_window.content {

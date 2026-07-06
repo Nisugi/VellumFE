@@ -19,13 +19,17 @@ use axum::Router;
 use tokio::sync::broadcast;
 
 use crate::config::WebConfig;
-use crate::core::remote::RemoteServerHandles;
+use crate::core::remote::{RemoteEvent, RemoteServerHandles};
 use crate::data::remote_buffer::RemoteLine;
 
-use super::protocol;
+use super::protocol::{self, ClientMessage, SnapshotMode};
 
 /// Scrollback lines per stream included in a connect-time snapshot.
 const SNAPSHOT_LINES_PER_STREAM: usize = 300;
+
+/// How long to wait for the client's `resume` before sending a full
+/// snapshot anyway.
+const RESUME_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 struct WebState {
     handles: RemoteServerHandles,
@@ -100,26 +104,100 @@ fn gather_snapshot(state: &WebState) -> (Vec<String>, Vec<RemoteLine>, u64) {
     )
 }
 
-async fn send_snapshot(socket: &mut WebSocket, state: &WebState) -> Result<(), axum::Error> {
+/// Build the snapshot reply for a `resume { seq }` request. Locks the
+/// buffer briefly; never holds it across an await.
+fn build_resume_reply(state: &WebState, resume_seq: u64) -> String {
+    let buffer = state
+        .handles
+        .buffer
+        .lock()
+        .expect("remote buffer lock poisoned");
+    let last_seq = buffer.last_seq();
+    let (mode, lines) = if resume_seq == 0 {
+        (SnapshotMode::Full, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM))
+    } else {
+        match buffer.lines_since(resume_seq) {
+            Some(lines) => (SnapshotMode::Resume, lines),
+            None => (SnapshotMode::Gap, buffer.snapshot_tail(SNAPSHOT_LINES_PER_STREAM)),
+        }
+    };
+    drop(buffer);
+    let game_state = state.handles.state_rx.borrow().clone();
+    protocol::snapshot(&game_state, lines, mode, last_seq)
+}
+
+async fn send_snapshot(
+    socket: &mut WebSocket,
+    state: &WebState,
+    mode: SnapshotMode,
+) -> Result<(), axum::Error> {
     let (_, lines, last_seq) = gather_snapshot(state);
     let game_state = state.handles.state_rx.borrow().clone();
-    let msg = protocol::snapshot(&game_state, lines, last_seq);
+    let msg = protocol::snapshot(&game_state, lines, mode, last_seq);
     socket.send(Message::Text(msg.into())).await
 }
 
+/// Handle one parsed client message inside the main loop.
+/// Returns false when the socket should close.
+async fn handle_client_message(
+    socket: &mut WebSocket,
+    state: &WebState,
+    msg: ClientMessage,
+) -> bool {
+    match msg {
+        ClientMessage::Cmd { text } => {
+            // Forward into the main loop; it runs the same path as local
+            // input. Send fails only if the app is shutting down.
+            state
+                .handles
+                .event_tx
+                .send(RemoteEvent::Command(text))
+                .is_ok()
+        }
+        ClientMessage::Resume { seq } => {
+            let reply = build_resume_reply(state, seq);
+            socket.send(Message::Text(reply.into())).await.is_ok()
+        }
+    }
+}
+
 async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
-    // Subscribe BEFORE building the snapshot so no delta can fall in the
-    // gap. Deltas that overlap the snapshot are deduped client-side by seq.
+    // Subscribe BEFORE building any snapshot so no delta can fall in the
+    // gap. Deltas that overlap a snapshot are deduped client-side by seq.
     let mut delta_rx = state.handles.delta_tx.subscribe();
 
     let (streams, _, last_seq) = gather_snapshot(&state);
     let character = state.handles.state_rx.borrow().character.clone();
-    let hello = protocol::hello(character, streams, last_seq);
+    let hello = protocol::hello(character, streams, state.handles.session.clone(), last_seq);
     if socket.send(Message::Text(hello.into())).await.is_err() {
         return;
     }
-    if send_snapshot(&mut socket, &state).await.is_err() {
-        return;
+
+    // The client answers hello with `resume { seq }` (0 = fresh). Fall
+    // back to a full snapshot for clients that never send one.
+    let first = tokio::time::timeout(RESUME_WAIT, socket.recv()).await;
+    match first {
+        Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return,
+        Ok(Some(Ok(Message::Text(text)))) => {
+            match protocol::parse_client_message(&text) {
+                Some(msg) => {
+                    if !handle_client_message(&mut socket, &state, msg).await {
+                        return;
+                    }
+                }
+                None => {
+                    if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+        Ok(Some(Ok(_))) | Err(_) => {
+            // Non-text frame or timeout: treat as a fresh client.
+            if send_snapshot(&mut socket, &state, SnapshotMode::Full).await.is_err() {
+                return;
+            }
+        }
     }
 
     loop {
@@ -139,7 +217,9 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
                     tracing::debug!("web client lagged {missed} deltas; re-syncing");
-                    if send_snapshot(&mut socket, &state).await.is_err() {
+                    // Gap mode: the client keeps its pane, shows a missed-
+                    // output marker, and seq-dedupes the overlap.
+                    if send_snapshot(&mut socket, &state, SnapshotMode::Gap).await.is_err() {
                         break;
                     }
                 }
@@ -147,7 +227,13 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
             },
             incoming = socket.recv() => match incoming {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
-                // Client → server input lands in Phase 2; ignore for now.
+                Some(Ok(Message::Text(text))) => {
+                    if let Some(msg) = protocol::parse_client_message(&text) {
+                        if !handle_client_message(&mut socket, &state, msg).await {
+                            break;
+                        }
+                    }
+                }
                 Some(Ok(_)) => {}
             },
         }

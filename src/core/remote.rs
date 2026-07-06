@@ -15,9 +15,10 @@
 //! ring are the only coupling — the server never touches `AppCore`.
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::data::remote_buffer::{RemoteBuffer, RemoteLine};
 use crate::data::widget::StyledLine;
@@ -49,6 +50,15 @@ pub enum RemoteDelta {
     },
 }
 
+/// Input from a remote client, drained by the active frontend's main loop
+/// (TUI runtime loop / GUI pump) and fed through the same command path as
+/// locally typed input.
+#[derive(Clone, Debug)]
+pub enum RemoteEvent {
+    /// A command typed on a remote client.
+    Command(String),
+}
+
 /// Latest coalesced game state, published via `watch` so the server can
 /// build a connect-time snapshot without asking the main loop.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -71,6 +81,11 @@ pub struct RemoteServerHandles {
     pub buffer: Arc<Mutex<RemoteBuffer>>,
     pub delta_tx: broadcast::Sender<RemoteDelta>,
     pub state_rx: watch::Receiver<RemoteStateSnapshot>,
+    /// Client input flowing toward the main loop.
+    pub event_tx: mpsc::UnboundedSender<RemoteEvent>,
+    /// Identifies this process instance. Sent in `hello`; clients discard
+    /// their resume cursor when it changes (seqs restart with the process).
+    pub session: String,
 }
 
 /// Core-side producer for remote clients.
@@ -83,14 +98,31 @@ pub struct RemoteSink {
 }
 
 impl RemoteSink {
-    pub fn new(max_lines_per_stream: usize) -> (Self, RemoteServerHandles) {
+    pub fn new(
+        max_lines_per_stream: usize,
+    ) -> (
+        Self,
+        RemoteServerHandles,
+        mpsc::UnboundedReceiver<RemoteEvent>,
+    ) {
         let buffer = Arc::new(Mutex::new(RemoteBuffer::new(max_lines_per_stream)));
         let (delta_tx, _) = broadcast::channel(DELTA_CHANNEL_CAPACITY);
         let (state_tx, state_rx) = watch::channel(RemoteStateSnapshot::default());
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let session = format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
         let handles = RemoteServerHandles {
             buffer: buffer.clone(),
             delta_tx: delta_tx.clone(),
             state_rx,
+            event_tx,
+            session,
         };
         (
             Self {
@@ -100,6 +132,7 @@ impl RemoteSink {
                 last: RemoteStateSnapshot::default(),
             },
             handles,
+            event_rx,
         )
     }
 
@@ -190,7 +223,7 @@ mod tests {
 
     #[test]
     fn push_text_buffers_and_broadcasts_shared_line() {
-        let (mut sink, handles) = RemoteSink::new(100);
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
         let mut rx = handles.delta_tx.subscribe();
 
         sink.push_text("main", styled("hello"));
@@ -211,7 +244,7 @@ mod tests {
 
     #[test]
     fn flush_state_sends_only_changed_groups() {
-        let (mut sink, handles) = RemoteSink::new(100);
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
         let mut rx = handles.delta_tx.subscribe();
 
         let mut gs = GameState::new();
@@ -234,7 +267,7 @@ mod tests {
 
     #[test]
     fn flush_state_rt_delta_on_roundtime_change() {
-        let (mut sink, handles) = RemoteSink::new(100);
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
         let mut rx = handles.delta_tx.subscribe();
 
         let mut gs = GameState::new();

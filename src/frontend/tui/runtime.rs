@@ -64,11 +64,15 @@ async fn async_run(
     let mut app_core = AppCore::new(config)?;
 
     // Start the web frontend sidecar if enabled (off by default). The
-    // server runs as a tokio task; core feeds it via the attached sink.
-    if app_core.config.web.enabled {
-        let sink = crate::frontend::web::start(&app_core.config.web);
+    // server runs as a tokio task; core feeds it via the attached sink,
+    // and remote client commands arrive on remote_rx.
+    let mut remote_rx = if app_core.config.web.enabled {
+        let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web);
         app_core.enable_remote(sink);
-    }
+        Some(event_rx)
+    } else {
+        None
+    };
 
     super::colors::set_global_color_mode(app_core.config.ui.color_mode);
 
@@ -251,6 +255,27 @@ async fn async_run(
             // Process pending window additions after event handling (for .testline)
             let (term_width, term_height) = frontend.size();
             app_core.process_pending_window_additions(term_width, term_height);
+        }
+
+        // Drain commands typed on remote web clients (non-blocking). Each
+        // runs the exact same path as a locally submitted command (echo,
+        // dot-commands, quit interception) and enters shared history so
+        // desk up-arrow reaches phone-typed commands.
+        if let Some(rx) = remote_rx.as_mut() {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    crate::core::remote::RemoteEvent::Command(text) => {
+                        tracing::debug!("remote command: '{}'", text);
+                        frontend.command_input_record_external("command_input", &text);
+                        if let Some(cmd) = frontend.handle_command_submission(text, &mut app_core)? {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
+                }
+            }
         }
 
         // Poll for server messages (non-blocking)
