@@ -23,6 +23,23 @@ html, body {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 14px;
   overscroll-behavior: none;
+  /* Kill iOS double-tap-to-zoom on the whole app while keeping pinch
+     zoom (accessibility) and normal panning/scrolling. */
+  touch-action: manipulation;
+}
+
+/* App chrome is buttons, not prose: without these, iOS long-press pops
+   text selection / the callout menu instead of our hold gestures. The
+   story pane stays selectable for copying game text. */
+#topbar, #chips, #bottombar, #sheet, #sheet-backdrop, #floating-layer {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#cmd-input {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 #app {

@@ -181,6 +181,9 @@ function ensureStream(stream) {
   });
   chip.addEventListener("pointerup", () => clearTimeout(hold));
   chip.addEventListener("pointerleave", () => clearTimeout(hold));
+  chip.addEventListener("pointercancel", () => clearTimeout(hold));
+  // Long-press must be ours, not the platform context menu / callout.
+  chip.addEventListener("contextmenu", (ev) => ev.preventDefault());
   chip.addEventListener("click", () => {
     if (!held) setActiveStream(stream);
   });
@@ -785,6 +788,7 @@ function attachFloatBehavior(el, btn) {
   };
   el.addEventListener("pointerup", endDrag);
   el.addEventListener("pointercancel", endDrag);
+  el.addEventListener("contextmenu", (ev) => ev.preventDefault());
   el.addEventListener("click", () => {
     if (!dragging) activateMacro(btn);
   });
@@ -1013,6 +1017,8 @@ repeatBtn.addEventListener("pointerdown", () => {
 });
 repeatBtn.addEventListener("pointerup", () => clearTimeout(repeatHold));
 repeatBtn.addEventListener("pointerleave", () => clearTimeout(repeatHold));
+repeatBtn.addEventListener("pointercancel", () => clearTimeout(repeatHold));
+repeatBtn.addEventListener("contextmenu", (ev) => ev.preventDefault());
 repeatBtn.addEventListener("click", () => {
   if (repeatHeld) return; // the hold already opened the history sheet
   if (history[0]) sendCommand(history[0]);
