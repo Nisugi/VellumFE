@@ -102,6 +102,10 @@ pub struct MessageProcessor {
     /// Buffered society stream lines for reload
     /// Updated whenever society stream text arrives
     society_buffer: Vec<String>,
+
+    /// Remote client sink for the web frontend sidecar.
+    /// None unless `[web] enabled = true` — see core/remote.rs.
+    pub remote: Option<super::remote::RemoteSink>,
 }
 
 impl MessageProcessor {
@@ -155,6 +159,7 @@ impl MessageProcessor {
             highlight_engine,
             current_stream: String::from("main"),
             current_segments: Vec::new(),
+            remote: None,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
@@ -2317,6 +2322,20 @@ impl MessageProcessor {
                 "Discarding text segment from room stream (room uses components, not text)"
             );
             return;
+        }
+
+        // Remote scrollback tap (web frontend): record the finalized,
+        // unwrapped line keyed by stream. Must stay after squelch/speech
+        // filtering and the room-stream discard so remote clients see what
+        // local windows can see. Mirrors the redirect copy: a redirected
+        // line is recorded under both streams when the mode keeps the
+        // original.
+        if let Some(remote) = self.remote.as_mut() {
+            let shared = std::sync::Arc::new(line.clone());
+            remote.push_text(&self.current_stream, shared.clone());
+            if should_send_to_original && self.current_stream != original_stream {
+                remote.push_text(&original_stream, shared);
+            }
         }
 
         // Buffer bounty stream data for later use (e.g., when adding a bounty window later)

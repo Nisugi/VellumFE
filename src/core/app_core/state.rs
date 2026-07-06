@@ -714,6 +714,20 @@ impl AppCore {
 
     /// Execute a KeyAction (dispatch to the appropriate method)
 
+    /// Attach the remote client sink (web frontend sidecar).
+    /// Called by the runtime after it spawns the web server task.
+    pub fn enable_remote(&mut self, sink: crate::core::remote::RemoteSink) {
+        self.message_processor.remote = Some(sink);
+    }
+
+    /// Flush coalesced game-state deltas to remote clients. Called once
+    /// per message batch by the frontend loop; no-op when web is disabled.
+    pub fn flush_remote_state(&mut self) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.flush_state(&self.game_state);
+        }
+    }
+
     /// Poll TTS events from callback channel and handle them
     /// Should be called in the main event loop to enable auto-play
     pub fn poll_tts_events(&mut self) {
