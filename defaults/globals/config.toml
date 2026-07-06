@@ -379,8 +379,17 @@ layout_mappings = []
 # port to the open internet; for off-LAN play use Tailscale/WireGuard.
 #
 # The --web-port CLI flag enables the server and overrides the port.
+#
+# Multiple characters: each instance serves its own session. An unpinned
+# instance starts at `port` and walks upward if it is taken, and every
+# instance serves the session dashboard at / (pick a character by name;
+# the game client for THAT instance lives at /play). Set `pinned = true`
+# in a character profile config to bind exactly `port` or disable web
+# for the session - that is what makes a per-character /play bookmark
+# stable. Recommended phone bookmark: http://<pc>:8040/ (the dashboard).
 
 [web]
 enabled = false
 port = 8040
 bind = "127.0.0.1"
+pinned = false

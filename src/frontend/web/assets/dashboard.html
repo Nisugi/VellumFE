@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <title>VellumFE — Sessions</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      background: #111318;
+      color: #d6d6d6;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      -webkit-text-size-adjust: 100%;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    }
+    h1 {
+      margin: 28px 0 4px;
+      font-size: 20px;
+      color: #d9b44f;
+    }
+    p.sub {
+      color: #8a8f98;
+      font-size: 12px;
+      margin-bottom: 22px;
+    }
+    #sessions {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    a.session {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      background: #1a1d24;
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+      color: #d6d6d6;
+      text-decoration: none;
+      font-size: 16px;
+    }
+    a.session:active { background: #2a2e37; }
+    a.session .port { color: #8a8f98; font-size: 12px; }
+    .empty {
+      color: #8a8f98;
+      font-style: italic;
+      text-align: center;
+      padding: 24px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>VellumFE</h1>
+  <p class="sub">Pick a session — this page never connects to a game.</p>
+  <div id="sessions"><div class="empty">Looking for sessions&hellip;</div></div>
+  <script>
+    // The registry can hold stale entries (crashes, other machines'
+    // leftovers); only sessions that answer /health get a card.
+    async function alive(port) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch(`http://${location.hostname}:${port}/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        return res.ok;
+      } catch {
+        return false;
+      }
+    }
+
+    async function load() {
+      const box = document.getElementById("sessions");
+      let sessions = [];
+      try {
+        sessions = await (await fetch("/sessions")).json();
+      } catch { /* fall through to empty state */ }
+      const checks = await Promise.all(sessions.map(s => alive(s.port)));
+      const live = sessions.filter((_, i) => checks[i]);
+      box.replaceChildren();
+      if (!live.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No sessions running";
+        box.appendChild(empty);
+        return;
+      }
+      for (const s of live) {
+        const a = document.createElement("a");
+        a.className = "session";
+        a.href = `http://${location.hostname}:${s.port}/play`;
+        const name = document.createElement("span");
+        name.textContent = s.character || "(unnamed)";
+        const port = document.createElement("span");
+        port.className = "port";
+        port.textContent = `:${s.port}`;
+        a.append(name, port);
+        box.appendChild(a);
+      }
+    }
+
+    load();
+    setInterval(load, 10000);
+  </script>
+</body>
+</html>

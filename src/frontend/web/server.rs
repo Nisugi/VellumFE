@@ -41,14 +41,156 @@ struct WebState {
     handles: RemoteServerHandles,
 }
 
+/// How many ports above the base an unpinned instance will try.
+const PORT_WALK_RANGE: u16 = 20;
+
 /// Bind and serve until the process exits. Runs as a detached tokio task.
-pub async fn serve(config: WebConfig, handles: RemoteServerHandles) -> Result<()> {
-    let addr = format!("{}:{}", config.bind, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .with_context(|| format!("web server failed to bind {addr}"))?;
-    tracing::info!("web server listening on http://{addr}");
+///
+/// Unpinned: tries `config.port` and walks upward (multiple characters
+/// launch without config). Pinned: binds exactly `config.port` or fails
+/// loudly via a Notice event — never silently takes a neighboring port,
+/// so a per-character /play bookmark stays trustworthy.
+pub async fn serve(
+    config: WebConfig,
+    handles: RemoteServerHandles,
+    session_label: String,
+) -> Result<()> {
+    let mut listener = None;
+    let mut bound_port = config.port;
+    let last = if config.pinned {
+        config.port
+    } else {
+        config.port.saturating_add(PORT_WALK_RANGE)
+    };
+    for port in config.port..=last {
+        match tokio::net::TcpListener::bind((config.bind.as_str(), port)).await {
+            Ok(l) => {
+                listener = Some(l);
+                bound_port = port;
+                break;
+            }
+            Err(e) => tracing::debug!("port {} unavailable: {}", port, e),
+        }
+    }
+    let Some(listener) = listener else {
+        let message = if config.pinned {
+            format!(
+                "Web server disabled: pinned port {} is taken (pinned instances never take a neighboring port)",
+                config.port
+            )
+        } else {
+            format!(
+                "Web server disabled: no free port in {}-{}",
+                config.port, last
+            )
+        };
+        tracing::error!("{message}");
+        let _ = handles.event_tx.send(RemoteEvent::Notice(message.clone()));
+        anyhow::bail!(message);
+    };
+
+    tracing::info!(
+        "web server listening on http://{}:{}",
+        config.bind,
+        bound_port
+    );
+    if bound_port != config.port {
+        let _ = handles.event_tx.send(RemoteEvent::Notice(format!(
+            "Web server on port {} (base {} was taken)",
+            bound_port, config.port
+        )));
+    }
+
+    // Session registry entry: one file per instance so the dashboard can
+    // list sessions by character. Best-effort; the dashboard also
+    // health-checks each port, so a stale entry only costs a hidden card.
+    registry::write_entry(bound_port, &session_label);
+
     serve_listener(listener, handles).await
+}
+
+/// Session registry: files in ~/.vellum-fe/web-sessions/, one per running
+/// instance, keyed by pid.
+pub mod registry {
+    use serde::{Deserialize, Serialize};
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct SessionEntry {
+        pub character: String,
+        pub port: u16,
+        pub pid: u32,
+        pub started_at: String,
+    }
+
+    pub fn dir() -> Option<PathBuf> {
+        let dir = crate::config::Config::base_dir().ok()?.join("web-sessions");
+        fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    }
+
+    fn entry_path(pid: u32) -> Option<PathBuf> {
+        Some(dir()?.join(format!("{pid}.json")))
+    }
+
+    pub fn write_entry(port: u16, character: &str) {
+        let pid = std::process::id();
+        let entry = SessionEntry {
+            character: character.to_string(),
+            port,
+            pid,
+            started_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let Some(path) = entry_path(pid) else { return };
+        if let Ok(json) = serde_json::to_string_pretty(&entry) {
+            if let Err(e) = fs::write(&path, json) {
+                tracing::warn!("failed to write session registry entry: {e}");
+            }
+        }
+    }
+
+    /// Remove this instance's entry (clean shutdown).
+    pub fn remove_entry() {
+        if let Some(path) = entry_path(std::process::id()) {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    /// All current entries. Also garbage-collects files whose pid is no
+    /// longer running (crashed instances).
+    pub fn list_and_gc() -> Vec<SessionEntry> {
+        let Some(dir) = dir() else { return Vec::new() };
+        let Ok(read) = fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut system = sysinfo::System::new();
+        system.refresh_processes();
+        let mut entries = Vec::new();
+        for file in read.flatten() {
+            let path = file.path();
+            if path.extension().is_none_or(|e| e != "json") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(entry) = serde_json::from_str::<SessionEntry>(&text) else {
+                let _ = fs::remove_file(&path);
+                continue;
+            };
+            let alive = system
+                .process(sysinfo::Pid::from_u32(entry.pid))
+                .is_some();
+            if alive {
+                entries.push(entry);
+            } else {
+                let _ = fs::remove_file(&path);
+            }
+        }
+        entries.sort_by(|a, b| a.character.cmp(&b.character));
+        entries
+    }
 }
 
 /// Serve on an already-bound listener (integration tests bind port 0).
@@ -58,7 +200,9 @@ pub async fn serve_listener(
 ) -> Result<()> {
     let state = Arc::new(WebState { handles });
     let router = Router::new()
-        .route("/", get(index_html))
+        .route("/", get(dashboard_html))
+        .route("/play", get(index_html))
+        .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
         .route("/app.css", get(app_css))
         .route("/manifest.webmanifest", get(manifest))
@@ -133,8 +277,33 @@ async fn icon_svg() -> impl IntoResponse {
     )
 }
 
-async fn health() -> &'static str {
-    "ok"
+async fn dashboard_html() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-cache")],
+        Html(include_str!("assets/dashboard.html")),
+    )
+}
+
+/// Session list for the dashboard. Every instance serves the same list
+/// (from the shared registry dir), so it's reachable via any live port.
+async fn sessions_json() -> impl IntoResponse {
+    let entries = registry::list_and_gc();
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string()),
+    )
+}
+
+/// Health check. CORS-open so the dashboard (served from one port) can
+/// probe sibling instances on other ports from the browser.
+async fn health() -> impl IntoResponse {
+    (
+        [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+        "ok",
+    )
 }
 
 async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<Arc<WebState>>) -> impl IntoResponse {

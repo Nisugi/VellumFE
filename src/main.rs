@@ -419,6 +419,10 @@ fn main() -> Result<()> {
         FrontendType::Gui => run_gui(config, direct_config, login_key)?,
     }
 
+    // Clean shutdown: drop this instance's entry from the web session
+    // dashboard registry (no-op when the web server never ran).
+    frontend::web::shutdown();
+
     Ok(())
 }
 

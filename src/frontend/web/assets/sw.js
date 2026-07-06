@@ -4,8 +4,8 @@
 // rebuilt binary always wins when the PC is reachable; the cache exists
 // so the installed app still paints its shell while reconnecting.
 
-const CACHE = "vellum-shell-v1";
-const SHELL = ["/", "/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "vellum-shell-v2";
+const SHELL = ["/", "/play", "/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

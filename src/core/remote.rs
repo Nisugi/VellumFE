@@ -228,6 +228,10 @@ pub enum RemoteEvent {
         group: Option<String>,
         label: String,
     },
+    /// A status notice from the web server task for the local UI (e.g.
+    /// "bound port 8041" or "pinned port taken, web disabled"). The main
+    /// loop surfaces it as a system message.
+    Notice(String),
 }
 
 /// Latest coalesced game state, published via `watch` so the server can

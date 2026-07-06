@@ -239,7 +239,15 @@ impl VellumGuiApp {
         // runs on this GUI-owned runtime.
         let web_event_rx = if app_core.config.web.enabled {
             let _guard = runtime.enter();
-            let (sink, event_rx) = crate::frontend::web::start(&app_core.config.web);
+            let session_label = app_core
+                .config
+                .connection
+                .character
+                .clone()
+                .or_else(|| app_core.config.character.clone())
+                .unwrap_or_else(|| "default".to_string());
+            let (sink, event_rx) =
+                crate::frontend::web::start(&app_core.config.web, session_label);
             app_core.enable_remote(sink);
             Some(event_rx)
         } else {
@@ -1257,6 +1265,9 @@ impl VellumGuiApp {
                 }
                 crate::core::remote::RemoteEvent::MacroDelete { group, label } => {
                     self.app_core.apply_macro_delete(group, label);
+                }
+                crate::core::remote::RemoteEvent::Notice(message) => {
+                    self.app_core.add_system_message(&message);
                 }
                 crate::core::remote::RemoteEvent::Macro { id } => {
                     // Resolve the id against config; the command runs the

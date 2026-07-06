@@ -164,10 +164,22 @@ async fn health_and_static_assets_are_served() {
     let health = http_get(addr, "/health").await;
     assert!(health.contains("200"), "health: {health}");
     assert!(health.ends_with("ok"), "health body: {health}");
+    assert!(
+        health.contains("access-control-allow-origin: *"),
+        "dashboard health probes are cross-port: {health}"
+    );
 
-    let index = http_get(addr, "/").await;
+    // "/" is the multi-session dashboard; the game client lives at /play.
+    let dashboard = http_get(addr, "/").await;
+    assert!(dashboard.contains("200"));
+    assert!(dashboard.contains("Pick a session"));
+
+    let index = http_get(addr, "/play").await;
     assert!(index.contains("200"));
     assert!(index.contains("VellumFE"));
+
+    let sessions = http_get(addr, "/sessions").await;
+    assert!(sessions.contains("application/json"));
 
     let js = http_get(addr, "/app.js").await;
     assert!(js.contains("text/javascript"));

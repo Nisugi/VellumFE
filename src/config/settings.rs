@@ -508,13 +508,21 @@ pub struct WebConfig {
     /// Enable the embedded web server sidecar.
     #[serde(default)]
     pub enabled: bool,
-    /// Port to serve HTTP + WebSocket on.
+    /// Port to serve HTTP + WebSocket on. Unpinned instances treat this
+    /// as a base port and walk upward when it's taken (so several
+    /// characters can launch without config); see `pinned`.
     #[serde(default = "default_web_port")]
     pub port: u16,
     /// Bind address. 127.0.0.1 (default) = this machine only;
     /// set to "0.0.0.0" consciously to allow phones on the LAN.
     #[serde(default = "default_web_bind")]
     pub bind: String,
+    /// Pin this instance to exactly `port`: bind it or fail loudly (web
+    /// disabled for the session), never silently take a neighboring
+    /// port. Pinning is what makes a per-character /play bookmark
+    /// stable; set it in the character's profile config.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn default_web_port() -> u16 {
@@ -531,6 +539,7 @@ impl Default for WebConfig {
             enabled: false,
             port: default_web_port(),
             bind: default_web_bind(),
+            pinned: false,
         }
     }
 }
