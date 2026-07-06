@@ -764,21 +764,6 @@ impl VellumGuiApp {
         ui.add_sized([bar_width, bar_height], bar);
     }
 
-    /// Body-part glyph grid mirroring the TUI injury doll (col, glyph, part).
-    const INJURY_DOLL_ROWS: &'static [&'static [(usize, &'static str, &'static str)]] = &[
-        &[(0, "\u{2022}", "leftEye"), (4, "\u{2022}", "rightEye")],
-        &[(2, "0", "head"), (6, "nk", "neck")],
-        &[(1, "/", "leftArm"), (2, "|", "chest"), (3, "\\", "rightArm")],
-        &[
-            (0, "o", "leftHand"),
-            (2, "|", "abdomen"),
-            (4, "o", "rightHand"),
-            (6, "bk", "back"),
-        ],
-        &[(1, "/", "leftLeg"), (3, "\\", "rightLeg")],
-        &[(0, "o", "leftLeg"), (4, "o", "rightLeg"), (6, "ns", "nsys")],
-    ];
-
     /// ProfanityFE injury palette: none, injury 1-3, scar 1-3.
     pub(super) fn injury_level_color(level: u8) -> Color32 {
         match level.min(6) {
@@ -792,27 +777,119 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn render_injury_doll_grid(
-        ui: &mut egui::Ui,
-        injuries: &HashMap<String, u8>,
-    ) {
-        for row in Self::INJURY_DOLL_ROWS {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let mut col = 0usize;
-                for (start, glyph, part) in row.iter() {
-                    if *start > col {
-                        ui.label(RichText::new(" ".repeat(start - col)).monospace());
-                    }
-                    let level = injuries.get(*part).copied().unwrap_or(0);
-                    ui.label(
-                        RichText::new(*glyph)
-                            .monospace()
-                            .color(Self::injury_level_color(level)),
-                    );
-                    col = start + glyph.chars().count();
+    /// Human-readable severity for a hover tooltip.
+    fn injury_severity_text(level: u8) -> &'static str {
+        match level.min(6) {
+            0 => "uninjured",
+            1 => "minor injury",
+            2 => "moderate injury",
+            3 => "severe injury",
+            4 => "minor scar",
+            5 => "moderate scar",
+            _ => "severe scar",
+        }
+    }
+
+    /// Wrayth-style paperdoll drawn with painter geometry: each body part is
+    /// a shape filled by its injury color, with a hover tooltip naming the
+    /// part and severity. Back and nervous system have no spot on a front
+    /// silhouette, so they render as labeled badges beside the body. Scales
+    /// with the window and needs no image assets.
+    pub(super) fn render_injury_doll(ui: &mut egui::Ui, injuries: &HashMap<String, u8>) {
+        // (key, display name, shape) in unit coordinates: x/y are fractions
+        // of the doll rect; radii and line widths are fractions of its
+        // height. Head must precede eyes so the eyes paint on top.
+        enum PartShape {
+            Circle { c: (f32, f32), r: f32 },
+            Block { min: (f32, f32), max: (f32, f32) },
+            Line { a: (f32, f32), b: (f32, f32), w: f32 },
+            Badge { c: (f32, f32), label: &'static str },
+        }
+        use PartShape::*;
+        const PARTS: &[(&str, &str, PartShape)] = &[
+            ("head", "head", Circle { c: (0.36, 0.105), r: 0.085 }),
+            ("leftEye", "left eye", Circle { c: (0.325, 0.09), r: 0.018 }),
+            ("rightEye", "right eye", Circle { c: (0.395, 0.09), r: 0.018 }),
+            ("neck", "neck", Block { min: (0.325, 0.19), max: (0.395, 0.235) }),
+            ("chest", "chest", Block { min: (0.24, 0.235), max: (0.48, 0.41) }),
+            ("abdomen", "abdomen", Block { min: (0.255, 0.41), max: (0.465, 0.525) }),
+            ("leftArm", "left arm", Line { a: (0.225, 0.26), b: (0.125, 0.47), w: 0.045 }),
+            ("rightArm", "right arm", Line { a: (0.495, 0.26), b: (0.595, 0.47), w: 0.045 }),
+            ("leftHand", "left hand", Circle { c: (0.11, 0.515), r: 0.033 }),
+            ("rightHand", "right hand", Circle { c: (0.61, 0.515), r: 0.033 }),
+            ("leftLeg", "left leg", Line { a: (0.30, 0.53), b: (0.27, 0.90), w: 0.055 }),
+            ("rightLeg", "right leg", Line { a: (0.42, 0.53), b: (0.45, 0.90), w: 0.055 }),
+            ("back", "back", Badge { c: (0.82, 0.31), label: "Back" }),
+            ("nsys", "nervous system", Badge { c: (0.82, 0.47), label: "Nerves" }),
+        ];
+
+        // Fit an aspect-stable doll rect into the available space, centered
+        // horizontally so narrow and wide windows both look intentional.
+        const ASPECT: f32 = 0.75; // width : height
+        let avail = ui.available_size();
+        let mut height = avail.y.max(60.0);
+        let mut width = height * ASPECT;
+        if width > avail.x.max(40.0) {
+            width = avail.x.max(40.0);
+            height = width / ASPECT;
+        }
+        let (outer, _) =
+            ui.allocate_exact_size(Vec2::new(avail.x.max(width), height), egui::Sense::hover());
+        let rect = Rect::from_center_size(outer.center(), Vec2::new(width, height));
+        let painter = ui.painter().with_clip_rect(outer);
+        let at = |x: f32, y: f32| rect.min + Vec2::new(x * rect.width(), y * rect.height());
+        let scale = rect.height();
+
+        let badge_font = egui::FontId::proportional((scale * 0.055).clamp(9.0, 16.0));
+        for (key, display, shape) in PARTS {
+            let level = injuries.get(*key).copied().unwrap_or(0);
+            let fill = Self::injury_level_color(level);
+            let outline = egui::Stroke::new(1.0, Self::lighten(fill, 0.2));
+
+            let hover_rect = match shape {
+                Circle { c, r } => {
+                    let center = at(c.0, c.1);
+                    painter.circle(center, r * scale, fill, outline);
+                    Rect::from_center_size(center, Vec2::splat(r * scale * 2.0))
                 }
-            });
+                Block { min, max } => {
+                    let shape_rect = Rect::from_min_max(at(min.0, min.1), at(max.0, max.1));
+                    painter.rect(shape_rect, scale * 0.02, fill, outline, egui::StrokeKind::Middle);
+                    shape_rect
+                }
+                Line { a, b, w } => {
+                    let (a, b) = (at(a.0, a.1), at(b.0, b.1));
+                    painter.line_segment([a, b], egui::Stroke::new(w * scale, fill));
+                    Rect::from_two_pos(a, b).expand(w * scale * 0.5)
+                }
+                Badge { c, label } => {
+                    let center = at(c.0, c.1);
+                    let badge_rect = Rect::from_center_size(
+                        center,
+                        Vec2::new(scale * 0.30, scale * 0.10),
+                    );
+                    painter.rect(badge_rect, scale * 0.03, fill, outline, egui::StrokeKind::Middle);
+                    painter.text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        *label,
+                        badge_font.clone(),
+                        if level == 0 {
+                            ui.visuals().weak_text_color()
+                        } else {
+                            Color32::WHITE
+                        },
+                    );
+                    badge_rect
+                }
+            };
+
+            ui.interact(
+                hover_rect,
+                ui.id().with(("injury_doll", key)),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(format!("{}: {}", display, Self::injury_severity_text(level)));
         }
     }
 
@@ -828,7 +905,9 @@ impl VellumGuiApp {
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
-                Self::render_injury_doll_grid(ui, &popup.injuries);
+                ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
+                    Self::render_injury_doll(ui, &popup.injuries);
+                });
             });
         if !open {
             self.app_core.ui_state.injuries_popup = None;
@@ -2397,7 +2476,7 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::InjuryDoll(doll) => {
-                Self::render_injury_doll_grid(ui, &doll.injuries);
+                Self::render_injury_doll(ui, &doll.injuries);
                 None
             }
             WindowContent::Dashboard { indicators } => {
