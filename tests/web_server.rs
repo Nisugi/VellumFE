@@ -233,7 +233,7 @@ async fn client_cmd_arrives_as_remote_event() {
         .await
         .expect("timed out waiting for remote event")
         .expect("event channel open");
-    let RemoteEvent::Command(text) = event;
+    let RemoteEvent::Command(text) = event else { panic!("expected Command event") };
     assert_eq!(text, "look");
 
     // Unknown/malformed messages are ignored, not fatal.
@@ -246,8 +246,69 @@ async fn client_cmd_arrives_as_remote_event() {
         .await
         .expect("timed out")
         .expect("channel open");
-    let RemoteEvent::Command(text) = event;
+    let RemoteEvent::Command(text) = event else { panic!("expected Command event") };
     assert_eq!(text, "second");
+}
+
+#[tokio::test]
+async fn link_tap_becomes_remote_event_and_menu_routes_to_requester_only() {
+    let (mut sink, mut event_rx, addr) = start_server(100).await;
+
+    let (mut tapper, _) = connect_and_sync(addr, 0).await;
+    let (mut other, _) = connect_and_sync(addr, 0).await;
+
+    tapper
+        .send_text(r#"{"t":"link_tap","d":{"request_id":7,"exist_id":"12345","noun":"kobold"}}"#)
+        .await;
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out waiting for link tap")
+        .expect("event channel open");
+    let RemoteEvent::LinkTap {
+        client_id,
+        request_id,
+        exist_id,
+        noun,
+    } = event
+    else {
+        panic!("expected LinkTap event");
+    };
+    assert_eq!(request_id, 7);
+    assert_eq!(exist_id, "12345");
+    assert_eq!(noun, "kobold");
+
+    // Simulate the core answering the tagged menu request.
+    sink.push_menu(
+        client_id,
+        7,
+        "kobold".to_string(),
+        vec![vellum_fe::core::remote::RemoteMenuItem {
+            text: "attack kobold".to_string(),
+            command: "attack #12345".to_string(),
+            disabled: false,
+        }],
+    );
+    // Follow with a broadcast line so the non-requesting client has
+    // something to receive if (and only if) the menu was filtered out.
+    sink.push_text("main", styled("after-menu", "main"));
+
+    let menu = read_json_timeout(&mut tapper).await;
+    assert_eq!(menu["t"], "menu", "requester gets the menu first");
+    assert_eq!(menu["d"]["request_id"], 7);
+    assert_eq!(menu["d"]["noun"], "kobold");
+    assert_eq!(menu["d"]["items"][0]["command"], "attack #12345");
+    assert!(menu["d"]["items"][0].get("client_id").is_none());
+
+    let next_for_other = read_json_timeout(&mut other).await;
+    assert_eq!(
+        next_for_other["t"], "text",
+        "non-requesting client must skip the menu and see only the text"
+    );
+    assert_eq!(
+        next_for_other["d"]["line"]["segments"][0]["text"],
+        "after-menu"
+    );
 }
 
 #[tokio::test]

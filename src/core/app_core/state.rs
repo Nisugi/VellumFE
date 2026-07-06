@@ -18,6 +18,9 @@ use std::collections::{HashMap, HashSet};
 pub struct PendingMenuRequest {
     pub exist_id: String,
     pub noun: String,
+    /// Who asked: the local UI, or a remote web client. The `<menu>`
+    /// response routes back to this origin.
+    pub origin: crate::core::remote::MenuOrigin,
 }
 
 /// Core application state - frontend-agnostic
@@ -3059,6 +3062,7 @@ impl AppCore {
             Some(list) => list,
             None => {
                 tracing::warn!("Context menu received but cmdlist not loaded");
+                self.answer_remote_menu_empty(&pending);
                 return;
             }
         };
@@ -3120,6 +3124,7 @@ impl AppCore {
 
         if categories.is_empty() {
             tracing::warn!("No menu items available for this object");
+            self.answer_remote_menu_empty(&pending);
             return;
         }
 
@@ -3137,6 +3142,39 @@ impl AppCore {
                 a.cmp(b)
             }
         });
+
+        // Route the response to its origin. A remote client gets a flat
+        // list (submenu categories become disabled section headers, since
+        // a phone bottom sheet has no nested menus); a pick comes back as
+        // an ordinary cmd. The local popup path below stays unchanged.
+        if let crate::core::remote::MenuOrigin::Remote {
+            client_id,
+            request_id,
+        } = pending.origin
+        {
+            let mut items = Vec::new();
+            for cat in &sorted_cats {
+                let cat_items = categories.get(cat).unwrap();
+                if cat.contains('_') && cat != "0" {
+                    items.push(crate::core::remote::RemoteMenuItem {
+                        text: Self::format_category_label(cat),
+                        command: String::new(),
+                        disabled: true,
+                    });
+                }
+                items.extend(cat_items.iter().map(|item| {
+                    crate::core::remote::RemoteMenuItem {
+                        text: item.text.clone(),
+                        command: item.command.clone(),
+                        disabled: item.disabled,
+                    }
+                }));
+            }
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_menu(client_id, request_id, pending.noun.clone(), items);
+            }
+            return;
+        }
 
         // Add items to menu
         for cat in &sorted_cats {
@@ -3171,6 +3209,21 @@ impl AppCore {
             "Created context menu with {} items",
             self.ui_state.popup_menu.as_ref().unwrap().get_items().len()
         );
+    }
+
+    /// When a menu request from a remote client can't produce items, still
+    /// answer with an empty menu — otherwise the client's sheet waits
+    /// forever. Local origins need nothing (no popup was opened).
+    fn answer_remote_menu_empty(&mut self, pending: &PendingMenuRequest) {
+        if let crate::core::remote::MenuOrigin::Remote {
+            client_id,
+            request_id,
+        } = pending.origin
+        {
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_menu(client_id, request_id, pending.noun.clone(), Vec::new());
+            }
+        }
     }
 
     fn format_category_label(cat: &str) -> String {
@@ -3223,13 +3276,27 @@ impl AppCore {
         }
     }
 
-    /// Request context menu for a link
+    /// Request context menu for a link (local popup origin)
     /// Returns the _menu command to send to the server
     pub fn request_menu(
         &mut self,
         exist_id: String,
         noun: String,
         click_pos: (u16, u16),
+    ) -> String {
+        // Store click position for menu placement
+        self.last_link_click_pos = Some(click_pos);
+        self.request_menu_from(exist_id, noun, crate::core::remote::MenuOrigin::Local)
+    }
+
+    /// Request context menu for a link on behalf of an origin (local UI or
+    /// a remote web client). The `<menu>` response routes back to the
+    /// origin in handle_menu_response.
+    pub fn request_menu_from(
+        &mut self,
+        exist_id: String,
+        noun: String,
+        origin: crate::core::remote::MenuOrigin,
     ) -> String {
         // Increment counter
         self.menu_request_counter += 1;
@@ -3241,11 +3308,9 @@ impl AppCore {
             PendingMenuRequest {
                 exist_id: exist_id.clone(),
                 noun,
+                origin,
             },
         );
-
-        // Store click position for menu placement
-        self.last_link_click_pos = Some(click_pos);
 
         // Return command to send to server
         format!("_menu #{} {}\n", exist_id, counter)

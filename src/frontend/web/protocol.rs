@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::remote::{RemoteDelta, RemoteStateSnapshot};
+use crate::core::remote::{RemoteDelta, RemoteMenuItem, RemoteStateSnapshot};
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
 use crate::data::widget::StyledLine;
@@ -82,6 +82,13 @@ struct RtPayload {
     roundtime_end: Option<i64>,
     casttime_end: Option<i64>,
     server_time: i64,
+}
+
+#[derive(Serialize)]
+struct MenuPayload<'a> {
+    request_id: u64,
+    noun: &'a str,
+    items: &'a [RemoteMenuItem],
 }
 
 #[derive(Serialize)]
@@ -202,6 +209,21 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 server_time: *server_time,
             },
         ),
+        // client_id stays server-side: the ws task already filtered on it.
+        RemoteDelta::Menu {
+            request_id,
+            noun,
+            items,
+            ..
+        } => encode(
+            "menu",
+            last_seq,
+            MenuPayload {
+                request_id: *request_id,
+                noun,
+                items,
+            },
+        ),
     }
 }
 
@@ -213,6 +235,13 @@ pub enum ClientMessage {
     /// Resume request with the highest text seq the client has rendered
     /// (0 = fresh view).
     Resume { seq: u64 },
+    /// A tapped noun; the server issues `_menu #exist_id` upstream and the
+    /// response comes back as a `menu` message with this request_id.
+    LinkTap {
+        request_id: u64,
+        exist_id: String,
+        noun: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -233,6 +262,16 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         "resume" => {
             let seq = msg.d.get("seq")?.as_u64()?;
             Some(ClientMessage::Resume { seq })
+        }
+        "link_tap" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let exist_id = msg.d.get("exist_id")?.as_str()?.to_string();
+            let noun = msg.d.get("noun")?.as_str()?.to_string();
+            Some(ClientMessage::LinkTap {
+                request_id,
+                exist_id,
+                noun,
+            })
         }
         _ => None,
     }

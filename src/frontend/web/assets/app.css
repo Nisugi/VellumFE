@@ -47,8 +47,28 @@ html, body {
 }
 
 #room-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+#room-name::-webkit-scrollbar { display: none; }
+
+.exit {
+  padding: 2px 8px;
+  background: var(--border);
+  color: var(--fg);
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.exit:active {
+  background: var(--fg-dim);
 }
 
 .conn { font-size: 11px; }
@@ -120,6 +140,77 @@ html, body {
   text-align: center;
   font-style: italic;
   margin: 2px 0;
+}
+
+/* Tappable nouns (game links) */
+.line .link {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Bottom-sheet menu for noun taps */
+#sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+#sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 11;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+#sheet-title {
+  padding: 12px 16px 8px;
+  font-weight: bold;
+  border-bottom: 1px solid var(--border);
+}
+
+#sheet-items {
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+
+.sheet-item {
+  display: block;
+  width: 100%;
+  padding: 11px 16px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.sheet-item:active {
+  background: var(--border);
+}
+
+.sheet-header {
+  padding: 10px 16px 4px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sheet-empty {
+  padding: 14px 16px;
+  color: var(--fg-dim);
+  font-style: italic;
 }
 
 #rt-row {

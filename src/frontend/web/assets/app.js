@@ -59,6 +59,13 @@ function renderLine(line) {
     if (seg.fg) span.style.color = seg.fg;
     if (seg.bg) span.style.backgroundColor = seg.bg;
     if (seg.bold) span.classList.add("b");
+    // Tappable noun: a real game object (not a <d> direct tag).
+    const link = seg.link_data;
+    if (link && link.exist_id && link.exist_id !== "_direct_") {
+      span.classList.add("link");
+      span.dataset.existId = link.exist_id;
+      span.dataset.noun = link.noun;
+    }
     div.appendChild(span);
   }
   return div;
@@ -111,9 +118,24 @@ function setVitals(v) {
   }
 }
 
+function sendCommand(text) {
+  if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ t: "cmd", d: { text } }));
+}
+
 function setRoom(room) {
-  const exits = room.exits && room.exits.length ? `  [${room.exits.join(", ")}]` : "";
-  roomNameEl.textContent = (room.name || "—") + exits;
+  roomNameEl.replaceChildren();
+  const name = document.createElement("span");
+  name.textContent = room.name || "—";
+  roomNameEl.appendChild(name);
+  for (const exit of room.exits || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "exit";
+    btn.textContent = exit;
+    btn.addEventListener("click", () => sendCommand(exit));
+    roomNameEl.appendChild(btn);
+  }
 }
 
 function setRt(rt) {
@@ -186,6 +208,7 @@ function handleMessage(msg) {
     case "vitals": setVitals(msg.d); break;
     case "room": setRoom(msg.d); break;
     case "rt": setRt(msg.d); break;
+    case "menu": handleMenu(msg.d); break;
     case "hands":
     case "indicators":
       break; // rendered in a later phase
@@ -218,6 +241,105 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
+// ---- Noun-tap bottom-sheet menu ----------------------------------------
+// Tapping a noun sends link_tap; the server issues `_menu` upstream and
+// the response comes back (to this client only) as a `menu` message. A
+// pick just sends the item's ready-made game command via `cmd`.
+
+const sheet = document.getElementById("sheet");
+const sheetBackdrop = document.getElementById("sheet-backdrop");
+const sheetTitle = document.getElementById("sheet-title");
+const sheetItems = document.getElementById("sheet-items");
+
+let menuRequestCounter = 0;
+let pendingMenuRequest = null;
+let sheetTimeout = null;
+
+function closeSheet() {
+  sheet.hidden = true;
+  sheetBackdrop.hidden = true;
+  pendingMenuRequest = null;
+  clearTimeout(sheetTimeout);
+}
+
+function openSheetLoading(noun) {
+  sheetTitle.textContent = noun;
+  sheetItems.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "sheet-empty";
+  loading.textContent = "…";
+  sheetItems.appendChild(loading);
+  sheet.hidden = false;
+  sheetBackdrop.hidden = false;
+  // Never leave the sheet spinning if the response is lost (disconnect,
+  // stale request id, server restart).
+  clearTimeout(sheetTimeout);
+  sheetTimeout = setTimeout(() => {
+    if (!sheet.hidden && pendingMenuRequest !== null) {
+      sheetItems.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "sheet-empty";
+      empty.textContent = "No response — tap to dismiss";
+      empty.addEventListener("click", closeSheet);
+      sheetItems.appendChild(empty);
+    }
+  }, 5000);
+}
+
+sheetBackdrop.addEventListener("click", closeSheet);
+
+pane.addEventListener("click", (ev) => {
+  const span = ev.target.closest("span.link");
+  if (!span || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const requestId = ++menuRequestCounter;
+  pendingMenuRequest = requestId;
+  openSheetLoading(span.dataset.noun || span.textContent);
+  state.ws.send(JSON.stringify({
+    t: "link_tap",
+    d: {
+      request_id: requestId,
+      exist_id: span.dataset.existId,
+      noun: span.dataset.noun || "",
+    },
+  }));
+});
+
+function handleMenu(d) {
+  // Stale or superseded response (user tapped something else meanwhile).
+  if (d.request_id !== pendingMenuRequest) return;
+  clearTimeout(sheetTimeout);
+  sheetTitle.textContent = d.noun || sheetTitle.textContent;
+  sheetItems.replaceChildren();
+  let rendered = 0;
+  for (const item of d.items) {
+    if (item.disabled) {
+      const header = document.createElement("div");
+      header.className = "sheet-header";
+      header.textContent = item.text;
+      sheetItems.appendChild(header);
+      continue;
+    }
+    // Defense in depth: never execute client-internal sentinels.
+    if (!item.command || /^(__|action:|menu:)/.test(item.command)) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    btn.textContent = item.text;
+    btn.addEventListener("click", () => {
+      sendCommand(item.command);
+      closeSheet();
+    });
+    sheetItems.appendChild(btn);
+    rendered += 1;
+  }
+  if (rendered === 0) {
+    const empty = document.createElement("div");
+    empty.className = "sheet-empty";
+    empty.textContent = "No actions available";
+    sheetItems.appendChild(empty);
+  }
+}
+
 // Command input: sends through the same core path as locally typed
 // commands. The echo comes back over the text stream, so we don't render
 // anything locally.
@@ -226,8 +348,8 @@ const cmdInput = document.getElementById("cmd-input");
 inputForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = cmdInput.value.trim();
-  if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  state.ws.send(JSON.stringify({ t: "cmd", d: { text } }));
+  if (!text) return;
+  sendCommand(text);
   cmdInput.value = "";
 });
 

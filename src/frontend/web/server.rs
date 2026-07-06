@@ -18,8 +18,10 @@ use axum::routing::get;
 use axum::Router;
 use tokio::sync::broadcast;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::config::WebConfig;
-use crate::core::remote::{RemoteEvent, RemoteServerHandles};
+use crate::core::remote::{RemoteDelta, RemoteEvent, RemoteServerHandles};
 use crate::data::remote_buffer::RemoteLine;
 
 use super::protocol::{self, ClientMessage, SnapshotMode};
@@ -30,6 +32,10 @@ const SNAPSHOT_LINES_PER_STREAM: usize = 300;
 /// How long to wait for the client's `resume` before sending a full
 /// snapshot anyway.
 const RESUME_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Per-connection id, used to route menu responses to the client whose
+/// link tap requested them.
+static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
 struct WebState {
     handles: RemoteServerHandles,
@@ -142,6 +148,7 @@ async fn send_snapshot(
 async fn handle_client_message(
     socket: &mut WebSocket,
     state: &WebState,
+    client_id: u64,
     msg: ClientMessage,
 ) -> bool {
     match msg {
@@ -158,10 +165,26 @@ async fn handle_client_message(
             let reply = build_resume_reply(state, seq);
             socket.send(Message::Text(reply.into())).await.is_ok()
         }
+        ClientMessage::LinkTap {
+            request_id,
+            exist_id,
+            noun,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::LinkTap {
+                client_id,
+                request_id,
+                exist_id,
+                noun,
+            })
+            .is_ok(),
     }
 }
 
 async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
+    let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
+
     // Subscribe BEFORE building any snapshot so no delta can fall in the
     // gap. Deltas that overlap a snapshot are deduped client-side by seq.
     let mut delta_rx = state.handles.delta_tx.subscribe();
@@ -181,7 +204,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         Ok(Some(Ok(Message::Text(text)))) => {
             match protocol::parse_client_message(&text) {
                 Some(msg) => {
-                    if !handle_client_message(&mut socket, &state, msg).await {
+                    if !handle_client_message(&mut socket, &state, client_id, msg).await {
                         return;
                     }
                 }
@@ -204,6 +227,13 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         tokio::select! {
             delta = delta_rx.recv() => match delta {
                 Ok(d) => {
+                    // Menus are addressed: only the requesting client's
+                    // task forwards them.
+                    if let RemoteDelta::Menu { client_id: target, .. } = &d {
+                        if *target != client_id {
+                            continue;
+                        }
+                    }
                     let last_seq = state
                         .handles
                         .buffer
@@ -229,7 +259,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
                 Some(Ok(Message::Text(text))) => {
                     if let Some(msg) = protocol::parse_client_message(&text) {
-                        if !handle_client_message(&mut socket, &state, msg).await {
+                        if !handle_client_message(&mut socket, &state, client_id, msg).await {
                             break;
                         }
                     }

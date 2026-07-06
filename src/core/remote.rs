@@ -29,6 +29,25 @@ use super::state::{GameState, StatusInfo, Vitals};
 /// than this many deltas behind get `Lagged` and re-snapshot.
 pub const DELTA_CHANNEL_CAPACITY: usize = 1024;
 
+/// Where a `_menu` request originated. The game's `<menu>` response is
+/// routed back to its origin: the local popup, or one remote client.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuOrigin {
+    Local,
+    Remote { client_id: u64, request_id: u64 },
+}
+
+/// One entry of a game menu serialized for a remote client. `command` is
+/// the cmdlist-substituted game command; the client executes a pick by
+/// sending it back over the ordinary `cmd` path (no server-side menu
+/// state). Disabled items are section headers from flattened submenus.
+#[derive(Clone, Debug, Serialize)]
+pub struct RemoteMenuItem {
+    pub text: String,
+    pub command: String,
+    pub disabled: bool,
+}
+
 /// A state change broadcast to all connected remote clients.
 #[derive(Clone, Debug)]
 pub enum RemoteDelta {
@@ -48,6 +67,14 @@ pub enum RemoteDelta {
         casttime_end: Option<i64>,
         server_time: i64,
     },
+    /// A `<menu>` response for one remote client's link tap. Broadcast to
+    /// all server tasks; each forwards it only to its own client.
+    Menu {
+        client_id: u64,
+        request_id: u64,
+        noun: String,
+        items: Vec<RemoteMenuItem>,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -57,6 +84,14 @@ pub enum RemoteDelta {
 pub enum RemoteEvent {
     /// A command typed on a remote client.
     Command(String),
+    /// A noun tapped on a remote client; the main loop issues the same
+    /// `_menu` request a local link click would, tagged with the origin.
+    LinkTap {
+        client_id: u64,
+        request_id: u64,
+        exist_id: String,
+        noun: String,
+    },
 }
 
 /// Latest coalesced game state, published via `watch` so the server can
@@ -151,6 +186,22 @@ impl RemoteSink {
             stream: stream.to_string(),
             line,
         }));
+    }
+
+    /// Route a game menu response to the remote client that requested it.
+    pub fn push_menu(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        noun: String,
+        items: Vec<RemoteMenuItem>,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Menu {
+            client_id,
+            request_id,
+            noun,
+            items,
+        });
     }
 
     /// Diff current game state against the last flush and broadcast one

@@ -1206,6 +1206,27 @@ impl VellumGuiApp {
                     tracing::debug!("remote command: '{}'", text);
                     self.dispatch_command(text);
                 }
+                crate::core::remote::RemoteEvent::LinkTap {
+                    client_id,
+                    request_id,
+                    exist_id,
+                    noun,
+                } => {
+                    // Same _menu request a local link click makes, but
+                    // tagged so the response routes to that client.
+                    let cmd = self.app_core.request_menu_from(
+                        exist_id,
+                        noun,
+                        crate::core::remote::MenuOrigin::Remote {
+                            client_id,
+                            request_id,
+                        },
+                    );
+                    self.app_core
+                        .perf_stats
+                        .record_bytes_sent((cmd.len() + 1) as u64);
+                    let _ = self.command_tx.send(cmd);
+                }
             }
         }
 
