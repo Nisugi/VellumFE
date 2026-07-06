@@ -25,7 +25,7 @@ eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support"
 fontdb = "0.23"  # System font discovery for per-window font selection
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 toml = "0.8"
 dirs = "5"

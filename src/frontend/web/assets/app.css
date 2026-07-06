@@ -1,0 +1,146 @@
+/* VellumFE web client v0 — dark, touch-first, no dependencies. */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #111318;
+  --bg-panel: #1a1d24;
+  --fg: #d6d6d6;
+  --fg-dim: #8a8f98;
+  --border: #2a2e37;
+  --hp: #d9534f;
+  --mp: #4f7fd9;
+  --st: #d9b44f;
+  --sp: #b9c2cc;
+  --rt: #d9534f;
+  --ct: #4f7fd9;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+  overscroll-behavior: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Keep chrome clear of notches / home indicators when installed as PWA */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+#room-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn { font-size: 11px; }
+.conn-up { color: #6fbf73; }
+.conn-down { color: var(--hp); }
+
+#text-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  -webkit-overflow-scrolling: touch;
+  overflow-anchor: none;
+}
+
+.line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1.35em;
+  line-height: 1.35;
+}
+
+.line .b { font-weight: bold; }
+
+#bottombar {
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  padding: 6px 10px 8px;
+}
+
+#rt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 16px;
+  margin-bottom: 6px;
+}
+
+#rt-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#rt-fill {
+  height: 100%;
+  width: 0;
+  background: var(--rt);
+  transition: width 100ms linear;
+}
+
+#rt-label {
+  min-width: 3.5em;
+  text-align: right;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+#vitals {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.vital {
+  position: relative;
+  height: 20px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vital-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  transform-origin: left;
+}
+
+#v-health .vital-fill { background: var(--hp); }
+#v-mana .vital-fill { background: var(--mp); }
+#v-stamina .vital-fill { background: var(--st); }
+#v-spirit .vital-fill { background: var(--sp); }
+
+.vital-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 11px;
+  color: #0b0d10;
+  font-weight: bold;
+}

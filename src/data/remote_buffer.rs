@@ -72,6 +72,13 @@ impl RemoteBuffer {
         self.next_seq - 1
     }
 
+    /// Names of all streams that have buffered at least one line.
+    pub fn stream_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.streams.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Last `n` lines of one stream, oldest first.
     pub fn tail(&self, stream: &str, n: usize) -> Vec<RemoteLine> {
         match self.streams.get(stream) {

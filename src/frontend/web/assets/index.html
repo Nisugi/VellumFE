@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111318">
+  <title>VellumFE</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <span id="room-name">&mdash;</span>
+      <span id="conn" class="conn conn-down">connecting&hellip;</span>
+    </header>
+    <main id="text-pane"></main>
+    <footer id="bottombar">
+      <div id="rt-row">
+        <div id="rt-bar"><div id="rt-fill"></div></div>
+        <span id="rt-label"></span>
+      </div>
+      <div id="vitals">
+        <div class="vital" id="v-health"><div class="vital-fill"></div><span class="vital-label">HP</span></div>
+        <div class="vital" id="v-mana"><div class="vital-fill"></div><span class="vital-label">MP</span></div>
+        <div class="vital" id="v-stamina"><div class="vital-fill"></div><span class="vital-label">ST</span></div>
+        <div class="vital" id="v-spirit"><div class="vital-fill"></div><span class="vital-label">SP</span></div>
+      </div>
+    </footer>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
