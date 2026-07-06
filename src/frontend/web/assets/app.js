@@ -671,6 +671,57 @@ function currentGroup() {
   return macros.groups.find((g) => g.name === savedName) || macros.groups[0];
 }
 
+// Per-device button order within each group (long-press a rail button to
+// arrange). Works for hand-file buttons too since it never touches the
+// server: { [groupName]: [label, ...] }.
+const MACRO_ORDER_KEY = "vellum-macro-order";
+let macroOrder = {};
+try {
+  macroOrder = JSON.parse(localStorage.getItem(MACRO_ORDER_KEY) || "{}");
+} catch { /* corrupted storage — config order it is */ }
+
+function orderedButtons(group) {
+  const placed = macroOrder[group.name] || [];
+  return [...group.buttons].sort((a, b) => {
+    const ia = placed.indexOf(a.label);
+    const ib = placed.indexOf(b.label);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return 0; // stable: config order for unplaced buttons
+  });
+}
+
+function moveMacroButton(group, label, delta) {
+  const order = orderedButtons(group).map((b) => b.label);
+  const from = order.indexOf(label);
+  const to = delta === "front" ? 0 : from + delta;
+  if (from === -1 || to < 0 || to >= order.length) return;
+  order.splice(from, 1);
+  order.splice(to, 0, label);
+  macroOrder[group.name] = order;
+  try {
+    localStorage.setItem(MACRO_ORDER_KEY, JSON.stringify(macroOrder));
+  } catch { /* fine, just won't persist */ }
+  renderMacros();
+}
+
+function openMacroArrange(group, btn) {
+  const order = orderedButtons(group).map((b) => b.label);
+  const at = order.indexOf(btn.label);
+  openSheet(btn.label);
+  if (btn.editable) {
+    sheetButton("Edit…", () => openMacroEditor({ group: group.name, btn }));
+  }
+  const reopen = (delta) => {
+    moveMacroButton(group, btn.label, delta);
+    openMacroArrange(group, btn);
+  };
+  if (at > 0) sheetButton("⟨  Move left", () => reopen(-1));
+  if (at < order.length - 1) sheetButton("Move right  ⟩", () => reopen(1));
+  if (at > 0) sheetButton("Move to front", () => reopen("front"));
+}
+
 function renderMacros() {
   renderFloating();
   // Rail shows once definitions arrive, even empty: the + button is how
@@ -682,7 +733,7 @@ function renderMacros() {
   if (!group) return;
   macroGroupBtn.textContent =
     macros.groups.length > 1 ? `${group.name} ▾` : group.name;
-  for (const btn of group.buttons) {
+  for (const btn of orderedButtons(group)) {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "macro-btn";
@@ -692,7 +743,24 @@ function renderMacros() {
       el.style.border = `1px solid ${btn.color}`;
       el.style.color = btn.color;
     }
-    el.addEventListener("click", () => activateMacro(btn));
+    // Tap fires; long-press arranges (and edits, for phone-authored).
+    let hold = null;
+    let held = false;
+    el.addEventListener("pointerdown", () => {
+      held = false;
+      clearTimeout(hold);
+      hold = setTimeout(() => {
+        held = true;
+        openMacroArrange(group, btn);
+      }, 450);
+    });
+    el.addEventListener("pointerup", () => clearTimeout(hold));
+    el.addEventListener("pointerleave", () => clearTimeout(hold));
+    el.addEventListener("pointercancel", () => clearTimeout(hold));
+    el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    el.addEventListener("click", () => {
+      if (!held) activateMacro(btn);
+    });
     macroButtonsEl.appendChild(el);
   }
   const collapsed = localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -806,15 +874,11 @@ function editableButtons() {
   if (!macros) return list;
   for (const group of macros.groups) {
     for (const btn of group.buttons) {
-      if (btn.editable && !(btn.options && btn.options.length)) {
-        list.push({ group: group.name, btn });
-      }
+      if (btn.editable) list.push({ group: group.name, btn });
     }
   }
   for (const btn of macros.floating) {
-    if (btn.editable && !(btn.options && btn.options.length)) {
-      list.push({ group: null, btn });
-    }
+    if (btn.editable) list.push({ group: null, btn });
   }
   return list;
 }
@@ -858,7 +922,53 @@ function openMacroEditor(existing) {
   cmdInputEl.spellcheck = false;
   cmdInputEl.value = existing ? existing.btn.command || "" : "";
   const cmdWrap = document.createElement("label");
-  cmdWrap.append("Command", cmdInputEl);
+  cmdWrap.append("Command (leave empty for a menu button)", cmdInputEl);
+
+  // Menu options: with any options, tapping the button opens a picker
+  // sheet instead of firing a command — "a button that is a category".
+  const optionsWrap = document.createElement("div");
+  optionsWrap.className = "option-rows";
+  const optionRows = [];
+  function addOptionRow(label = "", command = "", confirmed = false) {
+    const row = document.createElement("div");
+    row.className = "option-row";
+    const labelIn = document.createElement("input");
+    labelIn.type = "text";
+    labelIn.placeholder = "option label";
+    labelIn.value = label;
+    const cmdIn = document.createElement("input");
+    cmdIn.type = "text";
+    cmdIn.placeholder = "command";
+    cmdIn.autocapitalize = "off";
+    cmdIn.spellcheck = false;
+    cmdIn.value = command;
+    const confirmIn = document.createElement("input");
+    confirmIn.type = "checkbox";
+    confirmIn.checked = confirmed;
+    confirmIn.title = "Ask before sending";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "option-remove";
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => {
+      row.remove();
+      optionRows.splice(optionRows.indexOf(entry), 1);
+    });
+    const entry = { labelIn, cmdIn, confirmIn };
+    optionRows.push(entry);
+    row.append(labelIn, cmdIn, confirmIn, remove);
+    optionsWrap.appendChild(row);
+  }
+  for (const opt of existing?.btn.options || []) {
+    addOptionRow(opt.label, opt.command || "", opt.confirm);
+  }
+  const addOptionBtn = document.createElement("button");
+  addOptionBtn.type = "button";
+  addOptionBtn.className = "option-add";
+  addOptionBtn.textContent = "＋ Add menu option";
+  addOptionBtn.addEventListener("click", () => addOptionRow());
+  const optionsLabel = document.createElement("label");
+  optionsLabel.append("Menu options", optionsWrap, addOptionBtn);
 
   // Placement: existing groups, floating, or a new group.
   const placeSelect = document.createElement("select");
@@ -935,12 +1045,19 @@ function openMacroEditor(existing) {
     actions.appendChild(deleteBtn);
   }
 
-  form.append(labelWrap, cmdWrap, placeWrap, colorRow, confirmRow, actions);
+  form.append(labelWrap, cmdWrap, optionsLabel, placeWrap, colorRow, confirmRow, actions);
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const label = labelInput.value.trim();
     const command = cmdInputEl.value.trim();
-    if (!label || !command) return;
+    const options = optionRows
+      .map((row) => ({
+        label: row.labelIn.value.trim(),
+        command: row.cmdIn.value.trim(),
+        confirm: row.confirmIn.checked,
+      }))
+      .filter((o) => o.label && o.command);
+    if (!label || (!command && !options.length)) return;
     let group = null;
     if (placeSelect.value === "new") {
       group = newGroupInput.value.trim() || null;
@@ -955,6 +1072,7 @@ function openMacroEditor(existing) {
         group,
         label,
         command,
+        options,
         color: chosenColor,
         confirm: confirmToggle.checked,
         original: existing ? { group: existing.group, label: existing.btn.label } : null,

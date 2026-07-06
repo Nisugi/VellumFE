@@ -91,6 +91,9 @@ pub struct RemoteMacroOption {
     pub id: String,
     pub label: String,
     pub confirm: bool,
+    /// Echoed for phone-authored buttons only, so the editor can prefill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl RemoteMacros {
@@ -105,6 +108,11 @@ impl RemoteMacros {
                         id: format!("{id}:o:{oi}"),
                         label: option.label.clone(),
                         confirm: option.confirm,
+                        command: if button.editable {
+                            Some(option.command.clone())
+                        } else {
+                            None
+                        },
                     })
                     .collect(),
                 id,
@@ -206,9 +214,12 @@ pub enum RemoteEvent {
         /// Target rail group by name; None = floating.
         group: Option<String>,
         label: String,
+        /// Empty when the button is a menu (options-only) button.
         command: String,
         color: Option<String>,
         confirm: bool,
+        /// Non-empty makes this a menu button (tap opens the sheet).
+        options: Vec<crate::config::MacroOption>,
         /// Set when editing: the button's previous (group, label).
         original: Option<(Option<String>, String)>,
     },

@@ -1242,13 +1242,15 @@ impl VellumGuiApp {
                     command,
                     color,
                     confirm,
+                    options,
                     original,
                 } => {
                     let button = crate::config::MacroButton {
                         label,
-                        command: Some(command),
+                        command: Some(command).filter(|c| !c.is_empty()),
                         color,
                         confirm,
+                        options,
                         ..Default::default()
                     };
                     self.app_core.apply_macro_save(group, button, original);

@@ -239,6 +239,7 @@ async fn handle_client_message(
             command,
             color,
             confirm,
+            options,
             original,
         } => state
             .handles
@@ -249,6 +250,7 @@ async fn handle_client_message(
                 command,
                 color,
                 confirm,
+                options,
                 original,
             })
             .is_ok(),

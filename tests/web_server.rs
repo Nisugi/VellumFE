@@ -424,6 +424,7 @@ async fn macro_save_and_delete_arrive_as_events() {
         command,
         color,
         confirm,
+        options,
         original,
     } = event
     else {
@@ -434,7 +435,27 @@ async fn macro_save_and_delete_arrive_as_events() {
     assert_eq!(command, "sleep");
     assert_eq!(color.as_deref(), Some("#d9b44f"));
     assert!(confirm);
+    assert!(options.is_empty());
     assert_eq!(original, Some((None, "Old nap".to_string())));
+
+    // A menu button: options and no direct command.
+    client
+        .send_text(
+            r#"{"t":"macro_save","d":{"group":"Couch","label":"Travel","command":"","options":[{"label":"Bank","command":";go2 bank"},{"label":"Gate","command":";go2 gate","confirm":true}]}}"#,
+        )
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::MacroSave { label, command, options, .. } = event else {
+        panic!("expected MacroSave");
+    };
+    assert_eq!(label, "Travel");
+    assert!(command.is_empty());
+    assert_eq!(options.len(), 2);
+    assert_eq!(options[1].command, ";go2 gate");
+    assert!(options[1].confirm);
 
     // Empty label/command is rejected at parse time, not forwarded.
     client

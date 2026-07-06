@@ -261,6 +261,7 @@ pub enum ClientMessage {
         command: String,
         color: Option<String>,
         confirm: bool,
+        options: Vec<crate::config::MacroOption>,
         original: Option<(Option<String>, String)>,
     },
     /// Delete a phone-authored macro button.
@@ -326,8 +327,38 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "macro_save" => {
             let label = msg.d.get("label")?.as_str()?.trim().to_string();
-            let command = msg.d.get("command")?.as_str()?.trim().to_string();
-            if label.is_empty() || command.is_empty() {
+            let command = msg
+                .d
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let options: Vec<crate::config::MacroOption> = msg
+                .d
+                .get("options")
+                .and_then(|v| v.as_array())
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|o| {
+                            let label = o.get("label")?.as_str()?.trim().to_string();
+                            let command = o.get("command")?.as_str()?.trim().to_string();
+                            if label.is_empty() || command.is_empty() {
+                                return None;
+                            }
+                            Some(crate::config::MacroOption {
+                                label,
+                                command,
+                                confirm: o.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // A button needs a label and either a direct command or at
+            // least one option (menu button).
+            if label.is_empty() || (command.is_empty() && options.is_empty()) {
                 return None;
             }
             let original = msg.d.get("original").filter(|v| !v.is_null()).and_then(|o| {
@@ -339,6 +370,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 command,
                 color: opt_str(msg.d.get("color")),
                 confirm: msg.d.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                options,
                 original,
             })
         }

@@ -733,9 +733,11 @@ impl AppCore {
         button: crate::config::MacroButton,
         original: Option<(Option<String>, String)>,
     ) {
-        if button.label.trim().is_empty() || button.command.as_deref().unwrap_or("").trim().is_empty()
-        {
-            self.add_system_message("Macro not saved: label and command are required");
+        let has_command = !button.command.as_deref().unwrap_or("").trim().is_empty();
+        if button.label.trim().is_empty() || (!has_command && button.options.is_empty()) {
+            self.add_system_message(
+                "Macro not saved: a label plus a command (or menu options) are required",
+            );
             return;
         }
         let label = button.label.clone();

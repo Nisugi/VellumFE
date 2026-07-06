@@ -374,6 +374,43 @@ html, body {
   border-color: var(--fg);
 }
 
+.option-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.option-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.option-remove {
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+}
+
+.option-add {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: none;
+  border: 1px dashed var(--fg-dim);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
