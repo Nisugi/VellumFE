@@ -444,7 +444,22 @@ fn main() -> Result<()> {
     let login_key = cli.key.clone();
     match cli.frontend {
         FrontendType::Tui => {
-            frontend::tui::run(config, character, direct_config, setup_palette, login_key)?
+            // Launcher-spawned sessions own their console window, so the TUI
+            // restores/saves its size; manual runs leave the terminal alone.
+            let console_size_profile = cli.launch_profile.is_some().then(|| {
+                cli.profile
+                    .clone()
+                    .or_else(|| cli.character.clone())
+                    .unwrap_or_else(|| "default".to_string())
+            });
+            frontend::tui::run(
+                config,
+                character,
+                direct_config,
+                setup_palette,
+                login_key,
+                console_size_profile,
+            )?
         }
         FrontendType::Gui => {
             #[cfg(windows)]

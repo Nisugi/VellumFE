@@ -6,13 +6,23 @@ use crate::frontend::Frontend;
 
 /// Run the TUI frontend with the given configuration.
 /// This is the main entry point for TUI mode.
+///
+/// `console_size_profile` is set only for launcher-spawned sessions, which
+/// own their console window: the size is restored on start and saved on
+/// exit, keyed by settings profile. Manual runs pass None - resizing a
+/// terminal the user already owns (a tmux pane, a Windows Terminal tab)
+/// would be rude.
 pub fn run(
     config: crate::config::Config,
     character: Option<String>,
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
     login_key: Option<String>,
+    console_size_profile: Option<String>,
 ) -> Result<()> {
+    if let Some(profile) = console_size_profile.as_deref() {
+        restore_console_size(profile);
+    }
     // Use tokio runtime for async network I/O
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async_run(
@@ -21,7 +31,63 @@ pub fn run(
         direct,
         setup_palette,
         login_key,
+        console_size_profile,
     ))
+}
+
+/// Saved console geometry for launcher-spawned sessions, in character cells
+/// (`~/.vellum-fe/profiles/<profile>/console-size.toml`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ConsoleSize {
+    cols: u16,
+    rows: u16,
+}
+
+fn console_size_path(profile: &str) -> Option<std::path::PathBuf> {
+    crate::config::Config::profile_dir(Some(profile))
+        .ok()
+        .map(|dir| dir.join("console-size.toml"))
+}
+
+/// Best-effort: a freshly `start`-ed console opens at the host's default
+/// size, not where the player left it. crossterm's SetSize resizes via the
+/// console API or CSI 8 depending on host; hosts that support neither just
+/// keep their default size.
+fn restore_console_size(profile: &str) {
+    let Some(path) = console_size_path(profile) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(size) = toml::from_str::<ConsoleSize>(&text) else {
+        return;
+    };
+    if size.cols == 0 || size.rows == 0 {
+        return;
+    }
+    if crossterm::terminal::size().ok() == Some((size.cols, size.rows)) {
+        return;
+    }
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::SetSize(size.cols, size.rows)
+    );
+}
+
+fn save_console_size(profile: &str) {
+    let Ok((cols, rows)) = crossterm::terminal::size() else {
+        return;
+    };
+    let Some(path) = console_size_path(profile) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = toml::to_string(&ConsoleSize { cols, rows }) {
+        let _ = std::fs::write(path, text);
+    }
 }
 
 /// Async TUI main loop with network support
@@ -31,6 +97,7 @@ async fn async_run(
     direct: Option<crate::network::DirectConnectConfig>,
     setup_palette: bool,
     login_key: Option<String>,
+    console_size_profile: Option<String>,
 ) -> Result<()> {
     use crate::core::AppCore;
     use crate::network::{DirectConnection, LichConnection, ServerMessage};
@@ -483,6 +550,12 @@ async fn async_run(
                 }
             }
         }
+    }
+
+    // Remember the console size the player settled on (launcher-spawned
+    // sessions only) before teardown.
+    if let Some(profile) = console_size_profile.as_deref() {
+        save_console_size(profile);
     }
 
     // Cleanup
