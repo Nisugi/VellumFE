@@ -236,6 +236,8 @@ pub struct Config {
     pub menu_keybinds: MenuKeybinds, // Keybinds for menu system (browsers, forms, editors)
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_skin: Option<String>, // Active GUI skin (directory name under ~/.vellum-fe/skins/); None = plain theme colors
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml

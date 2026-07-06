@@ -2,6 +2,7 @@ use super::persistence::{
     load_layout, save_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
     TabSettings, TabSettingsEntry, ViewportState,
 };
+use super::skin;
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
@@ -72,6 +73,9 @@ pub(super) struct WidgetRenderSettings {
     wrap_text: bool,
     /// Vitals window layout and bar selection (global config).
     vitals: super::persistence::VitalsConfig,
+    /// Skin background image for this window, if the active skin defines
+    /// one. Resolved here so detached viewports can paint it too.
+    background: Option<skin::ResolvedBackground>,
 }
 
 impl WidgetRenderSettings {
@@ -167,6 +171,8 @@ pub struct VellumGuiApp {
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
     current_theme: crate::theme::AppTheme,
+    /// Active skin graphics (config.active_skin); reloaded when it changes.
+    skin_state: skin::SkinState,
     ui_font: FontRef,
     fonts_applied: bool,
     /// Named font families actually registered with egui; a per-tab font
@@ -462,6 +468,7 @@ impl VellumGuiApp {
             layout_dirty_since: None,
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
+            skin_state: skin::SkinState::default(),
             ui_font,
             fonts_applied: false,
             registered_font_families: HashSet::new(),
@@ -908,6 +915,10 @@ impl VellumGuiApp {
                 .map(|settings| settings.wrap_text)
                 .unwrap_or(true),
             vitals: self.ui_settings.vitals.clone(),
+            background: self
+                .available_tabs
+                .get(key)
+                .and_then(|tab| self.skin_state.background_for(&tab.window_name)),
         }
     }
 
@@ -997,6 +1008,76 @@ impl VellumGuiApp {
             }
         }
         clicked
+    }
+
+    /// Handle `action:setskin:<name>` from dot-commands or menus. "none"
+    /// (or "off") disables the active skin. The switch itself happens next
+    /// frame via `SkinState::apply_if_changed`.
+    fn apply_skin_by_name(&mut self, name: &str) {
+        if name.eq_ignore_ascii_case("none") || name.eq_ignore_ascii_case("off") {
+            self.app_core.config.active_skin = None;
+            self.save_config_after_skin_change();
+            self.app_core.add_system_message("Skin disabled.");
+            return;
+        }
+        match skin::load_manifest(name) {
+            Ok(_) => {
+                self.app_core.config.active_skin = Some(name.to_string());
+                self.save_config_after_skin_change();
+                self.app_core
+                    .add_system_message(&format!("Skin switched to: {}", name));
+            }
+            Err(err) => {
+                let available = skin::list_skins();
+                if available.is_empty() {
+                    self.app_core.add_system_message(&format!(
+                        "Cannot load skin '{}': {}. No skins installed; create one under ~/.vellum-fe/skins/<name>/skin.toml",
+                        name, err
+                    ));
+                } else {
+                    self.app_core.add_system_message(&format!(
+                        "Cannot load skin '{}': {}. Available: {}",
+                        name,
+                        err,
+                        available.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Handle `action:skins`: list installed skins in the main window.
+    fn list_skins_to_window(&mut self) {
+        let available = skin::list_skins();
+        if available.is_empty() {
+            self.app_core.add_system_message(
+                "No skins installed. Create one under ~/.vellum-fe/skins/<name>/skin.toml",
+            );
+            return;
+        }
+        let active = self.app_core.config.active_skin.clone();
+        self.app_core.add_system_message("Installed skins:");
+        for name in available {
+            let marker = if active.as_deref() == Some(name.as_str()) {
+                " (active)"
+            } else {
+                ""
+            };
+            self.app_core
+                .add_system_message(&format!("  {}{}", name, marker));
+        }
+        self.app_core
+            .add_system_message("Use .setskin <name> to activate, .setskin none to disable.");
+    }
+
+    fn save_config_after_skin_change(&mut self) {
+        if let Err(err) = self
+            .app_core
+            .config
+            .save(self.app_core.config.character.as_deref())
+        {
+            tracing::warn!("Failed to save config after skin switch: {}", err);
+        }
     }
 
     /// Accent (border) color for a window, if the user set one.
@@ -2094,6 +2175,15 @@ impl VellumGuiApp {
             self.apply_theme_by_name(&name);
             return true;
         }
+        if let Some(name) = action.strip_prefix("action:setskin:") {
+            let name = name.to_string();
+            self.apply_skin_by_name(&name);
+            return true;
+        }
+        if action == "action:skins" {
+            self.list_skins_to_window();
+            return true;
+        }
         if action == "action:settings" {
             self.open_settings_editor();
             return true;
@@ -2361,6 +2451,8 @@ impl eframe::App for VellumGuiApp {
             ctx.set_fonts(fonts);
         }
         self.apply_theme_if_changed(&ctx);
+        self.skin_state
+            .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
         self.sync_room_windows_from_components();

@@ -2173,6 +2173,15 @@ impl VellumGuiApp {
             return None;
         };
 
+        if let Some(background) = &settings.background {
+            crate::frontend::gui::skin::paint_background(
+                ui.painter(),
+                ui.available_rect_before_wrap(),
+                background,
+                ui.visuals().window_fill(),
+            );
+        }
+
         // Scale the label-driven text styles so list/grid widgets (targets,
         // players, dashboards, ...) follow the window's text size and font,
         // not just the segment-based text renderers below.

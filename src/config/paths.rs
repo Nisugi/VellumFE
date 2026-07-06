@@ -94,6 +94,13 @@ impl Config {
         Ok(Self::global_dir()?.join("sounds"))
     }
 
+    /// Get the shared skins directory (one subdirectory per skin, each with a
+    /// skin.toml manifest plus its image assets)
+    /// Returns: ~/.vellum-fe/skins/
+    pub fn skins_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("skins"))
+    }
+
     /// Get path to common (global) highlights file
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {
