@@ -294,13 +294,22 @@ function setIndicators(d) {
 }
 
 function setRt(rt) {
+  // Every rt message recalibrates the clock (the server sends one per
+  // prompt): a roundtime that was flushed ahead of its paired prompt
+  // self-corrects on the very next prompt instead of overcounting.
   if (typeof rt.server_time === "number" && rt.server_time > 0) {
     state.clockOffset = rt.server_time - Math.floor(Date.now() / 1000);
   }
+  const endsChanged =
+    (rt.roundtime_end ?? null) !== state.rtEnd || (rt.casttime_end ?? null) !== state.ctEnd;
   state.rtEnd = rt.roundtime_end ?? null;
   state.ctEnd = rt.casttime_end ?? null;
-  const end = Math.max(state.rtEnd ?? 0, state.ctEnd ?? 0);
-  state.rtTotal = Math.max(end - serverNowInt(), 0);
+  // Rebase the bar's full-width reference only when a new timer starts;
+  // pure clock resyncs shouldn't make the fill jump.
+  if (endsChanged) {
+    const end = Math.max(state.rtEnd ?? 0, state.ctEnd ?? 0);
+    state.rtTotal = Math.max(end - serverNowInt(), 0);
+  }
 }
 
 function tickRt() {

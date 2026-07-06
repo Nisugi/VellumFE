@@ -394,10 +394,16 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::Indicators(snap.indicators.clone()));
         }
-        // server_time ticks on every prompt; only RT/CT end changes are
-        // worth a delta (the client computes countdowns locally).
+        // Send on RT/CT end changes AND on every prompt (server_time
+        // tick). The per-prompt resend matters: a <roundTime> can be
+        // flushed before its paired prompt is parsed, so the first delta
+        // may carry a stale server_time and overstate the countdown by
+        // seconds; the next prompt's delta corrects the client's clock
+        // offset immediately - exactly how the TUI recalibrates
+        // server_time_offset on every prompt.
         if snap.roundtime_end != self.last.roundtime_end
             || snap.casttime_end != self.last.casttime_end
+            || snap.server_time != self.last.server_time
         {
             let _ = self.delta_tx.send(RemoteDelta::Rt {
                 roundtime_end: snap.roundtime_end,
@@ -465,6 +471,37 @@ mod tests {
 
         // Watch holds the latest state for snapshots.
         assert_eq!(handles.state_rx.borrow().vitals.health, 50);
+    }
+
+    #[test]
+    fn flush_state_resyncs_clock_on_prompt_tick() {
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
+        let mut rx = handles.delta_tx.subscribe();
+
+        let mut gs = GameState::new();
+        gs.game_time = 1000;
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        while rx.try_recv().is_ok() {}
+
+        // A prompt tick alone (no RT/CT change) must still emit an Rt
+        // delta: clients recalibrate their clock offset from it, which is
+        // what corrects a roundtime that was flushed before its paired
+        // prompt was parsed.
+        gs.game_time = 1002;
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        let mut saw_resync = false;
+        while let Ok(delta) = rx.try_recv() {
+            if matches!(
+                delta,
+                RemoteDelta::Rt {
+                    server_time: 1002,
+                    ..
+                }
+            ) {
+                saw_resync = true;
+            }
+        }
+        assert!(saw_resync, "prompt tick should emit an Rt clock resync");
     }
 
     #[test]
