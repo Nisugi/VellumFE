@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-67354920.js";
+            window.path_to_searchindex_js = "../searchindex-6028f454.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c827af74.js"></script>
+        <script src="../toc-0d437a7c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,9 +196,11 @@ Start Lich, then <code>vellum-fe --port 8000 --character Name</code>. VellumFE
 identifies as Stormfront to Lich, so scripts behave as they would under
 Wrayth. See <a href="../getting-started/first-launch.html">First Launch</a>.</p>
 <p><strong>Can I save my login credentials?</strong>
-Yes, in <code>config.toml</code> under <code>[connection]</code> (<code>account</code>, <code>password</code>, <code>game</code>)
-— but the password is stored in plain text. Safer: omit the password and
-VellumFE prompts for it at startup.</p>
+Yes — use <a href="../getting-started/launcher.html">the Launcher</a>: its “Save
+password” option stores the password in your OS’s secure credential store
+(keyring), never in a file. Storing a password in <code>config.toml</code>’s
+<code>[connection]</code> section also works but is plain text; if you store nothing,
+VellumFE prompts at startup.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <p><strong>Where are config files stored?</strong>
 <code>~/.vellum-fe/</code> on every platform (Windows: <code>C:\Users\you\.vellum-fe\</code>).

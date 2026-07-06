@@ -19,6 +19,11 @@ One core, three ways to play:
 
 ## Quick Start
 
+**Double-click `vellum-fe`** — the [Launcher](./getting-started/launcher.md)
+opens with saved connection profiles (passwords kept in the OS keyring).
+
+Or from a terminal:
+
 ```bash
 # Connect via Lich (most common)
 vellum-fe --port 8000 --character YourName
@@ -27,7 +32,7 @@ vellum-fe --port 8000 --character YourName
 vellum-fe --direct --account ACCOUNT --character YourName --game prime
 ```
 
-See [Connecting](./getting-started/first-launch.md) for details.
+See [First Launch](./getting-started/first-launch.md) for details.
 
 ## Configuration
 

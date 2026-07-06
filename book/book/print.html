@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-67354920.js";
+            window.path_to_searchindex_js = "searchindex-6028f454.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c827af74.js"></script>
+        <script src="toc-0d437a7c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,13 +196,16 @@
 <li><strong>Text-to-speech</strong> — screen reader support built in</li>
 </ul>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<p><strong>Double-click <code>vellum-fe</code></strong> — the <a href="#the-launcher">Launcher</a>
+opens with saved connection profiles (passwords kept in the OS keyring).</p>
+<p>Or from a terminal:</p>
 <pre><code class="language-bash"># Connect via Lich (most common)
 vellum-fe --port 8000 --character YourName
 
 # Direct connection (no Lich required)
 vellum-fe --direct --account ACCOUNT --character YourName --game prime
 </code></pre>
-<p>See <a href="#first-launch">Connecting</a> for details.</p>
+<p>See <a href="#first-launch">First Launch</a> for details.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <p>VellumFE stores configuration in <code>~/.vellum-fe/</code> (override with <code>VELLUM_FE_DIR</code> or <code>--data-dir</code>):</p>
 <div class="table-wrapper">
@@ -240,6 +243,7 @@ vellum-fe --direct --account ACCOUNT --character YourName --game prime
 <h2 id="chapters"><a class="header" href="#chapters">Chapters</a></h2>
 <ol>
 <li><strong><a href="#installation">Installation</a></strong> - Download and set up VellumFE</li>
+<li><strong><a href="#the-launcher">The Launcher</a></strong> - Saved profiles, one-click sessions</li>
 <li><strong><a href="#first-launch">First Launch</a></strong> - Connect and explore the interface</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -282,7 +286,51 @@ cargo build --release
 <pre><code class="language-bash">export VELLUM_FE_DIR=/custom/path
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-launcher"><a class="header" href="#the-launcher">The Launcher</a></h1>
+<p>The easiest way to start VellumFE: run it with <strong>no arguments</strong> (or just
+double-click <code>vellum-fe.exe</code>) and a graphical launcher opens with your
+saved connection profiles. One click launches a session; launch several
+profiles to play multiple characters at once.</p>
+<p>You can also open it explicitly with <code>vellum-fe --launcher</code>.</p>
+<h2 id="creating-a-profile"><a class="header" href="#creating-a-profile">Creating a Profile</a></h2>
+<p>Click <strong>Add profile</strong> and fill in:</p>
+<ul>
+<li><strong>Connection mode</strong> — <em>Direct</em> (eAccess, no Lich) or <em>Lich</em> (proxy
+host/port)</li>
+<li><strong>Account / game / character</strong> for direct mode, or <strong>host / port</strong> for
+Lich mode</li>
+<li><strong>Frontend</strong> — GUI (default) or Terminal</li>
+<li><strong>Advanced options</strong> — everything the CLI offers: web/phone port,
+sound off, settings profile, data directory, color mode, palette setup</li>
+</ul>
+<h2 id="passwords-go-in-the-keyring"><a class="header" href="#passwords-go-in-the-keyring">Passwords Go in the Keyring</a></h2>
+<p>Check <strong>Save password</strong> and the password is stored in your operating
+system’s secure credential store (Windows Credential Manager, macOS
+Keychain, or the Linux secret service) — it is <strong>never written to a
+file</strong> and never appears on a command line. Passwords are keyed by
+account, so several profiles on the same account share one saved
+password.</p>
+<p>If you don’t save it, the launcher prompts when you hit Launch (terminal
+sessions ask in their own console instead).</p>
+<h2 id="how-sessions-launch"><a class="header" href="#how-sessions-launch">How Sessions Launch</a></h2>
+<p>Each <strong>Launch</strong> spawns a separate <code>vellum-fe --launch-profile NAME</code>
+process — exactly the same startup path as a hand-typed command line, so
+everything in this book applies unchanged. Terminal sessions open in
+their own console window, which remembers its size and position across
+launches.</p>
+<h2 id="skipping-the-launcher"><a class="header" href="#skipping-the-launcher">Skipping the Launcher</a></h2>
+<p>Saved profiles work from the command line or a shortcut too:</p>
+<pre><code class="language-bash">vellum-fe --launch-profile "Rolfard hunting"
+</code></pre>
+<p>Profile definitions live in <code>~/.vellum-fe/launcher.toml</code> (passwords
+excluded — those stay in the keyring).</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="first-launch"><a class="header" href="#first-launch">First Launch</a></h1>
+<blockquote>
+<p><strong>Shortcut</strong>: double-clicking <code>vellum-fe</code> opens <a href="#the-launcher">the Launcher</a>,
+which handles everything below with saved profiles. This page covers the
+command-line paths.</p>
+</blockquote>
 <h2 id="connecting-via-lich-recommended"><a class="header" href="#connecting-via-lich-recommended">Connecting via Lich (Recommended)</a></h2>
 <p>Most players use <a href="https://lichproject.org/">Lich</a> for scripting. Start Lich first, then:</p>
 <pre><code class="language-bash">vellum-fe --port 8000 --character YourCharacter
@@ -580,6 +628,7 @@ about this.</li>
 </div>
 <h2 id="directory-layout"><a class="header" href="#directory-layout">Directory Layout</a></h2>
 <pre><code>~/.vellum-fe/
+├── launcher.toml         # Launcher profiles (passwords live in the OS keyring)
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
@@ -3004,12 +3053,15 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
 </code></pre>
 <h2 id="options"><a class="header" href="#options">Options</a></h2>
+<p>Run with <strong>no arguments</strong> to open <a href="#the-launcher">the Launcher</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Flag</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
+<tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
 <tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
 <tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
 <tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
@@ -3082,9 +3134,11 @@ Start Lich, then <code>vellum-fe --port 8000 --character Name</code>. VellumFE
 identifies as Stormfront to Lich, so scripts behave as they would under
 Wrayth. See <a href="#first-launch">First Launch</a>.</p>
 <p><strong>Can I save my login credentials?</strong>
-Yes, in <code>config.toml</code> under <code>[connection]</code> (<code>account</code>, <code>password</code>, <code>game</code>)
-— but the password is stored in plain text. Safer: omit the password and
-VellumFE prompts for it at startup.</p>
+Yes — use <a href="#the-launcher">the Launcher</a>: its “Save
+password” option stores the password in your OS’s secure credential store
+(keyring), never in a file. Storing a password in <code>config.toml</code>’s
+<code>[connection]</code> section also works but is plain text; if you store nothing,
+VellumFE prompts at startup.</p>
 <h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
 <p><strong>Where are config files stored?</strong>
 <code>~/.vellum-fe/</code> on every platform (Windows: <code>C:\Users\you\.vellum-fe\</code>).

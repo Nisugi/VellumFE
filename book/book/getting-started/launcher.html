@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>CLI Reference - VellumFE User Guide</title>
+        <title>The Launcher - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,81 +177,54 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
-<pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
+                        <h1 id="the-launcher"><a class="header" href="#the-launcher">The Launcher</a></h1>
+<p>The easiest way to start VellumFE: run it with <strong>no arguments</strong> (or just
+double-click <code>vellum-fe.exe</code>) and a graphical launcher opens with your
+saved connection profiles. One click launches a session; launch several
+profiles to play multiple characters at once.</p>
+<p>You can also open it explicitly with <code>vellum-fe --launcher</code>.</p>
+<h2 id="creating-a-profile"><a class="header" href="#creating-a-profile">Creating a Profile</a></h2>
+<p>Click <strong>Add profile</strong> and fill in:</p>
+<ul>
+<li><strong>Connection mode</strong> — <em>Direct</em> (eAccess, no Lich) or <em>Lich</em> (proxy
+host/port)</li>
+<li><strong>Account / game / character</strong> for direct mode, or <strong>host / port</strong> for
+Lich mode</li>
+<li><strong>Frontend</strong> — GUI (default) or Terminal</li>
+<li><strong>Advanced options</strong> — everything the CLI offers: web/phone port,
+sound off, settings profile, data directory, color mode, palette setup</li>
+</ul>
+<h2 id="passwords-go-in-the-keyring"><a class="header" href="#passwords-go-in-the-keyring">Passwords Go in the Keyring</a></h2>
+<p>Check <strong>Save password</strong> and the password is stored in your operating
+system’s secure credential store (Windows Credential Manager, macOS
+Keychain, or the Linux secret service) — it is <strong>never written to a
+file</strong> and never appears on a command line. Passwords are keyed by
+account, so several profiles on the same account share one saved
+password.</p>
+<p>If you don’t save it, the launcher prompts when you hit Launch (terminal
+sessions ask in their own console instead).</p>
+<h2 id="how-sessions-launch"><a class="header" href="#how-sessions-launch">How Sessions Launch</a></h2>
+<p>Each <strong>Launch</strong> spawns a separate <code>vellum-fe --launch-profile NAME</code>
+process — exactly the same startup path as a hand-typed command line, so
+everything in this book applies unchanged. Terminal sessions open in
+their own console window, which remembers its size and position across
+launches.</p>
+<h2 id="skipping-the-launcher"><a class="header" href="#skipping-the-launcher">Skipping the Launcher</a></h2>
+<p>Saved profiles work from the command line or a shortcut too:</p>
+<pre><code class="language-bash">vellum-fe --launch-profile "Rolfard hunting"
 </code></pre>
-<h2 id="options"><a class="header" href="#options">Options</a></h2>
-<p>Run with <strong>no arguments</strong> to open <a href="../getting-started/launcher.html">the Launcher</a>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Flag</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
-<tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
-<tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
-<tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
-<tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
-<tr><td><code>--character &lt;NAME&gt;</code></td><td>Character name (login + per-character profile)</td></tr>
-<tr><td><code>--profile &lt;NAME&gt;</code></td><td>Use a different profile directory than the character name</td></tr>
-<tr><td><code>--key &lt;KEY&gt;</code></td><td>Login key from Lich launcher (<code>%key%</code>)</td></tr>
-<tr><td><code>--direct</code></td><td>Connect directly via eAccess (no Lich)</td></tr>
-<tr><td><code>--account &lt;ACCOUNT&gt;</code></td><td>Account name (direct mode)</td></tr>
-<tr><td><code>--password &lt;PASSWORD&gt;</code></td><td>Password (direct mode; omit to be prompted securely)</td></tr>
-<tr><td><code>--game &lt;GAME&gt;</code></td><td>World for direct mode: <code>prime</code>, <code>platinum</code>, <code>shattered</code>, <code>test</code>, <code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td></tr>
-<tr><td><code>-c, --config &lt;FILE&gt;</code></td><td>Use a specific config.toml</td></tr>
-<tr><td><code>--data-dir &lt;DIR&gt;</code></td><td>Data directory (default <code>~/.vellum-fe</code>; also <code>VELLUM_FE_DIR</code> env var)</td></tr>
-<tr><td><code>--web-port &lt;PORT&gt;</code></td><td>Enable the <a href="../frontends/web.html">mobile web server</a> on this port</td></tr>
-<tr><td><code>--color-mode &lt;direct|slot&gt;</code></td><td>Override color rendering mode</td></tr>
-<tr><td><code>--setup-palette</code></td><td>Load the terminal palette at startup (use with <code>--color-mode slot</code>)</td></tr>
-<tr><td><code>--nosound</code></td><td>Disable the sound system entirely</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
-<h3 id="validate-layout"><a class="header" href="#validate-layout">validate-layout</a></h3>
-<p>Check a layout file for errors:</p>
-<pre><code class="language-bash">vellum-fe validate-layout                 # default layout for --character
-vellum-fe validate-layout mylayout.toml
-</code></pre>
-<h3 id="migrate-layout"><a class="header" href="#migrate-layout">migrate-layout</a></h3>
-<p>Convert layouts from older VellumFE versions:</p>
-<pre><code class="language-bash">vellum-fe migrate-layout --src &lt;DIR&gt; [--out &lt;DIR&gt;] [--dry-run] [-v]
-</code></pre>
-<h3 id="import-highlights"><a class="header" href="#import-highlights">import-highlights</a></h3>
-<p>Convert a Wrayth/StormFront settings XML into highlights.toml format:</p>
-<pre><code class="language-bash">vellum-fe import-highlights settings.xml [--out FILE] [--dry-run]
-</code></pre>
-<h2 id="common-invocations"><a class="header" href="#common-invocations">Common Invocations</a></h2>
-<pre><code class="language-bash"># Lich, most common
-vellum-fe --port 8000 --character Rolfard
-
-# Lich launcher integration
-vellum-fe --port %port% --key %key%
-
-# Direct, prompted for password
-vellum-fe --direct --account MYACCT --character Rolfard --game prime
-
-# GUI frontend
-vellum-fe --frontend gui --port 8000 --character Rolfard
-
-# TUI plus phone access
-vellum-fe --port 8000 --character Rolfard --web-port 8040
-
-# Debug logging
-RUST_LOG=debug vellum-fe --port 8000
-</code></pre>
+<p>Profile definitions live in <code>~/.vellum-fe/launcher.toml</code> (passwords
+excluded — those stay in the keyring).</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../reference/commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../getting-started/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/faq.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../getting-started/first-launch.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -261,11 +234,11 @@ RUST_LOG=debug vellum-fe --port 8000
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../reference/commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../getting-started/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/faq.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../getting-started/first-launch.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

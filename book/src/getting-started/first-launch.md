@@ -1,5 +1,9 @@
 # First Launch
 
+> **Shortcut**: double-clicking `vellum-fe` opens [the Launcher](./launcher.md),
+> which handles everything below with saved profiles. This page covers the
+> command-line paths.
+
 ## Connecting via Lich (Recommended)
 
 Most players use [Lich](https://lichproject.org/) for scripting. Start Lich first, then:

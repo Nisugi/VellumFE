@@ -11,4 +11,5 @@ This section covers installation and your first connection to GemStone IV.
 ## Chapters
 
 1. **[Installation](./installation.md)** - Download and set up VellumFE
-2. **[First Launch](./first-launch.md)** - Connect and explore the interface
+2. **[The Launcher](./launcher.md)** - Saved profiles, one-click sessions
+3. **[First Launch](./first-launch.md)** - Connect and explore the interface

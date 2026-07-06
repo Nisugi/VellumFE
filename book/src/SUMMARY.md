@@ -8,6 +8,7 @@
 
 - [Getting Started](./getting-started/README.md)
   - [Installation](./getting-started/installation.md)
+  - [The Launcher](./getting-started/launcher.md)
   - [First Launch](./getting-started/first-launch.md)
 
 - [Frontends](./frontends/README.md)
