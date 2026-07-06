@@ -942,14 +942,20 @@ impl MessageProcessor {
             ParsedElement::StatusIndicator { id, active } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Update game state (legacy)
-                match id.as_str() {
+                // Update game state. The parser strips the "Icon" prefix
+                // but preserves casing (e.g. "BLEEDING"), so match
+                // case-insensitively like the indicator widgets below do.
+                match id.to_ascii_lowercase().as_str() {
                     "stunned" => game_state.status.stunned = *active,
                     "bleeding" => game_state.status.bleeding = *active,
                     "hidden" => game_state.status.hidden = *active,
                     "invisible" => game_state.status.invisible = *active,
                     "webbed" => game_state.status.webbed = *active,
                     "dead" => game_state.status.dead = *active,
+                    "standing" => game_state.status.standing = *active,
+                    "kneeling" => game_state.status.kneeling = *active,
+                    "sitting" => game_state.status.sitting = *active,
+                    "prone" => game_state.status.prone = *active,
                     _ => {}
                 }
 
