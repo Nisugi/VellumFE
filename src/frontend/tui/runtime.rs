@@ -23,6 +23,10 @@ pub fn run(
     if let Some(profile) = console_size_profile.as_deref() {
         restore_console_size(profile);
     }
+    // Closing the console with the X button never reaches the end-of-loop
+    // save; catch it and save geometry there.
+    #[cfg(windows)]
+    console_close::install(character.clone(), console_size_profile.clone());
     // Use tokio runtime for async network I/O
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async_run(
@@ -73,6 +77,64 @@ fn restore_console_size(profile: &str) {
         std::io::stdout(),
         crossterm::terminal::SetSize(size.cols, size.rows)
     );
+}
+
+/// Save window geometry when the console window is closed with the X
+/// button. Windows delivers CTRL_CLOSE_EVENT on its own thread and kills
+/// the process as soon as the handler returns (or after ~5s), so the normal
+/// end-of-loop save in async_run never runs on that path.
+#[cfg(windows)]
+mod console_close {
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_CLOSE_EVENT};
+
+    struct SaveContext {
+        character: Option<String>,
+        size_profile: Option<String>,
+    }
+
+    static CONTEXT: OnceLock<SaveContext> = OnceLock::new();
+
+    pub fn install(character: Option<String>, size_profile: Option<String>) {
+        if CONTEXT
+            .set(SaveContext {
+                character,
+                size_profile,
+            })
+            .is_err()
+        {
+            return;
+        }
+        unsafe {
+            let _ = SetConsoleCtrlHandler(Some(on_console_event), true);
+        }
+    }
+
+    unsafe extern "system" fn on_console_event(ctrl_type: u32) -> BOOL {
+        if ctrl_type != CTRL_CLOSE_EVENT {
+            return BOOL::from(false);
+        }
+        if let Some(context) = CONTEXT.get() {
+            if let Some(positioner) = crate::window_position::create_positioner() {
+                if let (Ok(rect), Ok(screens)) =
+                    (positioner.get_position(), positioner.get_screen_bounds())
+                {
+                    let _ = crate::window_position::save(
+                        context.character.as_deref(),
+                        &crate::window_position::WindowPositionConfig {
+                            window: rect,
+                            monitors: screens,
+                        },
+                    );
+                }
+            }
+            if let Some(profile) = context.size_profile.as_deref() {
+                super::save_console_size(profile);
+            }
+        }
+        BOOL::from(true)
+    }
 }
 
 fn save_console_size(profile: &str) {

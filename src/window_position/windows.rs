@@ -9,14 +9,15 @@ use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
-use windows::Win32::System::Console::GetConsoleWindow;
+use windows::core::PCWSTR;
+use windows::Win32::System::Console::{GetConsoleTitleW, GetConsoleWindow, SetConsoleTitleW};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, SetWindowPos, HWND_TOP,
-    SWP_NOZORDER,
+    EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    SetWindowPos, HWND_TOP, SWP_NOZORDER,
 };
 
 use super::{ScreenInfo, WindowPositioner, WindowRect};
@@ -44,11 +45,99 @@ impl WindowsPositioner {
             hwnd,
             hwnd.0.is_null()
         );
+
+        // ConPTY delegation (e.g. Windows Terminal as the default host, with
+        // no WT ancestor - launcher-spawned sessions): GetConsoleWindow is a
+        // hidden pseudo-window, and moving it moves nothing visible. Find
+        // the host's real window by mirroring a unique console title.
+        if !hwnd.0.is_null() && !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            if let Some(host) = find_host_window_by_title(hwnd) {
+                tracing::debug!("Console is ConPTY-hosted; using host window {:?}", host);
+                return Self {
+                    hwnd: host,
+                    is_windows_terminal: true,
+                };
+            }
+            tracing::debug!("Console is ConPTY-hosted but no host window found");
+        }
+
         Self {
             hwnd,
             is_windows_terminal: false,
         }
     }
+}
+
+/// Locate the terminal window hosting our ConPTY console: set a unique
+/// console title, find the visible top-level window that mirrors it, then
+/// restore the original title. Hosts propagate the title into the tab and
+/// window title asynchronously, so poll briefly. Fails (None) when the
+/// session's tab is not the active one - the window title shows the active
+/// tab - which is fine: positioning a shared window would be wrong anyway.
+fn find_host_window_by_title(exclude: HWND) -> Option<HWND> {
+    unsafe {
+        let mut original = [0u16; 512];
+        let original_len = GetConsoleTitleW(&mut original) as usize;
+        let original_title: Vec<u16> = original[..original_len.min(original.len() - 1)]
+            .iter()
+            .copied()
+            .chain([0])
+            .collect();
+
+        let marker = format!("vellum-fe:{}", GetCurrentProcessId());
+        let marker_w: Vec<u16> = marker.encode_utf16().chain([0]).collect();
+        if SetConsoleTitleW(PCWSTR(marker_w.as_ptr())).is_err() {
+            return None;
+        }
+
+        let mut found = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            found = find_visible_window_titled(&marker, exclude);
+            if found.is_some() {
+                break;
+            }
+        }
+
+        let _ = SetConsoleTitleW(PCWSTR(original_title.as_ptr()));
+        found
+    }
+}
+
+/// Find a visible top-level window whose title contains `marker`.
+fn find_visible_window_titled(marker: &str, exclude: HWND) -> Option<HWND> {
+    struct EnumContext {
+        marker: String,
+        exclude: HWND,
+        found: Option<HWND>,
+    }
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam.0 as *mut EnumContext);
+        if hwnd.0 == ctx.exclude.0 || !IsWindowVisible(hwnd).as_bool() {
+            return BOOL::from(true);
+        }
+        let mut text = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut text) as usize;
+        if len > 0 {
+            let title = String::from_utf16_lossy(&text[..len.min(text.len())]);
+            if title.contains(&ctx.marker) {
+                ctx.found = Some(hwnd);
+                return BOOL::from(false);
+            }
+        }
+        BOOL::from(true)
+    }
+
+    let mut ctx = EnumContext {
+        marker: marker.to_string(),
+        exclude,
+        found: None,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(enum_callback), LPARAM(&mut ctx as *mut _ as isize));
+    }
+    ctx.found
 }
 
 impl WindowPositioner for WindowsPositioner {
