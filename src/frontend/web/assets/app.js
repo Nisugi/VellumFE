@@ -38,6 +38,15 @@ function scrollToBottom() {
   pane.scrollTop = pane.scrollHeight;
 }
 
+// Autoscroll stickiness is an explicit flag updated on scroll events, not
+// re-measured per append: measuring mid-flood reads a stale layout and
+// unsticks. The user scrolling up disables it; returning to the bottom
+// (or a snapshot reset) re-enables it.
+let autoScroll = true;
+pane.addEventListener("scroll", () => {
+  autoScroll = atBottom();
+}, { passive: true });
+
 function renderLine(line) {
   const div = document.createElement("div");
   div.className = "line";
@@ -53,14 +62,36 @@ function renderLine(line) {
   return div;
 }
 
+// Incoming lines are queued and rendered once per animation frame as a
+// single fragment. Per-line appends force two layout flushes each, which
+// floods the main thread when output scrolls fast (e.g. held-down LOOK)
+// and breaks autoscroll.
+const pendingLines = [];
+let renderScheduled = false;
+
+function flushPendingLines() {
+  renderScheduled = false;
+  if (!pendingLines.length) return;
+  const frag = document.createDocumentFragment();
+  for (const line of pendingLines) frag.appendChild(renderLine(line));
+  pendingLines.length = 0;
+  pane.appendChild(frag);
+  while (pane.childElementCount > MAX_LINES) pane.firstChild.remove();
+  if (autoScroll) scrollToBottom();
+}
+
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(flushPendingLines);
+}
+
 function appendText(seq, stream, line) {
   if (seq <= state.lastSeq) return; // duplicate (snapshot/delta overlap)
   state.lastSeq = seq;
   if (!VISIBLE_STREAMS.has(stream)) return;
-  const stick = atBottom();
-  pane.appendChild(renderLine(line));
-  while (pane.childElementCount > MAX_LINES) pane.firstChild.remove();
-  if (stick) scrollToBottom();
+  pendingLines.push(line);
+  scheduleRender();
 }
 
 function setVitals(v) {
@@ -112,7 +143,10 @@ function handleSnapshot(d) {
   pane.replaceChildren();
   // A snapshot resets the text pane; render its scrollback from scratch.
   state.lastSeq = 0;
+  pendingLines.length = 0;
+  autoScroll = true;
   for (const item of d.text) appendText(item.seq, item.stream, item.line);
+  flushPendingLines();
   setVitals(d.vitals);
   setRoom(d.room);
   setRt(d.rt);
