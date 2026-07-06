@@ -30,7 +30,7 @@ pub struct TextContent {
 }
 
 /// A single display line with styled segments
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StyledLine {
     pub segments: Vec<TextSegment>,
     /// The stream this line originated from (e.g., "death", "thoughts", "main")
@@ -166,7 +166,7 @@ pub struct CountdownData {
 }
 
 /// Compass directions
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CompassData {
     pub directions: Vec<String>, // Available exits: "n", "s", "e", "w", etc.
 }
@@ -199,7 +199,7 @@ impl InjuryDollData {
 }
 
 /// Status indicator state
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IndicatorData {
     pub indicator_id: String,  // Feed id, e.g., "kneeling", "hidden"
     pub active: bool,          // Whether indicator is on
@@ -207,7 +207,7 @@ pub struct IndicatorData {
 }
 
 /// Room description content
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoomContent {
     pub name: String,
     pub description: Vec<StyledLine>,
@@ -217,7 +217,7 @@ pub struct RoomContent {
 }
 
 /// Active effect (buff/debuff/cooldown/active spell)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActiveEffect {
     pub id: String,   // Unique identifier
     pub text: String, // Display text (e.g., "Fasthr's Reward")
@@ -228,7 +228,7 @@ pub struct ActiveEffect {
 }
 
 /// Active effects content (for buffs, debuffs, cooldowns, active spells)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActiveEffectsContent {
     pub category: String, // "Buffs", "Debuffs", "Cooldowns", "ActiveSpells"
     pub effects: Vec<ActiveEffect>,
@@ -525,6 +525,39 @@ pub struct PerceptionData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== Serde Round-Trip Tests ====================
+    // The web frontend ships StyledLine over WebSocket as JSON; these
+    // pin the wire format (docs/mobile-web-frontend-plan.md, Phase 0).
+
+    #[test]
+    fn test_styled_line_json_round_trip() {
+        let line = StyledLine {
+            stream: "main".to_string(),
+            segments: vec![
+                TextSegment::plain("You see "),
+                TextSegment {
+                    text: "a kobold".to_string(),
+                    fg: Some("#ff0000".to_string()),
+                    bg: Some("#000000".to_string()),
+                    bold: true,
+                    mono: false,
+                    span_type: SpanType::Monsterbold,
+                    link_data: Some(LinkData {
+                        exist_id: "12345".to_string(),
+                        noun: "kobold".to_string(),
+                        text: "a kobold".to_string(),
+                        coord: Some("2524,1864".to_string()),
+                    }),
+                },
+                TextSegment::styled(" here.", Some("#a0a0a0".to_string()), false),
+            ],
+        };
+
+        let json = serde_json::to_string(&line).expect("StyledLine must serialize");
+        let back: StyledLine = serde_json::from_str(&json).expect("StyledLine must deserialize");
+        assert_eq!(line, back);
+    }
 
     // ==================== TextContent Tests ====================
 

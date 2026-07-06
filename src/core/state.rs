@@ -3,6 +3,7 @@
 //! Tracks the current state of the game session: connection status,
 //! character info, room state, inventory, etc.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
 use super::highlight_engine::SoundTrigger;
@@ -149,7 +150,7 @@ pub struct GameState {
 }
 
 /// Player status information
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct StatusInfo {
     pub standing: bool,
     pub kneeling: bool,
@@ -165,7 +166,7 @@ pub struct StatusInfo {
 }
 
 /// Player vitals (percentages only)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vitals {
     pub health: u8,
     pub mana: u8,
