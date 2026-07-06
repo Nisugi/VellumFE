@@ -21,7 +21,15 @@ via the ordinary `cmd` path (items carry ready-made commands, so no `menu_pick`
 message was needed). Client: tappable nouns/exits, bottom-sheet menu with four
 dismissal paths (pick, ✕, backdrop, tap anywhere else), no-response and
 stale-response guards; assets served no-cache. Validated against a real game
-session. Phase 4 (real mobile UI) next.
+session.
+Phase 4 (first iteration): stream chips with unread badges (per-stream
+client-side buffers, curated hidden-stream list), one-handed bottom chrome
+(hands + indicator badges, RT/CT, vitals, input bar lowest), PWA install shell
+(manifest + SVG icon + network-first app-shell service worker, iOS metas),
+visualViewport keyboard handling, wake-lock toggle, repeat-last +
+hold-for-history input. Also fixed a latent core bug: indicator ids matched
+case-sensitively so game_state.status never updated. Remaining Phase 4
+iteration happens against real phone use. Phase 5 (macros) next.
 Target: play a VellumFE session from a phone (Android, iOS, Windows tablet) while the
 session stays anchored on the PC behind Lich. Both the desktop frontend and the phone
 control the same session simultaneously.
