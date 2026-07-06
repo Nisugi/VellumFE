@@ -235,6 +235,27 @@ pub struct RemoteStateSnapshot {
     pub server_time: i64,
 }
 
+impl RemoteStateSnapshot {
+    /// The parts sourced directly from GameState. Callers layer on the
+    /// fields that need context GameState doesn't have (room name from
+    /// the streamWindow subtitle, exits from the compass, character from
+    /// config).
+    pub fn from_game_state(game_state: &GameState) -> Self {
+        Self {
+            character: game_state.character_name.clone(),
+            vitals: game_state.vitals.clone(),
+            room_name: game_state.room_name.clone(),
+            exits: game_state.exits.clone(),
+            left_hand: game_state.left_hand.clone(),
+            right_hand: game_state.right_hand.clone(),
+            indicators: game_state.status.clone(),
+            roundtime_end: game_state.roundtime_end,
+            casttime_end: game_state.casttime_end,
+            server_time: game_state.game_time,
+        }
+    }
+}
+
 /// Everything the web server task needs; returned by [`RemoteSink::new`].
 #[derive(Clone)]
 pub struct RemoteServerHandles {
@@ -344,21 +365,11 @@ impl RemoteSink {
         });
     }
 
-    /// Diff current game state against the last flush and broadcast one
-    /// coalesced delta per changed group. Called once per message batch.
-    pub fn flush_state(&mut self, game_state: &GameState) {
-        let snap = RemoteStateSnapshot {
-            character: game_state.character_name.clone(),
-            vitals: game_state.vitals.clone(),
-            room_name: game_state.room_name.clone(),
-            exits: game_state.exits.clone(),
-            left_hand: game_state.left_hand.clone(),
-            right_hand: game_state.right_hand.clone(),
-            indicators: game_state.status.clone(),
-            roundtime_end: game_state.roundtime_end,
-            casttime_end: game_state.casttime_end,
-            server_time: game_state.game_time,
-        };
+    /// Diff a freshly built state snapshot against the last flush and
+    /// broadcast one coalesced delta per changed group. Called once per
+    /// message batch (AppCore::flush_remote_state builds the snapshot —
+    /// room name and exits need fallbacks only AppCore can see).
+    pub fn flush_state(&mut self, snap: RemoteStateSnapshot) {
         if snap == self.last {
             return;
         }
@@ -440,7 +451,7 @@ mod tests {
 
         let mut gs = GameState::new();
         gs.vitals.health = 50;
-        sink.flush_state(&gs);
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
 
         // Vitals changed relative to the default snapshot; room/hands/rt
         // did not (all None/empty in both).
@@ -449,7 +460,7 @@ mod tests {
         assert!(rx.try_recv().is_err(), "no further deltas expected");
 
         // No change => no deltas at all.
-        sink.flush_state(&gs);
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
         assert!(rx.try_recv().is_err());
 
         // Watch holds the latest state for snapshots.
@@ -463,12 +474,12 @@ mod tests {
 
         let mut gs = GameState::new();
         gs.vitals = Vitals::default();
-        sink.flush_state(&gs);
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
         while rx.try_recv().is_ok() {}
 
         gs.roundtime_end = Some(1_700_000_010);
         gs.game_time = 1_700_000_000;
-        sink.flush_state(&gs);
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
 
         let mut saw_rt = false;
         while let Ok(delta) = rx.try_recv() {

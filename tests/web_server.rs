@@ -211,7 +211,7 @@ async fn ws_client_gets_hello_snapshot_then_live_deltas() {
     // State changes flow as coalesced deltas.
     let mut gs = GameState::new();
     gs.vitals.health = 42;
-    sink.flush_state(&gs);
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
     let vitals = read_json_timeout(&mut client).await;
     assert_eq!(vitals["t"], "vitals");
     assert_eq!(vitals["d"]["health"], 42);

@@ -784,8 +784,40 @@ impl AppCore {
     /// Flush coalesced game-state deltas to remote clients. Called once
     /// per message batch by the frontend loop; no-op when web is disabled.
     pub fn flush_remote_state(&mut self) {
+        if self.message_processor.remote.is_none() {
+            return;
+        }
+        let mut snap =
+            crate::core::remote::RemoteStateSnapshot::from_game_state(&self.game_state);
+        // Real sessions rarely set game_state.room_name/exits; fall back
+        // the same way the room widget does (see gui sync_room_windows):
+        // subtitle from <streamWindow> for the name, compass for exits.
+        if snap.room_name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+            snap.room_name = self.room_subtitle.as_ref().map(|subtitle| {
+                subtitle
+                    .trim()
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .to_string()
+            });
+        }
+        if snap.exits.is_empty() {
+            snap.exits = self.game_state.compass_dirs.clone();
+        }
+        if snap.character.is_none() {
+            // connection.character comes from config.toml; config.character
+            // is the CLI --character/--profile name.
+            snap.character = self
+                .config
+                .connection
+                .character
+                .clone()
+                .or_else(|| self.config.character.clone());
+        }
         if let Some(remote) = self.message_processor.remote.as_mut() {
-            remote.flush_state(&self.game_state);
+            remote.flush_state(snap);
         }
     }
 
