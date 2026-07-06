@@ -24,8 +24,16 @@
       </span>
     </header>
     <nav id="chips"></nav>
-    <main id="text-pane"></main>
+    <main id="pane-wrap">
+      <div id="text-pane"></div>
+      <div id="floating-layer"></div>
+    </main>
     <footer id="bottombar">
+      <nav id="macro-rail" hidden>
+        <button id="macro-group-btn" type="button"></button>
+        <div id="macro-buttons"></div>
+        <button id="macro-collapse" type="button" aria-label="Collapse macros">&#9662;</button>
+      </nav>
       <div id="status-row">
         <span id="hands">
           <span class="hand"><span class="hand-tag">L</span><span id="hand-left">&mdash;</span></span>

@@ -145,12 +145,53 @@ html, body {
 
 .chip-badge[hidden] { display: none; }
 
+#pane-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  display: flex;
+}
+
 #text-pane {
   flex: 1;
   overflow-y: auto;
   padding: 6px 8px;
   -webkit-overflow-scrolling: touch;
   overflow-anchor: none;
+}
+
+/* Floating macro buttons: the layer never intercepts pane touches, only
+   the buttons themselves do. */
+#floating-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.float-btn {
+  position: absolute;
+  pointer-events: auto;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px; /* position is the button center */
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(26, 29, 36, 0.82);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  overflow: hidden;
+  touch-action: none; /* we handle drag ourselves */
+}
+
+.float-btn:active {
+  background: var(--border);
+}
+
+.float-btn.dragging {
+  border-color: var(--st);
+  opacity: 0.85;
 }
 
 .line {
@@ -166,6 +207,64 @@ html, body {
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   padding: 6px 10px 8px;
+}
+
+/* Macro rail */
+#macro-rail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+#macro-rail[hidden] { display: none; }
+
+#macro-group-btn {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  background: none;
+  border: 1px solid var(--fg-dim);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+}
+
+#macro-buttons {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+#macro-buttons::-webkit-scrollbar { display: none; }
+
+#macro-buttons[hidden] { display: none; }
+
+.macro-btn {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  background: var(--border);
+  border: none;
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.macro-btn:active {
+  background: var(--fg-dim);
+}
+
+#macro-collapse {
+  flex-shrink: 0;
+  padding: 7px 8px;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 13px;
 }
 
 /* Hands + status indicators */

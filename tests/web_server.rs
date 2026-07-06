@@ -143,8 +143,8 @@ async fn read_json_timeout(client: &mut WsClient) -> serde_json::Value {
         .expect("timed out waiting for a WS frame")
 }
 
-/// Connect, drain hello (answering with resume seq), return the client and
-/// the snapshot message.
+/// Connect, drain hello (answering with resume seq) and the macros message
+/// that follows the snapshot; return the client and the snapshot message.
 async fn connect_and_sync(addr: std::net::SocketAddr, resume_seq: u64) -> (WsClient, serde_json::Value) {
     let mut client = WsClient::connect(addr).await;
     let hello = read_json_timeout(&mut client).await;
@@ -152,6 +152,8 @@ async fn connect_and_sync(addr: std::net::SocketAddr, resume_seq: u64) -> (WsCli
     client.send_resume(resume_seq).await;
     let snapshot = read_json_timeout(&mut client).await;
     assert_eq!(snapshot["t"], "snapshot");
+    let macros = read_json_timeout(&mut client).await;
+    assert_eq!(macros["t"], "macros");
     (client, snapshot)
 }
 
@@ -338,6 +340,68 @@ async fn link_tap_becomes_remote_event_and_menu_routes_to_requester_only() {
         next_for_other["d"]["line"]["segments"][0]["text"],
         "after-menu"
     );
+}
+
+#[tokio::test]
+async fn macros_flow_definitions_out_taps_in() {
+    let (mut sink, mut event_rx, addr) = start_server(100).await;
+
+    let macros_config: vellum_fe::config::MacrosConfig = toml::from_str(
+        r##"
+        [[group]]
+        name = "Town"
+        [[group.button]]
+        label = "Look"
+        command = "look"
+        [[group.button]]
+        label = "Travel"
+        [[group.button.option]]
+        label = "Bank"
+        command = ";go2 bank"
+        [[floating]]
+        label = "Atk"
+        command = ";bigshot"
+        "##,
+    )
+    .unwrap();
+    sink.set_macros(&macros_config);
+
+    let mut client = WsClient::connect(addr).await;
+    assert_eq!(read_json_timeout(&mut client).await["t"], "hello");
+    client.send_resume(0).await;
+    assert_eq!(read_json_timeout(&mut client).await["t"], "snapshot");
+
+    // Definitions arrive after the snapshot: ids and labels, no commands.
+    let macros = read_json_timeout(&mut client).await;
+    assert_eq!(macros["t"], "macros");
+    let d = &macros["d"];
+    assert_eq!(d["groups"][0]["name"], "Town");
+    assert_eq!(d["groups"][0]["buttons"][0]["id"], "g:0:b:0");
+    assert_eq!(d["groups"][0]["buttons"][1]["options"][0]["id"], "g:0:b:1:o:0");
+    assert_eq!(d["floating"][0]["id"], "f:0");
+    assert!(
+        !macros.to_string().contains(";go2 bank"),
+        "commands must never reach the client"
+    );
+
+    // A tap comes back as an id-only event.
+    client.send_text(r#"{"t":"macro","d":{"id":"g:0:b:1:o:0"}}"#).await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::Macro { id } = event else {
+        panic!("expected Macro event");
+    };
+    assert_eq!(id, "g:0:b:1:o:0");
+    // ...which core resolves back to the command.
+    assert_eq!(macros_config.resolve(&id), Some(";go2 bank"));
+
+    // A reload pushes fresh definitions to connected clients as a delta.
+    sink.set_macros(&vellum_fe::config::MacrosConfig::default());
+    let update = read_json_timeout(&mut client).await;
+    assert_eq!(update["t"], "macros");
+    assert_eq!(update["d"]["groups"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

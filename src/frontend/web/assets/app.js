@@ -338,6 +338,7 @@ function handleMessage(msg) {
     case "indicators": setIndicators(msg.d); break;
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
+    case "macros": macros = msg.d; renderMacros(); break;
     default:
       console.debug("unknown message type", msg.t);
   }
@@ -407,8 +408,9 @@ function sheetButton(text, onPick) {
   btn.className = "sheet-item";
   btn.textContent = text;
   btn.addEventListener("click", () => {
-    onPick();
+    // Close first: onPick may open a follow-up sheet (confirm steps).
     closeSheet();
+    onPick();
   });
   sheetItems.appendChild(btn);
   return btn;
@@ -436,8 +438,14 @@ document.getElementById("sheet-close").addEventListener("click", closeSheet);
 document.addEventListener("click", (ev) => {
   if (sheet.hidden) return;
   if (ev.target.closest("#sheet")) return;
+  // A picked sheet item may already be detached (the pick re-rendered the
+  // sheet, e.g. option -> confirm step); closest("#sheet") can't see that,
+  // but the class on the detached node itself still matches.
+  if (ev.target.closest(".sheet-item, .sheet-empty")) return;
   if (ev.target.closest("span.link")) return;
   if (ev.target.closest("#repeat-btn")) return; // long-press opens history
+  if (ev.target.closest("#macro-rail")) return; // rail taps retarget the sheet
+  if (ev.target.closest(".float-btn")) return;
   closeSheet();
 });
 
@@ -487,6 +495,179 @@ function handleMenu(d) {
     rendered += 1;
   }
   if (rendered === 0) sheetNote("No actions available", true);
+}
+
+// ---- Macro buttons ---------------------------------------------------------
+// Definitions come from the server (macros.toml); taps send back opaque
+// ids that the server resolves to commands. An action button fires on
+// tap; a menu button opens the bottom sheet; `confirm` inserts a
+// two-step confirm sheet. Floating buttons overlay the text pane — tap
+// to fire, hold to drag; positions persist per device.
+
+const macroRail = document.getElementById("macro-rail");
+const macroGroupBtn = document.getElementById("macro-group-btn");
+const macroButtonsEl = document.getElementById("macro-buttons");
+const macroCollapseBtn = document.getElementById("macro-collapse");
+const floatingLayer = document.getElementById("floating-layer");
+
+const GROUP_KEY = "vellum-macro-group";
+const COLLAPSE_KEY = "vellum-macro-collapsed";
+const FLOAT_POS_KEY = "vellum-float-pos";
+
+let macros = null;
+
+function sendMacro(id) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ t: "macro", d: { id } }));
+}
+
+function confirmSheet(label, onConfirm) {
+  openSheet(label);
+  sheetButton(`Confirm: ${label}`, onConfirm);
+  sheetNote("tap anywhere else to cancel", true);
+}
+
+function activateMacro(btn) {
+  if (btn.options && btn.options.length) {
+    openSheet(btn.label);
+    for (const opt of btn.options) {
+      sheetButton(opt.label, () => {
+        if (opt.confirm) confirmSheet(opt.label, () => sendMacro(opt.id));
+        else sendMacro(opt.id);
+      });
+    }
+    return;
+  }
+  if (btn.confirm) confirmSheet(btn.label, () => sendMacro(btn.id));
+  else sendMacro(btn.id);
+}
+
+function currentGroup() {
+  if (!macros || !macros.groups.length) return null;
+  const savedName = localStorage.getItem(GROUP_KEY);
+  return macros.groups.find((g) => g.name === savedName) || macros.groups[0];
+}
+
+function renderMacros() {
+  renderFloating();
+  const group = currentGroup();
+  if (!group) {
+    macroRail.hidden = true;
+    return;
+  }
+  macroRail.hidden = false;
+  macroGroupBtn.textContent =
+    macros.groups.length > 1 ? `${group.name} ▾` : group.name;
+  macroButtonsEl.replaceChildren();
+  for (const btn of group.buttons) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "macro-btn";
+    el.textContent = btn.options && btn.options.length ? `${btn.label} ›` : btn.label;
+    if (btn.color) {
+      el.style.background = "none";
+      el.style.border = `1px solid ${btn.color}`;
+      el.style.color = btn.color;
+    }
+    el.addEventListener("click", () => activateMacro(btn));
+    macroButtonsEl.appendChild(el);
+  }
+  const collapsed = localStorage.getItem(COLLAPSE_KEY) === "1";
+  macroButtonsEl.hidden = collapsed;
+  macroCollapseBtn.textContent = collapsed ? "▸" : "▾";
+}
+
+macroGroupBtn.addEventListener("click", () => {
+  if (!macros || macros.groups.length <= 1) return;
+  openSheet("Macro group");
+  for (const group of macros.groups) {
+    sheetButton(group.name, () => {
+      localStorage.setItem(GROUP_KEY, group.name);
+      renderMacros();
+    });
+  }
+});
+
+macroCollapseBtn.addEventListener("click", () => {
+  const collapsed = localStorage.getItem(COLLAPSE_KEY) === "1";
+  localStorage.setItem(COLLAPSE_KEY, collapsed ? "0" : "1");
+  renderMacros();
+});
+
+function floatPositions() {
+  try {
+    return JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function renderFloating() {
+  floatingLayer.replaceChildren();
+  if (!macros) return;
+  const saved = floatPositions();
+  macros.floating.forEach((btn, i) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "float-btn";
+    el.textContent = btn.label;
+    if (btn.color) {
+      el.style.borderColor = btn.color;
+      el.style.color = btn.color;
+    }
+    // Device-local position wins; TOML x/y is the starting point; new
+    // buttons stack down the right edge.
+    const pos = saved[btn.id] || [btn.x ?? 0.86, btn.y ?? 0.18 + i * 0.12];
+    el.style.left = `${pos[0] * 100}%`;
+    el.style.top = `${pos[1] * 100}%`;
+    attachFloatBehavior(el, btn);
+    floatingLayer.appendChild(el);
+  });
+}
+
+function attachFloatBehavior(el, btn) {
+  let holdTimer = null;
+  let dragging = false;
+  el.addEventListener("pointerdown", (ev) => {
+    dragging = false;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      dragging = true;
+      el.classList.add("dragging");
+      el.setPointerCapture(ev.pointerId);
+    }, 450);
+  });
+  el.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    const rect = floatingLayer.getBoundingClientRect();
+    const x = Math.min(0.95, Math.max(0.05, (ev.clientX - rect.left) / rect.width));
+    const y = Math.min(0.95, Math.max(0.05, (ev.clientY - rect.top) / rect.height));
+    el.style.left = `${x * 100}%`;
+    el.style.top = `${y * 100}%`;
+    el.dataset.fx = x;
+    el.dataset.fy = y;
+  });
+  const endDrag = () => {
+    clearTimeout(holdTimer);
+    if (dragging && el.dataset.fx) {
+      const saved = floatPositions();
+      saved[btn.id] = [parseFloat(el.dataset.fx), parseFloat(el.dataset.fy)];
+      try {
+        localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(saved));
+      } catch { /* storage blocked — position just won't persist */ }
+    }
+    el.classList.remove("dragging");
+    // Cleared on a timeout so the click that follows pointerup still
+    // sees dragging=true and skips activation.
+    setTimeout(() => {
+      dragging = false;
+    }, 0);
+  };
+  el.addEventListener("pointerup", endDrag);
+  el.addEventListener("pointercancel", endDrag);
+  el.addEventListener("click", () => {
+    if (!dragging) activateMacro(btn);
+  });
 }
 
 // ---- Command input, repeat, history ---------------------------------------
