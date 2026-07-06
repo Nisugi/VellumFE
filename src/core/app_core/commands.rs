@@ -163,21 +163,53 @@ impl AppCore {
         self.add_system_message(
             "Off-LAN play: use Tailscale/WireGuard. Never expose this port to the open internet.",
         );
-        match qrcode::QrCode::new(url.as_bytes()) {
-            Ok(code) => {
-                // Inverted so QR-dark modules render as the (dark) window
-                // background and QR-light as bright text blocks.
-                let rendered = code
-                    .render::<qrcode::render::unicode::Dense1x2>()
-                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
-                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
-                    .build();
-                for line in rendered.lines() {
-                    self.add_system_message(line);
+        // A QR drawn with unicode blocks depends on font glyph coverage
+        // (the GUI font renders them all as tofu boxes), so render a real
+        // SVG QR into a local page and pop the default browser instead.
+        match Self::write_pairing_page(&url) {
+            Ok(path) => {
+                if open::that(&path).is_ok() {
+                    self.add_system_message("Opened the pairing QR in your browser.");
+                } else {
+                    self.add_system_message(&format!(
+                        "Pairing QR written to {} (open it in a browser)",
+                        path.display()
+                    ));
                 }
             }
-            Err(e) => tracing::warn!("webinfo QR render failed: {e}"),
+            Err(e) => {
+                tracing::warn!("webinfo pairing page failed: {e:#}");
+                self.add_system_message(&format!("Could not write pairing page: {e:#}"));
+            }
         }
+    }
+
+    /// Write ~/.vellum-fe/pair.html: a dark page with a scannable SVG QR
+    /// and the URL. Lives next to web-token — same trust domain.
+    fn write_pairing_page(url: &str) -> Result<std::path::PathBuf> {
+        use anyhow::Context as _;
+        let code = qrcode::QrCode::new(url.as_bytes()).context("QR encode failed")?;
+        let svg = code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(320, 320)
+            .dark_color(qrcode::render::svg::Color("#000000"))
+            .light_color(qrcode::render::svg::Color("#ffffff"))
+            .build();
+        let html = format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">\
+             <title>VellumFE pairing</title>\
+             <style>body{{background:#111318;color:#d6d6d6;font-family:ui-monospace,Consolas,monospace;\
+             display:flex;flex-direction:column;align-items:center;gap:18px;padding-top:6vh}}\
+             .qr{{background:#fff;padding:16px;border-radius:12px}}\
+             a{{color:#d9b44f;word-break:break-all;max-width:80vw}}</style></head>\
+             <body><h2>Scan with your phone</h2><div class=\"qr\">{svg}</div>\
+             <a href=\"{url}\">{url}</a>\
+             <p>This pairs the phone with every VellumFE session on this PC.</p>\
+             </body></html>"
+        );
+        let path = crate::config::Config::base_dir()?.join("pair.html");
+        std::fs::write(&path, html).context("Failed to write pair.html")?;
+        Ok(path)
     }
 
     /// Best-effort LAN IP: route lookup via an unconnected UDP socket

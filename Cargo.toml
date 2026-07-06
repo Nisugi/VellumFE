@@ -41,7 +41,7 @@ openssl = { version = "0.10", features = ["vendored"] }  # For CI builds - compi
 
 # Web server (mobile web frontend) - HTTP + WebSocket sidecar
 axum = { version = "0.8", features = ["ws"] }
-qrcode = { version = "0.14", default-features = false }  # .webinfo pairing QR
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .webinfo pairing QR
 
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
