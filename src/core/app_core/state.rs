@@ -724,6 +724,22 @@ impl AppCore {
         self.message_processor.remote = Some(sink);
     }
 
+    /// Declare that this runtime accepts session control (Connect /
+    /// Disconnect) from web clients. Only the headless runtime does.
+    pub fn set_remote_session_control(&mut self, enabled: bool) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_session_control(enabled);
+        }
+    }
+
+    /// Push a session status change to remote clients (headless supervisor
+    /// state transitions). No-op when web is disabled.
+    pub fn set_remote_session_state(&mut self, info: crate::core::remote::RemoteSessionInfo) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_session_state(info);
+        }
+    }
+
     /// Create or edit a phone-authored macro button. The edit lands in the
     /// macros-local.toml overlay (the hand-written macros.toml is never
     /// rewritten), then the merged set is re-published to every client.

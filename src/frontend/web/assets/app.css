@@ -97,7 +97,8 @@ html, body {
 .conn-down { color: var(--hp); }
 
 #wake-btn,
-#textsize-btn {
+#textsize-btn,
+#logout-btn {
   padding: 2px 8px;
   background: none;
   border: 1px solid var(--border);
@@ -105,6 +106,8 @@ html, body {
   color: var(--fg-dim);
   font-size: 13px;
 }
+
+#logout-btn { color: var(--hp); }
 
 /* Text size stepper (inside the sheet) */
 .size-stepper {
@@ -831,3 +834,152 @@ html, body {
   color: #0b0d10;
   font-weight: bold;
 }
+
+/* ---- Session screen (headless runtimes) --------------------------------- */
+
+#session-banner {
+  padding: 6px 12px;
+  background: #3a2a1a;
+  color: var(--st);
+  font-size: 13px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+
+#session-banner[hidden] { display: none; }
+
+#session-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 15; /* below the pairing overlay (20): pairing wins */
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+#session-overlay[hidden] { display: none; }
+
+#session-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#session-card h2 { color: var(--st); font-size: 18px; }
+#session-card h3 { color: var(--fg-dim); font-size: 13px; font-weight: normal; }
+
+#session-status { color: var(--fg-dim); font-size: 14px; }
+#session-error {
+  color: var(--hp);
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--hp);
+  border-radius: 6px;
+}
+
+#session-profiles { display: flex; flex-direction: column; gap: 8px; }
+#session-profiles.busy { opacity: 0.5; pointer-events: none; }
+
+.profile-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.profile-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+}
+
+.profile-name { font-size: 15px; }
+.profile-detail { font-size: 12px; color: var(--fg-dim); }
+
+.profile-delete {
+  padding: 0 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+.profile-password {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+}
+
+.profile-password input {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+}
+
+.profile-password button {
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  color: var(--st);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+#session-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+#session-form input,
+#session-form select {
+  padding: 10px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+}
+
+#login-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+#session-form button[type="submit"] {
+  padding: 10px;
+  background: var(--bg-panel);
+  color: var(--st);
+  border: 1px solid var(--st);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 15px;
+}
+
+#session-form :disabled { opacity: 0.5; }

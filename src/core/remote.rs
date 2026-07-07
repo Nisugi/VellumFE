@@ -154,6 +154,44 @@ impl RemoteMacros {
     }
 }
 
+/// Where the game session itself stands. Owned by the runtime that manages
+/// the connection (the headless supervisor); TUI/GUI sidecar sessions stay
+/// `Connected`-shaped implicitly and never send these.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionState {
+    /// No connection and none in progress; waiting for a login.
+    #[default]
+    Idle,
+    /// eAccess authentication in flight.
+    Authenticating,
+    /// Authenticated; connecting to the game server.
+    Connecting,
+    Connected,
+    /// Lost the connection; the supervisor is retrying.
+    Reconnecting,
+    /// Ended (auth failure or unrecoverable); shows `error`.
+    Disconnected,
+}
+
+/// Session status mirrored to web clients (snapshot field + `session`
+/// delta). `session_control` is the capability flag: true only when the
+/// serving runtime accepts Connect/Disconnect (headless), so sidecar
+/// sessions never render a login screen.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteSessionInfo {
+    pub state: SessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub session_control: bool,
+}
+
 /// A state change broadcast to all connected remote clients.
 #[derive(Clone, Debug)]
 pub enum RemoteDelta {
@@ -186,6 +224,8 @@ pub enum RemoteDelta {
     /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
     /// category order.
     Effects(Vec<crate::data::ActiveEffectsContent>),
+    /// Game-session status changed (headless runtime only).
+    Session(RemoteSessionInfo),
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -235,6 +275,20 @@ pub enum RemoteEvent {
     /// "bound port 8041" or "pinned port taken, web disabled"). The main
     /// loop surfaces it as a system message.
     Notice(String),
+    /// A login request from a web client (headless runtime only; TUI/GUI
+    /// reply with a notice). Either a saved profile name, or inline
+    /// credentials that optionally get saved as a profile.
+    SessionConnect {
+        profile: Option<String>,
+        account: Option<String>,
+        password: Option<String>,
+        character: Option<String>,
+        game: Option<String>,
+        save_password: bool,
+        profile_name: Option<String>,
+    },
+    /// User-initiated disconnect: end the session, suppress reconnection.
+    SessionDisconnect,
 }
 
 /// Latest coalesced game state, published via `watch` so the server can
@@ -253,6 +307,9 @@ pub struct RemoteStateSnapshot {
     pub server_time: i64,
     /// Active effects in fixed category order (empty categories omitted).
     pub effects: Vec<crate::data::ActiveEffectsContent>,
+    /// Session status + session-control capability. Overlaid by the sink in
+    /// `flush_state` (the sink owns it, not GameState).
+    pub session: RemoteSessionInfo,
 }
 
 /// Category display order for effects sent to clients.
@@ -280,6 +337,7 @@ impl RemoteStateSnapshot {
                 .filter_map(|category| game_state.effects.get(*category))
                 .cloned()
                 .collect(),
+            session: RemoteSessionInfo::default(),
         }
     }
 }
@@ -311,6 +369,9 @@ pub struct RemoteSink {
     bound_port: Arc<std::sync::OnceLock<u16>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
+    /// Session status owned by the serving runtime (headless supervisor);
+    /// overlaid onto every snapshot/flush.
+    session: RemoteSessionInfo,
 }
 
 impl RemoteSink {
@@ -352,10 +413,44 @@ impl RemoteSink {
                 macros_tx,
                 bound_port,
                 last: RemoteStateSnapshot::default(),
+                session: RemoteSessionInfo::default(),
             },
             handles,
             event_rx,
         )
+    }
+
+    /// Declare that this runtime accepts Connect/Disconnect from clients
+    /// (headless only). Broadcast so already-connected clients learn the
+    /// capability; also carried by every snapshot.
+    pub fn set_session_control(&mut self, enabled: bool) {
+        if self.session.session_control != enabled {
+            self.session.session_control = enabled;
+            self.publish_session();
+        }
+    }
+
+    /// Publish a session status change (state machine transitions in the
+    /// headless supervisor). Broadcast immediately — session changes must
+    /// not wait for the next game-text batch — and folded into the watch
+    /// so connect-time snapshots agree.
+    pub fn set_session_state(&mut self, mut info: RemoteSessionInfo) {
+        info.session_control = self.session.session_control;
+        if self.session == info {
+            return;
+        }
+        self.session = info;
+        self.publish_session();
+    }
+
+    fn publish_session(&mut self) {
+        let _ = self
+            .delta_tx
+            .send(RemoteDelta::Session(self.session.clone()));
+        self.state_tx.send_modify(|snap| {
+            snap.session = self.session.clone();
+        });
+        self.last.session = self.session.clone();
     }
 
     /// The port the server actually bound (may differ from config when an
@@ -410,7 +505,10 @@ impl RemoteSink {
     /// broadcast one coalesced delta per changed group. Called once per
     /// message batch (AppCore::flush_remote_state builds the snapshot —
     /// room name and exits need fallbacks only AppCore can see).
-    pub fn flush_state(&mut self, snap: RemoteStateSnapshot) {
+    pub fn flush_state(&mut self, mut snap: RemoteStateSnapshot) {
+        // The sink owns session status; AppCore builds snapshots from
+        // GameState which knows nothing about it.
+        snap.session = self.session.clone();
         if snap == self.last {
             return;
         }

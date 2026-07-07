@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::remote::{RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteStateSnapshot};
+use crate::core::remote::{
+    RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteSessionInfo, RemoteStateSnapshot,
+};
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
 use crate::data::widget::{ActiveEffectsContent, StyledLine};
@@ -108,6 +110,7 @@ struct SnapshotPayload {
     indicators: StatusInfo,
     rt: RtPayload,
     effects: Vec<ActiveEffectsContent>,
+    session: RemoteSessionInfo,
     text: Vec<SnapshotLine>,
 }
 
@@ -156,6 +159,7 @@ pub fn snapshot(
             server_time: state.server_time,
         },
         effects: state.effects.clone(),
+        session: state.session.clone(),
         text: lines
             .into_iter()
             .map(|l| SnapshotLine {
@@ -228,7 +232,30 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         ),
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
+        RemoteDelta::Session(info) => encode("session", last_seq, info),
     }
+}
+
+/// One saved login shown on the session screen. Never carries the password
+/// or the full account name — only whether a password is stored.
+#[derive(Serialize)]
+pub struct ProfileEntry {
+    pub name: String,
+    pub account_masked: String,
+    pub character: String,
+    pub game: String,
+    pub has_password: bool,
+}
+
+/// Saved-profile list; direct reply to a `get_profiles` request.
+pub fn profiles(list: &[ProfileEntry], seq: u64) -> String {
+    encode("profiles", seq, serde_json::json!({ "list": list }))
+}
+
+/// Mask an account name for display: first two characters + asterisks.
+pub fn mask_account(account: &str) -> String {
+    let visible: String = account.chars().take(2).collect();
+    format!("{visible}{}", "*".repeat(account.chars().count().saturating_sub(2)))
 }
 
 /// Macro definitions; sent on connect and after `.reloadmacros`.
@@ -280,6 +307,23 @@ pub enum ClientMessage {
         group: Option<String>,
         label: String,
     },
+    /// Start a game session (headless runtime only). Either a saved profile
+    /// name, or inline credentials optionally saved as a new profile.
+    Connect {
+        profile: Option<String>,
+        account: Option<String>,
+        password: Option<String>,
+        character: Option<String>,
+        game: Option<String>,
+        save_password: bool,
+        profile_name: Option<String>,
+    },
+    /// End the session and suppress reconnection (headless runtime only).
+    Disconnect,
+    /// Request the saved-profile list (direct `profiles` reply).
+    GetProfiles,
+    /// Delete a saved profile (and its stored password if unshared).
+    DeleteProfile { name: String },
 }
 
 fn opt_str(value: Option<&serde_json::Value>) -> Option<String> {
@@ -396,6 +440,41 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 label,
             })
         }
+        "connect" => {
+            let profile = opt_str(msg.d.get("profile"));
+            let account = opt_str(msg.d.get("account"));
+            let character = opt_str(msg.d.get("character"));
+            // A connect needs either a saved profile or inline credentials.
+            if profile.is_none() && (account.is_none() || character.is_none()) {
+                return None;
+            }
+            Some(ClientMessage::Connect {
+                profile,
+                account,
+                // Password may legitimately contain leading/trailing spaces;
+                // don't trim, only reject empty.
+                password: msg
+                    .d
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                character,
+                game: opt_str(msg.d.get("game")),
+                save_password: msg
+                    .d
+                    .get("save_password")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                profile_name: opt_str(msg.d.get("profile_name")),
+            })
+        }
+        "disconnect" => Some(ClientMessage::Disconnect),
+        "get_profiles" => Some(ClientMessage::GetProfiles),
+        "delete_profile" => {
+            let name = msg.d.get("name")?.as_str()?.to_string();
+            Some(ClientMessage::DeleteProfile { name })
+        }
         _ => None,
     }
 }
@@ -438,6 +517,101 @@ mod tests {
         assert_eq!(json["t"], "text");
         assert_eq!(json["d"]["stream"], "main");
         assert_eq!(json["d"]["line"]["segments"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn parse_session_control_messages() {
+        // Saved-profile connect (password optional).
+        assert_eq!(
+            parse_client_message(r#"{"t":"connect","d":{"profile":"Main"}}"#),
+            Some(ClientMessage::Connect {
+                profile: Some("Main".to_string()),
+                account: None,
+                password: None,
+                character: None,
+                game: None,
+                save_password: false,
+                profile_name: None,
+            })
+        );
+        // Inline credentials with save.
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"connect","d":{"account":"ACCT","password":"p w","character":"Testy","game":"prime","save_password":true,"profile_name":"Testy"}}"#
+            ),
+            Some(ClientMessage::Connect {
+                profile: None,
+                account: Some("ACCT".to_string()),
+                password: Some("p w".to_string()),
+                character: Some("Testy".to_string()),
+                game: Some("prime".to_string()),
+                save_password: true,
+                profile_name: Some("Testy".to_string()),
+            })
+        );
+        // Neither a profile nor complete inline credentials → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"connect","d":{"account":"ACCT"}}"#),
+            None
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"disconnect","d":{}}"#),
+            Some(ClientMessage::Disconnect)
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"get_profiles","d":{}}"#),
+            Some(ClientMessage::GetProfiles)
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"delete_profile","d":{"name":"Main"}}"#),
+            Some(ClientMessage::DeleteProfile {
+                name: "Main".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn session_delta_and_snapshot_field() {
+        use crate::core::remote::{RemoteSessionInfo, SessionState};
+        let info = RemoteSessionInfo {
+            state: SessionState::Reconnecting,
+            character: Some("Testy".to_string()),
+            game: None,
+            attempt: Some(3),
+            error: None,
+            session_control: true,
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&delta(&RemoteDelta::Session(info.clone()), 5)).unwrap();
+        assert_eq!(json["t"], "session");
+        assert_eq!(json["d"]["state"], "reconnecting");
+        assert_eq!(json["d"]["attempt"], 3);
+        assert_eq!(json["d"]["session_control"], true);
+
+        let mut state = RemoteStateSnapshot::default();
+        state.session = info;
+        let json: serde_json::Value =
+            serde_json::from_str(&snapshot(&state, Vec::new(), SnapshotMode::Full, 0)).unwrap();
+        assert_eq!(json["d"]["session"]["state"], "reconnecting");
+        assert_eq!(json["d"]["session"]["character"], "Testy");
+    }
+
+    #[test]
+    fn profiles_reply_masks_accounts() {
+        assert_eq!(mask_account("MYACCOUNT"), "MY*******");
+        assert_eq!(mask_account("ab"), "ab");
+        assert_eq!(mask_account("a"), "a");
+        let list = vec![ProfileEntry {
+            name: "Main".to_string(),
+            account_masked: mask_account("MYACCOUNT"),
+            character: "Testy".to_string(),
+            game: "prime".to_string(),
+            has_password: true,
+        }];
+        let json: serde_json::Value = serde_json::from_str(&profiles(&list, 9)).unwrap();
+        assert_eq!(json["t"], "profiles");
+        assert_eq!(json["d"]["list"][0]["account_masked"], "MY*******");
+        assert_eq!(json["d"]["list"][0]["has_password"], true);
     }
 
     #[test]

@@ -619,6 +619,9 @@ function handleSnapshot(d) {
   setIndicators(d.indicators || {});
   setEffects(d.effects || []);
   setRt(d.rt);
+  // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
+  // session as an implicitly-connected one we can't control.
+  setSession(d.session || { state: "connected", session_control: false });
   if (autoScroll) scrollToBottom();
 }
 
@@ -645,6 +648,8 @@ function handleMessage(msg) {
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
+    case "session": setSession(msg.d); break;
+    case "profiles": renderProfiles(msg.d.list || []); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -685,6 +690,173 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+// ---- Session screen (headless runtimes only) ------------------------------
+// Servers with session_control (the headless/Android runtime) mirror the
+// game-session state machine: idle → authenticating → connecting →
+// connected, with reconnecting/disconnected on drops. The overlay is the
+// login screen; sidecar servers (TUI/GUI hosting) never advertise the
+// capability and never see any of this.
+
+let session = { state: "connected", session_control: false };
+let profilesRequested = false;
+
+const sessionOverlay = document.getElementById("session-overlay");
+const sessionStatus = document.getElementById("session-status");
+const sessionError = document.getElementById("session-error");
+const sessionProfiles = document.getElementById("session-profiles");
+const sessionForm = document.getElementById("session-form");
+const logoutBtn = document.getElementById("logout-btn");
+const sessionBanner = document.getElementById("session-banner");
+
+function sendJson(t, d) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  state.ws.send(JSON.stringify({ t, d: d || {} }));
+  return true;
+}
+
+function setSession(d) {
+  session = d || { state: "connected", session_control: false };
+  updateSessionUi();
+}
+
+const SESSION_PROGRESS = {
+  authenticating: "Authenticating with play.net…",
+  connecting: "Connecting to the game…",
+};
+
+function updateSessionUi() {
+  if (!session.session_control) {
+    sessionOverlay.hidden = true;
+    sessionBanner.hidden = true;
+    logoutBtn.hidden = true;
+    return;
+  }
+
+  logoutBtn.hidden = session.state !== "connected";
+
+  // Mid-session drops keep the play view (game text stays useful) and show
+  // a banner; the login overlay is for sessions that aren't running.
+  if (session.state === "reconnecting") {
+    sessionBanner.textContent = session.attempt
+      ? `Reconnecting… (attempt ${session.attempt})`
+      : "Reconnecting…";
+    sessionBanner.hidden = false;
+    sessionOverlay.hidden = true;
+    return;
+  }
+  sessionBanner.hidden = true;
+
+  if (session.state === "connected") {
+    sessionOverlay.hidden = true;
+    profilesRequested = false;
+    return;
+  }
+
+  // idle / disconnected / authenticating / connecting → overlay.
+  const inProgress = session.state in SESSION_PROGRESS;
+  sessionStatus.textContent = inProgress ? SESSION_PROGRESS[session.state] : "";
+  sessionStatus.hidden = !inProgress;
+  sessionError.textContent = session.error || "";
+  sessionError.hidden = !session.error;
+  sessionForm.querySelectorAll("input, select, button").forEach((el) => {
+    el.disabled = inProgress;
+  });
+  sessionProfiles.classList.toggle("busy", inProgress);
+  sessionOverlay.hidden = false;
+  if (!profilesRequested && sendJson("get_profiles")) {
+    profilesRequested = true;
+  }
+}
+
+function renderProfiles(list) {
+  sessionProfiles.replaceChildren();
+  for (const p of list) {
+    const row = document.createElement("div");
+    row.className = "profile-row";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "profile-btn";
+    const label = document.createElement("span");
+    label.className = "profile-name";
+    label.textContent = p.character || p.name;
+    const detail = document.createElement("span");
+    detail.className = "profile-detail";
+    detail.textContent = `${p.name} · ${p.account_masked} · ${p.game}`;
+    btn.append(label, detail);
+    btn.addEventListener("click", () => {
+      if (p.has_password) {
+        sendJson("connect", { profile: p.name });
+      } else {
+        // No stored password: reveal a one-off password prompt for it.
+        askProfilePassword(row, p);
+      }
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "profile-delete";
+    del.setAttribute("aria-label", `Delete profile ${p.name}`);
+    del.textContent = "✕";
+    del.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openSheet(`Delete profile '${p.name}'?`);
+      sheetButton("Delete", () => sendJson("delete_profile", { name: p.name }));
+      sheetNote("The saved password is removed too.", true);
+    });
+
+    row.append(btn, del);
+    sessionProfiles.appendChild(row);
+  }
+}
+
+function askProfilePassword(row, profile) {
+  if (row.querySelector(".profile-password")) return;
+  const form = document.createElement("form");
+  form.className = "profile-password";
+  const input = document.createElement("input");
+  input.type = "password";
+  input.placeholder = "password";
+  input.autocomplete = "current-password";
+  const go = document.createElement("button");
+  go.type = "submit";
+  go.textContent = "Connect";
+  form.append(input, go);
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!input.value) return;
+    sendJson("connect", { profile: profile.name, password: input.value });
+  });
+  row.appendChild(form);
+  input.focus();
+}
+
+sessionForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const account = document.getElementById("login-account").value.trim();
+  const password = document.getElementById("login-password").value;
+  const character = document.getElementById("login-character").value.trim();
+  const game = document.getElementById("login-game").value;
+  const save = document.getElementById("login-save").checked;
+  if (!account || !password || !character) return;
+  sendJson("connect", {
+    account,
+    password,
+    character,
+    game,
+    save_password: save,
+    profile_name: save ? character : null,
+  });
+  document.getElementById("login-password").value = "";
+  // The profile list may gain an entry; refresh next time the overlay shows.
+  profilesRequested = false;
+});
+
+logoutBtn.addEventListener("click", () => {
+  openSheet("Disconnect from the game?");
+  sheetButton("Disconnect", () => sendJson("disconnect"));
+});
 
 // ---- Bottom sheet (noun menus + local pickers) ---------------------------
 

@@ -22,9 +22,12 @@
       <span id="topbar-right">
         <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
         <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
+        <button id="logout-btn" type="button" aria-label="Disconnect from the game"
+                title="Disconnect from the game" hidden>&#9211;</button>
         <span id="conn" class="conn conn-down">connecting&hellip;</span>
       </span>
     </header>
+    <div id="session-banner" hidden></div>
     <nav id="chips"></nav>
     <main id="pane-wrap">
       <div id="text-pane"></div>
@@ -75,6 +78,35 @@
              autocorrect="off" spellcheck="false" placeholder="pairing token">
       <button type="submit">Connect</button>
     </form>
+  </div>
+  <div id="session-overlay" hidden>
+    <div id="session-card">
+      <h2>VellumFE</h2>
+      <p id="session-status" hidden></p>
+      <p id="session-error" hidden></p>
+      <div id="session-profiles"></div>
+      <form id="session-form" autocomplete="off">
+        <h3>New login</h3>
+        <input id="login-account" type="text" placeholder="play.net account"
+               autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input id="login-password" type="password" placeholder="password"
+               autocomplete="current-password">
+        <input id="login-character" type="text" placeholder="character"
+               autocapitalize="off" autocorrect="off" spellcheck="false">
+        <select id="login-game">
+          <option value="prime" selected>GemStone IV</option>
+          <option value="platinum">GemStone IV Platinum</option>
+          <option value="shattered">GemStone IV Shattered</option>
+          <option value="test">GemStone IV Test</option>
+          <option value="dr">DragonRealms</option>
+          <option value="drplatinum">DragonRealms Platinum</option>
+          <option value="drfallen">DragonRealms Fallen</option>
+          <option value="drtest">DragonRealms Test</option>
+        </select>
+        <label id="login-save-row"><input id="login-save" type="checkbox"> Remember this login</label>
+        <button id="login-submit" type="submit">Connect</button>
+      </form>
+    </div>
   </div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" hidden>

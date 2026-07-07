@@ -1414,6 +1414,15 @@ impl VellumGuiApp {
                 crate::core::remote::RemoteEvent::Notice(message) => {
                     self.app_core.add_system_message(&message);
                 }
+                crate::core::remote::RemoteEvent::SessionConnect { .. }
+                | crate::core::remote::RemoteEvent::SessionDisconnect => {
+                    // Sidecar sessions are owned by this local UI; the web
+                    // client shouldn't offer these (session_control is
+                    // false), but answer stray requests politely.
+                    self.app_core.add_system_message(
+                        "Session control is only available in headless mode.",
+                    );
+                }
                 crate::core::remote::RemoteEvent::Macro { id } => {
                     // Resolve the id against config; the command runs the
                     // same dispatch as typed input (echo, dot-commands).

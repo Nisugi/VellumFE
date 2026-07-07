@@ -481,6 +481,89 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::MacroDelete { group, label })
             .is_ok(),
+        ClientMessage::Connect {
+            profile,
+            account,
+            password,
+            character,
+            game,
+            save_password,
+            profile_name,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::SessionConnect {
+                profile,
+                account,
+                password,
+                character,
+                game,
+                save_password,
+                profile_name,
+            })
+            .is_ok(),
+        ClientMessage::Disconnect => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::SessionDisconnect)
+            .is_ok(),
+        // Profile list/delete touch only launcher.toml via the config
+        // layer — answered here without a round-trip through the app loop.
+        ClientMessage::GetProfiles => {
+            let reply = profiles_reply(state);
+            socket.send(Message::Text(reply.into())).await.is_ok()
+        }
+        ClientMessage::DeleteProfile { name } => {
+            delete_profile(&name);
+            let reply = profiles_reply(state);
+            socket.send(Message::Text(reply.into())).await.is_ok()
+        }
+    }
+}
+
+/// Direct-mode saved profiles serialized for the session screen. Lich
+/// profiles are desktop-launcher concerns and are filtered out.
+fn profiles_reply(state: &WebState) -> String {
+    let list: Vec<protocol::ProfileEntry> = crate::config::profiles::LauncherStore::load()
+        .map(|store| {
+            store
+                .profiles
+                .iter()
+                .filter(|p| p.mode == crate::config::profiles::LaunchMode::Direct)
+                .map(|p| protocol::ProfileEntry {
+                    name: p.name.clone(),
+                    account_masked: protocol::mask_account(&p.account),
+                    character: p.character.clone(),
+                    game: p.game.clone(),
+                    has_password: p.password_saved,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let last_seq = state
+        .handles
+        .buffer
+        .lock()
+        .expect("remote buffer lock poisoned")
+        .last_seq();
+    protocol::profiles(&list, last_seq)
+}
+
+/// Remove a saved profile; drop its stored password too unless another
+/// profile shares the account.
+fn delete_profile(name: &str) {
+    let Ok(mut store) = crate::config::profiles::LauncherStore::load() else {
+        return;
+    };
+    let Some(removed) = store.remove(name) else {
+        return;
+    };
+    if let Err(e) = store.save() {
+        tracing::warn!("failed to save launcher.toml after delete: {e:#}");
+        return;
+    }
+    if removed.password_saved && !store.account_password_in_use(&removed.account) {
+        crate::config::profiles::delete_password(&removed.account);
     }
 }
 
