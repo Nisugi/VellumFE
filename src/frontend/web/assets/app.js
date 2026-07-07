@@ -44,12 +44,7 @@ let roomId = null;
 
 function renderTitle() {
   const showChar = titleMode === "char";
-  let value = showChar ? characterName || roomName : roomName || characterName;
-  // Room mode shows the room number when known (nav id in direct mode,
-  // Lich-extracted otherwise).
-  if (!showChar && value && value === roomName && roomId) {
-    value = `${value} · ${roomId}`;
-  }
+  const value = showChar ? characterName || roomName : roomName || characterName;
   topbarTitle.textContent = value || "—";
   topbarTitle.classList.toggle(
     "title-char",
@@ -729,6 +724,7 @@ function sendJson(t, d) {
 
 function setSession(d) {
   session = d || { state: "connected", session_control: false };
+  if (session.character) setCharacter(session.character);
   updateSessionUi();
 }
 
