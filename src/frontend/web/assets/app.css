@@ -5,6 +5,7 @@
 :root {
   --bg: #111318;
   --bg-panel: #1a1d24;
+  --panel-rgb: 26, 29, 36; /* --bg-panel as components, for adjustable alpha */
   --fg: #d6d6d6;
   --fg-dim: #8a8f98;
   --border: #2a2e37;
@@ -229,7 +230,7 @@ html, body {
   margin: -24px 0 0 -24px; /* position is the button center */
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: rgba(26, 29, 36, 0.82);
+  background: rgba(var(--panel-rgb), var(--float-alpha, 0.82));
   color: var(--fg);
   font: inherit;
   font-size: 12px;
@@ -719,7 +720,7 @@ html, body {
   right: 0;
   bottom: 0;
   z-index: 30;
-  background: var(--bg-panel);
+  background: rgba(var(--panel-rgb), var(--sheet-alpha, 1));
   border-top: 1px solid var(--border);
   border-radius: 12px 12px 0 0;
   max-height: 60%;
@@ -1381,7 +1382,7 @@ body.hide-chips #chips { display: none !important; }
   bottom: 0;
   width: min(75%, 300px);
   z-index: 8;
-  background: rgba(17, 19, 24, 0.93);
+  background: rgba(var(--panel-rgb), var(--drawer-alpha, 0.93));
   display: flex;
   flex-direction: column;
   transition: transform 200ms ease;
@@ -1538,3 +1539,21 @@ body.hide-macrorail #macro-rail { display: none !important; }
 }
 
 #topbar #topbar-title { width: 100%; }
+
+/* Opacity sliders (Appearance sheet) */
+.alpha-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+}
+
+.alpha-row label { flex: 1; color: var(--fg-dim); font-size: 13px; }
+.alpha-row input[type="range"] { flex: 2; accent-color: var(--st); }
+.alpha-row .alpha-value {
+  min-width: 42px;
+  text-align: right;
+  color: var(--fg-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

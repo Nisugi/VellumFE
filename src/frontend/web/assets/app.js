@@ -917,13 +917,17 @@ const THEMES = {
   dark: { label: "Vellum dark", vars: {} },
   black: {
     label: "Pure black (OLED)",
-    vars: { "--bg": "#000000", "--bg-panel": "#0b0b0e", "--border": "#1e2128" },
+    vars: {
+      "--bg": "#000000", "--bg-panel": "#0b0b0e", "--border": "#1e2128",
+      "--panel-rgb": "11, 11, 14",
+    },
   },
   contrast: {
     label: "High contrast",
     vars: {
       "--bg": "#000000", "--bg-panel": "#101014", "--fg": "#ffffff",
       "--fg-dim": "#c0c6cf", "--border": "#4a5060",
+      "--panel-rgb": "16, 16, 20",
     },
   },
   light: {
@@ -931,9 +935,17 @@ const THEMES = {
     vars: {
       "--bg": "#f2efe9", "--bg-panel": "#e6e1d8", "--fg": "#2a2620",
       "--fg-dim": "#6b655c", "--border": "#c9c2b4", "--st": "#8a6d1f",
+      "--panel-rgb": "230, 225, 216",
     },
   },
 };
+
+// Adjustable panel opacities (percent), applied as CSS alpha variables.
+const OPACITY_SETTINGS = [
+  ["float", "Floating buttons", "--float-alpha", 82],
+  ["drawer", "Side drawers", "--drawer-alpha", 93],
+  ["sheet", "Bottom menus", "--sheet-alpha", 100],
+];
 
 const CHROME_TOGGLES = [
   ["macrorail", "Macro bar (bottom)"],
@@ -961,6 +973,11 @@ function applyUiPrefs() {
   }
   for (const [key] of CHROME_TOGGLES) {
     document.body.classList.toggle(`hide-${key}`, !!uiPrefs.hide[key]);
+  }
+  const opacity = uiPrefs.opacity || {};
+  for (const [key, , cssVar, dflt] of OPACITY_SETTINGS) {
+    const pct = Number.isFinite(opacity[key]) ? opacity[key] : dflt;
+    root.style.setProperty(cssVar, String(Math.min(100, Math.max(20, pct)) / 100));
   }
 }
 applyUiPrefs();
@@ -992,6 +1009,33 @@ function openAppearanceSheet() {
   };
   refreshThemeButtons();
   sheetItems.appendChild(themeRow);
+
+  for (const [key, label, , dflt] of OPACITY_SETTINGS) {
+    const row = document.createElement("div");
+    row.className = "alpha-row";
+    const lab = document.createElement("label");
+    lab.textContent = label;
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "20";
+    slider.max = "100";
+    slider.step = "5";
+    const current = (uiPrefs.opacity || {})[key];
+    slider.value = String(Number.isFinite(current) ? current : dflt);
+    const value = document.createElement("span");
+    value.className = "alpha-value";
+    const refresh = () => { value.textContent = `${slider.value}%`; };
+    slider.addEventListener("input", () => {
+      uiPrefs.opacity = uiPrefs.opacity || {};
+      uiPrefs.opacity[key] = Number(slider.value);
+      saveUiPrefs();
+      applyUiPrefs();
+      refresh();
+    });
+    refresh();
+    row.append(lab, slider, value);
+    sheetItems.appendChild(row);
+  }
 
   for (const [key, label] of CHROME_TOGGLES) {
     const btn = document.createElement("button");
