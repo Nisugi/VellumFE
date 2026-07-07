@@ -1001,7 +1001,7 @@ function openAppearanceSheet() {
   sheetNote("Changes apply live — tap anywhere else to close", true);
 }
 
-document.getElementById("settings-btn").addEventListener("click", () => {
+function openSettingsSheet() {
   openSheet("Settings");
   sheetButton("Appearance", openAppearanceSheet);
   sheetButton(
@@ -1018,7 +1018,12 @@ document.getElementById("settings-btn").addEventListener("click", () => {
   for (const file of EDITOR_FILES) {
     sheetButton(file.label, () => openConfigEditor(file));
   }
-});
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettingsSheet);
+// The login screen covers the top bar; it gets its own settings entry so
+// highlights/appearance are reachable before logging in.
+document.getElementById("session-settings").addEventListener("click", openSettingsSheet);
 
 // ---- Highlight rule editor -------------------------------------------------
 // Structured editing of one scope's highlights file: list → tap → form.
@@ -1387,6 +1392,11 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#chips")) return; // long-press opens arrange
   if (ev.target.closest(".fx-pill")) return; // opens the effects sheet
   if (ev.target.closest("#textsize-btn")) return; // opens the size stepper
+  if (ev.target.closest("#settings-btn")) return; // opens the settings sheet
+  if (ev.target.closest("#session-settings")) return; // login-screen settings
+  if (ev.target.closest("#logout-btn")) return; // opens the disconnect confirm
+  if (ev.target.closest("#session-banner")) return; // opens stop-reconnect
+  if (ev.target.closest(".theme-row")) return; // appearance picks retarget
   if (ev.target.closest(".float-btn")) return;
   closeSheet();
 });

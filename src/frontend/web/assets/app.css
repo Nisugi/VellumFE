@@ -697,12 +697,14 @@ html, body {
   cursor: pointer;
 }
 
-/* Bottom-sheet menu for noun taps */
+/* Bottom-sheet menu for noun taps. Above every overlay (session 15,
+   pairing 20, editors 25): sheets are transient pickers opened FROM
+   whatever is on screen, including the login screen's settings gear. */
 #sheet-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.65);
-  z-index: 10;
+  z-index: 29;
 }
 
 #sheet {
@@ -710,7 +712,7 @@ html, body {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 11;
+  z-index: 30;
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   border-radius: 12px 12px 0 0;
@@ -1263,4 +1265,19 @@ body.hide-chips #chips { display: none !important; }
 .theme-btn.theme-active {
   color: var(--st);
   border-color: var(--st);
+}
+
+#session-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#session-settings {
+  padding: 4px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg-dim);
+  font-size: 14px;
 }
