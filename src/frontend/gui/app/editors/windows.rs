@@ -13,7 +13,23 @@ pub(in super::super) struct WindowEditorState {
     streams: String,
     max_lines: String,
     supports_streams: bool,
+    /// Some when the window is a countdown or progress widget: its feed id
+    /// and label are editable (the id decides which timer/bar updates it).
+    feed: Option<FeedFields>,
     error: Option<String>,
+}
+
+/// Editable feed binding for countdown/progress widgets.
+struct FeedFields {
+    kind: FeedKind,
+    id: String,
+    label: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FeedKind {
+    Countdown,
+    Progress,
 }
 
 impl WindowEditorState {
@@ -24,6 +40,7 @@ impl WindowEditorState {
             streams: String::new(),
             max_lines: String::new(),
             supports_streams: false,
+            feed: None,
             error: None,
         }
     }
@@ -67,6 +84,7 @@ impl VellumGuiApp {
         };
         state.selected = Some(name.to_string());
         state.error = None;
+        state.feed = None;
         if let Some(text) = text_content_of(&window.content) {
             state.title = text.title.clone();
             state.streams = text.streams.join(", ");
@@ -80,6 +98,21 @@ impl VellumGuiApp {
             state.streams = String::new();
             state.max_lines = String::new();
             state.supports_streams = false;
+            // Countdown/progress widgets: expose the feed binding so custom
+            // timers/bars can actually be pointed at an update source.
+            state.feed = match &window.content {
+                WindowContent::Countdown(countdown) => Some(FeedFields {
+                    kind: FeedKind::Countdown,
+                    id: countdown.countdown_id.clone(),
+                    label: countdown.label.clone(),
+                }),
+                WindowContent::Progress(progress) => Some(FeedFields {
+                    kind: FeedKind::Progress,
+                    id: progress.progress_id.clone(),
+                    label: progress.label.clone(),
+                }),
+                _ => None,
+            };
         }
         true
     }
@@ -121,6 +154,62 @@ impl VellumGuiApp {
             self.app_core
                 .message_processor
                 .update_text_stream_subscribers(&self.app_core.ui_state);
+        }
+
+        if let Some(feed) = &state.feed {
+            let id = feed.id.trim().to_string();
+            let label = feed.label.trim().to_string();
+
+            // Live content: countdown/progress updates match on this id
+            // directly (no cache), so the change takes effect immediately.
+            let Some(window) = self.app_core.ui_state.windows.get_mut(name) else {
+                return Err(format!("Window '{}' no longer exists.", name));
+            };
+            match (&mut window.content, feed.kind) {
+                (WindowContent::Countdown(countdown), FeedKind::Countdown) => {
+                    countdown.countdown_id = id.clone();
+                    countdown.label = label.clone();
+                }
+                (WindowContent::Progress(progress), FeedKind::Progress) => {
+                    progress.progress_id = id.clone();
+                    progress.label = label.clone();
+                }
+                _ => {
+                    return Err(format!(
+                        "Window '{}' is no longer a countdown/progress widget.",
+                        name
+                    ));
+                }
+            }
+
+            // Layout definition: persist the binding so it survives a save.
+            fn opt(value: &str) -> Option<String> {
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            }
+            if let Some(def) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                match (def, feed.kind) {
+                    (crate::config::WindowDef::Countdown { data, .. }, FeedKind::Countdown) => {
+                        data.id = opt(&id);
+                        data.label = opt(&label);
+                    }
+                    (crate::config::WindowDef::Progress { data, .. }, FeedKind::Progress) => {
+                        data.id = opt(&id);
+                        data.label = opt(&label);
+                    }
+                    _ => {}
+                }
+            }
+            self.app_core.layout_modified_since_save = true;
         }
 
         // Rename through the shared dot-command so the layout definition and
@@ -196,9 +285,32 @@ impl VellumGuiApp {
                             ui.text_edit_singleline(&mut state.max_lines);
                             ui.end_row();
                         }
+                        if let Some(feed) = state.feed.as_mut() {
+                            ui.label(match feed.kind {
+                                FeedKind::Countdown => "Countdown id",
+                                FeedKind::Progress => "Bar id",
+                            });
+                            ui.text_edit_singleline(&mut feed.id);
+                            ui.end_row();
+                            ui.label("Label");
+                            ui.text_edit_singleline(&mut feed.label);
+                            ui.end_row();
+                        }
                     });
                 if state.supports_streams {
                     ui.weak("Comma-separated stream ids (e.g. main, speech, thoughts).");
+                }
+                if let Some(feed) = &state.feed {
+                    ui.weak(match feed.kind {
+                        FeedKind::Countdown => {
+                            "Timer feed id this widget tracks: roundtime, casttime, \
+                             stuntime, or a custom id pushed by Lich."
+                        }
+                        FeedKind::Progress => {
+                            "Bar feed id this widget tracks: health, mana, stamina, \
+                             spirit, encumlevel, mindState, or a custom id pushed by Lich."
+                        }
+                    });
                 }
 
                 if let Some(error) = &state.error {

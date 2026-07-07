@@ -2837,6 +2837,12 @@ impl VellumGuiApp {
                     self.app_core.layout_modified_since_save = true;
                     self.app_core
                         .add_system_message(&format!("Window '{}' added.", actual_name));
+                    // Blank custom widgets start unconfigured (e.g. a countdown
+                    // with no feed id renders as nothing) — drop the user
+                    // straight into the editor, like the TUI does.
+                    if template.ends_with("_custom") {
+                        self.open_window_editor(Some(&actual_name));
+                    }
                 } else {
                     self.app_core.add_system_message(&format!(
                         "Window '{}' added but its definition could not be retrieved.",

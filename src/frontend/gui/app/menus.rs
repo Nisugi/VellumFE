@@ -515,11 +515,24 @@ impl VellumGuiApp {
             return;
         }
 
-        if command.strip_prefix("__ADD_CUSTOM__").is_some() {
-            self.app_core.add_system_message(
-                "Custom blank windows are not supported in the GUI yet; \
-                 use .addwindow <name> <type> <x> <y> <width> [height].",
-            );
+        if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
+            // "Custom (blank)" menu items carry a widget type, not a template
+            // name. Route to the matching `*_custom` blank template — its
+            // add path drops the user into the window editor to configure it.
+            let template = crate::config::Config::list_window_templates()
+                .into_iter()
+                .find(|name| {
+                    name.ends_with("_custom")
+                        && crate::config::Config::get_window_template(name)
+                            .is_some_and(|t| t.widget_type().eq_ignore_ascii_case(widget_type))
+                });
+            match template {
+                Some(template) => self.add_window_from_template(&template),
+                None => self.app_core.add_system_message(&format!(
+                    "No blank '{}' template exists; use .addwindow <name> {} <x> <y> <width> [height].",
+                    widget_type, widget_type
+                )),
+            }
             self.close_all_popup_menus();
             self.app_core.ui_state.input_mode = InputMode::Normal;
             return;
