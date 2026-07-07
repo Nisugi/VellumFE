@@ -316,6 +316,11 @@ pub async fn async_run(
         }
     }
 
+    // Set when the user quits: if the server hasn't closed the connection
+    // by the deadline, close it ourselves (some closes linger server-side —
+    // playtests saw quits that needed a follow-up command to complete).
+    let mut quit_deadline: Option<Instant> = None;
+
     tracing::info!("Headless runtime started (web UI is the interface)");
 
     while app_core.running {
@@ -373,6 +378,7 @@ pub async fn async_run(
                 }
             } => {
                 supervisor.connection = None;
+                quit_deadline = None;
                 app_core.game_state.connected = false;
                 // Unattended tracking: a loss with zero user input since
                 // the connection came up counts toward the cap — without
@@ -449,6 +455,24 @@ pub async fn async_run(
                     );
                 }
             }
+            // Quit grace expired: the server never closed after our quit —
+            // tear the connection down ourselves and land on the login
+            // screen without needing a nudge command.
+            _ = async {
+                match quit_deadline {
+                    Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                quit_deadline = None;
+                if let Some(conn) = supervisor.connection.take() {
+                    conn.task.abort();
+                    tracing::info!("Server didn't close after quit; closing locally");
+                }
+                app_core.game_state.connected = false;
+                app_core.add_system_message("Logged out.");
+                app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
+            }
             // Reconnect timer fired: start a fresh attempt.
             _ = async {
                 match supervisor.reconnect_at {
@@ -511,11 +535,15 @@ pub async fn async_run(
                     app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
                 }
                 SessionRequest::UserQuit => {
-                    // Don't abort: the quit command is in flight and the
-                    // game closes the connection once it processes it. The
-                    // flag makes that close land on the login screen.
+                    // Don't abort yet: the quit command is in flight and
+                    // the game closes the connection once it processes it.
+                    // The flag makes that close land on the login screen.
+                    // The deadline covers servers that linger without
+                    // closing (observed in playtests): if no close arrives
+                    // in time, tear the connection down ourselves.
                     supervisor.user_disconnected = true;
                     supervisor.reconnect_at = None;
+                    quit_deadline = Some(Instant::now() + Duration::from_secs(8));
                 }
                 connect @ SessionRequest::Connect { .. } => {
                     if supervisor.connection.is_some() {
