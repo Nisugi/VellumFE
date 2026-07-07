@@ -1306,3 +1306,63 @@ body.hide-chips #chips { display: none !important; }
   color: var(--fg-dim);
   font-size: 14px;
 }
+
+/* ---- Highlight form v2: pickers + preview --------------------------------- */
+
+#hl-preview {
+  padding: 12px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--story-size, 14px);
+  min-height: 1.4em;
+}
+
+.hl-color-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hl-color-label { color: var(--fg-dim); font-size: 13px; }
+
+.hl-color-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.hl-color-row input[type="color"] {
+  flex: 1;
+  min-height: 42px;
+  padding: 2px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.hl-color-row button {
+  padding: 0 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+}
+
+.hl-color-row button.hl-none-active {
+  color: var(--st);
+  border-color: var(--st);
+}
+
+#hl-form select {
+  padding: 10px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+}

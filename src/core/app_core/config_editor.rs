@@ -99,6 +99,29 @@ impl AppCore {
         std::fs::write(path, content).map_err(|e| format!("Write failed: {e}"))
     }
 
+    /// Sound files available for highlight rules (the form's dropdown).
+    fn list_sound_files() -> Vec<String> {
+        let Ok(dir) = Config::sounds_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                let lower = name.to_lowercase();
+                [".mp3", ".wav", ".ogg", ".flac"]
+                    .iter()
+                    .any(|ext| lower.ends_with(ext))
+                    .then_some(name)
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     fn reply_highlights(
         &mut self,
         client_id: u64,
@@ -113,8 +136,9 @@ impl AppCore {
             ),
             Err(e) => (serde_json::Value::Null, Some(e)),
         };
+        let sounds = Self::list_sound_files();
         if let Some(remote) = self.message_processor.remote.as_mut() {
-            remote.push_highlights(client_id, request_id, scope, rules, error);
+            remote.push_highlights(client_id, request_id, scope, rules, sounds, error);
         }
     }
 

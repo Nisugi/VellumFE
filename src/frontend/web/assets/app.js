@@ -875,11 +875,13 @@ sessionBanner.addEventListener("click", () => {
 // get onto the device: paste or import a desktop file, Save validates the
 // TOML server-side and hot-reloads.
 
+// Raw TOML editors: the import/export path for desktop configs and the
+// power-user escape hatch — the friendly editors are the primary UI.
 const EDITOR_FILES = [
-  { id: "highlights", label: "Highlights (this profile)", filename: "highlights.toml" },
-  { id: "highlights-global", label: "Highlights (global)", filename: "highlights.toml" },
-  { id: "colors", label: "Colors (this profile)", filename: "colors.toml" },
-  { id: "colors-global", label: "Colors (global)", filename: "colors.toml" },
+  { id: "highlights", label: "Advanced: highlights file (this profile)", filename: "highlights.toml" },
+  { id: "highlights-global", label: "Advanced: highlights file (global)", filename: "highlights.toml" },
+  { id: "colors", label: "Advanced: colors file (this profile)", filename: "colors.toml" },
+  { id: "colors-global", label: "Advanced: colors file (global)", filename: "colors.toml" },
 ];
 
 const editorOverlay = document.getElementById("editor-overlay");
@@ -1039,6 +1041,7 @@ const hlForm = document.getElementById("hl-form");
 const hlStatus = document.getElementById("hl-status");
 let hlScope = null;
 let hlRules = {};
+let hlSounds = [];
 let hlEditingName = null; // null = list view, "" = new rule
 let hlRequestCounter = 0;
 let hlPendingRequest = null;
@@ -1101,31 +1104,81 @@ function renderHlList() {
   }
 }
 
+// Color state: null = "no color set". The native pickers can't represent
+// empty, so the None buttons carry that state and the preview reflects it.
+let hlColors = { fg: null, bg: null };
+
 function openHlForm(name) {
   hlEditingName = name;
   const rule = name ? hlRules[name] || {} : {};
   document.getElementById("hl-name").value = name;
   document.getElementById("hl-pattern").value = rule.pattern || "";
-  document.getElementById("hl-fg").value = rule.fg || "";
-  document.getElementById("hl-bg").value = rule.bg || "";
+  hlColors = { fg: rule.fg || null, bg: rule.bg || null };
+  if (rule.fg && /^#[0-9a-f]{6}$/i.test(rule.fg)) {
+    document.getElementById("hl-fg-pick").value = rule.fg;
+  }
+  if (rule.bg && /^#[0-9a-f]{6}$/i.test(rule.bg)) {
+    document.getElementById("hl-bg-pick").value = rule.bg;
+  }
   document.getElementById("hl-bold").checked = !!rule.bold;
   document.getElementById("hl-line").checked = !!rule.color_entire_line;
-  document.getElementById("hl-sound").value = rule.sound || "";
+
+  // Sound dropdown: server-listed files, plus the rule's current value if
+  // it references something not in the folder (keeps it selectable).
+  const soundSel = document.getElementById("hl-sound");
+  soundSel.replaceChildren(new Option("None", ""));
+  const sounds = [...hlSounds];
+  if (rule.sound && !sounds.includes(rule.sound)) sounds.unshift(rule.sound);
+  for (const file of sounds) soundSel.appendChild(new Option(file, file));
+  soundSel.value = rule.sound || "";
+
   document.getElementById("hl-delete").hidden = !name;
   hlStatusMsg("", false);
-  updateHlSwatches();
+  updateHlPreview();
   hlListView.hidden = true;
   hlForm.hidden = false;
 }
 
-function updateHlSwatches() {
-  document.getElementById("hl-fg-swatch").style.background =
-    document.getElementById("hl-fg").value || "transparent";
-  document.getElementById("hl-bg-swatch").style.background =
-    document.getElementById("hl-bg").value || "transparent";
+function updateHlPreview() {
+  const preview = document.getElementById("hl-preview");
+  const text = document.getElementById("hl-preview-text");
+  const pattern = document.getElementById("hl-pattern").value.trim();
+  // Show the pattern itself when it reads like plain text; regex syntax
+  // gets a generic sample.
+  text.textContent =
+    pattern && !/[\\^$.|?*+()\[\]{}]/.test(pattern) ? pattern : "Sample game text";
+  const wholeLine = document.getElementById("hl-line").checked;
+  const target = wholeLine ? preview : text;
+  const other = wholeLine ? text : preview;
+  other.style.color = "";
+  other.style.background = "";
+  target.style.color = hlColors.fg || "";
+  target.style.background = hlColors.bg || "";
+  preview.style.fontWeight = text.style.fontWeight =
+    document.getElementById("hl-bold").checked ? "bold" : "";
+  document.getElementById("hl-fg-clear").classList.toggle("hl-none-active", !hlColors.fg);
+  document.getElementById("hl-bg-clear").classList.toggle("hl-none-active", !hlColors.bg);
 }
-document.getElementById("hl-fg").addEventListener("input", updateHlSwatches);
-document.getElementById("hl-bg").addEventListener("input", updateHlSwatches);
+
+document.getElementById("hl-fg-pick").addEventListener("input", (ev) => {
+  hlColors.fg = ev.target.value;
+  updateHlPreview();
+});
+document.getElementById("hl-bg-pick").addEventListener("input", (ev) => {
+  hlColors.bg = ev.target.value;
+  updateHlPreview();
+});
+document.getElementById("hl-fg-clear").addEventListener("click", () => {
+  hlColors.fg = null;
+  updateHlPreview();
+});
+document.getElementById("hl-bg-clear").addEventListener("click", () => {
+  hlColors.bg = null;
+  updateHlPreview();
+});
+document.getElementById("hl-pattern").addEventListener("input", updateHlPreview);
+document.getElementById("hl-bold").addEventListener("change", updateHlPreview);
+document.getElementById("hl-line").addEventListener("change", updateHlPreview);
 
 function handleHighlightsReply(d) {
   if (d.request_id !== hlPendingRequest) return;
@@ -1142,6 +1195,7 @@ function handleHighlightsReply(d) {
     return;
   }
   hlRules = d.rules || {};
+  hlSounds = d.sounds || [];
   if (hlAwaitingSave) {
     hlAwaitingSave = false;
     showHlList();
@@ -1162,11 +1216,9 @@ hlForm.addEventListener("submit", (ev) => {
   // cover survive the round trip.
   const base = (hlEditingName && hlRules[hlEditingName]) || {};
   const rule = { ...base, pattern };
-  const fg = document.getElementById("hl-fg").value.trim();
-  const bg = document.getElementById("hl-bg").value.trim();
-  const sound = document.getElementById("hl-sound").value.trim();
-  if (fg) rule.fg = fg; else delete rule.fg;
-  if (bg) rule.bg = bg; else delete rule.bg;
+  const sound = document.getElementById("hl-sound").value;
+  if (hlColors.fg) rule.fg = hlColors.fg; else delete rule.fg;
+  if (hlColors.bg) rule.bg = hlColors.bg; else delete rule.bg;
   if (sound) rule.sound = sound; else delete rule.sound;
   rule.bold = document.getElementById("hl-bold").checked;
   rule.color_entire_line = document.getElementById("hl-line").checked;

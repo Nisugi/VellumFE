@@ -142,19 +142,31 @@
       </div>
       <form id="hl-form" hidden autocomplete="off">
         <div id="hl-fields">
+          <div id="hl-preview"><span id="hl-preview-text">Sample game text</span></div>
           <label>Name <input id="hl-name" type="text" autocapitalize="off" spellcheck="false"></label>
-          <label>Pattern (regex) <input id="hl-pattern" type="text" autocapitalize="off"
+          <label>Pattern (text or regex) <input id="hl-pattern" type="text" autocapitalize="off"
                  autocorrect="off" spellcheck="false"></label>
           <div class="hl-colors">
-            <label>Text color <span class="hl-swatch" id="hl-fg-swatch"></span>
-              <input id="hl-fg" type="text" placeholder="#ff0000 or empty" autocapitalize="off" spellcheck="false"></label>
-            <label>Background <span class="hl-swatch" id="hl-bg-swatch"></span>
-              <input id="hl-bg" type="text" placeholder="empty = none" autocapitalize="off" spellcheck="false"></label>
+            <div class="hl-color-field">
+              <span class="hl-color-label">Text color</span>
+              <div class="hl-color-row">
+                <input id="hl-fg-pick" type="color" value="#ffff00" aria-label="Pick text color">
+                <button id="hl-fg-clear" type="button">None</button>
+              </div>
+            </div>
+            <div class="hl-color-field">
+              <span class="hl-color-label">Background</span>
+              <div class="hl-color-row">
+                <input id="hl-bg-pick" type="color" value="#333333" aria-label="Pick background color">
+                <button id="hl-bg-clear" type="button">None</button>
+              </div>
+            </div>
           </div>
           <label class="hl-check"><input id="hl-bold" type="checkbox"> Bold</label>
           <label class="hl-check"><input id="hl-line" type="checkbox"> Color entire line</label>
-          <label>Sound file <input id="hl-sound" type="text" placeholder="e.g. alert (from sounds folder)"
-                 autocapitalize="off" spellcheck="false"></label>
+          <label>Sound
+            <select id="hl-sound"><option value="">None</option></select>
+          </label>
         </div>
         <p id="hl-status" hidden></p>
         <div id="hl-actions">

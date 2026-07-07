@@ -242,12 +242,14 @@ pub enum RemoteDelta {
         saved: bool,
     },
     /// Reply to one client's structured highlight get/put/delete: the full
-    /// rule map for the scope (or an error).
+    /// rule map for the scope (or an error), plus the available sound
+    /// files for the editor's dropdown.
     Highlights {
         client_id: u64,
         request_id: u64,
         scope: String,
         rules: serde_json::Value,
+        sounds: Vec<String>,
         error: Option<String>,
     },
 }
@@ -576,12 +578,14 @@ impl RemoteSink {
     }
 
     /// Route a structured highlights reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
     pub fn push_highlights(
         &mut self,
         client_id: u64,
         request_id: u64,
         scope: String,
         rules: serde_json::Value,
+        sounds: Vec<String>,
         error: Option<String>,
     ) {
         let _ = self.delta_tx.send(RemoteDelta::Highlights {
@@ -589,6 +593,7 @@ impl RemoteSink {
             request_id,
             scope,
             rules,
+            sounds,
             error,
         });
     }

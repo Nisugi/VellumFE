@@ -242,6 +242,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             request_id,
             scope,
             rules,
+            sounds,
             error,
             ..
         } => encode(
@@ -251,6 +252,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "request_id": request_id,
                 "scope": scope,
                 "rules": rules,
+                "sounds": sounds,
                 "error": error,
             }),
         ),
