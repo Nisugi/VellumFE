@@ -87,6 +87,11 @@ struct Supervisor {
     /// Consecutive connection losses without user input (see
     /// MAX_UNATTENDED_LOSSES).
     unattended_losses: u32,
+    /// When the current connection attempt/session started (stall watchdog).
+    phase_started: Option<Instant>,
+    /// Whether any game text has arrived on the current connection — a
+    /// connected-but-silent session is treated as stalled.
+    first_text_seen: bool,
     /// Display fields for session status pushes.
     character: Option<String>,
     game: Option<String>,
@@ -101,6 +106,8 @@ impl Supervisor {
 
     fn spawn(&mut self, app_core: &AppCore, server_tx: mpsc::Sender<ServerMessage>) {
         self.saw_input_since_connect = false;
+        self.phase_started = Some(Instant::now());
+        self.first_text_seen = false;
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
         let raw_logger = match RawLogger::new(&app_core.config) {
             Ok(logger) => logger,
@@ -285,6 +292,8 @@ pub async fn async_run(
         user_disconnected: false,
         saw_input_since_connect: false,
         unattended_losses: 0,
+        phase_started: None,
+        first_text_seen: false,
     };
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
@@ -356,6 +365,9 @@ pub async fn async_run(
             }
             maybe_msg = server_rx.recv() => {
                 if let Some(msg) = maybe_msg {
+                    if matches!(msg, ServerMessage::Text(_)) {
+                        supervisor.first_text_seen = true;
+                    }
                     let newly_connected = handle_server_message(&mut app_core, msg);
                     if newly_connected {
                         supervisor.reconnect_attempt = 0;
@@ -415,6 +427,11 @@ pub async fn async_run(
                             !supervisor.can_reconnect()
                         }
                     }
+                    Err(join_err) if join_err.is_cancelled() => {
+                        // Watchdog or teardown aborted the task; the
+                        // scheduler below decides what happens next.
+                        !supervisor.can_reconnect()
+                    }
                     Err(join_err) => {
                         tracing::error!("Network task panicked: {join_err}");
                         !supervisor.can_reconnect()
@@ -460,6 +477,26 @@ pub async fn async_run(
                     app_core.set_remote_session_state(
                         supervisor.status(SessionState::Reconnecting),
                     );
+                }
+            }
+            // Stall watchdog: a connection that has produced no game text
+            // within the window is stuck (auth server hang, silent socket).
+            // Tear it down; the completion arm schedules the retry. Once
+            // text flows this branch goes dormant (no periodic wakeups).
+            _ = tokio::time::sleep(Duration::from_secs(5)),
+                if supervisor.connection.is_some() && !supervisor.first_text_seen => {
+                let stalled = supervisor
+                    .phase_started
+                    .is_some_and(|at| at.elapsed() > Duration::from_secs(45));
+                if stalled {
+                    tracing::warn!("No game data within 45s of starting the connection; recycling");
+                    app_core.add_system_message(
+                        "Login is not responding — retrying...",
+                    );
+                    if let Some(conn) = supervisor.connection.as_ref() {
+                        conn.task.abort();
+                    }
+                    // Completion arm fires next with a cancelled result.
                 }
             }
             // Quit grace expired: the server never closed after our quit —
@@ -515,6 +552,9 @@ pub async fn async_run(
             }
         }
         while let Ok(msg) = server_rx.try_recv() {
+            if matches!(msg, ServerMessage::Text(_)) {
+                supervisor.first_text_seen = true;
+            }
             let newly_connected = handle_server_message(&mut app_core, msg);
             if newly_connected {
                 supervisor.reconnect_attempt = 0;

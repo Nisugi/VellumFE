@@ -383,9 +383,13 @@ impl DirectConnection {
 
         let (host, port) = fix_game_host_port(&ticket.game_host, ticket.game_port);
         info!("Connecting directly to {}:{}...", host, port);
-        let mut stream = TcpStream::connect(format!("{}:{}", host, port))
-            .await
-            .context("Failed to connect to game server")?;
+        let mut stream = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            TcpStream::connect(format!("{}:{}", host, port)),
+        )
+        .await
+        .context("Timed out connecting to game server")?
+        .context("Failed to connect to game server")?;
 
         send_direct_handshake(&mut stream, &ticket).await?;
 
@@ -673,7 +677,15 @@ mod eaccess {
     /// The old OpenSSL code also disabled session caching to send an empty
     /// Session ID; native-tls has no knob for that, but a fresh connector per
     /// login starts with no session to resume, which has the same effect.
+    /// How long any single eAccess connect/read/write may take. Without
+    /// these the blocking socket waits forever when the auth server stalls
+    /// (observed in playtests as "Authenticating…" hanging until quit) —
+    /// with them, a stall becomes an error the reconnect supervisor retries.
+    const AUTH_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
     fn tls_handshake() -> Result<TlsStream<TcpStream>> {
+        use std::net::ToSocketAddrs;
+
         let connector = TlsConnector::builder()
             .use_sni(false)
             .danger_accept_invalid_certs(true)
@@ -681,8 +693,29 @@ mod eaccess {
             .build()
             .context("Failed to build TLS connector")?;
 
-        let stream = TcpStream::connect((HOST, PORT)).context("Failed to open TLS socket")?;
+        let mut last_err = None;
+        let mut stream = None;
+        for addr in (HOST, PORT)
+            .to_socket_addrs()
+            .context("Failed to resolve eAccess host")?
+        {
+            match TcpStream::connect_timeout(&addr, AUTH_IO_TIMEOUT) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        let stream = stream.ok_or_else(|| {
+            anyhow!(
+                "Failed to open TLS socket: {}",
+                last_err.map(|e| e.to_string()).unwrap_or_default()
+            )
+        })?;
         stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(AUTH_IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(AUTH_IO_TIMEOUT))?;
         connector
             .connect(HOST, stream)
             .map_err(|e| anyhow!("TLS handshake with eAccess failed: {e}"))
