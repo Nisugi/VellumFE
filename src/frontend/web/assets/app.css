@@ -1231,3 +1231,36 @@ html, body {
 #hl-status { color: var(--fg-dim); font-size: 13px; }
 #hl-status.editor-error { color: var(--hp); }
 #hl-status[hidden] { display: none; }
+
+/* ---- Appearance prefs ----------------------------------------------------- */
+
+/* Chrome visibility toggles (Settings -> Appearance). !important because
+   some of these elements manage their own hidden attribute from JS. */
+body.hide-vitals #vitals { display: none !important; }
+body.hide-hands #hands { display: none !important; }
+body.hide-rt #rt-label { display: none !important; }
+body.hide-fx #fx-buffs, body.hide-fx #fx-debuffs { display: none !important; }
+body.hide-chips #chips { display: none !important; }
+
+.theme-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+}
+
+.theme-btn {
+  flex: 1 1 40%;
+  padding: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.theme-btn.theme-active {
+  color: var(--st);
+  border-color: var(--st);
+}

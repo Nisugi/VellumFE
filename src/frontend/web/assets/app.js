@@ -890,8 +890,120 @@ let editorFile = null; // active EDITOR_FILES entry
 let configRequestCounter = 0;
 let pendingConfigRequest = null;
 
+// ---- Appearance (client-side prefs) ----------------------------------------
+// Theme presets are CSS-variable override sets; chrome toggles are body
+// classes. Both persist per device — nothing crosses the wire.
+
+const UI_PREFS_KEY = "vellum-ui-prefs";
+let uiPrefs = { theme: "dark", hide: {} };
+try {
+  const stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || "{}");
+  if (stored && typeof stored === "object") {
+    uiPrefs = { theme: stored.theme || "dark", hide: stored.hide || {} };
+  }
+} catch { /* defaults */ }
+
+const THEMES = {
+  dark: { label: "Vellum dark", vars: {} },
+  black: {
+    label: "Pure black (OLED)",
+    vars: { "--bg": "#000000", "--bg-panel": "#0b0b0e", "--border": "#1e2128" },
+  },
+  contrast: {
+    label: "High contrast",
+    vars: {
+      "--bg": "#000000", "--bg-panel": "#101014", "--fg": "#ffffff",
+      "--fg-dim": "#c0c6cf", "--border": "#4a5060",
+    },
+  },
+  light: {
+    label: "Parchment",
+    vars: {
+      "--bg": "#f2efe9", "--bg-panel": "#e6e1d8", "--fg": "#2a2620",
+      "--fg-dim": "#6b655c", "--border": "#c9c2b4", "--st": "#8a6d1f",
+    },
+  },
+};
+
+const CHROME_TOGGLES = [
+  ["vitals", "Vitals bars"],
+  ["hands", "Hands"],
+  ["rt", "RT label"],
+  ["fx", "Effect pills"],
+  ["chips", "Stream chips"],
+];
+
+function saveUiPrefs() {
+  try {
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs));
+  } catch { /* private mode */ }
+}
+
+function applyUiPrefs() {
+  const root = document.documentElement;
+  for (const theme of Object.values(THEMES)) {
+    for (const key of Object.keys(theme.vars)) root.style.removeProperty(key);
+  }
+  const active = THEMES[uiPrefs.theme] || THEMES.dark;
+  for (const [key, value] of Object.entries(active.vars)) {
+    root.style.setProperty(key, value);
+  }
+  for (const [key] of CHROME_TOGGLES) {
+    document.body.classList.toggle(`hide-${key}`, !!uiPrefs.hide[key]);
+  }
+}
+applyUiPrefs();
+
+function openAppearanceSheet() {
+  openSheet("Appearance");
+
+  const themeRow = document.createElement("div");
+  themeRow.className = "theme-row";
+  const themeButtons = new Map();
+  for (const [key, theme] of Object.entries(THEMES)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "theme-btn";
+    btn.textContent = theme.label;
+    btn.addEventListener("click", () => {
+      uiPrefs.theme = key;
+      saveUiPrefs();
+      applyUiPrefs();
+      refreshThemeButtons();
+    });
+    themeButtons.set(key, btn);
+    themeRow.appendChild(btn);
+  }
+  const refreshThemeButtons = () => {
+    for (const [key, btn] of themeButtons) {
+      btn.classList.toggle("theme-active", key === (uiPrefs.theme || "dark"));
+    }
+  };
+  refreshThemeButtons();
+  sheetItems.appendChild(themeRow);
+
+  for (const [key, label] of CHROME_TOGGLES) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    const refresh = () => {
+      btn.textContent = `${label}: ${uiPrefs.hide[key] ? "hidden" : "shown"}`;
+    };
+    btn.addEventListener("click", () => {
+      uiPrefs.hide[key] = !uiPrefs.hide[key];
+      saveUiPrefs();
+      applyUiPrefs();
+      refresh();
+    });
+    refresh();
+    sheetItems.appendChild(btn);
+  }
+  sheetNote("Changes apply live — tap anywhere else to close", true);
+}
+
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSheet("Settings");
+  sheetButton("Appearance", openAppearanceSheet);
   sheetButton(
     soundMuted ? "Sound alerts: off — tap to enable" : "Sound alerts: on — tap to mute",
     () => {
