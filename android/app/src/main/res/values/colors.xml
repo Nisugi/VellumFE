@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Matches the web UI background (--bg in app.css). -->
+    <!-- Matches the web UI background color (bg variable in app.css). -->
     <color name="ic_launcher_background">#111318</color>
 </resources>
