@@ -346,16 +346,104 @@ fn store_password_map(map: &std::collections::HashMap<String, String>) -> Result
     fs::write(&path, text).context("Failed to write password store")
 }
 
+/// Sealing for stored password values (non-desktop builds). The 32-byte
+/// key arrives as hex in VELLUM_PASSWORD_KEY — on Android the Kotlin shell
+/// derives it from an Android-Keystore-wrapped master key before starting
+/// the core. Without the key (desktop headless testing), values stay
+/// plaintext; legacy plaintext entries always remain readable and are
+/// re-sealed on the next save.
+#[cfg(not(feature = "desktop"))]
+mod seal {
+    use base64::Engine as _;
+    use chacha20poly1305::aead::{Aead, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+
+    const PREFIX: &str = "enc:";
+
+    fn decode_hex(s: &str) -> Option<Vec<u8>> {
+        if s.len() % 2 != 0 {
+            return None;
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+            .collect()
+    }
+
+    fn cipher() -> Option<ChaCha20Poly1305> {
+        let hex = std::env::var("VELLUM_PASSWORD_KEY").ok()?;
+        let bytes = decode_hex(hex.trim())?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        Some(ChaCha20Poly1305::new(Key::from_slice(&bytes)))
+    }
+
+    pub fn seal(value: &str) -> String {
+        let Some(c) = cipher() else {
+            return value.to_string();
+        };
+        let mut nonce = [0u8; 12];
+        if getrandom::fill(&mut nonce).is_err() {
+            return value.to_string();
+        }
+        match c.encrypt(Nonce::from_slice(&nonce), value.as_bytes()) {
+            Ok(ct) => {
+                let mut blob = nonce.to_vec();
+                blob.extend(ct);
+                format!(
+                    "{PREFIX}{}",
+                    base64::engine::general_purpose::STANDARD.encode(blob)
+                )
+            }
+            Err(_) => value.to_string(),
+        }
+    }
+
+    pub fn open(value: &str) -> Option<String> {
+        let Some(b64) = value.strip_prefix(PREFIX) else {
+            // Legacy plaintext entry.
+            return Some(value.to_string());
+        };
+        let blob = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+        if blob.len() < 13 {
+            return None;
+        }
+        let (nonce, ct) = blob.split_at(12);
+        let pt = cipher()?.decrypt(Nonce::from_slice(nonce), ct).ok()?;
+        String::from_utf8(pt).ok()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn seal_roundtrip_with_key() {
+            std::env::set_var(
+                "VELLUM_PASSWORD_KEY",
+                "0101010101010101010101010101010101010101010101010101010101010101",
+            );
+            let sealed = super::seal("hunter2 with spaces");
+            assert!(sealed.starts_with("enc:"));
+            assert_eq!(super::open(&sealed).as_deref(), Some("hunter2 with spaces"));
+            // Legacy plaintext passes through.
+            assert_eq!(super::open("plain").as_deref(), Some("plain"));
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+        }
+    }
+}
+
 #[cfg(not(feature = "desktop"))]
 pub fn save_password(account: &str, password: &str) -> Result<()> {
     let mut map = load_password_map();
-    map.insert(account.to_lowercase(), password.to_string());
+    map.insert(account.to_lowercase(), seal::seal(password));
     store_password_map(&map)
 }
 
 #[cfg(not(feature = "desktop"))]
 pub fn load_password(account: &str) -> Option<String> {
-    load_password_map().get(&account.to_lowercase()).cloned()
+    load_password_map()
+        .get(&account.to_lowercase())
+        .and_then(|v| seal::open(v))
 }
 
 #[cfg(not(feature = "desktop"))]

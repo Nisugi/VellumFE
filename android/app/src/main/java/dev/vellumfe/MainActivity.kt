@@ -78,6 +78,7 @@ class MainActivity : Activity() {
     /** Boot the core (idempotent), wait for the server, load the client. */
     private fun bootAndLoad() {
         Thread({
+            CryptoKeys.installPasswordKey(this)
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
                 showError("Core failed to start:\n${info.optString("error")}")

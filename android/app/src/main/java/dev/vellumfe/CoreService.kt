@@ -65,6 +65,8 @@ class CoreService : Service() {
             .apply { setReferenceCounted(false) }
 
         pollThread = Thread({
+            // Password key first: the core seals saved passwords with it.
+            CryptoKeys.installPasswordKey(this)
             // JNI boot (config load + server bind), then the status loop.
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
