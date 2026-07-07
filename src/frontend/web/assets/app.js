@@ -371,7 +371,56 @@ function sendCommand(text) {
 function setRoom(room) {
   roomName = room.name || null;
   roomId = room.id || null;
+  roomExits = room.exits || [];
   renderTitle();
+  renderCompass();
+}
+
+// ---- Compass ----------------------------------------------------------------
+// Small always-available rose over the text pane; lit directions are the
+// room's exits, tapping one moves. Toggleable in Appearance; shares the
+// floating-button opacity.
+
+let roomExits = [];
+
+const COMPASS_CELLS = [
+  "nw", "n", "ne", "up",
+  "w", "out", "e", "down",
+  "sw", "s", "se", "",
+];
+
+const EXIT_ALIASES = {
+  north: "n", northeast: "ne", east: "e", southeast: "se", south: "s",
+  southwest: "sw", west: "w", northwest: "nw", up: "up", down: "down",
+  out: "out", u: "up", d: "down",
+};
+
+function renderCompass() {
+  const compass = document.getElementById("compass");
+  const exits = new Set(
+    roomExits.map((e) => {
+      const key = String(e).toLowerCase().trim();
+      return EXIT_ALIASES[key] || key;
+    }),
+  );
+  compass.hidden = exits.size === 0;
+  compass.replaceChildren();
+  for (const dir of COMPASS_CELLS) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "compass-cell";
+    cell.textContent = dir;
+    if (!dir) {
+      cell.disabled = true;
+      cell.classList.add("compass-blank");
+    } else if (exits.has(dir)) {
+      cell.classList.add("compass-lit");
+      cell.addEventListener("click", () => sendCommand(dir));
+    } else {
+      cell.disabled = true;
+    }
+    compass.appendChild(cell);
+  }
 }
 
 function setHands(d) {
@@ -621,6 +670,8 @@ function handleSnapshot(d) {
   setIndicators(d.indicators || {});
   setEffects(d.effects || []);
   setInjuries(d.injuries || {});
+  setTargets(d.targets || []);
+  setCharInfo(d.char_info || {});
   setRt(d.rt);
   // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
   // session as an implicitly-connected one we can't control.
@@ -657,6 +708,8 @@ function handleMessage(msg) {
     case "sound": playRemoteSound(msg.d); break;
     case "highlights": handleHighlightsReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
+    case "targets": setTargets(msg.d); break;
+    case "charinfo": setCharInfo(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -949,6 +1002,7 @@ const OPACITY_SETTINGS = [
 
 const CHROME_TOGGLES = [
   ["macrorail", "Macro bar (bottom)"],
+  ["compass", "Compass"],
   ["vitals", "Vitals bars"],
   ["hands", "Hands"],
   ["rt", "RT label"],
@@ -2252,6 +2306,38 @@ const drawerLeft = document.getElementById("drawer-left");
 const drawerRight = document.getElementById("drawer-right");
 const paneWrap = document.getElementById("pane-wrap");
 let injuries = {};
+let targets = [];
+let charInfo = {};
+
+function setCharInfo(info) {
+  charInfo = info || {};
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+function setTargets(list) {
+  targets = list || [];
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+// Tap-to-target rides the ordinary link machinery: the server resolves
+// the creature's menu (attack, look, target, ...) exactly like tapping
+// its name in the story text.
+function tapCreature(t) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const requestId = ++menuRequestCounter;
+  pendingMenuRequest = requestId;
+  openSheetLoading(t.noun || t.name);
+  state.ws.send(JSON.stringify({
+    t: "link_tap",
+    d: {
+      request_id: requestId,
+      exist_id: t.id,
+      noun: t.noun || "",
+      text: t.name,
+      coord: null,
+    },
+  }));
+}
 
 function drawerOpen() {
   return drawerLeft.classList.contains("open") || drawerRight.classList.contains("open");
@@ -2411,6 +2497,31 @@ function renderStatusDrawer() {
   const panel = document.getElementById("status-content");
   panel.replaceChildren();
 
+  // Targets first: mid-combat is when this drawer earns its keep.
+  if (targets.length) {
+    panel.appendChild(sectionTitle("Targets"));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const t of targets) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "status-row target-row";
+      if (t.current) row.classList.add("target-current");
+      const name = document.createElement("span");
+      name.textContent = (t.current ? "▸ " : "") + t.name;
+      row.appendChild(name);
+      if (t.status) {
+        const status = document.createElement("span");
+        status.className = "status-time";
+        status.textContent = t.status;
+        row.appendChild(status);
+      }
+      row.addEventListener("click", () => tapCreature(t));
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
   // Doll
   const doll = document.createElement("div");
   doll.id = "status-doll";
@@ -2472,6 +2583,28 @@ function renderStatusDrawer() {
   }
   panel.appendChild(hands);
 
+  // Character sheet (pre-formatted lines from the core).
+  const CHAR_SECTIONS = [
+    ["experience", "Experience"],
+    ["encumbrance", "Encumbrance"],
+    ["bounty", "Bounty"],
+    ["society", "Society"],
+  ];
+  for (const [key, label] of CHAR_SECTIONS) {
+    const lines = charInfo[key];
+    if (!lines || !lines.length) continue;
+    panel.appendChild(sectionTitle(label));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const line of lines) {
+      const row = document.createElement("div");
+      row.className = "status-row status-wrap";
+      row.textContent = line;
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
   // Active effects with countdowns
   for (const cat of effectCategories) {
     if (!cat.effects.length) continue;
@@ -2511,3 +2644,10 @@ setInterval(() => {
     }
   }
 }, 1000);
+
+// Debug/test handle: the module scope hides everything from the console
+// and from UI test drivers; this exposes the state setters (display-only
+// helpers, no privileged actions) for both.
+window.vellumDebug = {
+  setRoom, setTargets, setCharInfo, setInjuries, setEffects, setSession,
+};

@@ -1557,3 +1557,57 @@ body.hide-macrorail #macro-rail { display: none !important; }
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Tap-to-target rows */
+.target-row {
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.target-row.target-current { border-color: var(--st); }
+.status-row.status-wrap { display: block; white-space: normal; }
+
+/* ---- Compass ---------------------------------------------------------------- */
+
+#compass {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, 27px);
+  gap: 2px;
+  padding: 3px;
+  background: rgba(var(--panel-rgb), var(--float-alpha, 0.82));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+#compass[hidden] { display: none; }
+body.hide-compass #compass { display: none !important; }
+
+.compass-cell {
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--border);
+  font: inherit;
+  font-size: 10px;
+}
+
+.compass-cell.compass-lit {
+  color: var(--st);
+  border-color: var(--border);
+  background: rgba(var(--panel-rgb), 0.5);
+}
+
+.compass-cell.compass-lit:active { background: var(--border); }
+.compass-blank { visibility: hidden; }

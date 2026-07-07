@@ -230,6 +230,10 @@ pub enum RemoteDelta {
     /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
     /// cleared parts are absent.
     Injuries(std::collections::HashMap<String, u8>),
+    /// The targetable-creature list changed.
+    Targets(Vec<RemoteTarget>),
+    /// Character-sheet lines changed (experience/encumbrance/bounty/society).
+    CharInfo(RemoteCharInfo),
     /// Game-session status changed (headless runtime only).
     Session(RemoteSessionInfo),
     /// A highlight-triggered sound. Clients fetch the file from /sounds/
@@ -381,9 +385,43 @@ pub struct RemoteStateSnapshot {
     pub effects: Vec<crate::data::ActiveEffectsContent>,
     /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
     pub injuries: std::collections::HashMap<String, u8>,
+    /// Targetable creatures in the room (tap-to-target list).
+    pub targets: Vec<RemoteTarget>,
+    /// Character sheet: experience/encumbrance/bounty/society lines.
+    pub char_info: RemoteCharInfo,
     /// Session status + session-control capability. Overlaid by the sink in
     /// `flush_state` (the sink owns it, not GameState).
     pub session: RemoteSessionInfo,
+}
+
+/// A targetable creature in the room, for the status drawer's tap-to-
+/// target list. Tapping routes through the ordinary link-tap machinery.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteTarget {
+    /// Exist id (e.g. "#146101714") — the link-tap exist_id.
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noun: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// True when this is the currently selected target.
+    pub current: bool,
+}
+
+/// Character-sheet lines for the status drawer: experience, encumbrance,
+/// bounty, society — pre-formatted core-side so every client renders the
+/// same text. Empty sections are omitted from the wire.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteCharInfo {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub experience: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub encumbrance: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bounty: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub society: Vec<String>,
 }
 
 /// Category display order for effects sent to clients.
@@ -413,6 +451,56 @@ impl RemoteStateSnapshot {
                 .cloned()
                 .collect(),
             injuries: game_state.injuries.clone(),
+            targets: {
+                // dDBTarget narrows room creatures to the targetable set
+                // (direct mode); when absent, every room creature counts.
+                let ids = &game_state.target_list.target_ids;
+                game_state
+                    .room_creatures
+                    .iter()
+                    .filter(|c| ids.is_empty() || ids.contains(&c.id))
+                    .map(|c| RemoteTarget {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        noun: c.noun.clone(),
+                        status: c.status.clone(),
+                        current: c.id == game_state.target_list.current_target,
+                    })
+                    .collect()
+            },
+            char_info: {
+                let mut info = RemoteCharInfo::default();
+                let exp = &game_state.gs4_experience;
+                if !exp.level_text.is_empty() {
+                    info.experience.push(exp.level_text.clone());
+                }
+                if !exp.mind_state_text.is_empty() {
+                    info.experience.push(format!(
+                        "Mind: {} ({}%)",
+                        exp.mind_state_text, exp.mind_state_value
+                    ));
+                }
+                if !exp.next_level_text.is_empty() {
+                    info.experience.push(format!(
+                        "Next level: {}% ({})",
+                        exp.next_level_value, exp.next_level_text
+                    ));
+                }
+                let enc = &game_state.encumbrance;
+                if !enc.text.is_empty() {
+                    info.encumbrance.push(format!("{} ({}%)", enc.text, enc.value));
+                    if !enc.blurb.is_empty() {
+                        info.encumbrance.push(enc.blurb.clone());
+                    }
+                }
+                if !game_state.bounty.compact_lines.is_empty() {
+                    info.bounty = game_state.bounty.compact_lines.clone();
+                } else if !game_state.bounty.raw_text.is_empty() {
+                    info.bounty.push(game_state.bounty.raw_text.clone());
+                }
+                info.society = game_state.society.lines.clone();
+                info
+            },
             session: RemoteSessionInfo::default(),
         }
     }
@@ -672,6 +760,16 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Injuries(snap.injuries.clone()));
+        }
+        if snap.targets != self.last.targets {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Targets(snap.targets.clone()));
+        }
+        if snap.char_info != self.last.char_info {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::CharInfo(snap.char_info.clone()));
         }
         // Send on RT/CT end changes AND on every prompt (server_time
         // tick). The per-prompt resend matters: a <roundTime> can be
