@@ -17,16 +17,18 @@
 <body>
   <div id="app">
     <header id="topbar">
+      <div id="topbar-controls">
+        <span id="conn" class="conn conn-down">connecting&hellip;</span>
+        <span id="topbar-right">
+          <button id="settings-btn" type="button" aria-label="Settings" title="Settings">&#9881;</button>
+          <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
+          <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
+          <button id="logout-btn" type="button" aria-label="Disconnect from the game"
+                  title="Disconnect from the game" hidden>&#9211;</button>
+        </span>
+      </div>
       <button id="topbar-title" type="button"
               title="Toggle between room and character name">&mdash;</button>
-      <span id="topbar-right">
-        <button id="settings-btn" type="button" aria-label="Settings" title="Settings">&#9881;</button>
-        <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
-        <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
-        <button id="logout-btn" type="button" aria-label="Disconnect from the game"
-                title="Disconnect from the game" hidden>&#9211;</button>
-        <span id="conn" class="conn conn-down">connecting&hellip;</span>
-      </span>
     </header>
     <div id="session-banner" hidden></div>
     <nav id="chips"></nav>

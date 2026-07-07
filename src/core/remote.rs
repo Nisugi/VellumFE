@@ -200,6 +200,9 @@ pub enum RemoteDelta {
     Room {
         name: Option<String>,
         exits: Vec<String>,
+        /// Room number when known (nav tag in direct mode, extracted from
+        /// the room name under Lich).
+        id: Option<String>,
     },
     Hands {
         left: Option<String>,
@@ -364,6 +367,9 @@ pub struct RemoteStateSnapshot {
     pub character: Option<String>,
     pub vitals: Vitals,
     pub room_name: Option<String>,
+    /// Room number when known; overlaid by AppCore::flush_remote_state
+    /// (nav/lich ids live on AppCore, not GameState).
+    pub room_id: Option<String>,
     pub exits: Vec<String>,
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
@@ -393,6 +399,7 @@ impl RemoteStateSnapshot {
             character: game_state.character_name.clone(),
             vitals: game_state.vitals.clone(),
             room_name: game_state.room_name.clone(),
+            room_id: game_state.room_id.clone(),
             exits: game_state.exits.clone(),
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
@@ -635,10 +642,14 @@ impl RemoteSink {
         if snap.vitals != self.last.vitals {
             let _ = self.delta_tx.send(RemoteDelta::Vitals(snap.vitals.clone()));
         }
-        if snap.room_name != self.last.room_name || snap.exits != self.last.exits {
+        if snap.room_name != self.last.room_name
+            || snap.exits != self.last.exits
+            || snap.room_id != self.last.room_id
+        {
             let _ = self.delta_tx.send(RemoteDelta::Room {
                 name: snap.room_name.clone(),
                 exits: snap.exits.clone(),
+                id: snap.room_id.clone(),
             });
         }
         if snap.left_hand != self.last.left_hand || snap.right_hand != self.last.right_hand {

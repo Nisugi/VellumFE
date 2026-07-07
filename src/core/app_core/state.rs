@@ -816,6 +816,14 @@ impl AppCore {
         }
         let mut snap =
             crate::core::remote::RemoteStateSnapshot::from_game_state(&self.game_state);
+        // Room number lives on AppCore (nav tag in direct mode; extracted
+        // from the room name under Lich), not GameState.
+        if snap.room_id.is_none() {
+            snap.room_id = self
+                .nav_room_id
+                .clone()
+                .or_else(|| self.lich_room_id.clone());
+        }
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.

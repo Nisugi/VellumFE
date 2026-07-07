@@ -1525,3 +1525,16 @@ body.hide-chips #chips { display: none !important; }
   font-size: 13px;
 }
 body.hide-macrorail #macro-rail { display: none !important; }
+
+/* Two-line top bar: controls row, then the title on its own full-width
+   line so room names stop truncating against the buttons. */
+#topbar { flex-direction: column; align-items: stretch; gap: 3px; }
+
+#topbar-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#topbar #topbar-title { width: 100%; }

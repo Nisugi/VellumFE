@@ -359,6 +359,13 @@ pub async fn async_run(
                     let newly_connected = handle_server_message(&mut app_core, msg);
                     if newly_connected {
                         supervisor.reconnect_attempt = 0;
+                        // The game feed never carries the character name;
+                        // the supervisor knows it from the login. Write it
+                        // into game state so remote clients (top-bar title,
+                        // hello payload) see it.
+                        if app_core.game_state.character_name.is_none() {
+                            app_core.game_state.character_name = supervisor.character.clone();
+                        }
                         supervisor.character = app_core
                             .game_state
                             .character_name
@@ -511,6 +518,9 @@ pub async fn async_run(
             let newly_connected = handle_server_message(&mut app_core, msg);
             if newly_connected {
                 supervisor.reconnect_attempt = 0;
+                if app_core.game_state.character_name.is_none() {
+                    app_core.game_state.character_name = supervisor.character.clone();
+                }
                 supervisor.character = app_core
                     .game_state
                     .character_name

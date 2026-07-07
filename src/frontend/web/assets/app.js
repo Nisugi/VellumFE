@@ -40,10 +40,16 @@ const TITLE_MODE_KEY = "vellum-topbar-mode";
 let titleMode = localStorage.getItem(TITLE_MODE_KEY) || "room";
 let characterName = null;
 let roomName = null;
+let roomId = null;
 
 function renderTitle() {
   const showChar = titleMode === "char";
-  const value = showChar ? characterName || roomName : roomName || characterName;
+  let value = showChar ? characterName || roomName : roomName || characterName;
+  // Room mode shows the room number when known (nav id in direct mode,
+  // Lich-extracted otherwise).
+  if (!showChar && value && value === roomName && roomId) {
+    value = `${value} · ${roomId}`;
+  }
   topbarTitle.textContent = value || "—";
   topbarTitle.classList.toggle(
     "title-char",
@@ -369,6 +375,7 @@ function sendCommand(text) {
 
 function setRoom(room) {
   roomName = room.name || null;
+  roomId = room.id || null;
   renderTitle();
 }
 

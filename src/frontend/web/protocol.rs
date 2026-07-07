@@ -71,6 +71,8 @@ struct TextPayload {
 struct RoomPayload {
     name: Option<String>,
     exits: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -148,6 +150,7 @@ pub fn snapshot(
         room: RoomPayload {
             name: state.room_name.clone(),
             exits: state.exits.clone(),
+            id: state.room_id.clone(),
         },
         hands: HandsPayload {
             left: state.left_hand.clone(),
@@ -187,12 +190,13 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Vitals(v) => encode("vitals", last_seq, v.clone()),
-        RemoteDelta::Room { name, exits } => encode(
+        RemoteDelta::Room { name, exits, id } => encode(
             "room",
             last_seq,
             RoomPayload {
                 name: name.clone(),
                 exits: exits.clone(),
+                id: id.clone(),
             },
         ),
         RemoteDelta::Hands { left, right } => encode(
