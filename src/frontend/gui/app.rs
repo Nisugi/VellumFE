@@ -152,6 +152,13 @@ pub struct VellumGuiApp {
     remote_rx: mpsc::UnboundedReceiver<crate::core::remote::RemoteEvent>,
     network_handle: Option<tokio::task::JoinHandle<()>>,
     command_input: String,
+    /// Input-bar history, newest first (same file and semantics as the
+    /// TUI: ~/.vellum-fe/<profile>/history.txt, deduped, capped).
+    command_history: std::collections::VecDeque<String>,
+    /// Some(i) while browsing history with the arrow keys.
+    history_pos: Option<usize>,
+    /// The in-progress text stashed when browsing starts.
+    history_draft: String,
     close_requested: bool,
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
     detached_context_menu: Option<DetachedMenuState>,
@@ -449,6 +456,8 @@ impl VellumGuiApp {
             })
             .collect();
 
+        let command_history =
+            Self::load_command_history(app_core.config.character.as_deref());
         Ok(Self {
             app_core,
             _runtime: runtime,
@@ -457,6 +466,9 @@ impl VellumGuiApp {
             remote_rx,
             network_handle: Some(network_handle),
             command_input: String::new(),
+            command_history,
+            history_pos: None,
+            history_draft: String::new(),
             close_requested: false,
             detached_tabs,
             detached_context_menu: None,
@@ -1357,6 +1369,7 @@ impl VellumGuiApp {
             match event {
                 crate::core::remote::RemoteEvent::Command(text) => {
                     tracing::debug!("remote command: '{}'", text);
+                    self.record_command_history(&text);
                     self.dispatch_command(text);
                 }
                 crate::core::remote::RemoteEvent::LinkTap {
@@ -2002,7 +2015,110 @@ impl VellumGuiApp {
 
     fn submit_command(&mut self) {
         let input = std::mem::take(&mut self.command_input);
+        self.record_command_history(&input);
+        self.history_pos = None;
+        self.history_draft.clear();
         self.dispatch_command(input);
+    }
+
+    const MAX_COMMAND_HISTORY: usize = 100;
+
+    fn history_path_for(character: Option<&str>) -> Option<std::path::PathBuf> {
+        crate::config::Config::history_path(character).ok()
+    }
+
+    /// Load history from the shared per-profile file (newest first, same
+    /// format the TUI reads and writes).
+    fn load_command_history(character: Option<&str>) -> std::collections::VecDeque<String> {
+        let mut history = std::collections::VecDeque::new();
+        let Some(path) = Self::history_path_for(character) else {
+            return history;
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return history;
+        };
+        for line in text.lines() {
+            if !line.trim().is_empty() {
+                history.push_back(line.to_string());
+                if history.len() >= Self::MAX_COMMAND_HISTORY {
+                    break;
+                }
+            }
+        }
+        history
+    }
+
+    /// Record a submitted command: min-length and consecutive-dedupe rules
+    /// matching the TUI's input model, then persist.
+    fn record_command_history(&mut self, command: &str) {
+        let command = command.trim_end();
+        if command.is_empty() || command.len() < self.app_core.config.ui.min_command_length {
+            return;
+        }
+        if self.command_history.front().map(String::as_str) == Some(command) {
+            return;
+        }
+        self.command_history.push_front(command.to_string());
+        self.command_history.truncate(Self::MAX_COMMAND_HISTORY);
+        if let Some(path) = Self::history_path_for(self.app_core.config.character.as_deref()) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let joined: String = self
+                .command_history
+                .iter()
+                .map(|c| format!("{c}\n"))
+                .collect();
+            let _ = std::fs::write(path, joined);
+        }
+    }
+
+    /// Up arrow: step back through history (stashing the in-progress text
+    /// on entry).
+    fn history_previous(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        let next = match self.history_pos {
+            None => {
+                self.history_draft = std::mem::take(&mut self.command_input);
+                0
+            }
+            Some(i) if i + 1 < self.command_history.len() => i + 1,
+            Some(i) => i,
+        };
+        self.history_pos = Some(next);
+        self.command_input = self.command_history[next].clone();
+    }
+
+    /// Down arrow: step toward newest; at the newest entry (or when not
+    /// browsing) clear the input so it's ready for fresh typing.
+    fn history_next(&mut self) {
+        match self.history_pos {
+            Some(0) | None => {
+                self.history_pos = None;
+                self.command_input.clear();
+                self.history_draft.clear();
+            }
+            Some(i) => {
+                self.history_pos = Some(i - 1);
+                self.command_input = self.command_history[i - 1].clone();
+            }
+        }
+    }
+
+    /// Put the caret at the end of the input after programmatic text swaps.
+    fn command_cursor_to_end(&self, ctx: &egui::Context) {
+        let Some(id) = self.command_input_id else {
+            return;
+        };
+        if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+            let ccursor = egui::text::CCursor::new(self.command_input.chars().count());
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+            state.store(ctx, id);
+        }
     }
 
     /// Run a command through the shared core path (echo, dot-commands,
@@ -2887,6 +3003,25 @@ impl eframe::App for VellumGuiApp {
             if response.lost_focus() && pressed_enter {
                 self.submit_command();
                 response.request_focus();
+            }
+
+            // History browsing: up = older, down = newer / clear at the
+            // newest. consume_key keeps the arrows from reaching anything
+            // else while the input has focus.
+            if response.has_focus() {
+                let up = ui.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                });
+                let down = ui.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                });
+                if up {
+                    self.history_previous();
+                    self.command_cursor_to_end(ui.ctx());
+                } else if down {
+                    self.history_next();
+                    self.command_cursor_to_end(ui.ctx());
+                }
             }
         });
 
