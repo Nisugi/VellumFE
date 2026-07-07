@@ -1461,6 +1461,7 @@ impl MessageProcessor {
                                     content.add_line(StyledLine {
                                         segments,
                                         stream: window_name.clone(),
+                                        timestamp: None,
                                     });
                                 } else {
                                     content.add_line(StyledLine::from_text(label.value.clone()));
@@ -2333,6 +2334,7 @@ impl MessageProcessor {
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
             stream: self.current_stream.clone(),
+            timestamp: None,
         };
 
         // Track main stream text for prompt skip logic.
@@ -2594,6 +2596,7 @@ impl MessageProcessor {
                                     window_name,
                                 ),
                                 stream: src.stream.clone(),
+                                timestamp: src.timestamp,
                             }
                         };
 
@@ -2687,6 +2690,7 @@ impl MessageProcessor {
                                 StyledLine {
                                     segments,
                                     stream: src.stream.clone(),
+                                    timestamp: src.timestamp,
                                 }
                             };
                             tab.content.add_line(final_line);
@@ -2753,6 +2757,7 @@ impl MessageProcessor {
                                         &fallback_window,
                                     ),
                                     stream: line.stream.clone(),
+                                    timestamp: line.timestamp,
                                 }
                             };
                             content.add_line(final_line);
@@ -2779,6 +2784,7 @@ impl MessageProcessor {
                                             "main",
                                         ),
                                         stream: line.stream.clone(),
+                                        timestamp: line.timestamp,
                                     }
                                 };
                                 content.add_line(final_line);
@@ -2820,6 +2826,7 @@ impl MessageProcessor {
                                     &original_window_name,
                                 ),
                                 stream: line.stream.clone(),
+                                timestamp: line.timestamp,
                             }
                         };
                         content.add_line(final_line);
@@ -2847,6 +2854,7 @@ impl MessageProcessor {
                                     "main",
                                 ),
                                 stream: line.stream.clone(),
+                                timestamp: line.timestamp,
                             }
                         };
                         content.add_line(final_line);
@@ -2887,6 +2895,7 @@ impl MessageProcessor {
                         content.add_line(StyledLine {
                             segments: line_segments.clone(),
                             stream: String::from("inv"),
+                            timestamp: None,
                         });
                     }
                     tracing::debug!(
@@ -2948,6 +2957,7 @@ impl MessageProcessor {
                         content.add_line(StyledLine {
                             segments: line_segments.clone(),
                             stream: String::from("Spells"),
+                            timestamp: None,
                         });
                     }
                     tracing::debug!(
@@ -3358,6 +3368,7 @@ impl MessageProcessor {
             window_content.add_line(StyledLine {
                 segments: line_segments.clone(),
                 stream: String::from("Spells"),
+                timestamp: None,
             });
         }
 

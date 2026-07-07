@@ -784,6 +784,7 @@ impl VellumGuiApp {
                     .map(|segments| StyledLine {
                         segments: segments.clone(),
                         stream: "room".to_string(),
+                        timestamp: None,
                     })
                     .collect()
             })

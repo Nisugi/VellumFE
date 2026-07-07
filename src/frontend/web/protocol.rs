@@ -673,6 +673,7 @@ mod tests {
         let line = Arc::new(StyledLine {
             segments: vec![TextSegment::plain("hi")],
             stream: "main".to_string(),
+            timestamp: None,
         });
         let d = RemoteDelta::Text(RemoteLine {
             seq: 42,
@@ -838,6 +839,7 @@ mod tests {
             line: Arc::new(StyledLine {
                 segments: vec![TextSegment::plain("x")],
                 stream: "main".to_string(),
+                timestamp: None,
             }),
         }];
         let json: serde_json::Value =

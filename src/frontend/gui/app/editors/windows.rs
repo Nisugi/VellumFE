@@ -20,6 +20,10 @@ pub(in super::super) struct WindowEditorState {
     /// Compact mode toggle (plain text windows only).
     supports_compact: bool,
     compact: bool,
+    /// Timestamp rendering (plain text windows only).
+    show_timestamps: bool,
+    /// Timestamp at the start of the line (false = end).
+    ts_at_start: bool,
     /// Some for ActiveEffects windows: which effect category feeds it.
     effects_category: Option<String>,
     /// Some for tabbed-text windows: the editable tab list.
@@ -33,6 +37,7 @@ struct TabBuffer {
     name: String,
     streams: String,
     ignore_activity: bool,
+    show_timestamps: bool,
     original: Option<crate::config::TabbedTextTab>,
 }
 
@@ -42,6 +47,7 @@ impl TabBuffer {
             name: tab.name.clone(),
             streams: tab.get_streams().join(", "),
             ignore_activity: tab.ignore_activity.unwrap_or(false),
+            show_timestamps: tab.show_timestamps.unwrap_or(false),
             original: Some(tab.clone()),
         }
     }
@@ -51,6 +57,7 @@ impl TabBuffer {
             name: String::new(),
             streams: String::new(),
             ignore_activity: false,
+            show_timestamps: false,
             original: None,
         }
     }
@@ -67,6 +74,7 @@ impl TabBuffer {
             .map(str::to_string)
             .collect();
         tab.ignore_activity = if self.ignore_activity { Some(true) } else { None };
+        tab.show_timestamps = if self.show_timestamps { Some(true) } else { None };
         tab
     }
 }
@@ -104,6 +112,8 @@ impl WindowEditorState {
             feed: None,
             supports_compact: false,
             compact: false,
+            show_timestamps: false,
+            ts_at_start: false,
             effects_category: None,
             tabs: None,
             error: None,
@@ -152,6 +162,8 @@ impl VellumGuiApp {
         state.feed = None;
         state.supports_compact = false;
         state.compact = false;
+        state.show_timestamps = false;
+        state.ts_at_start = false;
         state.effects_category = None;
         state.tabs = None;
         // Tabbed windows: edit the tab list from the layout definition (the
@@ -172,11 +184,16 @@ impl VellumGuiApp {
             state.streams = text.streams.join(", ");
             state.max_lines = text.max_lines.to_string();
             state.supports_streams = true;
-            // Compact mode (ingest-time transform) applies to plain text
-            // windows only, matching the TUI editor.
+            // Compact mode (ingest-time transform) and timestamps apply to
+            // plain text windows only, matching the TUI editor.
             if matches!(window.content, WindowContent::Text(_)) {
                 state.supports_compact = true;
                 state.compact = text.compact;
+                state.show_timestamps = text.show_timestamps;
+                state.ts_at_start = matches!(
+                    text.timestamp_position,
+                    crate::config::TimestampPosition::Start
+                );
             }
         } else {
             // Fall back to the tab title for non-text widgets.
@@ -249,6 +266,12 @@ impl VellumGuiApp {
             text.max_lines = max_lines;
             if state.supports_compact {
                 text.compact = state.compact;
+                text.show_timestamps = state.show_timestamps;
+                text.timestamp_position = if state.ts_at_start {
+                    crate::config::TimestampPosition::Start
+                } else {
+                    crate::config::TimestampPosition::End
+                };
             }
             // Stream routing reads a cached subscriber map; rebuild it.
             self.app_core
@@ -267,6 +290,12 @@ impl VellumGuiApp {
                     data.streams = streams;
                     data.buffer_size = max_lines;
                     data.compact = state.compact;
+                    data.show_timestamps = state.show_timestamps;
+                    data.timestamp_position = Some(if state.ts_at_start {
+                        crate::config::TimestampPosition::Start
+                    } else {
+                        crate::config::TimestampPosition::End
+                    });
                 }
                 Some(crate::config::WindowDef::Inventory { data, .. }) => {
                     data.streams = streams;
@@ -484,6 +513,17 @@ impl VellumGuiApp {
                             ui.label("Compact");
                             ui.checkbox(&mut state.compact, "condense known content");
                             ui.end_row();
+                            ui.label("Timestamps");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut state.show_timestamps, "show");
+                                if state.show_timestamps {
+                                    ui.checkbox(&mut state.ts_at_start, "at line start")
+                                        .on_hover_text(
+                                            "Unchecked: timestamp at the end of the line.",
+                                        );
+                                }
+                            });
+                            ui.end_row();
                         }
                         if let Some(feed) = state.feed.as_mut() {
                             ui.label(match feed.kind {
@@ -553,12 +593,13 @@ impl VellumGuiApp {
                     let mut move_op: Option<(usize, bool)> = None; // (index, up)
                     let tab_count = tabs.len();
                     egui::Grid::new("window_editor_tabs_grid")
-                        .num_columns(4)
+                        .num_columns(5)
                         .striped(true)
                         .show(ui, |ui| {
                             ui.strong("Name");
                             ui.strong("Streams");
                             ui.strong("Quiet");
+                            ui.strong("TS");
                             ui.label("");
                             ui.end_row();
                             for (index, tab) in tabs.iter_mut().enumerate() {
@@ -572,6 +613,8 @@ impl VellumGuiApp {
                                 );
                                 ui.checkbox(&mut tab.ignore_activity, "")
                                     .on_hover_text("Don't mark this tab unread on activity.");
+                                ui.checkbox(&mut tab.show_timestamps, "")
+                                    .on_hover_text("Show per-line timestamps on this tab.");
                                 ui.horizontal(|ui| {
                                     if ui
                                         .add_enabled(index > 0, egui::Button::new("↑").small())

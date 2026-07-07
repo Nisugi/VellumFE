@@ -75,6 +75,7 @@ impl AppCore {
             let styled_line = StyledLine {
                 segments,
                 stream: String::from("main"),
+                timestamp: None,
             };
 
             // Echo bypasses the message pipeline, so mirror it to remote

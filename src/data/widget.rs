@@ -27,6 +27,10 @@ pub struct TextContent {
     pub streams: Vec<String>,
     /// Enable compact display mode (transforms verbose bounty text to 1-4 lines)
     pub compact: bool,
+    /// Render per-line arrival timestamps
+    pub show_timestamps: bool,
+    /// Where the timestamp goes on the line (start or end)
+    pub timestamp_position: TimestampPosition,
 }
 
 /// A single display line with styled segments
@@ -36,6 +40,11 @@ pub struct StyledLine {
     /// The stream this line originated from (e.g., "death", "thoughts", "main")
     /// Used for stream-filtered highlights
     pub stream: String,
+    /// Arrival time (unix seconds), stamped when the line enters a text
+    /// buffer. Rendered when a window enables timestamps; None on lines
+    /// recorded before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
 }
 
 /// A segment of text with styling
@@ -280,7 +289,11 @@ impl TabbedTextContent {
                         ignore_activity,
                         timestamp_position,
                     };
-                    let content = TextContent::new(name, max_lines_per_tab);
+                    let mut content = TextContent::new(name, max_lines_per_tab);
+                    // Mirror timestamp settings onto the tab's content so the
+                    // shared text renderer can honor them uniformly.
+                    content.show_timestamps = definition.show_timestamps;
+                    content.timestamp_position = definition.timestamp_position;
                     TabState {
                         definition,
                         content,
@@ -367,6 +380,8 @@ impl TabbedTextContent {
                 tab.definition.show_timestamps = *show_ts;
                 tab.definition.ignore_activity = *ignore;
                 tab.definition.timestamp_position = *ts_pos;
+                tab.content.show_timestamps = *show_ts;
+                tab.content.timestamp_position = *ts_pos;
             }
             return false; // No structural change
         }
@@ -392,11 +407,15 @@ impl TabbedTextContent {
 
                     // Reuse existing tab content if available
                     if let Some(mut old_tab) = old_tabs.remove(&name) {
+                        old_tab.content.show_timestamps = definition.show_timestamps;
+                        old_tab.content.timestamp_position = definition.timestamp_position;
                         old_tab.definition = definition;
                         old_tab
                     } else {
                         // New tab - empty content
-                        let content = TextContent::new(&name, max_lines_per_tab);
+                        let mut content = TextContent::new(&name, max_lines_per_tab);
+                        content.show_timestamps = definition.show_timestamps;
+                        content.timestamp_position = definition.timestamp_position;
                         TabState {
                             definition,
                             content,
@@ -426,10 +445,20 @@ impl TextContent {
             generation: 0,
             streams: vec![], // Default to empty - will be set during window creation
             compact: false,  // Default to disabled - set during window creation from layout
+            show_timestamps: false,
+            timestamp_position: TimestampPosition::default(),
         }
     }
 
-    pub fn add_line(&mut self, line: StyledLine) {
+    pub fn add_line(&mut self, mut line: StyledLine) {
+        // Stamp arrival time once, centrally, so any window that enables
+        // timestamps (now or later) can render when each line arrived.
+        if line.timestamp.is_none() {
+            line.timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|elapsed| elapsed.as_secs() as i64);
+        }
         self.lines.push_back(line);
         // Only prune if max_lines > 0 (0 means unlimited - content managed by clearStream)
         if self.max_lines > 0 && self.lines.len() > self.max_lines {
@@ -472,6 +501,7 @@ impl StyledLine {
                 link_data: None,
             }],
             stream: String::from("main"),
+            timestamp: None,
         }
     }
 
@@ -488,6 +518,7 @@ impl StyledLine {
                 link_data: None,
             }],
             stream: stream.into(),
+            timestamp: None,
         }
     }
 }
@@ -537,6 +568,7 @@ mod tests {
     fn test_styled_line_json_round_trip() {
         let line = StyledLine {
             stream: "main".to_string(),
+            timestamp: Some(1_720_000_000),
             segments: vec![
                 TextSegment::plain("You see "),
                 TextSegment {

@@ -848,6 +848,7 @@ mod tests {
         Arc::new(StyledLine {
             segments: vec![TextSegment::plain(text)],
             stream: "main".to_string(),
+            timestamp: None,
         })
     }
 

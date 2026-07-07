@@ -134,6 +134,7 @@ mod tests {
         Arc::new(StyledLine {
             segments: vec![crate::data::widget::TextSegment::plain(text)],
             stream: stream.to_string(),
+            timestamp: None,
         })
     }
 

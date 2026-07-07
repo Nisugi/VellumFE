@@ -941,15 +941,24 @@ impl AppCore {
 
             let content = match widget_type {
                 WidgetType::Text => {
-                    let (buffer_size, streams, compact) =
+                    let (buffer_size, streams, compact, show_ts, ts_pos) =
                         if let crate::config::WindowDef::Text { data, .. } = window_def {
-                            (data.buffer_size, data.streams.clone(), data.compact)
+                            (
+                                data.buffer_size,
+                                data.streams.clone(),
+                                data.compact,
+                                data.show_timestamps,
+                                data.timestamp_position
+                                    .unwrap_or(self.config.ui.timestamp_position),
+                            )
                         } else {
-                            (1000, vec![], false) // fallback
+                            (1000, vec![], false, false, self.config.ui.timestamp_position)
                         };
                     let mut text_content = TextContent::new(title, buffer_size);
                     text_content.streams = streams.clone();
                     text_content.compact = compact;
+                    text_content.show_timestamps = show_ts;
+                    text_content.timestamp_position = ts_pos;
 
                     // Pre-populate bounty window with cached data on reload
                     if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
@@ -1272,14 +1281,24 @@ impl AppCore {
 
         let content = match widget_type {
             WidgetType::Text => {
-                let (buffer_size, streams, compact) = if let crate::config::WindowDef::Text { data, .. } = window_def {
-                    (data.buffer_size, data.streams.clone(), data.compact)
-                } else {
-                    (1000, vec![], false) // fallback
-                };
+                let (buffer_size, streams, compact, show_ts, ts_pos) =
+                    if let crate::config::WindowDef::Text { data, .. } = window_def {
+                        (
+                            data.buffer_size,
+                            data.streams.clone(),
+                            data.compact,
+                            data.show_timestamps,
+                            data.timestamp_position
+                                .unwrap_or(self.config.ui.timestamp_position),
+                        )
+                    } else {
+                        (1000, vec![], false, false, self.config.ui.timestamp_position)
+                    };
                 let mut text_content = TextContent::new(title, buffer_size);
                 text_content.streams = streams;
                 text_content.compact = compact;
+                text_content.show_timestamps = show_ts;
+                text_content.timestamp_position = ts_pos;
 
                 // For bounty windows: pre-populate with buffered bounty data if available
                 if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
@@ -1921,6 +1940,7 @@ impl AppCore {
                 link_data: None,
             }],
             stream: String::from("main"),
+            timestamp: None,
         };
 
         // System messages bypass the message pipeline, so mirror them to
