@@ -49,6 +49,20 @@ Open `.settings` → GUI panel:
 
 Every size is adjustable — the Wrayth-like defaults are just defaults.
 
+## Graphics
+
+The GUI draws real graphics where the terminal uses characters:
+
+- **Compass rose** — a vector rose with lit direction markers.
+- **Injury paperdoll** — a vector body diagram colored by wound/scar
+  severity.
+- **Status icons** — vector pictograms for stance, hidden, stunned, and
+  the rest of the dashboard/indicator set.
+
+All of it can be reskinned with your own images — window background art,
+nine-slice borders, icon sprites, a sprite compass and paperdoll. See
+[Skins](../customization/skins.md).
+
 ## Differences from the TUI
 
 - Copying is plain text: select with the mouse, `Ctrl+C`.

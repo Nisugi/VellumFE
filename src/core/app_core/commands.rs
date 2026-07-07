@@ -514,6 +514,28 @@ impl AppCore {
                 return Ok("action:edittheme".to_string());
             }
 
+            // Skins (GUI graphics layered on top of themes)
+            "skins" => {
+                return Ok("action:skins".to_string());
+            }
+            "setskin" | "skin" => {
+                if let Some(name) = parts.get(1) {
+                    return Ok(format!("action:setskin:{}", name));
+                } else {
+                    self.add_system_message("Usage: .setskin <name> (or .setskin none to disable)");
+                }
+            }
+            "makeskin" => {
+                if let Some(name) = parts.get(1) {
+                    return Ok(format!("action:makeskin:{}", name));
+                } else {
+                    self.add_system_message("Usage: .makeskin <name> - create a starter skin");
+                }
+            }
+            "reloadskin" => {
+                return Ok("action:reloadskin".to_string());
+            }
+
             // Tab navigation
             "nexttab" => {
                 return Ok("action:nexttab".to_string());
@@ -946,6 +968,18 @@ mod tests {
                 }
             }
             "edittheme" => Some("action:edittheme".to_string()),
+            "skins" => Some("action:skins".to_string()),
+            "setskin" | "skin" => {
+                if let Some(name) = args.first() {
+                    Some(format!("action:setskin:{}", name))
+                } else {
+                    None // Shows usage message instead
+                }
+            }
+            "makeskin" => args
+                .first()
+                .map(|name| format!("action:makeskin:{}", name)),
+            "reloadskin" => Some("action:reloadskin".to_string()),
             "nexttab" => Some("action:nexttab".to_string()),
             "prevtab" => Some("action:prevtab".to_string()),
             "gonew" | "nextunread" => Some("action:nextunread".to_string()),

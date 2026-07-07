@@ -533,8 +533,8 @@ fn fix_game_host_port(host: &str, port: u16) -> (String, u16) {
 
 mod eaccess {
     use anyhow::{anyhow, bail, Context, Result};
-    use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
-    use openssl::x509::X509;
+    use base64::Engine as _;
+    use native_tls::{Certificate, TlsConnector, TlsStream};
     use std::collections::HashMap;
     use std::fs;
     use std::io::{Read, Write};
@@ -626,76 +626,69 @@ mod eaccess {
         download_certificate(path)
     }
 
-    fn download_certificate(path: &Path) -> Result<()> {
-        // Create permissive connector to download cert
-        let mut connector = SslConnector::builder(SslMethod::tls_client())?;
-        connector.set_verify(SslVerifyMode::NONE);
+    /// TLS handshake with the OS-native stack. The server's cert is self-signed
+    /// with no hostname, so automatic verification is disabled and the peer cert
+    /// is pinned manually against the stored simu.pem instead (like Lich's
+    /// verify_pem). SNI is disabled to match Ruby/Lich, which don't send it.
+    /// The old OpenSSL code also disabled session caching to send an empty
+    /// Session ID; native-tls has no knob for that, but a fresh connector per
+    /// login starts with no session to resume, which has the same effect.
+    fn tls_handshake() -> Result<TlsStream<TcpStream>> {
+        let connector = TlsConnector::builder()
+            .use_sni(false)
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()
+            .context("Failed to build TLS connector")?;
 
-        let stream = TcpStream::connect((HOST, PORT))?;
+        let stream = TcpStream::connect((HOST, PORT)).context("Failed to open TLS socket")?;
         stream.set_nodelay(true)?;
-        let connector = connector.build();
-        let tls_stream = connector.connect(HOST, stream)?;
+        connector
+            .connect(HOST, stream)
+            .map_err(|e| anyhow!("TLS handshake with eAccess failed: {e}"))
+    }
 
-        // Get peer certificate and save as PEM
-        let cert = tls_stream
-            .ssl()
+    fn peer_cert_der(stream: &TlsStream<TcpStream>) -> Result<Vec<u8>> {
+        stream
             .peer_certificate()
-            .ok_or_else(|| anyhow!("Server did not provide a certificate"))?;
+            .context("Failed to read peer certificate")?
+            .ok_or_else(|| anyhow!("Server did not provide a certificate"))?
+            .to_der()
+            .context("Failed to encode peer certificate")
+    }
 
-        let pem = cert.to_pem()?;
-        fs::write(path, pem).context("Failed to save certificate")?;
+    fn der_to_pem(der: &[u8]) -> String {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(der);
+        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+        for chunk in encoded.as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(chunk).expect("base64 is ASCII"));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        pem
+    }
+
+    fn download_certificate(path: &Path) -> Result<()> {
+        let tls_stream = tls_handshake()?;
+        let der = peer_cert_der(&tls_stream)?;
+        fs::write(path, der_to_pem(&der)).context("Failed to save certificate")?;
         Ok(())
     }
 
-    fn connect_with_cert(cert_path: &Path) -> Result<SslStream<TcpStream>> {
+    fn connect_with_cert(cert_path: &Path) -> Result<TlsStream<TcpStream>> {
         let cert_data = fs::read(cert_path).context("Failed to read stored certificate")?;
-        let stored_cert = X509::from_pem(&cert_data)
-            .context("Invalid PEM certificate")?;
+        // Compare in DER form so PEM formatting differences (line width,
+        // trailing newline) between OpenSSL-era and current files don't matter.
+        let stored_der = Certificate::from_pem(&cert_data)
+            .context("Invalid PEM certificate")?
+            .to_der()
+            .context("Failed to encode stored certificate")?;
 
-        // Create connector with the stored certificate
-        // Configure like Ruby's OpenSSL - allow both TLS 1.2 and 1.3
-        let mut connector = SslConnector::builder(SslMethod::tls_client())?;
+        let tls_stream = tls_handshake()?;
+        tracing::debug!("TLS handshake with eAccess succeeded");
 
-        // Add our stored cert as a trusted root
-        connector.cert_store_mut().add_cert(stored_cert.clone())?;
-
-        // Let OpenSSL negotiate - server will pick TLS 1.2, but we need to offer 1.3 too
-        // (Server expects clients to advertise TLS 1.3 cipher suites even if it uses 1.2)
-
-        // Disable session caching to avoid sending a Session ID (match Lich's empty Session ID)
-        use openssl::ssl::SslSessionCacheMode;
-        connector.set_session_cache_mode(SslSessionCacheMode::OFF);
-
-        // Disable automatic verification - we do manual verification below (like Lich)
-        // The cert has no hostname, so automatic verification would fail
-        connector.set_verify(SslVerifyMode::NONE);
-
-        let connector = connector.build();
-        let stream = TcpStream::connect((HOST, PORT)).context("Failed to open TLS socket")?;
-        stream.set_nodelay(true)?;
-
-        // Disable SNI - Ruby doesn't send it by default for IP-based connections
-        let mut config = connector.configure()?;
-        config.set_use_server_name_indication(false);
-        config.set_verify_hostname(false);
-
-        let tls_stream = config
-            .connect("", stream)
-            .context("TLS handshake with eAccess failed")?;
-
-        // Log TLS details
-        tracing::debug!("TLS version: {:?}, Cipher: {:?}",
-            tls_stream.ssl().version_str(),
-            tls_stream.ssl().current_cipher().map(|c| c.name()));
-
-        // Manually verify the peer certificate matches our stored one (like Lich's verify_pem)
-        let peer_cert = tls_stream
-            .ssl()
-            .peer_certificate()
-            .ok_or_else(|| anyhow!("Server did not provide a certificate"))?;
-
-        let peer_pem = peer_cert.to_pem()?;
-        if peer_pem != cert_data {
+        let peer_der = peer_cert_der(&tls_stream)?;
+        if peer_der != stored_der {
             tracing::warn!("Certificate mismatch - refreshing stored certificate");
             download_certificate(cert_path)?;
         }
@@ -703,7 +696,7 @@ mod eaccess {
         Ok(tls_stream)
     }
 
-    fn send_line(stream: &mut SslStream<TcpStream>, line: &str) -> Result<()> {
+    fn send_line(stream: &mut TlsStream<TcpStream>, line: &str) -> Result<()> {
         // Match Ruby's puts - sends string with newline in a SINGLE write
         // Build the complete message with newline, then write it all at once
         // to ensure it goes out as a single TLS record
@@ -717,7 +710,7 @@ mod eaccess {
     }
 
     fn send_login_payload(
-        stream: &mut SslStream<TcpStream>,
+        stream: &mut TlsStream<TcpStream>,
         account: &str,
         encoded_password: &[u8],
     ) -> Result<()> {
@@ -735,7 +728,7 @@ mod eaccess {
         Ok(())
     }
 
-    fn read_response(stream: &mut SslStream<TcpStream>) -> Result<String> {
+    fn read_response(stream: &mut TlsStream<TcpStream>) -> Result<String> {
         // Match Ruby's conn.sysread(PACKET_SIZE) behavior - read up to 8192 bytes in one blocking call
         const PACKET_SIZE: usize = 8192;
         let mut buf = vec![0u8; PACKET_SIZE];

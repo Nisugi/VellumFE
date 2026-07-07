@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-67354920.js";
+            window.path_to_searchindex_js = "searchindex-97ed8572.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c827af74.js"></script>
+        <script src="toc-03608cc9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,13 +196,16 @@
 <li><strong>Text-to-speech</strong> — screen reader support built in</li>
 </ul>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<p><strong>Double-click <code>vellum-fe</code></strong> — the <a href="#the-launcher">Launcher</a>
+opens with saved connection profiles (passwords kept in the OS keyring).</p>
+<p>Or from a terminal:</p>
 <pre><code class="language-bash"># Connect via Lich (most common)
 vellum-fe --port 8000 --character YourName
 
 # Direct connection (no Lich required)
 vellum-fe --direct --account ACCOUNT --character YourName --game prime
 </code></pre>
-<p>See <a href="#first-launch">Connecting</a> for details.</p>
+<p>See <a href="#first-launch">First Launch</a> for details.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <p>VellumFE stores configuration in <code>~/.vellum-fe/</code> (override with <code>VELLUM_FE_DIR</code> or <code>--data-dir</code>):</p>
 <div class="table-wrapper">
@@ -240,6 +243,7 @@ vellum-fe --direct --account ACCOUNT --character YourName --game prime
 <h2 id="chapters"><a class="header" href="#chapters">Chapters</a></h2>
 <ol>
 <li><strong><a href="#installation">Installation</a></strong> - Download and set up VellumFE</li>
+<li><strong><a href="#the-launcher">The Launcher</a></strong> - Saved profiles, one-click sessions</li>
 <li><strong><a href="#first-launch">First Launch</a></strong> - Connect and explore the interface</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -266,12 +270,11 @@ cd VellumFE
 cargo build --release
 </code></pre>
 <p>The binary will be at <code>target/release/vellum-fe</code>.</p>
-<h3 id="windows-openssl-for-direct-mode"><a class="header" href="#windows-openssl-for-direct-mode">Windows: OpenSSL for Direct Mode</a></h3>
-<p>Direct eAccess authentication requires OpenSSL. Install via <a href="https://vcpkg.io/">vcpkg</a>:</p>
-<pre><code class="language-powershell">vcpkg install openssl:x64-windows
-set VCPKG_ROOT=C:\path\to\vcpkg
-cargo build --release
-</code></pre>
+<h3 id="tls-dependencies"><a class="header" href="#tls-dependencies">TLS Dependencies</a></h3>
+<p>Direct eAccess authentication uses your operating system’s native TLS stack
+(SChannel on Windows, Security.framework on macOS) — no extra setup needed.
+On Linux, a bundled OpenSSL is compiled automatically during the build; it
+only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
@@ -282,7 +285,53 @@ cargo build --release
 <pre><code class="language-bash">export VELLUM_FE_DIR=/custom/path
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-launcher"><a class="header" href="#the-launcher">The Launcher</a></h1>
+<p>The easiest way to start VellumFE: run it with <strong>no arguments</strong> (or just
+double-click <code>vellum-fe.exe</code>) and a graphical launcher opens with your
+saved connection profiles. One click launches a session; launch several
+profiles to play multiple characters at once.</p>
+<p>You can also open it explicitly with <code>vellum-fe --launcher</code>.</p>
+<h2 id="creating-a-profile"><a class="header" href="#creating-a-profile">Creating a Profile</a></h2>
+<p>Click <strong>Add profile</strong> and fill in:</p>
+<ul>
+<li><strong>Connection mode</strong> — <em>Direct</em> (eAccess, no Lich) or <em>Lich</em> (proxy
+host/port)</li>
+<li><strong>Account / game / character</strong> for direct mode, or <strong>host / port</strong> for
+Lich mode</li>
+<li><strong>Frontend</strong> — GUI (default) or Terminal</li>
+<li><strong>Advanced options</strong> — everything the CLI offers: web/phone port,
+sound off, settings profile, data directory, color mode, palette setup</li>
+</ul>
+<h2 id="passwords-go-in-the-keyring"><a class="header" href="#passwords-go-in-the-keyring">Passwords Go in the Keyring</a></h2>
+<p>Check <strong>Save password</strong> and the password is stored in your operating
+system’s secure credential store (Windows Credential Manager, macOS
+Keychain, or the Linux secret service) — it is <strong>never written to a
+file</strong> and never appears on a command line. Passwords are keyed by
+account, so several profiles on the same account share one saved
+password.</p>
+<p>If you don’t save it, the launcher prompts when you hit Launch (terminal
+sessions ask in their own console instead). Account names are masked in
+the profile list, and the password field has a show/hide toggle — safe
+to open at a convention table.</p>
+<h2 id="how-sessions-launch"><a class="header" href="#how-sessions-launch">How Sessions Launch</a></h2>
+<p>Each <strong>Launch</strong> spawns a separate <code>vellum-fe --launch-profile NAME</code>
+process — exactly the same startup path as a hand-typed command line, so
+everything in this book applies unchanged. Terminal sessions open in
+their own console window, which remembers its size and position across
+launches.</p>
+<h2 id="skipping-the-launcher"><a class="header" href="#skipping-the-launcher">Skipping the Launcher</a></h2>
+<p>Saved profiles work from the command line or a shortcut too:</p>
+<pre><code class="language-bash">vellum-fe --launch-profile "Rolfard hunting"
+</code></pre>
+<p>Profile definitions live in <code>~/.vellum-fe/launcher.toml</code> (passwords
+excluded — those stay in the keyring).</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="first-launch"><a class="header" href="#first-launch">First Launch</a></h1>
+<blockquote>
+<p><strong>Shortcut</strong>: double-clicking <code>vellum-fe</code> opens <a href="#the-launcher">the Launcher</a>,
+which handles everything below with saved profiles. This page covers the
+command-line paths.</p>
+</blockquote>
 <h2 id="connecting-via-lich-recommended"><a class="header" href="#connecting-via-lich-recommended">Connecting via Lich (Recommended)</a></h2>
 <p>Most players use <a href="https://lichproject.org/">Lich</a> for scripting. Start Lich first, then:</p>
 <pre><code class="language-bash">vellum-fe --port 8000 --character YourCharacter
@@ -331,7 +380,7 @@ Credentials can also be stored in <code>config.toml</code> under <code>[connecti
 </table>
 </div>
 <blockquote>
-<p><strong>Note</strong>: Direct mode requires OpenSSL on Windows. See <a href="#installation">Installation</a>.</p>
+<p><strong>Note</strong>: Direct mode uses your operating system’s native TLS stack — no extra setup on Windows or macOS. On Linux, see <a href="#installation">Installation</a>.</p>
 </blockquote>
 <h2 id="the-interface"><a class="header" href="#the-interface">The Interface</a></h2>
 <p>On successful connection, you’ll see the default layout:</p>
@@ -475,6 +524,18 @@ light/dark bar text for contrast.</li>
 <li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
 </ul>
 <p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="graphics"><a class="header" href="#graphics">Graphics</a></h2>
+<p>The GUI draws real graphics where the terminal uses characters:</p>
+<ul>
+<li><strong>Compass rose</strong> — a vector rose with lit direction markers.</li>
+<li><strong>Injury paperdoll</strong> — a vector body diagram colored by wound/scar
+severity.</li>
+<li><strong>Status icons</strong> — vector pictograms for stance, hidden, stunned, and
+the rest of the dashboard/indicator set.</li>
+</ul>
+<p>All of it can be reskinned with your own images — window background art,
+nine-slice borders, icon sprites, a sprite compass and paperdoll. See
+<a href="#skins-gui-graphics">Skins</a>.</p>
 <h2 id="differences-from-the-tui"><a class="header" href="#differences-from-the-tui">Differences from the TUI</a></h2>
 <ul>
 <li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>.</li>
@@ -580,6 +641,7 @@ about this.</li>
 </div>
 <h2 id="directory-layout"><a class="header" href="#directory-layout">Directory Layout</a></h2>
 <pre><code>~/.vellum-fe/
+├── launcher.toml         # Launcher profiles (passwords live in the OS keyring)
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
@@ -591,6 +653,7 @@ about this.</li>
 ├── profiles/
 │   └── CharName/         # Per-character overrides + auto-saved layout.toml
 ├── themes/               # Custom themes (.edittheme saves here)
+├── skins/                # GUI skins (one folder per skin: skin.toml + images)
 └── vellum-fe.log
 </code></pre>
 <p>Files in <code>profiles/&lt;name&gt;/</code> override the matching global file for that character.</p>
@@ -2885,6 +2948,109 @@ save under a new name.</p>
 </table>
 </div>
 <p>Switching a theme does not change your game-text colors, and vice versa.</p>
+<p>For image-based decoration in the GUI (background art, icon sprites),
+see <a href="#skins-gui-graphics">Skins</a> — themes own colors, skins own graphics.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="skins-gui-graphics"><a class="header" href="#skins-gui-graphics">Skins (GUI Graphics)</a></h1>
+<p>Skins layer <strong>your own images</strong> on top of the GUI: window backgrounds,
+nine-slice window borders, status icon sprites, a sprite compass, and a
+sprite injury paperdoll. Themes own colors and fonts; skins own graphics.</p>
+<p>Skins apply to the <a href="#desktop-gui">Desktop GUI</a> only — the terminal
+has no image pipeline. Without a skin, the GUI uses its built-in vector
+graphics and theme colors, and anything a skin doesn’t cover (or fails to
+load) falls back to that.</p>
+<h2 id="using-skins"><a class="header" href="#using-skins">Using Skins</a></h2>
+<pre><code>.skins            # list installed skins
+.setskin parchment
+.setskin none     # back to plain theme rendering
+</code></pre>
+<p>The active skin is remembered in your config. <code>.skin</code> is an alias. The
+GUI settings editor (<code>.settings</code>) has a Skin section with the same
+picker, an “Open skins folder” button, and a “Create” button.</p>
+<h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>The quickest start:</p>
+<pre><code>.makeskin myskin
+</code></pre>
+<p>This creates <code>~/.vellum-fe/skins/myskin/skin.toml</code> with <strong>every section
+present but commented out</strong> — uncomment a line, point it at a PNG, done.
+It never overwrites an existing skin.</p>
+<p>While a skin is active, edits to its <code>skin.toml</code> <strong>hot-reload within a
+second</strong>. Edited <em>images</em> don’t touch the manifest, so after swapping an
+image file run <code>.reloadskin</code> to force a full reload.</p>
+<p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
+<code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
+<pre><code>~/.vellum-fe/skins/parchment/
+├── skin.toml
+└── bg/
+    ├── paper.png
+    └── vellum.png
+</code></pre>
+<pre><code class="language-toml">[meta]
+name = "Parchment"
+description = "Warm paper backgrounds for text windows"
+
+# Applies to every window without its own [window.&lt;name&gt;] entry.
+[window.default.background]
+image = "bg/paper.png"   # relative to the skin folder (absolute paths allowed)
+fit = "cover"            # stretch | cover | contain | tile | center
+opacity = 0.85           # 0.0-1.0
+tint = "#c0a878"         # optional multiply tint
+scrim = 0.3              # 0.0-1.0 theme-colored overlay for text readability
+
+# Windows are matched by their layout window name ("main", "thoughts", ...).
+[window.main.background]
+image = "bg/vellum.png"
+scrim = 0.5
+</code></pre>
+<blockquote>
+<p><strong>Tip</strong>: <code>scrim</code> paints a theme-colored wash over the image so text
+stays readable — start around <code>0.3</code> and adjust.</p>
+</blockquote>
+<h2 id="window-borders-nine-slice"><a class="header" href="#window-borders-nine-slice">Window Borders (Nine-Slice)</a></h2>
+<pre><code class="language-toml">[window.main.border]
+image = "borders/frame.png"
+slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
+scale = 1.0                # source pixels -&gt; screen points
+</code></pre>
+<h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
+<p>Replace the built-in vector pictograms in the dashboard and indicator
+widgets, keyed by indicator id (case-insensitive):</p>
+<pre><code class="language-toml">[icons]
+kneeling = "icons/kneeling.png"
+stunned = "icons/stunned.png"
+hidden = "icons/hidden.png"
+</code></pre>
+<h2 id="sprite-compass"><a class="header" href="#sprite-compass">Sprite Compass</a></h2>
+<p>A rose image plus one overlay per direction, drawn only while that exit
+exists. Author every overlay at the same canvas size as the rose, so
+positioning lives in the art:</p>
+<pre><code class="language-toml">[compass]
+rose = "compass/rose.png"
+n = "compass/n.png"
+ne = "compass/ne.png"
+# ... e, se, s, sw, w, nw — plus optional up / down / out overlays
+</code></pre>
+<h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
+<p>A base body image plus full-canvas overlays per body part and severity.
+Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>, <code>back</code>,
+<code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>, <code>rightLeg</code>,
+<code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>), each with <code>injury1</code>–<code>injury3</code> and
+<code>scar1</code>–<code>scar3</code> entries:</p>
+<pre><code class="language-toml">[injury_doll]
+base = "doll/body.png"
+
+[injury_doll.head]
+injury1 = "doll/head_i1.png"
+injury2 = "doll/head_i2.png"
+injury3 = "doll/head_i3.png"
+scar1 = "doll/head_s1.png"
+</code></pre>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>Absolute image paths are allowed on purpose, so a skin can point at art
+from another install (e.g. your local Wrayth graphics) without copying.</li>
+<li>Every piece is optional — a skin can be nothing but one background.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
 <p>Anything you type starting with <code>.</code> is handled by VellumFE instead of being
@@ -2974,6 +3140,10 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.themes</code></td><td></td><td>Browse and apply themes</td></tr>
 <tr><td><code>.settheme &lt;name&gt;</code></td><td><code>.theme</code></td><td>Switch theme by name</td></tr>
 <tr><td><code>.edittheme</code></td><td></td><td>Edit the current theme</td></tr>
+<tr><td><code>.skins</code></td><td></td><td>List installed GUI skins</td></tr>
+<tr><td><code>.setskin &lt;name&gt;</code></td><td><code>.skin</code></td><td>Apply a skin (<code>.setskin none</code> disables; GUI only)</td></tr>
+<tr><td><code>.makeskin &lt;name&gt;</code></td><td></td><td>Create a starter skin to edit</td></tr>
+<tr><td><code>.reloadskin</code></td><td></td><td>Force-reload the active skin (after editing images)</td></tr>
 <tr><td><code>.colors</code></td><td><code>.colorpalette</code></td><td>Browse the color palette</td></tr>
 <tr><td><code>.addcolor</code></td><td><code>.createcolor</code></td><td>Add a palette color</td></tr>
 <tr><td><code>.uicolors</code></td><td></td><td>Edit UI element colors</td></tr>
@@ -3004,12 +3174,15 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
 </code></pre>
 <h2 id="options"><a class="header" href="#options">Options</a></h2>
+<p>Run with <strong>no arguments</strong> to open <a href="#the-launcher">the Launcher</a>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Flag</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
+<tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
 <tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
 <tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
 <tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
@@ -3082,9 +3255,11 @@ Start Lich, then <code>vellum-fe --port 8000 --character Name</code>. VellumFE
 identifies as Stormfront to Lich, so scripts behave as they would under
 Wrayth. See <a href="#first-launch">First Launch</a>.</p>
 <p><strong>Can I save my login credentials?</strong>
-Yes, in <code>config.toml</code> under <code>[connection]</code> (<code>account</code>, <code>password</code>, <code>game</code>)
-— but the password is stored in plain text. Safer: omit the password and
-VellumFE prompts for it at startup.</p>
+Yes — use <a href="#the-launcher">the Launcher</a>: its “Save
+password” option stores the password in your OS’s secure credential store
+(keyring), never in a file. Storing a password in <code>config.toml</code>’s
+<code>[connection]</code> section also works but is plain text; if you store nothing,
+VellumFE prompts at startup.</p>
 <h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
 <p><strong>Where are config files stored?</strong>
 <code>~/.vellum-fe/</code> on every platform (Windows: <code>C:\Users\you\.vellum-fe\</code>).

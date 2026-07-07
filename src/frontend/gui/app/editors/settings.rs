@@ -29,15 +29,26 @@ pub(in super::super) struct SettingsEditorState {
     sound_cooldown_ms: u64,
     active_theme: String,
     theme_names: Vec<String>,
+    /// Selected skin; NONE_SKIN sentinel = no skin.
+    active_skin: String,
+    skin_names: Vec<String>,
+    /// Buffer for the "New skin" name field.
+    new_skin_name: String,
+    /// Inline error from the last "Create" attempt.
+    skin_error: Option<String>,
     /// GUI sizing settings; persisted in the per-character GUI layout file,
     /// not config.toml.
     gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
 }
 
+/// ComboBox entry meaning "no skin active".
+const NONE_SKIN: &str = "(none)";
+
 impl SettingsEditorState {
     fn from_config(
         config: &crate::config::Config,
         theme_names: Vec<String>,
+        skin_names: Vec<String>,
         gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
     ) -> Self {
         Self {
@@ -53,6 +64,13 @@ impl SettingsEditorState {
             sound_cooldown_ms: config.sound.cooldown_ms,
             active_theme: config.active_theme.clone(),
             theme_names,
+            active_skin: config
+                .active_skin
+                .clone()
+                .unwrap_or_else(|| NONE_SKIN.to_string()),
+            skin_names,
+            new_skin_name: String::new(),
+            skin_error: None,
             gui_settings,
         }
     }
@@ -73,6 +91,11 @@ impl SettingsEditorState {
         config.sound.volume = self.sound_volume;
         config.sound.cooldown_ms = self.sound_cooldown_ms;
         config.active_theme = self.active_theme.clone();
+        config.active_skin = if self.active_skin == NONE_SKIN {
+            None
+        } else {
+            Some(self.active_skin.clone())
+        };
     }
 }
 
@@ -87,6 +110,7 @@ impl VellumGuiApp {
         self.settings_editor = Some(SettingsEditorState::from_config(
             &self.app_core.config,
             theme_names,
+            crate::frontend::gui::skin::list_skins(),
             self.ui_settings.clone(),
         ));
     }
@@ -361,6 +385,77 @@ impl VellumGuiApp {
                                         );
                                     }
                                 });
+                        });
+
+                        ui.collapsing("Skin", |ui| {
+                            ui.label("Skins add graphics (backgrounds, borders, widget art) on top of the theme.");
+                            ui.horizontal(|ui| {
+                                egui::ComboBox::from_id_salt("settings_skin")
+                                    .selected_text(state.active_skin.clone())
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.active_skin,
+                                            NONE_SKIN.to_string(),
+                                            NONE_SKIN,
+                                        );
+                                        for name in &state.skin_names {
+                                            ui.selectable_value(
+                                                &mut state.active_skin,
+                                                name.clone(),
+                                                name,
+                                            );
+                                        }
+                                    });
+                                if ui
+                                    .button("Open skins folder")
+                                    .on_hover_text("Skins live in ~/.vellum-fe/skins/<name>/")
+                                    .clicked()
+                                {
+                                    if let Ok(dir) = crate::config::Config::skins_dir() {
+                                        let _ = std::fs::create_dir_all(&dir);
+                                        if let Err(err) = open::that(&dir) {
+                                            tracing::warn!(
+                                                "Failed to open skins folder {}: {}",
+                                                dir.display(),
+                                                err
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut state.new_skin_name)
+                                        .hint_text("new skin name")
+                                        .desired_width(140.0),
+                                );
+                                if ui
+                                    .button("Create")
+                                    .on_hover_text(
+                                        "Write a starter skin.toml (all sections commented out) and select it",
+                                    )
+                                    .clicked()
+                                {
+                                    match crate::frontend::gui::skin::write_scaffold(
+                                        &state.new_skin_name,
+                                    ) {
+                                        Ok(_) => {
+                                            let name = state.new_skin_name.trim().to_string();
+                                            state.skin_names.push(name.clone());
+                                            state.skin_names.sort();
+                                            state.active_skin = name;
+                                            state.new_skin_name.clear();
+                                            state.skin_error = None;
+                                        }
+                                        Err(err) => {
+                                            state.skin_error = Some(err.to_string());
+                                        }
+                                    }
+                                }
+                            });
+                            if let Some(error) = &state.skin_error {
+                                ui.colored_label(ui.visuals().error_fg_color, error);
+                            }
                         });
 
                         ui.separator();

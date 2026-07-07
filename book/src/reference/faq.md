@@ -24,9 +24,11 @@ identifies as Stormfront to Lich, so scripts behave as they would under
 Wrayth. See [First Launch](../getting-started/first-launch.md).
 
 **Can I save my login credentials?**
-Yes, in `config.toml` under `[connection]` (`account`, `password`, `game`)
-— but the password is stored in plain text. Safer: omit the password and
-VellumFE prompts for it at startup.
+Yes — use [the Launcher](../getting-started/launcher.md): its "Save
+password" option stores the password in your OS's secure credential store
+(keyring), never in a file. Storing a password in `config.toml`'s
+`[connection]` section also works but is plain text; if you store nothing,
+VellumFE prompts at startup.
 
 ## Configuration
 

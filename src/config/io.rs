@@ -579,6 +579,7 @@ impl Default for Config {
             character: None,                // Set at runtime via load_with_options
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),
+            active_skin: None,
         }
     }
 }

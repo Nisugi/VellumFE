@@ -764,21 +764,6 @@ impl VellumGuiApp {
         ui.add_sized([bar_width, bar_height], bar);
     }
 
-    /// Body-part glyph grid mirroring the TUI injury doll (col, glyph, part).
-    const INJURY_DOLL_ROWS: &'static [&'static [(usize, &'static str, &'static str)]] = &[
-        &[(0, "\u{2022}", "leftEye"), (4, "\u{2022}", "rightEye")],
-        &[(2, "0", "head"), (6, "nk", "neck")],
-        &[(1, "/", "leftArm"), (2, "|", "chest"), (3, "\\", "rightArm")],
-        &[
-            (0, "o", "leftHand"),
-            (2, "|", "abdomen"),
-            (4, "o", "rightHand"),
-            (6, "bk", "back"),
-        ],
-        &[(1, "/", "leftLeg"), (3, "\\", "rightLeg")],
-        &[(0, "o", "leftLeg"), (4, "o", "rightLeg"), (6, "ns", "nsys")],
-    ];
-
     /// ProfanityFE injury palette: none, injury 1-3, scar 1-3.
     pub(super) fn injury_level_color(level: u8) -> Color32 {
         match level.min(6) {
@@ -792,27 +777,153 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn render_injury_doll_grid(
+    /// Human-readable severity for a hover tooltip.
+    fn injury_severity_text(level: u8) -> &'static str {
+        match level.min(6) {
+            0 => "uninjured",
+            1 => "minor injury",
+            2 => "moderate injury",
+            3 => "severe injury",
+            4 => "minor scar",
+            5 => "moderate scar",
+            _ => "severe scar",
+        }
+    }
+
+    /// Wrayth-style paperdoll drawn with painter geometry: each body part is
+    /// a shape filled by its injury color, with a hover tooltip naming the
+    /// part and severity. Back and nervous system have no spot on a front
+    /// silhouette, so they render as "B"/"N" letters in the bottom corners
+    /// (Wrayth-style). Scales with the window and needs no image assets.
+    pub(super) fn render_injury_doll(
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
-        for row in Self::INJURY_DOLL_ROWS {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let mut col = 0usize;
-                for (start, glyph, part) in row.iter() {
-                    if *start > col {
-                        ui.label(RichText::new(" ".repeat(start - col)).monospace());
-                    }
-                    let level = injuries.get(*part).copied().unwrap_or(0);
-                    ui.label(
-                        RichText::new(*glyph)
-                            .monospace()
-                            .color(Self::injury_level_color(level)),
-                    );
-                    col = start + glyph.chars().count();
+        // Sprite mode: skin-supplied base body plus per-part severity
+        // overlays, authored on the same canvas so they stack in place.
+        if let Some(base) = skin_art.and_then(|art| art.doll_base) {
+            let art = skin_art.unwrap();
+            let avail = ui.available_size();
+            let (outer, response) = ui.allocate_exact_size(
+                Vec2::new(avail.x.max(40.0), avail.y.max(60.0)),
+                egui::Sense::hover(),
+            );
+            let painter = ui.painter().with_clip_rect(outer);
+            let dest = crate::frontend::gui::skin::sprite_dest(&base, outer);
+            crate::frontend::gui::skin::paint_sprite(&painter, dest, &base, Color32::WHITE);
+            let mut wounds: Vec<String> = Vec::new();
+            for (part, level) in injuries {
+                if *level == 0 {
+                    continue;
                 }
-            });
+                if let Some(overlay) = art.doll_overlay(part, *level) {
+                    crate::frontend::gui::skin::paint_sprite(
+                        &painter,
+                        dest,
+                        &overlay,
+                        Color32::WHITE,
+                    );
+                }
+                wounds.push(format!("{}: {}", part, Self::injury_severity_text(*level)));
+            }
+            if wounds.is_empty() {
+                response.on_hover_text("uninjured");
+            } else {
+                wounds.sort();
+                response.on_hover_text(wounds.join("\n"));
+            }
+            return;
+        }
+
+        // (key, display name, shape) in unit coordinates: x/y are fractions
+        // of the doll rect; radii and line widths are fractions of its
+        // height. Head must precede eyes so the eyes paint on top.
+        enum PartShape {
+            Circle { c: (f32, f32), r: f32 },
+            Block { min: (f32, f32), max: (f32, f32) },
+            Line { a: (f32, f32), b: (f32, f32), w: f32 },
+            Letter { c: (f32, f32), letter: &'static str },
+        }
+        use PartShape::*;
+        // Back and nervous system have no spot on a front silhouette; like
+        // Wrayth's paperdoll they render as "B" and "N" letters in the
+        // bottom corners, colored by severity.
+        const PARTS: &[(&str, &str, PartShape)] = &[
+            ("head", "head", Circle { c: (0.50, 0.105), r: 0.085 }),
+            ("leftEye", "left eye", Circle { c: (0.465, 0.09), r: 0.018 }),
+            ("rightEye", "right eye", Circle { c: (0.535, 0.09), r: 0.018 }),
+            ("neck", "neck", Block { min: (0.465, 0.19), max: (0.535, 0.235) }),
+            ("chest", "chest", Block { min: (0.38, 0.235), max: (0.62, 0.41) }),
+            ("abdomen", "abdomen", Block { min: (0.395, 0.41), max: (0.605, 0.525) }),
+            ("leftArm", "left arm", Line { a: (0.365, 0.26), b: (0.265, 0.47), w: 0.045 }),
+            ("rightArm", "right arm", Line { a: (0.635, 0.26), b: (0.735, 0.47), w: 0.045 }),
+            ("leftHand", "left hand", Circle { c: (0.25, 0.515), r: 0.033 }),
+            ("rightHand", "right hand", Circle { c: (0.75, 0.515), r: 0.033 }),
+            ("leftLeg", "left leg", Line { a: (0.44, 0.53), b: (0.41, 0.90), w: 0.055 }),
+            ("rightLeg", "right leg", Line { a: (0.56, 0.53), b: (0.59, 0.90), w: 0.055 }),
+            ("back", "back", Letter { c: (0.12, 0.93), letter: "B" }),
+            ("nsys", "nervous system", Letter { c: (0.88, 0.93), letter: "N" }),
+        ];
+
+        // Fit an aspect-stable doll rect into the available space, centered
+        // horizontally so narrow and wide windows both look intentional.
+        const ASPECT: f32 = 0.75; // width : height
+        let avail = ui.available_size();
+        let mut height = avail.y.max(60.0);
+        let mut width = height * ASPECT;
+        if width > avail.x.max(40.0) {
+            width = avail.x.max(40.0);
+            height = width / ASPECT;
+        }
+        let (outer, _) =
+            ui.allocate_exact_size(Vec2::new(avail.x.max(width), height), egui::Sense::hover());
+        let rect = Rect::from_center_size(outer.center(), Vec2::new(width, height));
+        let painter = ui.painter().with_clip_rect(outer);
+        let at = |x: f32, y: f32| rect.min + Vec2::new(x * rect.width(), y * rect.height());
+        let scale = rect.height();
+
+        let letter_font = egui::FontId::proportional((scale * 0.09).clamp(10.0, 18.0));
+        for (key, display, shape) in PARTS {
+            let level = injuries.get(*key).copied().unwrap_or(0);
+            let fill = Self::injury_level_color(level);
+            let outline = egui::Stroke::new(1.0, Self::lighten(fill, 0.2));
+
+            let hover_rect = match shape {
+                Circle { c, r } => {
+                    let center = at(c.0, c.1);
+                    painter.circle(center, r * scale, fill, outline);
+                    Rect::from_center_size(center, Vec2::splat(r * scale * 2.0))
+                }
+                Block { min, max } => {
+                    let shape_rect = Rect::from_min_max(at(min.0, min.1), at(max.0, max.1));
+                    painter.rect(shape_rect, scale * 0.02, fill, outline, egui::StrokeKind::Middle);
+                    shape_rect
+                }
+                Line { a, b, w } => {
+                    let (a, b) = (at(a.0, a.1), at(b.0, b.1));
+                    painter.line_segment([a, b], egui::Stroke::new(w * scale, fill));
+                    Rect::from_two_pos(a, b).expand(w * scale * 0.5)
+                }
+                Letter { c, letter } => {
+                    let center = at(c.0, c.1);
+                    painter.text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        *letter,
+                        letter_font.clone(),
+                        fill,
+                    );
+                    Rect::from_center_size(center, Vec2::splat(scale * 0.11))
+                }
+            };
+
+            ui.interact(
+                hover_rect,
+                ui.id().with(("injury_doll", key)),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(format!("{}: {}", display, Self::injury_severity_text(level)));
         }
     }
 
@@ -828,7 +939,13 @@ impl VellumGuiApp {
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
-                Self::render_injury_doll_grid(ui, &popup.injuries);
+                ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
+                    Self::render_injury_doll(
+                        ui,
+                        &popup.injuries,
+                        self.skin_state.widget_art().as_deref(),
+                    );
+                });
             });
         if !open {
             self.app_core.ui_state.injuries_popup = None;
@@ -839,6 +956,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         label: &str,
         indicator: &crate::data::IndicatorData,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
         let text = if label.is_empty() {
             &indicator.indicator_id
@@ -855,6 +973,40 @@ impl VellumGuiApp {
         } else {
             Color32::from_rgb(0x55, 0x55, 0x55)
         };
+        // Skin sprite first, then the built-in pictogram (dimmed when
+        // inactive, Wrayth-style); custom ids without art keep the text.
+        let sprite = skin_art.and_then(|art| art.icon(&indicator.indicator_id));
+        if sprite.is_some() || super::status_icons::supported(&indicator.indicator_id) {
+            let side = ui
+                .available_width()
+                .min(ui.available_height())
+                .clamp(10.0, 96.0);
+            ui.centered_and_justified(|ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                if let Some(sprite) = sprite {
+                    // Sprites carry their own colors: full-color when
+                    // active, dimmed toward gray when inactive.
+                    let tint = if indicator.active {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 70)
+                    };
+                    let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
+                    crate::frontend::gui::skin::paint_sprite(ui.painter(), dest, &sprite, tint);
+                } else {
+                    super::status_icons::paint(
+                        ui.painter(),
+                        rect,
+                        &indicator.indicator_id,
+                        color,
+                        ui.visuals().window_fill(),
+                    );
+                }
+                response.on_hover_text(text.to_string());
+            });
+            return;
+        }
         ui.centered_and_justified(|ui| {
             ui.label(RichText::new(text).color(color).strong());
         });
@@ -864,6 +1016,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         compass_data: &crate::data::CompassData,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
         let source_directions: &[String] = if compass_data.directions.is_empty() {
@@ -876,42 +1029,206 @@ impl VellumGuiApp {
             .map(|direction| direction.to_ascii_lowercase())
             .collect();
 
-        let grid_rows: [[&str; 3]; 3] = [["nw", "n", "ne"], ["w", "", "e"], ["sw", "s", "se"]];
-        egui::Grid::new("gui_compass_grid")
-            .num_columns(3)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                for row in grid_rows {
-                    for direction in row {
-                        if direction.is_empty() {
-                            ui.label("");
-                            continue;
-                        }
-                        let is_available = available.contains(direction);
-                        let label = direction.to_ascii_uppercase();
-                        let response = ui.add_enabled(
-                            is_available,
-                            egui::Button::new(label).min_size(Vec2::splat(26.0)),
-                        );
-                        if is_available && response.clicked() && clicked_link.is_none() {
-                            clicked_link = Some(Self::gui_link_click_from_response(
-                                &response,
-                                ui,
-                                Self::direct_command_link(direction.to_string()),
-                            ));
+        ui.horizontal_centered(|ui| {
+            // Rose square: whatever height we have, leaving room for the
+            // up/down arrow column to the right. Out is the rose's hub.
+            let arrow_side = (ui.available_height() * 0.28).clamp(14.0, 30.0);
+            let side = ui
+                .available_height()
+                .min(ui.available_width() - arrow_side - 8.0)
+                .max(40.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+            if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
+                clicked_link = Some(click);
+            }
+
+            ui.vertical(|ui| {
+                for (direction, points_up) in [("up", true), ("down", false)] {
+                    if let Some(click) =
+                        Self::paint_vertical_arrow(ui, arrow_side, direction, points_up, &available)
+                    {
+                        if clicked_link.is_none() {
+                            clicked_link = Some(click);
                         }
                     }
-                    ui.end_row();
                 }
             });
+        });
 
-        ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            for direction in ["up", "down", "out", "in"] {
-                let is_available = available.contains(direction);
-                let label = direction.to_ascii_uppercase();
-                let response = ui.add_enabled(is_available, egui::Button::new(label));
-                if is_available && response.clicked() && clicked_link.is_none() {
+        clicked_link
+    }
+
+    /// One up/down movement arrow beside the compass rose: a triangle in
+    /// the same color language as the rose (link color when the exit is
+    /// available, faint outline otherwise), clickable like a rose arrow.
+    fn paint_vertical_arrow(
+        ui: &mut egui::Ui,
+        side: f32,
+        direction: &str,
+        points_up: bool,
+        available: &HashSet<String>,
+    ) -> Option<GuiLinkClick> {
+        let is_available = available.contains(direction);
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::splat(side),
+            if is_available {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+
+        let visuals = ui.visuals();
+        let available_fill = visuals.hyperlink_color;
+        let idle_stroke = visuals.widgets.noninteractive.bg_stroke.color;
+        let (fill, stroke) = if !is_available {
+            (Color32::TRANSPARENT, egui::Stroke::new(1.0, idle_stroke))
+        } else if response.hovered() {
+            let hover = Self::lighten(available_fill, 0.35);
+            (hover, egui::Stroke::new(1.0, hover))
+        } else {
+            (available_fill, egui::Stroke::new(1.0, available_fill))
+        };
+
+        let inner = rect.shrink(side * 0.18);
+        let points = if points_up {
+            vec![
+                Pos2::new(inner.center().x, inner.min.y),
+                Pos2::new(inner.min.x, inner.max.y),
+                Pos2::new(inner.max.x, inner.max.y),
+            ]
+        } else {
+            vec![
+                Pos2::new(inner.min.x, inner.min.y),
+                Pos2::new(inner.max.x, inner.min.y),
+                Pos2::new(inner.center().x, inner.max.y),
+            ]
+        };
+        ui.painter()
+            .add(egui::Shape::convex_polygon(points, fill, stroke));
+
+        if is_available {
+            let response = response
+                .on_hover_text(direction.to_string())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                return Some(Self::gui_link_click_from_response(
+                    &response,
+                    ui,
+                    Self::direct_command_link(direction.to_string()),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Draw the compass rose into `rect`. Sprite mode (skin `[compass]`
+    /// with a rose image) paints the rose plus a lit overlay per available
+    /// direction, all aspect-fit to the same canvas. Vector mode draws
+    /// eight arrows around a hub, available exits filled with the theme
+    /// link color, the rest as faint outlines. Both modes share the same
+    /// clickable hit regions and send the same movement commands.
+    fn paint_compass_rose(
+        ui: &mut egui::Ui,
+        rect: Rect,
+        available: &HashSet<String>,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) -> Option<GuiLinkClick> {
+        const DIRECTIONS: [(&str, &str); 8] = [
+            ("n", "north"),
+            ("ne", "northeast"),
+            ("e", "east"),
+            ("se", "southeast"),
+            ("s", "south"),
+            ("sw", "southwest"),
+            ("w", "west"),
+            ("nw", "northwest"),
+        ];
+
+        let mut clicked_link = None;
+        let painter = ui.painter().with_clip_rect(rect);
+        let center = rect.center();
+        let radius = rect.width().min(rect.height()) * 0.5 - 2.0;
+        if radius < 8.0 {
+            return None;
+        }
+
+        let rose_sprite = skin_art.and_then(|art| art.compass_rose);
+        if let Some(rose) = &rose_sprite {
+            let dest = crate::frontend::gui::skin::sprite_dest(rose, rect);
+            crate::frontend::gui::skin::paint_sprite(&painter, dest, rose, Color32::WHITE);
+            let overlay_dirs = DIRECTIONS
+                .iter()
+                .map(|(direction, _)| *direction)
+                .chain(["up", "down", "out"]);
+            for direction in overlay_dirs {
+                if !available.contains(direction) {
+                    continue;
+                }
+                if let Some(overlay) = skin_art.and_then(|art| art.compass_dir(direction)) {
+                    crate::frontend::gui::skin::paint_sprite(
+                        &painter,
+                        dest,
+                        &overlay,
+                        Color32::WHITE,
+                    );
+                }
+            }
+        }
+
+        let visuals = ui.visuals().clone();
+        let available_fill = visuals.hyperlink_color;
+        let hover_fill = Self::lighten(available_fill, 0.35);
+        let idle_stroke = visuals.widgets.noninteractive.bg_stroke.color;
+
+        for (index, (direction, full_name)) in DIRECTIONS.iter().enumerate() {
+            let is_cardinal = index % 2 == 0;
+            let angle = index as f32 * std::f32::consts::FRAC_PI_4;
+            let dir = Vec2::new(angle.sin(), -angle.cos());
+            let perp = Vec2::new(-dir.y, dir.x);
+
+            let tip_r = if is_cardinal { radius } else { radius * 0.78 };
+            let base_r = radius * 0.3;
+            let half_w = if is_cardinal { radius * 0.15 } else { radius * 0.11 };
+
+            let is_available = available.contains(*direction);
+            let hit_center = center + dir * ((tip_r + base_r) * 0.5);
+            let hit_rect =
+                Rect::from_center_size(hit_center, Vec2::splat((radius * 0.4).max(12.0)));
+            let response = ui.interact(
+                hit_rect,
+                ui.id().with(("compass_rose", direction)),
+                if is_available {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                },
+            );
+
+            if rose_sprite.is_none() {
+                let points = vec![
+                    center + dir * tip_r,
+                    center + dir * base_r + perp * half_w,
+                    center + dir * base_r - perp * half_w,
+                ];
+                let (fill, stroke) = if !is_available {
+                    (
+                        Color32::TRANSPARENT,
+                        egui::Stroke::new(1.0, idle_stroke),
+                    )
+                } else if response.hovered() {
+                    (hover_fill, egui::Stroke::new(1.0, hover_fill))
+                } else {
+                    (available_fill, egui::Stroke::new(1.0, available_fill))
+                };
+                painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            }
+
+            if is_available {
+                let response = response
+                    .on_hover_text(*full_name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() && clicked_link.is_none() {
                     clicked_link = Some(Self::gui_link_click_from_response(
                         &response,
                         ui,
@@ -919,9 +1236,57 @@ impl VellumGuiApp {
                     ));
                 }
             }
-        });
+        }
+
+        // Hub over the arrow bases doubles as the OUT exit: lit and
+        // clickable when the room has one, a plain hub otherwise.
+        let out_available = available.contains("out");
+        let hub_radius = radius * 0.18;
+        let hub_response = ui.interact(
+            Rect::from_center_size(center, Vec2::splat(hub_radius * 2.0)),
+            ui.id().with(("compass_rose", "out")),
+            if out_available {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        if rose_sprite.is_none() {
+            let hub_fill = if !out_available {
+                visuals.window_fill()
+            } else if hub_response.hovered() {
+                hover_fill
+            } else {
+                available_fill
+            };
+            painter.circle(center, hub_radius, hub_fill, egui::Stroke::new(1.0, idle_stroke));
+        }
+        if out_available {
+            let hub_response = hub_response
+                .on_hover_text("out")
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if hub_response.clicked() && clicked_link.is_none() {
+                clicked_link = Some(Self::gui_link_click_from_response(
+                    &hub_response,
+                    ui,
+                    Self::direct_command_link("out".to_string()),
+                ));
+            }
+        }
 
         clicked_link
+    }
+
+    /// Blend a color toward white by `t` (0..=1), preserving alpha.
+    fn lighten(color: Color32, t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        let channel = |c: u8| c.saturating_add(((255 - c) as f32 * t) as u8);
+        Color32::from_rgba_unmultiplied(
+            channel(color.r()),
+            channel(color.g()),
+            channel(color.b()),
+            color.a(),
+        )
     }
 
     pub(super) fn render_hand_content(
@@ -1562,7 +1927,11 @@ impl VellumGuiApp {
             });
     }
 
-    pub(super) fn render_dashboard_content(ui: &mut egui::Ui, indicators: &[(String, u8)]) {
+    pub(super) fn render_dashboard_content(
+        ui: &mut egui::Ui,
+        indicators: &[(String, u8)],
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
         // Matches the TUI dashboard default of hiding inactive indicators.
         let active: Vec<&(String, u8)> = indicators
             .iter()
@@ -1572,6 +1941,9 @@ impl VellumGuiApp {
             ui.weak("No active status.");
             return;
         }
+        // Icons scale with the window's text size. Skin sprites win over
+        // the built-in pictograms; ids with neither keep the text label.
+        let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
         ui.horizontal_wrapped(|ui| {
             for (id, value) in active {
                 let color = match value {
@@ -1579,7 +1951,31 @@ impl VellumGuiApp {
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
                 };
-                ui.label(RichText::new(id).color(color).strong());
+                let sprite = skin_art.and_then(|art| art.icon(id));
+                if sprite.is_some() || super::status_icons::supported(id) {
+                    let (rect, response) = ui
+                        .allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
+                    if let Some(sprite) = sprite {
+                        let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
+                        crate::frontend::gui::skin::paint_sprite(
+                            ui.painter(),
+                            dest,
+                            &sprite,
+                            Color32::WHITE,
+                        );
+                    } else {
+                        super::status_icons::paint(
+                            ui.painter(),
+                            rect,
+                            id,
+                            color,
+                            ui.visuals().window_fill(),
+                        );
+                    }
+                    response.on_hover_text(super::status_icons::display_name(id));
+                } else {
+                    ui.label(RichText::new(id).color(color).strong());
+                }
             }
         });
     }
@@ -2173,6 +2569,15 @@ impl VellumGuiApp {
             return None;
         };
 
+        if let Some(background) = &settings.background {
+            crate::frontend::gui::skin::paint_background(
+                ui.painter(),
+                ui.available_rect_before_wrap(),
+                background,
+                ui.visuals().window_fill(),
+            );
+        }
+
         // Scale the label-driven text styles so list/grid widgets (targets,
         // players, dashboards, ...) follow the window's text size and font,
         // not just the segment-based text renderers below.
@@ -2214,7 +2619,9 @@ impl VellumGuiApp {
                 Self::render_single_progress_content(ui, data, &settings);
                 None
             }
-            WindowContent::Compass(compass) => Self::render_compass_content(app_core, ui, compass),
+            WindowContent::Compass(compass) => {
+                Self::render_compass_content(app_core, ui, compass, settings.skin_art.as_deref())
+            }
             WindowContent::Hand { item, link } => {
                 let hand_prefix = if window.name.to_ascii_lowercase().contains("left") {
                     "L"
@@ -2288,15 +2695,20 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Indicator(indicator) => {
-                Self::render_indicator_content(ui, &tab.id.title, indicator);
+                Self::render_indicator_content(
+                    ui,
+                    &tab.id.title,
+                    indicator,
+                    settings.skin_art.as_deref(),
+                );
                 None
             }
             WindowContent::InjuryDoll(doll) => {
-                Self::render_injury_doll_grid(ui, &doll.injuries);
+                Self::render_injury_doll(ui, &doll.injuries, settings.skin_art.as_deref());
                 None
             }
             WindowContent::Dashboard { indicators } => {
-                Self::render_dashboard_content(ui, indicators);
+                Self::render_dashboard_content(ui, indicators, settings.skin_art.as_deref());
                 None
             }
             WindowContent::GS4Experience => {

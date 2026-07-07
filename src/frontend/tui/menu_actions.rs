@@ -292,6 +292,19 @@ pub fn handle_menu_action(
                 frontend.update_theme_cache(theme_id, theme);
                 app_core.needs_render = true;
             }
+            action
+                if action == "action:skins"
+                    || action == "action:reloadskin"
+                    || action.starts_with("action:setskin:")
+                    || action.starts_with("action:makeskin:") =>
+            {
+                // Skins are image-based GUI decoration; the terminal frontend
+                // has no image pipeline, so just point the user at the GUI.
+                app_core.add_system_message(
+                    "Skins apply to the GUI frontend. Start with --frontend gui to use them.",
+                );
+                app_core.needs_render = true;
+            }
             "action:edittheme" => {
                 // Open theme editor with current theme
                 let current_theme = app_core.config.get_theme();

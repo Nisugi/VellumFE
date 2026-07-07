@@ -6,8 +6,12 @@ vellum-fe [OPTIONS] [SUBCOMMAND]
 
 ## Options
 
+Run with **no arguments** to open [the Launcher](../getting-started/launcher.md).
+
 | Flag | Description |
 |------|-------------|
+| `--launcher` | Open the graphical launcher (also the no-args default) |
+| `--launch-profile <NAME>` | Launch a saved launcher profile from launcher.toml |
 | `-f, --frontend <tui\|gui>` | Frontend to run (default `tui`) |
 | `-p, --port <PORT>` | Lich proxy port (overrides config.toml) |
 | `--host <HOST>` | Lich proxy host (overrides config.toml) |

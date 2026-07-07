@@ -1752,6 +1752,12 @@ impl AppCore {
             ".settheme".to_string(),
             ".theme".to_string(),
             ".edittheme".to_string(),
+            // Skin commands (GUI)
+            ".skins".to_string(),
+            ".setskin".to_string(),
+            ".skin".to_string(),
+            ".makeskin".to_string(),
+            ".reloadskin".to_string(),
             // Tab navigation
             ".nexttab".to_string(),
             ".prevtab".to_string(),
@@ -1981,6 +1987,11 @@ impl AppCore {
         self.add_system_message("  .settheme <name>        - Switch to a theme");
         self.add_system_message("  .theme <name>           - Alias for .settheme");
         self.add_system_message("  .edittheme              - Edit current theme");
+        self.add_system_message("  .skins                  - List installed GUI skins");
+        self.add_system_message("  .setskin <name>         - Activate a GUI skin (.setskin none to disable)");
+        self.add_system_message("  .skin <name>            - Alias for .setskin");
+        self.add_system_message("  .makeskin <name>        - Create a starter skin to edit");
+        self.add_system_message("  .reloadskin             - Reload the active skin's images");
         self.add_system_message("");
 
         // Tab navigation

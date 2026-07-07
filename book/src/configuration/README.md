@@ -18,6 +18,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 
 ```
 ~/.vellum-fe/
+├── launcher.toml         # Launcher profiles (passwords live in the OS keyring)
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
@@ -29,6 +30,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 ├── profiles/
 │   └── CharName/         # Per-character overrides + auto-saved layout.toml
 ├── themes/               # Custom themes (.edittheme saves here)
+├── skins/                # GUI skins (one folder per skin: skin.toml + images)
 └── vellum-fe.log
 ```
 

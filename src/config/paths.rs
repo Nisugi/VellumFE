@@ -94,6 +94,13 @@ impl Config {
         Ok(Self::global_dir()?.join("sounds"))
     }
 
+    /// Get the shared skins directory (one subdirectory per skin, each with a
+    /// skin.toml manifest plus its image assets)
+    /// Returns: ~/.vellum-fe/skins/
+    pub fn skins_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("skins"))
+    }
+
     /// Get path to common (global) highlights file
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {
@@ -276,7 +283,7 @@ impl Config {
             }
         }
         let mut bytes = [0u8; 16];
-        openssl::rand::rand_bytes(&mut bytes).context("Failed to generate web token")?;
+        getrandom::fill(&mut bytes).context("Failed to generate web token")?;
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
