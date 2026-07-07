@@ -4390,6 +4390,7 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         use crate::core::input_router;
+        use crate::data::input::KeyCode;
         use crate::data::ui_state::InputMode;
         if let Some(ref mut editor) = self.window_editor {
             let key_event = crate::data::input::KeyEvent { code, modifiers };
@@ -4624,6 +4625,21 @@ impl TuiFrontend {
                                 app_core.needs_render = true;
                                 return Ok(None);
                             }
+                        }
+                        // Ctrl+P on the Streams field opens the seen-streams
+                        // picker (parity with the GUI custom-windows picker).
+                        // Seed it here where AppCore is in scope, since the
+                        // editor holds no app reference.
+                        if modifiers.ctrl
+                            && matches!(code, KeyCode::Char('p') | KeyCode::Char('P'))
+                            && editor.is_on_streams()
+                        {
+                            editor.set_seen_streams(
+                                app_core.message_processor.seen_streams(),
+                            );
+                            editor.open_stream_picker();
+                            app_core.needs_render = true;
+                            return Ok(None);
                         }
                         editor.input(rt_key);
                         app_core.needs_render = true;
