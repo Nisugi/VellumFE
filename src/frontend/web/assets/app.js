@@ -1115,13 +1115,18 @@ function openHlForm(name) {
   const rule = name ? hlRules[name] || {} : {};
   document.getElementById("hl-name").value = name;
   document.getElementById("hl-pattern").value = rule.pattern || "";
-  hlColors = { fg: rule.fg || null, bg: rule.bg || null };
-  if (rule.fg && /^#[0-9a-f]{6}$/i.test(rule.fg)) {
-    document.getElementById("hl-fg-pick").value = rule.fg;
+  // New rules start with a selected text color (the 99% case); existing
+  // rules reflect exactly what they have. Picker widgets are reset per
+  // form so the previous rule's choices don't leak into this one.
+  if (name) {
+    hlColors = { fg: rule.fg || null, bg: rule.bg || null };
+  } else {
+    hlColors = { fg: "#ffff00", bg: null };
   }
-  if (rule.bg && /^#[0-9a-f]{6}$/i.test(rule.bg)) {
-    document.getElementById("hl-bg-pick").value = rule.bg;
-  }
+  document.getElementById("hl-fg-pick").value =
+    hlColors.fg && /^#[0-9a-f]{6}$/i.test(hlColors.fg) ? hlColors.fg : "#ffff00";
+  document.getElementById("hl-bg-pick").value =
+    hlColors.bg && /^#[0-9a-f]{6}$/i.test(hlColors.bg) ? hlColors.bg : "#333333";
   document.getElementById("hl-bold").checked = !!rule.bold;
   document.getElementById("hl-line").checked = !!rule.color_entire_line;
 
@@ -1160,16 +1165,24 @@ function updateHlPreview() {
     document.getElementById("hl-bold").checked ? "bold" : "";
   document.getElementById("hl-fg-clear").classList.toggle("hl-none-active", !hlColors.fg);
   document.getElementById("hl-bg-clear").classList.toggle("hl-none-active", !hlColors.bg);
+  document.getElementById("hl-fg-pick").classList.toggle("hl-inactive", !hlColors.fg);
+  document.getElementById("hl-bg-pick").classList.toggle("hl-inactive", !hlColors.bg);
 }
 
-document.getElementById("hl-fg-pick").addEventListener("input", (ev) => {
-  hlColors.fg = ev.target.value;
-  updateHlPreview();
-});
-document.getElementById("hl-bg-pick").addEventListener("input", (ev) => {
-  hlColors.bg = ev.target.value;
-  updateHlPreview();
-});
+// Tapping a picker adopts the color it already shows (choosing the shown
+// color in the dialog fires no input event — the value didn't change);
+// dragging in the dialog then updates live via input.
+for (const [pickId, key] of [["hl-fg-pick", "fg"], ["hl-bg-pick", "bg"]]) {
+  const pick = document.getElementById(pickId);
+  pick.addEventListener("click", () => {
+    hlColors[key] = pick.value;
+    updateHlPreview();
+  });
+  pick.addEventListener("input", () => {
+    hlColors[key] = pick.value;
+    updateHlPreview();
+  });
+}
 document.getElementById("hl-fg-clear").addEventListener("click", () => {
   hlColors.fg = null;
   updateHlPreview();
@@ -2276,15 +2289,30 @@ function renderTray() {
     head.textContent = group.name;
     tray.appendChild(head);
     for (const btn of orderedButtons(group)) {
+      const row = document.createElement("div");
+      row.className = "tray-row";
       const el = document.createElement("button");
       el.type = "button";
       el.className = "tray-btn";
       el.textContent = btn.label;
       if (btn.color) el.style.borderLeftColor = btn.color;
       el.addEventListener("click", () => activateMacro(btn));
-      tray.appendChild(el);
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "tray-more";
+      more.setAttribute("aria-label", `Edit or move ${btn.label}`);
+      more.textContent = "⋯";
+      more.addEventListener("click", () => openMacroArrange(group, btn));
+      row.append(el, more);
+      tray.appendChild(row);
     }
   }
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "tray-add";
+  add.textContent = "＋ Add or edit macros";
+  add.addEventListener("click", () => document.getElementById("macro-add").click());
+  tray.appendChild(add);
 }
 
 // ---- Right drawer: injury doll + status -------------------------------------

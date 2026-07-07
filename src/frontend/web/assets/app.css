@@ -1498,3 +1498,29 @@ body.hide-chips #chips { display: none !important; }
 
 .status-effect { justify-content: space-between; }
 .status-time { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+
+/* Color picker selection state + tray edit affordances */
+.hl-color-row input[type="color"].hl-inactive { opacity: 0.35; }
+
+.tray-row { display: flex; gap: 6px; }
+.tray-row .tray-btn { flex: 1; min-width: 0; }
+
+.tray-more {
+  padding: 0 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+.tray-add {
+  margin-top: 8px;
+  padding: 10px;
+  background: none;
+  border: 1px dashed var(--fg-dim);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+}
