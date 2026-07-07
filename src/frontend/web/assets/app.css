@@ -1524,3 +1524,4 @@ body.hide-chips #chips { display: none !important; }
   font: inherit;
   font-size: 13px;
 }
+body.hide-macrorail #macro-rail { display: none !important; }

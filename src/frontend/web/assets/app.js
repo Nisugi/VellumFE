@@ -906,6 +906,9 @@ try {
     uiPrefs = { theme: stored.theme || "dark", hide: stored.hide || {} };
   }
 } catch { /* defaults */ }
+// The bottom macro rail duplicates the tray + floating buttons on very
+// limited vertical space: hidden unless the user explicitly enabled it.
+if (!("macrorail" in uiPrefs.hide)) uiPrefs.hide.macrorail = true;
 
 const THEMES = {
   dark: { label: "Vellum dark", vars: {} },
@@ -930,6 +933,7 @@ const THEMES = {
 };
 
 const CHROME_TOGGLES = [
+  ["macrorail", "Macro bar (bottom)"],
   ["vitals", "Vitals bars"],
   ["hands", "Hands"],
   ["rt", "RT label"],
@@ -2424,14 +2428,14 @@ function renderStatusDrawer() {
   // Active effects with countdowns
   for (const cat of effectCategories) {
     if (!cat.effects.length) continue;
-    panel.appendChild(sectionTitle(cat.category.replace(/([a-z])([A-Z])/g, "$1 $2")));
+    panel.appendChild(sectionTitle(CATEGORY_LABELS[cat.category] || cat.category));
     const section = document.createElement("div");
     section.className = "status-section";
     for (const effect of cat.effects) {
       const row = document.createElement("div");
       row.className = "status-row status-effect";
       const name = document.createElement("span");
-      name.textContent = effect.name;
+      name.textContent = effect.text;
       const time = document.createElement("span");
       time.className = "status-time";
       time.dataset.expires = effect.expiresAt ?? "";
