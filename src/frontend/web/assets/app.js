@@ -707,6 +707,7 @@ function handleMessage(msg) {
     case "config_file": handleConfigReply(msg.d); break;
     case "sound": playRemoteSound(msg.d); break;
     case "highlights": handleHighlightsReply(msg.d); break;
+    case "colors": handleColorsReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "charinfo": setCharInfo(msg.d); break;
@@ -1124,6 +1125,8 @@ function openSettingsSheet() {
   );
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
+  sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
+  sheetButton("Colors (global)", () => openColorsEditor("global"));
   for (const file of EDITOR_FILES) {
     sheetButton(file.label, () => openConfigEditor(file));
   }
@@ -2651,3 +2654,151 @@ setInterval(() => {
 window.vellumDebug = {
   setRoom, setTargets, setCharInfo, setInjuries, setEffects, setSession,
 };
+
+
+// ---- Colors editor ----------------------------------------------------------
+// Structured editing of colors.toml: preset colors (what the text engine
+// references for speech/whispers/etc.) and prompt-character colors, with
+// native pickers. Sections the UI does not cover (TUI chrome, spell
+// colors, palette) live in the fetched document and survive the save.
+
+const colorsOverlay = document.getElementById("colors-overlay");
+const colorsList = document.getElementById("colors-list");
+const colorsStatus = document.getElementById("colors-status");
+let colorsScope = null;
+let colorsDoc = null; // the full fetched ColorConfig JSON
+let colorsRequestCounter = 0;
+let colorsPendingRequest = null;
+
+function colorsStatusMsg(text, isError) {
+  colorsStatus.textContent = text;
+  colorsStatus.classList.toggle("editor-error", !!isError);
+  colorsStatus.hidden = !text;
+}
+
+function openColorsEditor(scope) {
+  colorsScope = scope;
+  colorsDoc = null;
+  document.getElementById("colors-title").textContent =
+    scope === "global" ? "Colors (global)" : "Colors (this profile)";
+  colorsList.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading\u2026",
+  }));
+  colorsStatusMsg("", false);
+  colorsOverlay.hidden = false;
+  colorsPendingRequest = ++colorsRequestCounter;
+  sendJson("colors_get", { request_id: colorsPendingRequest, scope });
+}
+
+function handleColorsReply(d) {
+  if (d.request_id !== colorsPendingRequest) return;
+  if (d.error) {
+    colorsStatusMsg(d.error, true);
+    return;
+  }
+  if (d.saved) {
+    colorsStatusMsg("Saved \u2014 applied live.", false);
+    return;
+  }
+  colorsDoc = d.colors || {};
+  renderColorsList();
+}
+
+// One row: label + fg/bg pickers with clear buttons (select-on-tap, same
+// lesson as the highlight form: picking the shown color fires no event).
+function colorRow(label, obj, fgKey, bgKey) {
+  const row = document.createElement("div");
+  row.className = "color-row";
+  const name = document.createElement("span");
+  name.className = "color-row-name";
+  name.textContent = label;
+  row.appendChild(name);
+
+  const makePicker = (key) => {
+    const wrap = document.createElement("span");
+    wrap.className = "color-cell";
+    const pick = document.createElement("input");
+    pick.type = "color";
+    const current = obj[key];
+    if (current && /^#[0-9a-f]{6}$/i.test(current)) pick.value = current;
+    pick.classList.toggle("hl-inactive", !current);
+    const none = document.createElement("button");
+    none.type = "button";
+    none.textContent = "\u2715";
+    none.className = "color-none";
+    none.classList.toggle("hl-none-active", !current);
+    const setVal = (v) => {
+      if (v) obj[key] = v; else delete obj[key];
+      pick.classList.toggle("hl-inactive", !v);
+      none.classList.toggle("hl-none-active", !v);
+    };
+    pick.addEventListener("click", () => setVal(pick.value));
+    pick.addEventListener("input", () => setVal(pick.value));
+    none.addEventListener("click", () => setVal(null));
+    wrap.append(pick, none);
+    return wrap;
+  };
+
+  row.appendChild(makePicker(fgKey));
+  if (bgKey) row.appendChild(makePicker(bgKey));
+  return row;
+}
+
+function colorsSection(title) {
+  const el = document.createElement("div");
+  el.className = "status-title";
+  el.textContent = title;
+  return el;
+}
+
+function renderColorsList() {
+  colorsList.replaceChildren();
+  const doc = colorsDoc || {};
+
+  const presets = doc.presets || {};
+  const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+  if (names.length) {
+    colorsList.appendChild(colorsSection("Text presets (color \u00b7 background)"));
+    for (const name of names) {
+      colorsList.appendChild(colorRow(name, presets[name], "fg", "bg"));
+    }
+  }
+
+  const prompts = doc.prompt_colors || [];
+  if (prompts.length) {
+    colorsList.appendChild(colorsSection("Prompt characters"));
+    for (const p of prompts) {
+      colorsList.appendChild(colorRow('"' + p.character + '"', p, "fg", "bg"));
+    }
+  }
+
+  if (!names.length && !prompts.length) {
+    colorsList.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: "No presets or prompt colors in this file.",
+    }));
+  }
+
+  const note = document.createElement("p");
+  note.className = "hl-empty";
+  note.textContent =
+    "Other sections (TUI chrome, spell colors, palette) are preserved as-is; edit them under Advanced.";
+  colorsList.appendChild(note);
+}
+
+document.getElementById("colors-save").addEventListener("click", () => {
+  if (!colorsDoc) return;
+  colorsStatusMsg("Saving\u2026", false);
+  colorsPendingRequest = ++colorsRequestCounter;
+  sendJson("colors_put", {
+    request_id: colorsPendingRequest,
+    scope: colorsScope,
+    colors: colorsDoc,
+  });
+});
+
+document.getElementById("colors-close").addEventListener("click", () => {
+  colorsOverlay.hidden = true;
+  colorsScope = null;
+  colorsDoc = null;
+});

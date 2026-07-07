@@ -212,6 +212,82 @@ impl AppCore {
         }
     }
 
+    // ---- Structured colors editing (phone editor UI) --------------------
+
+    fn colors_scope_path(&self, scope: &str) -> Result<std::path::PathBuf, String> {
+        match scope {
+            "profile" => Config::colors_path(self.config.character.as_deref()),
+            "global" => Config::common_colors_path(),
+            _ => return Err(format!("Unknown colors scope '{scope}'")),
+        }
+        .map_err(|e| format!("Path unavailable: {e}"))
+    }
+
+    /// Read the color config for editing. A missing file shows the
+    /// *effective* config (merged for profile scope, defaults for global)
+    /// so the editor lists real preset names rather than an empty page.
+    pub fn handle_remote_colors_get(&mut self, client_id: u64, request_id: u64, scope: String) {
+        let result = self.colors_scope_path(&scope).and_then(|path| {
+            let config = if path.exists() {
+                let content =
+                    std::fs::read_to_string(&path).map_err(|e| format!("Read failed: {e}"))?;
+                toml::from_str::<crate::config::ColorConfig>(&content)
+                    .map_err(|e| format!("Existing file is invalid TOML: {e}"))?
+            } else if scope == "profile" {
+                crate::config::ColorConfig::load(self.config.character.as_deref())
+                    .unwrap_or_default()
+            } else {
+                crate::config::ColorConfig::default()
+            };
+            serde_json::to_value(&config).map_err(|e| format!("Serialize failed: {e}"))
+        });
+        let (colors, error) = match result {
+            Ok(v) => (v, None),
+            Err(e) => (serde_json::Value::Null, Some(e)),
+        };
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_colors(client_id, request_id, scope, colors, error, false);
+        }
+    }
+
+    /// Validate (deserializes into the real ColorConfig), write, hot-reload.
+    pub fn handle_remote_colors_put(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+    ) {
+        let result = (|| {
+            let config: crate::config::ColorConfig = serde_json::from_value(colors)
+                .map_err(|e| format!("Invalid color config: {e}"))?;
+            let path = self.colors_scope_path(&scope)?;
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let content =
+                toml::to_string_pretty(&config).map_err(|e| format!("Serialize failed: {e}"))?;
+            std::fs::write(&path, content).map_err(|e| format!("Write failed: {e}"))
+        })();
+        let (saved, error) = match result {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        };
+        if saved {
+            self.reload_colors();
+        }
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_colors(
+                client_id,
+                request_id,
+                scope,
+                serde_json::Value::Null,
+                error,
+                saved,
+            );
+        }
+    }
+
     /// Validate, write, and hot-reload a config file for a remote client.
     pub fn handle_remote_config_put(
         &mut self,

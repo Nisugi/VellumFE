@@ -252,6 +252,24 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             last_seq,
             serde_json::json!({ "file": file, "volume": volume }),
         ),
+        RemoteDelta::Colors {
+            request_id,
+            scope,
+            colors,
+            error,
+            saved,
+            ..
+        } => encode(
+            "colors",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "scope": scope,
+                "colors": colors,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
         RemoteDelta::Highlights {
             request_id,
             scope,
@@ -402,6 +420,14 @@ pub enum ClientMessage {
         request_id: u64,
         scope: String,
         name: String,
+    },
+    /// Structured color config for the editor UI.
+    ColorsGet { request_id: u64, scope: String },
+    /// Validate + write the full color config, then hot-reload.
+    ColorsPut {
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
     },
 }
 
@@ -583,6 +609,24 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 scope,
                 name,
                 rule,
+            })
+        }
+        "colors_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            Some(ClientMessage::ColorsGet { request_id, scope })
+        }
+        "colors_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            let colors = msg.d.get("colors")?.clone();
+            if !colors.is_object() {
+                return None;
+            }
+            Some(ClientMessage::ColorsPut {
+                request_id,
+                scope,
+                colors,
             })
         }
         "highlight_delete" => {

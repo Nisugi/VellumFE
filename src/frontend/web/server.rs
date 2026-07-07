@@ -631,6 +631,29 @@ async fn handle_client_message(
                 rule,
             })
             .is_ok(),
+        ClientMessage::ColorsGet { request_id, scope } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ColorsGet {
+                client_id,
+                request_id,
+                scope,
+            })
+            .is_ok(),
+        ClientMessage::ColorsPut {
+            request_id,
+            scope,
+            colors,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ColorsPut {
+                client_id,
+                request_id,
+                scope,
+                colors,
+            })
+            .is_ok(),
         ClientMessage::HighlightDelete {
             request_id,
             scope,
@@ -797,7 +820,8 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     // only the requesting client's task forwards them.
                     if let RemoteDelta::Menu { client_id: target, .. }
                     | RemoteDelta::ConfigFile { client_id: target, .. }
-                    | RemoteDelta::Highlights { client_id: target, .. } = &d
+                    | RemoteDelta::Highlights { client_id: target, .. }
+                    | RemoteDelta::Colors { client_id: target, .. } = &d
                     {
                         if *target != client_id {
                             continue;

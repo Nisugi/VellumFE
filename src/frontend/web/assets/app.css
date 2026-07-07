@@ -1611,3 +1611,117 @@ body.hide-compass #compass { display: none !important; }
 
 .compass-cell.compass-lit:active { background: var(--border); }
 .compass-blank { visibility: hidden; }
+
+/* ---- Colors editor ---------------------------------------------------------- */
+
+#colors-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  background: var(--bg);
+  display: flex;
+  padding: 12px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+#colors-overlay[hidden] { display: none; }
+
+#colors-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+#colors-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#colors-title { color: var(--st); font-size: 15px; }
+
+#colors-close {
+  padding: 4px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+#colors-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.color-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.color-cell { display: flex; gap: 4px; align-items: stretch; }
+
+.color-cell input[type="color"] {
+  width: 44px;
+  min-height: 34px;
+  padding: 2px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.color-none {
+  padding: 0 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+}
+
+.color-none.hl-none-active {
+  color: var(--st);
+  border-color: var(--st);
+}
+
+#colors-actions { display: flex; }
+
+#colors-save {
+  flex: 1;
+  padding: 10px;
+  background: var(--bg-panel);
+  color: var(--st);
+  border: 1px solid var(--st);
+  border-radius: 6px;
+  font: inherit;
+}
+
+#colors-status { color: var(--fg-dim); font-size: 13px; }
+#colors-status.editor-error { color: var(--hp); }
+#colors-status[hidden] { display: none; }

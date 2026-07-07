@@ -833,6 +833,23 @@ fn handle_remote_event(
             app_core.handle_remote_highlight_put(client_id, request_id, scope, name, rule);
             true
         }
+        RemoteEvent::ColorsGet {
+            client_id,
+            request_id,
+            scope,
+        } => {
+            app_core.handle_remote_colors_get(client_id, request_id, scope);
+            true
+        }
+        RemoteEvent::ColorsPut {
+            client_id,
+            request_id,
+            scope,
+            colors,
+        } => {
+            app_core.handle_remote_colors_put(client_id, request_id, scope, colors);
+            true
+        }
         RemoteEvent::HighlightDelete {
             client_id,
             request_id,

@@ -251,6 +251,15 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// Reply to one client's structured colors get/put (addressed).
+    Colors {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    },
     /// Reply to one client's structured highlight get/put/delete: the full
     /// rule map for the scope (or an error), plus the available sound
     /// files for the editor's dropdown.
@@ -361,6 +370,21 @@ pub enum RemoteEvent {
         request_id: u64,
         scope: String,
         name: String,
+    },
+    /// Structured color config for the phone editor ("profile"/"global").
+    ColorsGet {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    },
+    /// Validate and write the full color config, then hot-reload. The
+    /// client edits the fetched JSON in place, so sections its UI doesn't
+    /// cover survive the round trip.
+    ColorsPut {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
     },
 }
 
@@ -673,6 +697,27 @@ impl RemoteSink {
             request_id,
             file,
             content,
+            error,
+            saved,
+        });
+    }
+
+    /// Route a structured colors reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_colors(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Colors {
+            client_id,
+            request_id,
+            scope,
+            colors,
             error,
             saved,
         });
