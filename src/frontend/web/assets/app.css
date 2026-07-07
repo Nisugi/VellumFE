@@ -853,14 +853,16 @@ html, body {
 
 #session-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--vvh, 100%);
   z-index: 15; /* below the pairing overlay (20): pairing wins */
   background: var(--bg);
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 24px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 #session-overlay[hidden] { display: none; }
@@ -871,6 +873,10 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* margin:auto centers like flex centering but stays scrollable when the
+     card is taller than a short (keyboard-open) viewport — align-items:
+     center would clip the top. */
+  margin: auto;
 }
 
 #session-card h2 { color: var(--st); font-size: 18px; }
@@ -991,7 +997,10 @@ html, body {
 
 #editor-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--vvh, 100%);
   z-index: 25;
   background: var(--bg);
   display: flex;
@@ -1030,6 +1039,7 @@ html, body {
 #editor-text {
   flex: 1;
   min-height: 0;
+  -webkit-overflow-scrolling: touch;
   padding: 10px;
   background: var(--bg-panel);
   color: var(--fg);
@@ -1070,7 +1080,10 @@ html, body {
 
 #hl-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--vvh, 100%);
   z-index: 25;
   background: var(--bg);
   display: flex;
@@ -1129,6 +1142,7 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1173,7 +1187,18 @@ html, body {
 #hl-form {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Fields scroll; the action bar stays pinned and visible even with the
+   soft keyboard up (the overlay tracks the visual viewport). */
+#hl-fields {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 10px;
