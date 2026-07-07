@@ -58,6 +58,10 @@ enum SessionRequest {
         profile_name: Option<String>,
     },
     Disconnect,
+    /// The user sent `quit` to the game: the server will close the
+    /// connection shortly — treat that close as an intentional logout
+    /// (no reconnect, back to the login screen), not a network drop.
+    UserQuit,
 }
 
 /// Everything the supervisor tracks about the desired/current session.
@@ -375,13 +379,22 @@ pub async fn async_run(
                     }
                 };
                 if stop {
-                    app_core.add_system_message(
-                        "Session ended. Log in again from the web UI to reconnect.",
-                    );
                     supervisor.reconnect_at = None;
-                    let mut info = supervisor.status(SessionState::Disconnected);
-                    info.error = error_text;
-                    app_core.set_remote_session_state(info);
+                    if supervisor.user_disconnected {
+                        // Intentional logout (quit / disconnect button):
+                        // clean return to the login screen, no error.
+                        app_core.add_system_message("Logged out.");
+                        app_core.set_remote_session_state(
+                            supervisor.status(SessionState::Idle),
+                        );
+                    } else {
+                        app_core.add_system_message(
+                            "Session ended. Log in again from the web UI to reconnect.",
+                        );
+                        let mut info = supervisor.status(SessionState::Disconnected);
+                        info.error = error_text;
+                        app_core.set_remote_session_state(info);
+                    }
                 } else {
                     let delay = backoff_delay(supervisor.reconnect_attempt);
                     supervisor.reconnect_attempt += 1;
@@ -454,6 +467,13 @@ pub async fn async_run(
                     app_core.game_state.connected = false;
                     app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
                 }
+                SessionRequest::UserQuit => {
+                    // Don't abort: the quit command is in flight and the
+                    // game closes the connection once it processes it. The
+                    // flag makes that close land on the login screen.
+                    supervisor.user_disconnected = true;
+                    supervisor.reconnect_at = None;
+                }
                 connect @ SessionRequest::Connect { .. } => {
                     if supervisor.connection.is_some() {
                         app_core.add_system_message(
@@ -502,35 +522,45 @@ pub async fn async_run(
 /// Command dispatch without a local frontend: same core path as typed input
 /// (echo, dot-commands, quit interception), modeled on the GUI's
 /// `dispatch_command`. `action:`/`menu:` outputs need a local UI and get a
-/// notice instead.
-fn dispatch_command(app_core: &mut AppCore, connection: Option<&Connection>, command: String) {
+/// notice instead. Returns true when the outbound command was `quit`, so
+/// the supervisor treats the server's coming close as an intentional
+/// logout instead of a drop to reconnect from.
+fn dispatch_command(
+    app_core: &mut AppCore,
+    connection: Option<&Connection>,
+    command: String,
+) -> bool {
     let command = command.trim_end().to_string();
     if command.is_empty() {
-        return;
+        return false;
     }
     match app_core.send_command(command) {
         Ok(outbound) => {
             if outbound.is_empty() || outbound.starts_with("__") {
-                return;
+                return false;
             }
             if outbound.starts_with("action:") || outbound.starts_with("menu:") {
                 app_core.add_system_message("That action needs the desktop client.");
-                return;
+                return false;
             }
+            let is_quit = outbound.trim().eq_ignore_ascii_case("quit");
             match connection {
                 Some(conn) => {
                     app_core
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
                     let _ = conn.command_tx.send(outbound);
+                    is_quit
                 }
                 None => {
                     app_core.add_system_message("Not connected — command not sent.");
+                    false
                 }
             }
         }
         Err(err) => {
             app_core.add_system_message(&format!("Command error: {}", err));
+            false
         }
     }
 }
@@ -545,7 +575,9 @@ fn handle_remote_event(
     match event {
         RemoteEvent::Command(text) => {
             tracing::debug!("remote command: '{}'", text);
-            dispatch_command(app_core, connection, text);
+            if dispatch_command(app_core, connection, text) {
+                session_requests.push(SessionRequest::UserQuit);
+            }
         }
         RemoteEvent::LinkTap {
             client_id,
@@ -603,7 +635,9 @@ fn handle_remote_event(
             match app_core.config.macros.resolve(&id).map(String::from) {
                 Some(command) => {
                     tracing::debug!("remote macro '{}': '{}'", id, command);
-                    dispatch_command(app_core, connection, command);
+                    if dispatch_command(app_core, connection, command) {
+                        session_requests.push(SessionRequest::UserQuit);
+                    }
                 }
                 None => {
                     tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id)

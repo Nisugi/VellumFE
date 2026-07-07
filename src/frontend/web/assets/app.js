@@ -858,6 +858,14 @@ logoutBtn.addEventListener("click", () => {
   sheetButton("Disconnect", () => sendJson("disconnect"));
 });
 
+// The reconnect banner is also the escape hatch: tap to stop retrying
+// and return to the login screen.
+sessionBanner.addEventListener("click", () => {
+  openSheet("Stop reconnecting?");
+  sheetButton("Stop and log out", () => sendJson("disconnect"));
+  sheetNote("Or close this to keep trying.", true);
+});
+
 // ---- Bottom sheet (noun menus + local pickers) ---------------------------
 
 const sheet = document.getElementById("sheet");
