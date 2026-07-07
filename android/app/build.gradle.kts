@@ -13,8 +13,8 @@ android {
         // and it covers the oldest hardware we care about (Galaxy S7 era).
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.3.0-beta.1"
         // Must match the cargo-ndk targets that populate src/main/jniLibs:
         // arm64 for real phones, x86_64 for the Android Studio emulator.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }

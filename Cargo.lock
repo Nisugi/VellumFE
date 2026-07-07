@@ -4679,7 +4679,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-android"
-version = "0.1.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "android_logger",
  "jni 0.21.1",
@@ -4692,7 +4692,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-fe"
-version = "0.1.0"
+version = "0.3.0-beta.1"
 dependencies = [
  "aho-corasick",
  "anyhow",
