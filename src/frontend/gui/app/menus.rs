@@ -34,6 +34,8 @@ pub(super) struct GuiWindowMenuRequest {
 
 #[derive(Clone, Debug)]
 enum GuiWindowMenuCommand {
+    /// Open the Window Editor on this window (title, streams, feed ids).
+    Edit,
     Hide,
     Detach,
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
@@ -107,6 +109,15 @@ impl VellumGuiApp {
         command: GuiWindowMenuCommand,
     ) {
         match command {
+            GuiWindowMenuCommand::Edit => {
+                let window_name = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone());
+                if let Some(name) = window_name {
+                    self.open_window_editor(Some(&name));
+                }
+            }
             GuiWindowMenuCommand::Hide => {
                 // Hiding a grouped window hides the whole group; otherwise
                 // the group would keep rendering without its leader.
@@ -650,6 +661,9 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         view: &WindowMenuView<'_>,
     ) -> Option<GuiWindowMenuCommand> {
+        if ui.button("Edit Window…").clicked() {
+            return Some(GuiWindowMenuCommand::Edit);
+        }
         if ui.button("Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }

@@ -582,7 +582,10 @@ impl VellumGuiApp {
 
     fn collect_available_tabs(app_core: &AppCore) -> HashMap<TabKey, GuiTab> {
         let mut keys: Vec<String> = app_core.ui_state.windows.keys().cloned().collect();
-        keys.sort();
+        // Canonical windows first so they claim singleton keys (Targets,
+        // Room, …) ahead of user-added "custom-*" duplicates, which fall
+        // back to name-keyed tabs below instead of hijacking the slot.
+        keys.sort_by_key(|name| (name.starts_with("custom-"), name.clone()));
 
         let mut tabs = HashMap::new();
         for name in keys {
@@ -590,9 +593,15 @@ impl VellumGuiApp {
                 continue;
             };
 
-            let Some(tab_key) = Self::tab_key_for_window(&name, window) else {
+            let Some(mut tab_key) = Self::tab_key_for_window(&name, window) else {
                 continue;
             };
+            // A second window of a singleton type would silently lose the
+            // entry race and never get a tab (invisible, unlisted). Key
+            // extras by window name so every window stays reachable.
+            if tabs.contains_key(&tab_key) {
+                tab_key = TabKey::WindowByName { id: name.clone() };
+            }
 
             // The main story window keeps its canonical title regardless of the
             // layout's window name (legacy layouts call it "main"/"primary").

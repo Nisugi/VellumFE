@@ -106,6 +106,14 @@ pub enum TabKey {
         /// Page id, e.g. "creaturebar/main"
         page: String,
     },
+
+    /// Fallback key for an extra window whose natural singleton key is
+    /// already claimed (e.g. a second targets window added alongside the
+    /// canonical one). Keyed by window name so every window gets a tab.
+    WindowByName {
+        /// Window name (stable internal id)
+        id: String,
+    },
 }
 
 impl TabKey {
@@ -142,6 +150,7 @@ impl TabKey {
             TabKey::Encumbrance => "Encumbrance".to_string(),
             TabKey::Perception => "Perception".to_string(),
             TabKey::WebUi { page } => page.clone(),
+            TabKey::WindowByName { id } => id.clone(),
         }
     }
 
@@ -172,6 +181,7 @@ impl TabKey {
             TabKey::Encumbrance => "encumbrance".to_string(),
             TabKey::Perception => "perception".to_string(),
             TabKey::WebUi { page } => format!("webui:{}", page),
+            TabKey::WindowByName { id } => format!("win:{}", id),
         }
     }
 }
