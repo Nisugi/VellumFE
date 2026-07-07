@@ -91,6 +91,28 @@ pub async fn async_run(
     let (sink, mut remote_rx) = crate::frontend::web::start(&app_core.config.web, session_label);
     app_core.enable_remote(sink);
 
+    // With no local UI there is no `.webinfo` to surface the pairing token —
+    // print the ready-to-open URL instead. (Unpinned instances may port-walk
+    // above the base port if it's taken; the log from the server task shows
+    // the actual bind.)
+    match crate::config::Config::load_or_create_web_token() {
+        Ok(token) => {
+            let url = format!(
+                "http://127.0.0.1:{}/play#token={}",
+                app_core.config.web.port, token
+            );
+            tracing::info!("Web client URL: {url}");
+            println!("Web UI: {url}");
+            if app_core.config.web.bind != "127.0.0.1" {
+                println!(
+                    "LAN clients: same #token fragment with this machine's IP (bind = {})",
+                    app_core.config.web.bind
+                );
+            }
+        }
+        Err(e) => tracing::warn!("Could not load web pairing token: {e:#}"),
+    }
+
     app_core.init_windows(NOMINAL_COLS, NOMINAL_ROWS);
 
     let (server_tx, mut server_rx) =
