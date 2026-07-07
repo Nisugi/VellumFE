@@ -12,6 +12,10 @@
 //! The core logic is target-independent so `cargo check -p vellum-android`
 //! validates it on any host; only the thin `jni_glue` layer is Android-only.
 
+// On non-Android hosts the jni_glue callers are compiled out, which makes
+// every core item look dead to the host `cargo check`.
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 use std::sync::Mutex;
 
 struct Core {
