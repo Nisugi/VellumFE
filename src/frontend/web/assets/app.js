@@ -618,6 +618,7 @@ function handleSnapshot(d) {
   setHands(d.hands || {});
   setIndicators(d.indicators || {});
   setEffects(d.effects || []);
+  setInjuries(d.injuries || {});
   setRt(d.rt);
   // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
   // session as an implicitly-connected one we can't control.
@@ -653,6 +654,7 @@ function handleMessage(msg) {
     case "config_file": handleConfigReply(msg.d); break;
     case "sound": playRemoteSound(msg.d); break;
     case "highlights": handleHighlightsReply(msg.d); break;
+    case "injuries": setInjuries(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -1450,6 +1452,8 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#session-banner")) return; // opens stop-reconnect
   if (ev.target.closest(".theme-row")) return; // appearance picks retarget
   if (ev.target.closest(".float-btn")) return;
+  if (ev.target.closest(".drawer")) return; // tray buttons open option sheets
+  if (ev.target.closest(".drawer-handle")) return;
   closeSheet();
 });
 
@@ -1605,6 +1609,11 @@ function openMacroArrange(group, btn) {
 
 function renderMacros() {
   renderFloating();
+  // Keep the left drawer tray in sync with definition changes.
+  if (typeof renderTray === "function" &&
+      document.getElementById("drawer-left").classList.contains("open")) {
+    renderTray();
+  }
   // Rail shows once definitions arrive, even empty: the + button is how
   // the first macro gets created from the phone.
   macroRail.hidden = macros === null;
@@ -2169,3 +2178,257 @@ ensureStream("main");
 setActiveStream("main");
 setInterval(tickRt, 100);
 connect();
+
+// ---- Side drawers: macro tray (left) + status/injuries (right) ------------
+// Swipe in from either edge (starting inside the screen so Android's back
+// gesture keeps the literal edge) or tap the handles; text keeps flowing
+// beneath the translucent panel. Swipe back or tap the pane to close.
+
+const drawerLeft = document.getElementById("drawer-left");
+const drawerRight = document.getElementById("drawer-right");
+const paneWrap = document.getElementById("pane-wrap");
+let injuries = {};
+
+function drawerOpen() {
+  return drawerLeft.classList.contains("open") || drawerRight.classList.contains("open");
+}
+
+function openDrawer(side) {
+  closeDrawers();
+  (side === "left" ? drawerLeft : drawerRight).classList.add("open");
+  if (side === "left") renderTray();
+  else renderStatusDrawer();
+}
+
+function closeDrawers() {
+  drawerLeft.classList.remove("open");
+  drawerRight.classList.remove("open");
+}
+
+document.getElementById("handle-left").addEventListener("click", () => openDrawer("left"));
+document.getElementById("handle-right").addEventListener("click", () => openDrawer("right"));
+for (const btn of document.querySelectorAll(".drawer-close")) {
+  btn.addEventListener("click", closeDrawers);
+}
+
+// Edge swipes. Track a touch that starts in the outer 48px of the pane
+// (drawer closed) or anywhere (drawer open, for swipe-to-close).
+let swipe = null;
+paneWrap.addEventListener("touchstart", (ev) => {
+  if (ev.touches.length !== 1) { swipe = null; return; }
+  const t = ev.touches[0];
+  const rect = paneWrap.getBoundingClientRect();
+  const x = t.clientX - rect.left;
+  if (drawerOpen()) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "close" };
+  } else if (x < 48) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "open-left" };
+  } else if (x > rect.width - 48) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "open-right" };
+  } else {
+    swipe = null;
+  }
+}, { passive: true });
+
+paneWrap.addEventListener("touchmove", (ev) => {
+  if (!swipe) return;
+  const t = ev.touches[0];
+  const dx = t.clientX - swipe.x0;
+  const dy = t.clientY - swipe.y0;
+  if (Math.abs(dy) > Math.abs(dx) * 1.5) { swipe = null; return; } // vertical scroll
+  if (swipe.mode === "open-left" && dx > 56) { openDrawer("left"); swipe = null; }
+  else if (swipe.mode === "open-right" && dx < -56) { openDrawer("right"); swipe = null; }
+  else if (swipe.mode === "close") {
+    if ((drawerLeft.classList.contains("open") && dx < -56) ||
+        (drawerRight.classList.contains("open") && dx > 56)) {
+      closeDrawers();
+      swipe = null;
+    }
+  }
+}, { passive: true });
+paneWrap.addEventListener("touchend", () => { swipe = null; }, { passive: true });
+
+// Tapping the visible pane while a drawer is open closes it (capture phase
+// so the tap never reaches links beneath).
+paneWrap.addEventListener("click", (ev) => {
+  if (!drawerOpen()) return;
+  if (ev.target.closest(".drawer") || ev.target.closest(".drawer-handle")) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  closeDrawers();
+}, true);
+
+// ---- Left drawer: vertical macro tray --------------------------------------
+
+function renderTray() {
+  const tray = document.getElementById("tray-content");
+  tray.replaceChildren();
+  if (!macros || (!macros.groups.length && !macros.floating.length)) {
+    tray.appendChild(Object.assign(document.createElement("p"), {
+      className: "drawer-empty",
+      textContent: "No macros yet — use the + button on the macro rail to create one.",
+    }));
+    return;
+  }
+  for (const group of macros.groups) {
+    const head = document.createElement("div");
+    head.className = "tray-group";
+    head.textContent = group.name;
+    tray.appendChild(head);
+    for (const btn of orderedButtons(group)) {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "tray-btn";
+      el.textContent = btn.label;
+      if (btn.color) el.style.borderLeftColor = btn.color;
+      el.addEventListener("click", () => activateMacro(btn));
+      tray.appendChild(el);
+    }
+  }
+}
+
+// ---- Right drawer: injury doll + status -------------------------------------
+
+const LEVEL_COLORS = {
+  1: "#d9b44f", 2: "#e08a2e", 3: "#d9534f", // wounds
+  4: "#8a8f98", 5: "#a98f6e", 6: "#7a5c49", // scars
+};
+
+// Viewer-mirrored like the game's doll: the character's left side draws on
+// the viewer's right. `back` and `nsys` get indicator chips, not geometry.
+const DOLL_PARTS = [
+  ["head", "<circle cx='70' cy='16' r='13'/>"],
+  ["rightEye", "<circle cx='64' cy='13' r='3'/>"],
+  ["leftEye", "<circle cx='76' cy='13' r='3'/>"],
+  ["neck", "<rect x='63' y='29' width='14' height='7' rx='2'/>"],
+  ["chest", "<rect x='50' y='36' width='40' height='26' rx='3'/>"],
+  ["abdomen", "<rect x='52' y='62' width='36' height='20' rx='3'/>"],
+  ["rightArm", "<rect x='33' y='38' width='14' height='42' rx='6'/>"],
+  ["leftArm", "<rect x='93' y='38' width='14' height='42' rx='6'/>"],
+  ["rightHand", "<rect x='33' y='82' width='14' height='12' rx='4'/>"],
+  ["leftHand", "<rect x='93' y='82' width='14' height='12' rx='4'/>"],
+  ["rightLeg", "<rect x='52' y='84' width='16' height='46' rx='6'/>"],
+  ["leftLeg", "<rect x='72' y='84' width='16' height='46' rx='6'/>"],
+];
+
+const PART_LABELS = {
+  head: "head", neck: "neck", chest: "chest", abdomen: "abdomen",
+  back: "back", leftArm: "left arm", rightArm: "right arm",
+  leftHand: "left hand", rightHand: "right hand", leftLeg: "left leg",
+  rightLeg: "right leg", leftEye: "left eye", rightEye: "right eye",
+  nsys: "nerves",
+};
+
+function injuryText(level) {
+  return level <= 3 ? `wound ${level}` : `scar ${level - 3}`;
+}
+
+function setInjuries(map) {
+  injuries = map || {};
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+function renderStatusDrawer() {
+  const panel = document.getElementById("status-content");
+  panel.replaceChildren();
+
+  // Doll
+  const doll = document.createElement("div");
+  doll.id = "status-doll";
+  const shapes = DOLL_PARTS.map(([id, shape]) => {
+    const level = injuries[id] || 0;
+    const fill = LEVEL_COLORS[level] || "var(--border)";
+    return shape.replace("/>", ` fill="${fill}"/>`);
+  }).join("");
+  doll.innerHTML =
+    `<svg viewBox="0 0 140 132" role="img" aria-label="Injury doll">${shapes}</svg>`;
+  panel.appendChild(doll);
+
+  // Back / nervous system indicator chips (no geometry on the doll).
+  const chipRow = document.createElement("div");
+  chipRow.id = "status-chiprow";
+  for (const id of ["back", "nsys"]) {
+    const level = injuries[id] || 0;
+    if (!level) continue;
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.style.borderColor = LEVEL_COLORS[level];
+    chip.textContent = `${PART_LABELS[id]}: ${injuryText(level)}`;
+    chipRow.appendChild(chip);
+  }
+  if (chipRow.children.length) panel.appendChild(chipRow);
+
+  // Injured-part list (exact severities beat squinting at colors).
+  const injured = Object.entries(injuries).sort();
+  if (injured.length) {
+    panel.appendChild(sectionTitle("Injuries"));
+    const list = document.createElement("div");
+    list.className = "status-section";
+    for (const [id, level] of injured) {
+      const row = document.createElement("div");
+      row.className = "status-row";
+      const dot = document.createElement("span");
+      dot.className = "hl-swatch";
+      dot.style.background = LEVEL_COLORS[level] || "transparent";
+      row.append(dot, ` ${PART_LABELS[id] || id}: ${injuryText(level)}`);
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+  } else {
+    const ok = document.createElement("p");
+    ok.className = "drawer-empty";
+    ok.textContent = "No injuries.";
+    panel.appendChild(ok);
+  }
+
+  // Hands
+  panel.appendChild(sectionTitle("Hands"));
+  const hands = document.createElement("div");
+  hands.className = "status-section";
+  for (const [tag, id] of [["L", "hand-left"], ["R", "hand-right"]]) {
+    const row = document.createElement("div");
+    row.className = "status-row";
+    row.textContent = `${tag}: ${document.getElementById(id).textContent}`;
+    hands.appendChild(row);
+  }
+  panel.appendChild(hands);
+
+  // Active effects with countdowns
+  for (const cat of effectCategories) {
+    if (!cat.effects.length) continue;
+    panel.appendChild(sectionTitle(cat.category.replace(/([a-z])([A-Z])/g, "$1 $2")));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const effect of cat.effects) {
+      const row = document.createElement("div");
+      row.className = "status-row status-effect";
+      const name = document.createElement("span");
+      name.textContent = effect.name;
+      const time = document.createElement("span");
+      time.className = "status-time";
+      time.dataset.expires = effect.expiresAt ?? "";
+      time.textContent =
+        effect.expiresAt === null ? "" : fmtRemaining(effect.expiresAt - Date.now());
+      row.append(name, time);
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+}
+
+function sectionTitle(text) {
+  const el = document.createElement("div");
+  el.className = "status-title";
+  el.textContent = text;
+  return el;
+}
+
+// Tick the visible countdowns once a second alongside the pill timer.
+setInterval(() => {
+  if (!drawerRight.classList.contains("open")) return;
+  for (const el of document.querySelectorAll(".status-time")) {
+    if (el.dataset.expires) {
+      el.textContent = fmtRemaining(Number(el.dataset.expires) - Date.now());
+    }
+  }
+}, 1000);

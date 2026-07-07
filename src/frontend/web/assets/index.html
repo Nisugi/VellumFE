@@ -34,6 +34,24 @@
       <div id="text-pane"></div>
       <aside id="effects-panel"></aside>
       <div id="floating-layer"></div>
+      <aside id="drawer-left" class="drawer drawer-l" aria-label="Macro tray">
+        <div class="drawer-head">
+          <span>Macros</span>
+          <button class="drawer-close" data-side="left" type="button" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="drawer-inner" id="tray-content"></div>
+      </aside>
+      <aside id="drawer-right" class="drawer drawer-r" aria-label="Status">
+        <div class="drawer-head">
+          <span>Status</span>
+          <button class="drawer-close" data-side="right" type="button" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="drawer-inner" id="status-content"></div>
+      </aside>
+      <button id="handle-left" class="drawer-handle handle-l" type="button"
+              aria-label="Open macro tray">&#9002;</button>
+      <button id="handle-right" class="drawer-handle handle-r" type="button"
+              aria-label="Open status panel">&#9001;</button>
     </main>
     <footer id="bottombar">
       <div id="rt-bar"><div id="rt-fill"></div></div>
