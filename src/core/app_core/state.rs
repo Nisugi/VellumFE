@@ -740,6 +740,15 @@ impl AppCore {
         }
     }
 
+    /// Broadcast a highlight-triggered sound to remote clients, which play
+    /// it via the browser (used by the headless runtime where there is no
+    /// native audio device). No-op when web is disabled.
+    pub fn push_remote_sound(&mut self, file: &str, volume: Option<f32>) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_sound(file, volume);
+        }
+    }
+
     /// Create or edit a phone-authored macro button. The edit lands in the
     /// macros-local.toml overlay (the hand-written macros.toml is never
     /// rewritten), then the merged set is re-published to every client.

@@ -261,6 +261,7 @@ pub async fn serve_listener_with_token(
         .route("/icon.svg", get(icon_svg))
         .route("/health", get(health))
         .route("/status", get(status_json))
+        .route("/sounds/{name}", get(sound_file))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
     axum::serve(listener, router)
@@ -356,6 +357,57 @@ async fn health() -> impl IntoResponse {
         [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
         "ok",
     )
+}
+
+/// Serve a sound file from the shared sounds directory for client-side
+/// playback (`RemoteDelta::Sound`). Token-gated like /status. The name is
+/// a bare filename — anything path-like is rejected — and extension
+/// resolution matches SoundPlayer::play_from_sounds_dir (a highlight may
+/// reference "alert" meaning "alert.mp3").
+async fn sound_file(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    let Ok(sounds_dir) = crate::config::Config::sounds_dir() else {
+        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    };
+
+    let mut path = sounds_dir.join(&name);
+    if !path.exists() {
+        let mut found = false;
+        for ext in ["mp3", "wav", "ogg", "flac"] {
+            let candidate = sounds_dir.join(format!("{name}.{ext}"));
+            if candidate.exists() {
+                path = candidate;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        }
+    }
+
+    let content_type = match path.extension().and_then(|e| e.to_str()) {
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        _ => "application/octet-stream",
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
+        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+    }
 }
 
 /// Session status for native shells (the Android foreground service polls

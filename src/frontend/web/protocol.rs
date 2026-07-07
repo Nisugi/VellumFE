@@ -233,6 +233,11 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
+        RemoteDelta::Sound { file, volume } => encode(
+            "sound",
+            last_seq,
+            serde_json::json!({ "file": file, "volume": volume }),
+        ),
         // client_id stays server-side: the ws task already filtered on it.
         RemoteDelta::ConfigFile {
             request_id,

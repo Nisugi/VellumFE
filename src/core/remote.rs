@@ -226,6 +226,10 @@ pub enum RemoteDelta {
     Effects(Vec<crate::data::ActiveEffectsContent>),
     /// Game-session status changed (headless runtime only).
     Session(RemoteSessionInfo),
+    /// A highlight-triggered sound. Clients fetch the file from /sounds/
+    /// and play it locally (the Android build has no native audio; the
+    /// phone's browser engine is the sound device).
+    Sound { file: String, volume: Option<f32> },
     /// Reply to one client's config get/put (addressed like `Menu`).
     /// `content` is set for reads; `error` for validation/IO failures;
     /// `saved` for successful writes.
@@ -508,6 +512,14 @@ impl RemoteSink {
             stream: stream.to_string(),
             line,
         }));
+    }
+
+    /// Broadcast a highlight-triggered sound for clients to play.
+    pub fn push_sound(&mut self, file: &str, volume: Option<f32>) {
+        let _ = self.delta_tx.send(RemoteDelta::Sound {
+            file: file.to_string(),
+            volume,
+        });
     }
 
     /// Route a config get/put reply to the remote client that requested it.

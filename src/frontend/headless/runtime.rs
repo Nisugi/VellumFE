@@ -786,6 +786,10 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
             app_core.adjust_content_driven_windows();
 
             for sound in app_core.game_state.drain_sound_queue() {
+                // Web clients play sounds themselves (the Android build has
+                // no native audio); local playback still runs when the
+                // desktop headless build has the sound feature.
+                app_core.push_remote_sound(&sound.file, sound.volume);
                 if let Some(ref player) = app_core.sound_player {
                     if let Err(e) = player.play_from_sounds_dir(&sound.file, sound.volume) {
                         tracing::warn!("Failed to play sound '{}': {}", sound.file, e);

@@ -651,6 +651,7 @@ function handleMessage(msg) {
     case "session": setSession(msg.d); break;
     case "profiles": renderProfiles(msg.d.list || []); break;
     case "config_file": handleConfigReply(msg.d); break;
+    case "sound": playRemoteSound(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -890,10 +891,43 @@ let pendingConfigRequest = null;
 
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSheet("Settings");
+  sheetButton(
+    soundMuted ? "Sound alerts: off — tap to enable" : "Sound alerts: on — tap to mute",
+    () => {
+      soundMuted = !soundMuted;
+      try {
+        localStorage.setItem(SOUND_MUTE_KEY, soundMuted ? "1" : "");
+      } catch { /* private mode */ }
+    },
+  );
   for (const file of EDITOR_FILES) {
     sheetButton(file.label, () => openConfigEditor(file));
   }
 });
+
+// ---- Sound alerts ----------------------------------------------------------
+// Highlight-triggered sounds arrive as `sound` messages; the browser is
+// the audio device (the Android core has no native audio). Files are
+// fetched from /sounds/ with the pairing token.
+
+const SOUND_MUTE_KEY = "vellum-sound-muted";
+let soundMuted = false;
+try {
+  soundMuted = !!localStorage.getItem(SOUND_MUTE_KEY);
+} catch { /* default unmuted */ }
+
+function playRemoteSound(d) {
+  if (soundMuted || !d.file) return;
+  const url = `/sounds/${encodeURIComponent(d.file)}?token=${encodeURIComponent(pairingToken)}`;
+  const audio = new Audio(url);
+  if (typeof d.volume === "number") {
+    audio.volume = Math.max(0, Math.min(1, d.volume));
+  }
+  audio.play().catch((e) => {
+    // Autoplay policy: needs one interaction first; normal before login.
+    console.debug("sound blocked or missing", d.file, e);
+  });
+}
 
 function editorStatusMsg(text, isError) {
   editorStatus.textContent = text;
