@@ -10,6 +10,7 @@
 //! the web frontend, and `--no-default-features` builds — the Android
 //! configuration — must include it.
 
+pub mod embedded;
 mod runtime;
 
 use anyhow::Result;
@@ -34,6 +35,7 @@ pub fn run(
     })
 }
 
-/// Embeddable entry point (Android JNI, Phase C). The caller owns the
-/// runtime and signals shutdown via the watch channel.
+/// Embeddable entry point. The caller owns the runtime and signals shutdown
+/// via the watch channel. Mobile shells go through [`embedded`], which wraps
+/// this in a managed thread + runtime.
 pub use runtime::async_run;

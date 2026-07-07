@@ -4856,15 +4856,13 @@ dependencies = [
  "android_logger",
  "jni 0.21.1",
  "log",
- "serde_json",
- "tokio",
  "tracing",
  "vellum-fe",
 ]
 
 [[package]]
 name = "vellum-fe"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "aho-corasick",
  "anyhow",

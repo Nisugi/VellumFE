@@ -12,11 +12,11 @@ crate-type = ["cdylib"]
 # The core: parser, network, AppCore, web frontend, headless runtime.
 # No TUI/GUI/desktop integrations — see the feature table in the root manifest.
 vellum-fe = { path = "../..", default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread"] }
-serde_json = "1"
 # The "log" feature forwards tracing events from the whole graph to the
 # `log` crate when no tracing subscriber is installed — which is how core
-# logs reach logcat via android_logger without a bridge layer.
+# logs reach logcat via android_logger without a bridge layer. Declared
+# here (not just transitively) because the forwarding is this crate's
+# load-bearing behavior, not an accident of feature unification.
 tracing = { version = "0.1", features = ["log"] }
 log = "0.4"
 
