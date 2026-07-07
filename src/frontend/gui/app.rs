@@ -216,6 +216,7 @@ pub struct VellumGuiApp {
     theme_editor: Option<editors::ThemeEditorState>,
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
+    custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     search_bar_needs_focus: bool,
     /// Cached search-bar match count: (lowercased query, content fingerprint, count).
     search_match_cache: Option<(String, u64, usize)>,
@@ -538,6 +539,7 @@ impl VellumGuiApp {
             theme_editor: None,
             indicator_templates_editor: None,
             window_editor: None,
+            custom_windows_editor: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
@@ -3049,8 +3051,23 @@ impl VellumGuiApp {
         if self.handle_webui_action(action) {
             return true;
         }
+        if action == "action:customwindows" {
+            self.open_custom_windows_editor();
+            return true;
+        }
         if action == "action:addwindow" {
-            let items = self.app_core.build_add_window_menu();
+            let mut items = self.app_core.build_add_window_menu();
+            // Surface the custom-window authoring panel at the top of the Add
+            // Widget menu so creating a stream-fed window is discoverable
+            // (GUI-local; the shared core menu builder stays untouched).
+            items.insert(
+                0,
+                PopupMenuItem {
+                    text: "Custom Window…".to_string(),
+                    command: "action:customwindows".to_string(),
+                    disabled: false,
+                },
+            );
             if items.is_empty() {
                 self.app_core
                     .add_system_message("No window templates available to add.");
