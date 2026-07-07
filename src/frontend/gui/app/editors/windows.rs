@@ -22,7 +22,53 @@ pub(in super::super) struct WindowEditorState {
     compact: bool,
     /// Some for ActiveEffects windows: which effect category feeds it.
     effects_category: Option<String>,
+    /// Some for tabbed-text windows: the editable tab list.
+    tabs: Option<Vec<TabBuffer>>,
     error: Option<String>,
+}
+
+/// One editable tab row. Keeps the original config tab so fields this
+/// editor doesn't surface (timestamps, position) survive a save.
+struct TabBuffer {
+    name: String,
+    streams: String,
+    ignore_activity: bool,
+    original: Option<crate::config::TabbedTextTab>,
+}
+
+impl TabBuffer {
+    fn from_config(tab: &crate::config::TabbedTextTab) -> Self {
+        Self {
+            name: tab.name.clone(),
+            streams: tab.get_streams().join(", "),
+            ignore_activity: tab.ignore_activity.unwrap_or(false),
+            original: Some(tab.clone()),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            name: String::new(),
+            streams: String::new(),
+            ignore_activity: false,
+            original: None,
+        }
+    }
+
+    fn to_config(&self) -> crate::config::TabbedTextTab {
+        let mut tab = self.original.clone().unwrap_or_default();
+        tab.name = self.name.trim().to_string();
+        tab.stream = None; // legacy single-stream field superseded below
+        tab.streams = self
+            .streams
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        tab.ignore_activity = if self.ignore_activity { Some(true) } else { None };
+        tab
+    }
 }
 
 /// Editable feed binding for countdown/progress widgets.
@@ -55,6 +101,7 @@ impl WindowEditorState {
             supports_compact: false,
             compact: false,
             effects_category: None,
+            tabs: None,
             error: None,
         }
     }
@@ -102,6 +149,20 @@ impl VellumGuiApp {
         state.supports_compact = false;
         state.compact = false;
         state.effects_category = None;
+        state.tabs = None;
+        // Tabbed windows: edit the tab list from the layout definition (the
+        // canonical home of per-tab config; live tabs sync from it on save).
+        if matches!(window.content, WindowContent::TabbedText(_)) {
+            if let Some(crate::config::WindowDef::TabbedText { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.name() == name)
+            {
+                state.tabs = Some(data.tabs.iter().map(TabBuffer::from_config).collect());
+            }
+        }
         if let Some(text) = text_content_of(&window.content) {
             state.title = text.title.clone();
             state.streams = text.streams.join(", ");
@@ -299,6 +360,33 @@ impl VellumGuiApp {
             self.app_core.layout_modified_since_save = true;
         }
 
+        if let Some(tabs) = &state.tabs {
+            if tabs.is_empty() {
+                return Err("A tabbed window needs at least one tab.".to_string());
+            }
+            if tabs.iter().any(|tab| tab.name.trim().is_empty()) {
+                return Err("Every tab needs a name.".to_string());
+            }
+            let new_tabs: Vec<crate::config::TabbedTextTab> =
+                tabs.iter().map(TabBuffer::to_config).collect();
+            let Some(crate::config::WindowDef::TabbedText { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            else {
+                return Err(format!(
+                    "Window '{}' has no tabbed layout definition.",
+                    name
+                ));
+            };
+            data.tabs = new_tabs;
+            // Rebuild live tabs (and the stream routing index) from the def.
+            self.app_core.sync_tabbed_window_tabs(name);
+            self.app_core.layout_modified_since_save = true;
+        }
+
         // Rename through the shared dot-command so the layout definition and
         // system messaging behave exactly like the TUI.
         let _ = self
@@ -424,6 +512,70 @@ impl VellumGuiApp {
                              spirit, encumlevel, mindState, or a custom id pushed by Lich."
                         }
                     });
+                }
+
+                if let Some(tabs) = state.tabs.as_mut() {
+                    ui.separator();
+                    ui.strong("Tabs");
+                    let mut remove_index: Option<usize> = None;
+                    let mut move_op: Option<(usize, bool)> = None; // (index, up)
+                    let tab_count = tabs.len();
+                    egui::Grid::new("window_editor_tabs_grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.strong("Name");
+                            ui.strong("Streams");
+                            ui.strong("Quiet");
+                            ui.label("");
+                            ui.end_row();
+                            for (index, tab) in tabs.iter_mut().enumerate() {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut tab.name)
+                                        .desired_width(90.0),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut tab.streams)
+                                        .desired_width(160.0),
+                                );
+                                ui.checkbox(&mut tab.ignore_activity, "")
+                                    .on_hover_text("Don't mark this tab unread on activity.");
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_enabled(index > 0, egui::Button::new("↑").small())
+                                        .clicked()
+                                    {
+                                        move_op = Some((index, true));
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            index + 1 < tab_count,
+                                            egui::Button::new("↓").small(),
+                                        )
+                                        .clicked()
+                                    {
+                                        move_op = Some((index, false));
+                                    }
+                                    if ui.small_button("Remove").clicked() {
+                                        remove_index = Some(index);
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                    if ui.button("Add tab").clicked() {
+                        tabs.push(TabBuffer::empty());
+                    }
+                    ui.weak("Per-tab comma-separated stream ids. Changes apply on Save.");
+                    if let Some((index, up)) = move_op {
+                        let target = if up { index - 1 } else { index + 1 };
+                        tabs.swap(index, target);
+                    }
+                    if let Some(index) = remove_index {
+                        if tabs.len() > 1 {
+                            tabs.remove(index);
+                        }
+                    }
                 }
 
                 if let Some(error) = &state.error {

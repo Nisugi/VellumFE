@@ -357,7 +357,7 @@ fn default_tab_bar_position() -> String {
 }
 
 /// Tab configuration for TabbedText widget
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TabbedTextTab {
     pub name: String,
     /// Single stream (for compatibility) - converts to streams array
