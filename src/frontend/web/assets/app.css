@@ -18,6 +18,10 @@
 
 html, body {
   height: 100%;
+  /* Fixed-viewport app: internal panes scroll, the page never does.
+     Without this, elements translated past the screen edge (closed
+     drawers) widen the layout and the browser zooms the whole UI out. */
+  overflow: hidden;
   background: var(--bg);
   color: var(--fg);
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -194,6 +198,8 @@ html, body {
   position: relative;
   min-height: 0;
   display: flex;
+  /* Clip the off-screen (translated) drawers. */
+  overflow: hidden;
 }
 
 #text-pane {
@@ -856,7 +862,7 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  height: var(--vvh, 100%);
+  bottom: 0;
   z-index: 15; /* below the pairing overlay (20): pairing wins */
   background: var(--bg);
   display: flex;
@@ -1000,7 +1006,7 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  height: var(--vvh, 100%);
+  bottom: 0;
   z-index: 25;
   background: var(--bg);
   display: flex;
@@ -1083,7 +1089,7 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  height: var(--vvh, 100%);
+  bottom: 0;
   z-index: 25;
   background: var(--bg);
   display: flex;
