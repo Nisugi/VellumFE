@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
@@ -202,7 +202,9 @@ pub mod registry {
         let Ok(read) = fs::read_dir(&dir) else {
             return Vec::new();
         };
+        #[cfg(feature = "desktop")]
         let mut system = sysinfo::System::new();
+        #[cfg(feature = "desktop")]
         system.refresh_processes();
         let mut entries = Vec::new();
         for file in read.flatten() {
@@ -217,9 +219,14 @@ pub mod registry {
                 let _ = fs::remove_file(&path);
                 continue;
             };
+            #[cfg(feature = "desktop")]
             let alive = system
                 .process(sysinfo::Pid::from_u32(entry.pid))
                 .is_some();
+            // Without process inspection (Android: single-process app), only
+            // our own entry can be live; anything else is a stale leftover.
+            #[cfg(not(feature = "desktop"))]
+            let alive = entry.pid == std::process::id();
             if alive {
                 entries.push(entry);
             } else {
@@ -253,6 +260,8 @@ pub async fn serve_listener_with_token(
         .route("/sw.js", get(sw_js))
         .route("/icon.svg", get(icon_svg))
         .route("/health", get(health))
+        .route("/status", get(status_json))
+        .route("/sounds/{name}", get(sound_file))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
     axum::serve(listener, router)
@@ -347,6 +356,80 @@ async fn health() -> impl IntoResponse {
     (
         [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
         "ok",
+    )
+}
+
+/// Serve a sound file from the shared sounds directory for client-side
+/// playback (`RemoteDelta::Sound`). Token-gated like /status. The name is
+/// a bare filename — anything path-like is rejected — and extension
+/// resolution matches SoundPlayer::play_from_sounds_dir (a highlight may
+/// reference "alert" meaning "alert.mp3").
+async fn sound_file(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    let Ok(sounds_dir) = crate::config::Config::sounds_dir() else {
+        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    };
+
+    let mut path = sounds_dir.join(&name);
+    if !path.exists() {
+        let mut found = false;
+        for ext in ["mp3", "wav", "ogg", "flac"] {
+            let candidate = sounds_dir.join(format!("{name}.{ext}"));
+            if candidate.exists() {
+                path = candidate;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+        }
+    }
+
+    let content_type = match path.extension().and_then(|e| e.to_str()) {
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        _ => "application/octet-stream",
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
+        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+    }
+}
+
+/// Session status for native shells (the Android foreground service polls
+/// this to scope its wakelock and to self-stop when the session is idle
+/// and the app was swiped away). Token-gated: session state and character
+/// name shouldn't be readable by arbitrary local processes.
+async fn status_json(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"forbidden"}"#.to_string(),
+        );
+    }
+    let session = state.handles.state_rx.borrow().session.clone();
+    (
+        axum::http::StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&session).unwrap_or_else(|_| "{}".to_string()),
     )
 }
 
@@ -474,6 +557,174 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::MacroDelete { group, label })
             .is_ok(),
+        ClientMessage::Connect {
+            profile,
+            account,
+            password,
+            character,
+            game,
+            save_password,
+            profile_name,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::SessionConnect {
+                profile,
+                account,
+                password,
+                character,
+                game,
+                save_password,
+                profile_name,
+            })
+            .is_ok(),
+        ClientMessage::Disconnect => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::SessionDisconnect)
+            .is_ok(),
+        ClientMessage::ConfigGet { request_id, file } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ConfigGet {
+                client_id,
+                request_id,
+                file,
+            })
+            .is_ok(),
+        ClientMessage::ConfigPut {
+            request_id,
+            file,
+            content,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ConfigPut {
+                client_id,
+                request_id,
+                file,
+                content,
+            })
+            .is_ok(),
+        ClientMessage::HighlightsGet { request_id, scope } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightsGet {
+                client_id,
+                request_id,
+                scope,
+            })
+            .is_ok(),
+        ClientMessage::HighlightPut {
+            request_id,
+            scope,
+            name,
+            rule,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightPut {
+                client_id,
+                request_id,
+                scope,
+                name,
+                rule,
+            })
+            .is_ok(),
+        ClientMessage::ColorsGet { request_id, scope } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ColorsGet {
+                client_id,
+                request_id,
+                scope,
+            })
+            .is_ok(),
+        ClientMessage::ColorsPut {
+            request_id,
+            scope,
+            colors,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ColorsPut {
+                client_id,
+                request_id,
+                scope,
+                colors,
+            })
+            .is_ok(),
+        ClientMessage::HighlightDelete {
+            request_id,
+            scope,
+            name,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightDelete {
+                client_id,
+                request_id,
+                scope,
+                name,
+            })
+            .is_ok(),
+        // Profile list/delete touch only launcher.toml via the config
+        // layer — answered here without a round-trip through the app loop.
+        ClientMessage::GetProfiles => {
+            let reply = profiles_reply(state);
+            socket.send(Message::Text(reply.into())).await.is_ok()
+        }
+        ClientMessage::DeleteProfile { name } => {
+            delete_profile(&name);
+            let reply = profiles_reply(state);
+            socket.send(Message::Text(reply.into())).await.is_ok()
+        }
+    }
+}
+
+/// Direct-mode saved profiles serialized for the session screen. Lich
+/// profiles are desktop-launcher concerns and are filtered out.
+fn profiles_reply(state: &WebState) -> String {
+    let list: Vec<protocol::ProfileEntry> = crate::config::profiles::LauncherStore::load()
+        .map(|store| {
+            store
+                .profiles
+                .iter()
+                .filter(|p| p.mode == crate::config::profiles::LaunchMode::Direct)
+                .map(|p| protocol::ProfileEntry {
+                    name: p.name.clone(),
+                    account_masked: protocol::mask_account(&p.account),
+                    character: p.character.clone(),
+                    game: p.game.clone(),
+                    has_password: p.password_saved,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let last_seq = state
+        .handles
+        .buffer
+        .lock()
+        .expect("remote buffer lock poisoned")
+        .last_seq();
+    protocol::profiles(&list, last_seq)
+}
+
+/// Remove a saved profile; drop its stored password too unless another
+/// profile shares the account.
+fn delete_profile(name: &str) {
+    let Ok(mut store) = crate::config::profiles::LauncherStore::load() else {
+        return;
+    };
+    let Some(removed) = store.remove(name) else {
+        return;
+    };
+    if let Err(e) = store.save() {
+        tracing::warn!("failed to save launcher.toml after delete: {e:#}");
+        return;
+    }
+    if removed.password_saved && !store.account_password_in_use(&removed.account) {
+        crate::config::profiles::delete_password(&removed.account);
     }
 }
 
@@ -565,9 +816,13 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         tokio::select! {
             delta = delta_rx.recv() => match delta {
                 Ok(d) => {
-                    // Menus are addressed: only the requesting client's
-                    // task forwards them.
-                    if let RemoteDelta::Menu { client_id: target, .. } = &d {
+                    // Menus and config/highlight replies are addressed:
+                    // only the requesting client's task forwards them.
+                    if let RemoteDelta::Menu { client_id: target, .. }
+                    | RemoteDelta::ConfigFile { client_id: target, .. }
+                    | RemoteDelta::Highlights { client_id: target, .. }
+                    | RemoteDelta::Colors { client_id: target, .. } = &d
+                    {
                         if *target != client_id {
                             continue;
                         }

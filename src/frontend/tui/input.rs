@@ -1954,26 +1954,16 @@ impl TuiFrontend {
                             window_name, start.line, start.col, end.line, end.col,
                         ) {
                             // Copy to clipboard
-                            match arboard::Clipboard::new() {
-                                Ok(mut clipboard) => {
-                                    if let Err(e) = clipboard.set_text(&text) {
-                                        tracing::warn!(
-                                            "Failed to copy to clipboard: {}",
-                                            e
-                                        );
-                                    } else {
-                                        tracing::info!(
-                                            "Copied {} chars to clipboard from '{}'",
-                                            text.len(),
-                                            window_name
-                                        );
-                                    }
+                            match crate::clipboard::copy(&text) {
+                                Ok(()) => {
+                                    tracing::info!(
+                                        "Copied {} chars to clipboard from '{}'",
+                                        text.len(),
+                                        window_name
+                                    );
                                 }
                                 Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to access clipboard: {}",
-                                        e
-                                    );
+                                    tracing::warn!("Failed to copy to clipboard: {}", e);
                                 }
                             }
                         }

@@ -724,6 +724,31 @@ impl AppCore {
         self.message_processor.remote = Some(sink);
     }
 
+    /// Declare that this runtime accepts session control (Connect /
+    /// Disconnect) from web clients. Only the headless runtime does.
+    pub fn set_remote_session_control(&mut self, enabled: bool) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_session_control(enabled);
+        }
+    }
+
+    /// Push a session status change to remote clients (headless supervisor
+    /// state transitions). No-op when web is disabled.
+    pub fn set_remote_session_state(&mut self, info: crate::core::remote::RemoteSessionInfo) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_session_state(info);
+        }
+    }
+
+    /// Broadcast a highlight-triggered sound to remote clients, which play
+    /// it via the browser (used by the headless runtime where there is no
+    /// native audio device). No-op when web is disabled.
+    pub fn push_remote_sound(&mut self, file: &str, volume: Option<f32>) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_sound(file, volume);
+        }
+    }
+
     /// Create or edit a phone-authored macro button. The edit lands in the
     /// macros-local.toml overlay (the hand-written macros.toml is never
     /// rewritten), then the merged set is re-published to every client.
@@ -791,6 +816,14 @@ impl AppCore {
         }
         let mut snap =
             crate::core::remote::RemoteStateSnapshot::from_game_state(&self.game_state);
+        // Room number lives on AppCore (nav tag in direct mode; extracted
+        // from the room name under Lich), not GameState.
+        if snap.room_id.is_none() {
+            snap.room_id = self
+                .nav_room_id
+                .clone()
+                .or_else(|| self.lich_room_id.clone());
+        }
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.

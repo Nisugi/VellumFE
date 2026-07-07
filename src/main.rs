@@ -12,6 +12,7 @@ mod migrate;
 mod network;
 mod parser;
 mod performance;
+mod platform;
 mod selection;
 mod session_cache;
 mod sound;
@@ -118,6 +119,9 @@ struct Cli {
 enum FrontendType {
     Tui,
     Gui,
+    /// Core + web server only, no local UI — a browser (or the Android
+    /// WebView shell) at /play is the interface.
+    Headless,
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -465,6 +469,9 @@ fn main() -> Result<()> {
             #[cfg(windows)]
             detach_exclusive_console();
             run_gui(config, direct_config, login_key)?
+        }
+        FrontendType::Headless => {
+            frontend::headless::run(config, character, direct_config, login_key)?
         }
     }
 

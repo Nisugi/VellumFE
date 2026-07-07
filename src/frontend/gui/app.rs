@@ -1414,6 +1414,76 @@ impl VellumGuiApp {
                 crate::core::remote::RemoteEvent::Notice(message) => {
                     self.app_core.add_system_message(&message);
                 }
+                crate::core::remote::RemoteEvent::ConfigGet {
+                    client_id,
+                    request_id,
+                    file,
+                } => {
+                    self.app_core
+                        .handle_remote_config_get(client_id, request_id, file);
+                }
+                crate::core::remote::RemoteEvent::ConfigPut {
+                    client_id,
+                    request_id,
+                    file,
+                    content,
+                } => {
+                    self.app_core
+                        .handle_remote_config_put(client_id, request_id, file, content);
+                }
+                crate::core::remote::RemoteEvent::HighlightsGet {
+                    client_id,
+                    request_id,
+                    scope,
+                } => {
+                    self.app_core
+                        .handle_remote_highlights_get(client_id, request_id, scope);
+                }
+                crate::core::remote::RemoteEvent::HighlightPut {
+                    client_id,
+                    request_id,
+                    scope,
+                    name,
+                    rule,
+                } => {
+                    self.app_core
+                        .handle_remote_highlight_put(client_id, request_id, scope, name, rule);
+                }
+                crate::core::remote::RemoteEvent::ColorsGet {
+                    client_id,
+                    request_id,
+                    scope,
+                } => {
+                    self.app_core
+                        .handle_remote_colors_get(client_id, request_id, scope);
+                }
+                crate::core::remote::RemoteEvent::ColorsPut {
+                    client_id,
+                    request_id,
+                    scope,
+                    colors,
+                } => {
+                    self.app_core
+                        .handle_remote_colors_put(client_id, request_id, scope, colors);
+                }
+                crate::core::remote::RemoteEvent::HighlightDelete {
+                    client_id,
+                    request_id,
+                    scope,
+                    name,
+                } => {
+                    self.app_core
+                        .handle_remote_highlight_delete(client_id, request_id, scope, name);
+                }
+                crate::core::remote::RemoteEvent::SessionConnect { .. }
+                | crate::core::remote::RemoteEvent::SessionDisconnect => {
+                    // Sidecar sessions are owned by this local UI; the web
+                    // client shouldn't offer these (session_control is
+                    // false), but answer stray requests politely.
+                    self.app_core.add_system_message(
+                        "Session control is only available in headless mode.",
+                    );
+                }
                 crate::core::remote::RemoteEvent::Macro { id } => {
                     // Resolve the id against config; the command runs the
                     // same dispatch as typed input (echo, dot-commands).

@@ -154,6 +154,44 @@ impl RemoteMacros {
     }
 }
 
+/// Where the game session itself stands. Owned by the runtime that manages
+/// the connection (the headless supervisor); TUI/GUI sidecar sessions stay
+/// `Connected`-shaped implicitly and never send these.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionState {
+    /// No connection and none in progress; waiting for a login.
+    #[default]
+    Idle,
+    /// eAccess authentication in flight.
+    Authenticating,
+    /// Authenticated; connecting to the game server.
+    Connecting,
+    Connected,
+    /// Lost the connection; the supervisor is retrying.
+    Reconnecting,
+    /// Ended (auth failure or unrecoverable); shows `error`.
+    Disconnected,
+}
+
+/// Session status mirrored to web clients (snapshot field + `session`
+/// delta). `session_control` is the capability flag: true only when the
+/// serving runtime accepts Connect/Disconnect (headless), so sidecar
+/// sessions never render a login screen.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteSessionInfo {
+    pub state: SessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub session_control: bool,
+}
+
 /// A state change broadcast to all connected remote clients.
 #[derive(Clone, Debug)]
 pub enum RemoteDelta {
@@ -162,6 +200,9 @@ pub enum RemoteDelta {
     Room {
         name: Option<String>,
         exits: Vec<String>,
+        /// Room number when known (nav tag in direct mode, extracted from
+        /// the room name under Lich).
+        id: Option<String>,
     },
     Hands {
         left: Option<String>,
@@ -186,6 +227,50 @@ pub enum RemoteDelta {
     /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
     /// category order.
     Effects(Vec<crate::data::ActiveEffectsContent>),
+    /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
+    /// cleared parts are absent.
+    Injuries(std::collections::HashMap<String, u8>),
+    /// The targetable-creature list changed.
+    Targets(Vec<RemoteTarget>),
+    /// Character-sheet lines changed (experience/encumbrance/bounty/society).
+    CharInfo(RemoteCharInfo),
+    /// Game-session status changed (headless runtime only).
+    Session(RemoteSessionInfo),
+    /// A highlight-triggered sound. Clients fetch the file from /sounds/
+    /// and play it locally (the Android build has no native audio; the
+    /// phone's browser engine is the sound device).
+    Sound { file: String, volume: Option<f32> },
+    /// Reply to one client's config get/put (addressed like `Menu`).
+    /// `content` is set for reads; `error` for validation/IO failures;
+    /// `saved` for successful writes.
+    ConfigFile {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    },
+    /// Reply to one client's structured colors get/put (addressed).
+    Colors {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    },
+    /// Reply to one client's structured highlight get/put/delete: the full
+    /// rule map for the scope (or an error), plus the available sound
+    /// files for the editor's dropdown.
+    Highlights {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        rules: serde_json::Value,
+        sounds: Vec<String>,
+        error: Option<String>,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -235,6 +320,72 @@ pub enum RemoteEvent {
     /// "bound port 8041" or "pinned port taken, web disabled"). The main
     /// loop surfaces it as a system message.
     Notice(String),
+    /// A login request from a web client (headless runtime only; TUI/GUI
+    /// reply with a notice). Either a saved profile name, or inline
+    /// credentials that optionally get saved as a profile.
+    SessionConnect {
+        profile: Option<String>,
+        account: Option<String>,
+        password: Option<String>,
+        character: Option<String>,
+        game: Option<String>,
+        save_password: bool,
+        profile_name: Option<String>,
+    },
+    /// User-initiated disconnect: end the session, suppress reconnection.
+    SessionDisconnect,
+    /// Read a whitelisted config file (settings sheet editor). The reply
+    /// routes back to the requesting client as `RemoteDelta::ConfigFile`.
+    ConfigGet {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+    },
+    /// Validate and write a whitelisted config file, then hot-reload it.
+    ConfigPut {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: String,
+    },
+    /// Structured highlight-rule listing for the phone editor. `scope` is
+    /// "profile" or "global".
+    HighlightsGet {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    },
+    /// Create/update one highlight rule by name (JSON matching
+    /// HighlightPattern); replies with the full updated rule map.
+    HighlightPut {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
+        rule: serde_json::Value,
+    },
+    /// Delete one highlight rule by name; replies with the updated map.
+    HighlightDelete {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
+    },
+    /// Structured color config for the phone editor ("profile"/"global").
+    ColorsGet {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    },
+    /// Validate and write the full color config, then hot-reload. The
+    /// client edits the fetched JSON in place, so sections its UI doesn't
+    /// cover survive the round trip.
+    ColorsPut {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+    },
 }
 
 /// Latest coalesced game state, published via `watch` so the server can
@@ -244,6 +395,9 @@ pub struct RemoteStateSnapshot {
     pub character: Option<String>,
     pub vitals: Vitals,
     pub room_name: Option<String>,
+    /// Room number when known; overlaid by AppCore::flush_remote_state
+    /// (nav/lich ids live on AppCore, not GameState).
+    pub room_id: Option<String>,
     pub exits: Vec<String>,
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
@@ -253,6 +407,45 @@ pub struct RemoteStateSnapshot {
     pub server_time: i64,
     /// Active effects in fixed category order (empty categories omitted).
     pub effects: Vec<crate::data::ActiveEffectsContent>,
+    /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
+    pub injuries: std::collections::HashMap<String, u8>,
+    /// Targetable creatures in the room (tap-to-target list).
+    pub targets: Vec<RemoteTarget>,
+    /// Character sheet: experience/encumbrance/bounty/society lines.
+    pub char_info: RemoteCharInfo,
+    /// Session status + session-control capability. Overlaid by the sink in
+    /// `flush_state` (the sink owns it, not GameState).
+    pub session: RemoteSessionInfo,
+}
+
+/// A targetable creature in the room, for the status drawer's tap-to-
+/// target list. Tapping routes through the ordinary link-tap machinery.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteTarget {
+    /// Exist id (e.g. "#146101714") — the link-tap exist_id.
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noun: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// True when this is the currently selected target.
+    pub current: bool,
+}
+
+/// Character-sheet lines for the status drawer: experience, encumbrance,
+/// bounty, society — pre-formatted core-side so every client renders the
+/// same text. Empty sections are omitted from the wire.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteCharInfo {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub experience: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub encumbrance: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bounty: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub society: Vec<String>,
 }
 
 /// Category display order for effects sent to clients.
@@ -268,6 +461,7 @@ impl RemoteStateSnapshot {
             character: game_state.character_name.clone(),
             vitals: game_state.vitals.clone(),
             room_name: game_state.room_name.clone(),
+            room_id: game_state.room_id.clone(),
             exits: game_state.exits.clone(),
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
@@ -280,6 +474,58 @@ impl RemoteStateSnapshot {
                 .filter_map(|category| game_state.effects.get(*category))
                 .cloned()
                 .collect(),
+            injuries: game_state.injuries.clone(),
+            targets: {
+                // dDBTarget narrows room creatures to the targetable set
+                // (direct mode); when absent, every room creature counts.
+                let ids = &game_state.target_list.target_ids;
+                game_state
+                    .room_creatures
+                    .iter()
+                    .filter(|c| ids.is_empty() || ids.contains(&c.id))
+                    .map(|c| RemoteTarget {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        noun: c.noun.clone(),
+                        status: c.status.clone(),
+                        current: c.id == game_state.target_list.current_target,
+                    })
+                    .collect()
+            },
+            char_info: {
+                let mut info = RemoteCharInfo::default();
+                let exp = &game_state.gs4_experience;
+                if !exp.level_text.is_empty() {
+                    info.experience.push(exp.level_text.clone());
+                }
+                if !exp.mind_state_text.is_empty() {
+                    info.experience.push(format!(
+                        "Mind: {} ({}%)",
+                        exp.mind_state_text, exp.mind_state_value
+                    ));
+                }
+                if !exp.next_level_text.is_empty() {
+                    info.experience.push(format!(
+                        "Next level: {}% ({})",
+                        exp.next_level_value, exp.next_level_text
+                    ));
+                }
+                let enc = &game_state.encumbrance;
+                if !enc.text.is_empty() {
+                    info.encumbrance.push(format!("{} ({}%)", enc.text, enc.value));
+                    if !enc.blurb.is_empty() {
+                        info.encumbrance.push(enc.blurb.clone());
+                    }
+                }
+                if !game_state.bounty.compact_lines.is_empty() {
+                    info.bounty = game_state.bounty.compact_lines.clone();
+                } else if !game_state.bounty.raw_text.is_empty() {
+                    info.bounty.push(game_state.bounty.raw_text.clone());
+                }
+                info.society = game_state.society.lines.clone();
+                info
+            },
+            session: RemoteSessionInfo::default(),
         }
     }
 }
@@ -311,6 +557,9 @@ pub struct RemoteSink {
     bound_port: Arc<std::sync::OnceLock<u16>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
+    /// Session status owned by the serving runtime (headless supervisor);
+    /// overlaid onto every snapshot/flush.
+    session: RemoteSessionInfo,
 }
 
 impl RemoteSink {
@@ -352,10 +601,44 @@ impl RemoteSink {
                 macros_tx,
                 bound_port,
                 last: RemoteStateSnapshot::default(),
+                session: RemoteSessionInfo::default(),
             },
             handles,
             event_rx,
         )
+    }
+
+    /// Declare that this runtime accepts Connect/Disconnect from clients
+    /// (headless only). Broadcast so already-connected clients learn the
+    /// capability; also carried by every snapshot.
+    pub fn set_session_control(&mut self, enabled: bool) {
+        if self.session.session_control != enabled {
+            self.session.session_control = enabled;
+            self.publish_session();
+        }
+    }
+
+    /// Publish a session status change (state machine transitions in the
+    /// headless supervisor). Broadcast immediately — session changes must
+    /// not wait for the next game-text batch — and folded into the watch
+    /// so connect-time snapshots agree.
+    pub fn set_session_state(&mut self, mut info: RemoteSessionInfo) {
+        info.session_control = self.session.session_control;
+        if self.session == info {
+            return;
+        }
+        self.session = info;
+        self.publish_session();
+    }
+
+    fn publish_session(&mut self) {
+        let _ = self
+            .delta_tx
+            .send(RemoteDelta::Session(self.session.clone()));
+        self.state_tx.send_modify(|snap| {
+            snap.session = self.session.clone();
+        });
+        self.last.session = self.session.clone();
     }
 
     /// The port the server actually bound (may differ from config when an
@@ -390,6 +673,77 @@ impl RemoteSink {
         }));
     }
 
+    /// Broadcast a highlight-triggered sound for clients to play.
+    pub fn push_sound(&mut self, file: &str, volume: Option<f32>) {
+        let _ = self.delta_tx.send(RemoteDelta::Sound {
+            file: file.to_string(),
+            volume,
+        });
+    }
+
+    /// Route a config get/put reply to the remote client that requested it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_config_file(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::ConfigFile {
+            client_id,
+            request_id,
+            file,
+            content,
+            error,
+            saved,
+        });
+    }
+
+    /// Route a structured colors reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_colors(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        colors: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Colors {
+            client_id,
+            request_id,
+            scope,
+            colors,
+            error,
+            saved,
+        });
+    }
+
+    /// Route a structured highlights reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_highlights(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        rules: serde_json::Value,
+        sounds: Vec<String>,
+        error: Option<String>,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Highlights {
+            client_id,
+            request_id,
+            scope,
+            rules,
+            sounds,
+            error,
+        });
+    }
+
     /// Route a game menu response to the remote client that requested it.
     pub fn push_menu(
         &mut self,
@@ -410,7 +764,10 @@ impl RemoteSink {
     /// broadcast one coalesced delta per changed group. Called once per
     /// message batch (AppCore::flush_remote_state builds the snapshot —
     /// room name and exits need fallbacks only AppCore can see).
-    pub fn flush_state(&mut self, snap: RemoteStateSnapshot) {
+    pub fn flush_state(&mut self, mut snap: RemoteStateSnapshot) {
+        // The sink owns session status; AppCore builds snapshots from
+        // GameState which knows nothing about it.
+        snap.session = self.session.clone();
         if snap == self.last {
             return;
         }
@@ -418,10 +775,14 @@ impl RemoteSink {
         if snap.vitals != self.last.vitals {
             let _ = self.delta_tx.send(RemoteDelta::Vitals(snap.vitals.clone()));
         }
-        if snap.room_name != self.last.room_name || snap.exits != self.last.exits {
+        if snap.room_name != self.last.room_name
+            || snap.exits != self.last.exits
+            || snap.room_id != self.last.room_id
+        {
             let _ = self.delta_tx.send(RemoteDelta::Room {
                 name: snap.room_name.clone(),
                 exits: snap.exits.clone(),
+                id: snap.room_id.clone(),
             });
         }
         if snap.left_hand != self.last.left_hand || snap.right_hand != self.last.right_hand {
@@ -439,6 +800,21 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Effects(snap.effects.clone()));
+        }
+        if snap.injuries != self.last.injuries {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Injuries(snap.injuries.clone()));
+        }
+        if snap.targets != self.last.targets {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Targets(snap.targets.clone()));
+        }
+        if snap.char_info != self.last.char_info {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::CharInfo(snap.char_info.clone()));
         }
         // Send on RT/CT end changes AND on every prompt (server_time
         // tick). The per-prompt resend matters: a <roundTime> can be

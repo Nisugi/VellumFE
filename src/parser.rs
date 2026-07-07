@@ -144,6 +144,11 @@ pub enum ParsedElement {
     CloseDialog {
         id: String,
     },
+    /// Login-time application info: `<app char="Nisugi" game="GS" .../>`.
+    /// The authoritative source of the character name in the game feed.
+    AppInfo {
+        character: String,
+    },
     RoomId {
         id: String,
     },
@@ -649,6 +654,8 @@ impl XmlParser {
             self.handle_label(tag, elements);
         } else if tag.starts_with("<nav ") {
             self.handle_nav(tag, elements);
+        } else if tag.starts_with("<app ") {
+            self.handle_app(tag, elements);
         } else if tag.starts_with("<streamWindow ") {
             self.handle_stream_window(tag, elements);
         } else if tag.starts_with("<d ") || tag == "<d>" {
@@ -1872,6 +1879,18 @@ impl XmlParser {
         // Extract room ID
         if let Some(id) = Self::extract_attribute(tag, "rm") {
             elements.push(ParsedElement::RoomId { id });
+        }
+    }
+
+    fn handle_app(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <app char="Nisugi" game="GS" title="[GSIV: Nisugi]"/>
+        // Sent at login; char is empty on logout screens - skip those.
+        if let Some(character) = Self::extract_attribute(tag, "char") {
+            if !character.trim().is_empty() {
+                elements.push(ParsedElement::AppInfo {
+                    character: Self::decode_entities(character),
+                });
+            }
         }
     }
 
@@ -3703,6 +3722,27 @@ mod tests {
             panic!("Expected RoomId element, got {:?}", room_elements[0]);
         };
         assert_eq!(id, "7150105");
+    }
+
+    #[test]
+    fn test_app_info_character() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(r#"<app char="Nisugi" game="GS" title="[GSIV: Nisugi]"/>"#);
+        let app: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::AppInfo { .. }))
+            .collect();
+        assert_eq!(app.len(), 1);
+        let ParsedElement::AppInfo { character } = app[0] else {
+            panic!("Expected AppInfo, got {:?}", app[0]);
+        };
+        assert_eq!(character, "Nisugi");
+
+        // Logout screens send an empty char - no element.
+        let elements = parser.parse_line(r#"<app char="" game="" title=""/>"#);
+        assert!(!elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::AppInfo { .. })));
     }
 
     // ==================== ClearStream Parsing ====================

@@ -342,6 +342,13 @@ impl MessageProcessor {
                     room_window_dirty,
                 );
             }
+            ParsedElement::AppInfo { character } => {
+                self.chunk_has_silent_updates = true;
+                // Game feed is authoritative (the headless supervisor's
+                // login-derived write-back is the fallback).
+                game_state.character_name = Some(character.clone());
+                tracing::debug!("Character name from <app>: {}", character);
+            }
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
                 *room_window_dirty = true;
@@ -826,6 +833,14 @@ impl MessageProcessor {
                 } else {
                     0 // Unknown injury type - treat as cleared
                 };
+
+                // Game state owns injuries (remote clients and windows added
+                // mid-session read from here); widget copy below.
+                if level == 0 {
+                    game_state.injuries.remove(id);
+                } else {
+                    game_state.injuries.insert(id.clone(), level);
+                }
 
                 // Update injury doll widget if it exists (singleton)
                 if let Some(injury_window) =
@@ -1660,7 +1675,7 @@ impl MessageProcessor {
                 tracing::info!("Launching URL in browser: {}", full_url);
 
                 // Open in default browser
-                if let Err(e) = open::that(&full_url) {
+                if let Err(e) = crate::platform::open_url(&full_url) {
                     tracing::error!("Failed to open browser: {}", e);
                 }
             }

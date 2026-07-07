@@ -40,6 +40,7 @@ const TITLE_MODE_KEY = "vellum-topbar-mode";
 let titleMode = localStorage.getItem(TITLE_MODE_KEY) || "room";
 let characterName = null;
 let roomName = null;
+let roomId = null;
 
 function renderTitle() {
   const showChar = titleMode === "char";
@@ -369,7 +370,57 @@ function sendCommand(text) {
 
 function setRoom(room) {
   roomName = room.name || null;
+  roomId = room.id || null;
+  roomExits = room.exits || [];
   renderTitle();
+  renderCompass();
+}
+
+// ---- Compass ----------------------------------------------------------------
+// Small always-available rose over the text pane; lit directions are the
+// room's exits, tapping one moves. Toggleable in Appearance; shares the
+// floating-button opacity.
+
+let roomExits = [];
+
+const COMPASS_CELLS = [
+  "nw", "n", "ne", "up",
+  "w", "out", "e", "down",
+  "sw", "s", "se", "",
+];
+
+const EXIT_ALIASES = {
+  north: "n", northeast: "ne", east: "e", southeast: "se", south: "s",
+  southwest: "sw", west: "w", northwest: "nw", up: "up", down: "down",
+  out: "out", u: "up", d: "down",
+};
+
+function renderCompass() {
+  const compass = document.getElementById("compass");
+  const exits = new Set(
+    roomExits.map((e) => {
+      const key = String(e).toLowerCase().trim();
+      return EXIT_ALIASES[key] || key;
+    }),
+  );
+  compass.hidden = exits.size === 0;
+  compass.replaceChildren();
+  for (const dir of COMPASS_CELLS) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "compass-cell";
+    cell.textContent = dir;
+    if (!dir) {
+      cell.disabled = true;
+      cell.classList.add("compass-blank");
+    } else if (exits.has(dir)) {
+      cell.classList.add("compass-lit");
+      cell.addEventListener("click", () => sendCommand(dir));
+    } else {
+      cell.disabled = true;
+    }
+    compass.appendChild(cell);
+  }
 }
 
 function setHands(d) {
@@ -618,7 +669,13 @@ function handleSnapshot(d) {
   setHands(d.hands || {});
   setIndicators(d.indicators || {});
   setEffects(d.effects || []);
+  setInjuries(d.injuries || {});
+  setTargets(d.targets || []);
+  setCharInfo(d.char_info || {});
   setRt(d.rt);
+  // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
+  // session as an implicitly-connected one we can't control.
+  setSession(d.session || { state: "connected", session_control: false });
   if (autoScroll) scrollToBottom();
 }
 
@@ -645,6 +702,15 @@ function handleMessage(msg) {
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
+    case "session": setSession(msg.d); break;
+    case "profiles": renderProfiles(msg.d.list || []); break;
+    case "config_file": handleConfigReply(msg.d); break;
+    case "sound": playRemoteSound(msg.d); break;
+    case "highlights": handleHighlightsReply(msg.d); break;
+    case "colors": handleColorsReply(msg.d); break;
+    case "injuries": setInjuries(msg.d); break;
+    case "targets": setTargets(msg.d); break;
+    case "charinfo": setCharInfo(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -685,6 +751,739 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+// ---- Session screen (headless runtimes only) ------------------------------
+// Servers with session_control (the headless/Android runtime) mirror the
+// game-session state machine: idle → authenticating → connecting →
+// connected, with reconnecting/disconnected on drops. The overlay is the
+// login screen; sidecar servers (TUI/GUI hosting) never advertise the
+// capability and never see any of this.
+
+let session = { state: "connected", session_control: false };
+let profilesRequested = false;
+
+const sessionOverlay = document.getElementById("session-overlay");
+const sessionStatus = document.getElementById("session-status");
+const sessionError = document.getElementById("session-error");
+const sessionProfiles = document.getElementById("session-profiles");
+const sessionForm = document.getElementById("session-form");
+const logoutBtn = document.getElementById("logout-btn");
+const sessionBanner = document.getElementById("session-banner");
+
+function sendJson(t, d) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  state.ws.send(JSON.stringify({ t, d: d || {} }));
+  return true;
+}
+
+function setSession(d) {
+  session = d || { state: "connected", session_control: false };
+  if (session.character) setCharacter(session.character);
+  updateSessionUi();
+}
+
+const SESSION_PROGRESS = {
+  authenticating: "Authenticating with play.net…",
+  connecting: "Connecting to the game…",
+};
+
+function updateSessionUi() {
+  if (!session.session_control) {
+    sessionOverlay.hidden = true;
+    sessionBanner.hidden = true;
+    logoutBtn.hidden = true;
+    return;
+  }
+
+  logoutBtn.hidden = session.state !== "connected";
+
+  // Mid-session drops keep the play view (game text stays useful) and show
+  // a banner; the login overlay is for sessions that aren't running.
+  if (session.state === "reconnecting") {
+    sessionBanner.textContent = session.attempt
+      ? `Reconnecting… (attempt ${session.attempt})`
+      : "Reconnecting…";
+    sessionBanner.hidden = false;
+    sessionOverlay.hidden = true;
+    return;
+  }
+  sessionBanner.hidden = true;
+
+  if (session.state === "connected") {
+    sessionOverlay.hidden = true;
+    profilesRequested = false;
+    return;
+  }
+
+  // idle / disconnected / authenticating / connecting → overlay.
+  const inProgress = session.state in SESSION_PROGRESS;
+  sessionStatus.textContent = inProgress ? SESSION_PROGRESS[session.state] : "";
+  sessionStatus.hidden = !inProgress;
+  sessionError.textContent = session.error || "";
+  sessionError.hidden = !session.error;
+  sessionForm.querySelectorAll("input, select, button").forEach((el) => {
+    el.disabled = inProgress;
+  });
+  sessionProfiles.classList.toggle("busy", inProgress);
+  sessionOverlay.hidden = false;
+  if (!profilesRequested && sendJson("get_profiles")) {
+    profilesRequested = true;
+  }
+}
+
+function renderProfiles(list) {
+  sessionProfiles.replaceChildren();
+  for (const p of list) {
+    const row = document.createElement("div");
+    row.className = "profile-row";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "profile-btn";
+    const label = document.createElement("span");
+    label.className = "profile-name";
+    label.textContent = p.character || p.name;
+    const detail = document.createElement("span");
+    detail.className = "profile-detail";
+    detail.textContent = `${p.name} · ${p.account_masked} · ${p.game}`;
+    btn.append(label, detail);
+    btn.addEventListener("click", () => {
+      if (p.has_password) {
+        sendJson("connect", { profile: p.name });
+      } else {
+        // No stored password: reveal a one-off password prompt for it.
+        askProfilePassword(row, p);
+      }
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "profile-delete";
+    del.setAttribute("aria-label", `Delete profile ${p.name}`);
+    del.textContent = "✕";
+    del.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openSheet(`Delete profile '${p.name}'?`);
+      sheetButton("Delete", () => sendJson("delete_profile", { name: p.name }));
+      sheetNote("The saved password is removed too.", true);
+    });
+
+    row.append(btn, del);
+    sessionProfiles.appendChild(row);
+  }
+}
+
+function askProfilePassword(row, profile) {
+  if (row.querySelector(".profile-password")) return;
+  const form = document.createElement("form");
+  form.className = "profile-password";
+  const input = document.createElement("input");
+  input.type = "password";
+  input.placeholder = "password";
+  input.autocomplete = "current-password";
+  const go = document.createElement("button");
+  go.type = "submit";
+  go.textContent = "Connect";
+  form.append(input, go);
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!input.value) return;
+    sendJson("connect", { profile: profile.name, password: input.value });
+  });
+  row.appendChild(form);
+  input.focus();
+}
+
+sessionForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const account = document.getElementById("login-account").value.trim();
+  const password = document.getElementById("login-password").value;
+  const character = document.getElementById("login-character").value.trim();
+  const game = document.getElementById("login-game").value;
+  const save = document.getElementById("login-save").checked;
+  if (!account || !password || !character) return;
+  sendJson("connect", {
+    account,
+    password,
+    character,
+    game,
+    save_password: save,
+    profile_name: save ? character : null,
+  });
+  document.getElementById("login-password").value = "";
+  // The profile list may gain an entry; refresh next time the overlay shows.
+  profilesRequested = false;
+});
+
+logoutBtn.addEventListener("click", () => {
+  openSheet("Disconnect from the game?");
+  sheetButton("Disconnect", () => sendJson("disconnect"));
+});
+
+// The reconnect banner is also the escape hatch: tap to stop retrying
+// and return to the login screen.
+sessionBanner.addEventListener("click", () => {
+  openSheet("Stop reconnecting?");
+  sheetButton("Stop and log out", () => sendJson("disconnect"));
+  sheetNote("Or close this to keep trying.", true);
+});
+
+// ---- Settings sheet + config editor ---------------------------------------
+// Config files live server-side (on Android, in the app's private storage
+// where no file manager reaches) — the editor is how highlights and colors
+// get onto the device: paste or import a desktop file, Save validates the
+// TOML server-side and hot-reloads.
+
+// Raw TOML editors: the import/export path for desktop configs and the
+// power-user escape hatch — the friendly editors are the primary UI.
+const EDITOR_FILES = [
+  { id: "highlights", label: "Advanced: highlights file (this profile)", filename: "highlights.toml" },
+  { id: "highlights-global", label: "Advanced: highlights file (global)", filename: "highlights.toml" },
+  { id: "colors", label: "Advanced: colors file (this profile)", filename: "colors.toml" },
+  { id: "colors-global", label: "Advanced: colors file (global)", filename: "colors.toml" },
+];
+
+const editorOverlay = document.getElementById("editor-overlay");
+const editorTitle = document.getElementById("editor-title");
+const editorText = document.getElementById("editor-text");
+const editorStatus = document.getElementById("editor-status");
+let editorFile = null; // active EDITOR_FILES entry
+let configRequestCounter = 0;
+let pendingConfigRequest = null;
+
+// ---- Appearance (client-side prefs) ----------------------------------------
+// Theme presets are CSS-variable override sets; chrome toggles are body
+// classes. Both persist per device — nothing crosses the wire.
+
+const UI_PREFS_KEY = "vellum-ui-prefs";
+let uiPrefs = { theme: "dark", hide: {} };
+try {
+  const stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || "{}");
+  if (stored && typeof stored === "object") {
+    uiPrefs = { theme: stored.theme || "dark", hide: stored.hide || {} };
+  }
+} catch { /* defaults */ }
+// The bottom macro rail duplicates the tray + floating buttons on very
+// limited vertical space: hidden unless the user explicitly enabled it.
+if (!("macrorail" in uiPrefs.hide)) uiPrefs.hide.macrorail = true;
+
+const THEMES = {
+  dark: { label: "Vellum dark", vars: {} },
+  black: {
+    label: "Pure black (OLED)",
+    vars: {
+      "--bg": "#000000", "--bg-panel": "#0b0b0e", "--border": "#1e2128",
+      "--panel-rgb": "11, 11, 14",
+    },
+  },
+  contrast: {
+    label: "High contrast",
+    vars: {
+      "--bg": "#000000", "--bg-panel": "#101014", "--fg": "#ffffff",
+      "--fg-dim": "#c0c6cf", "--border": "#4a5060",
+      "--panel-rgb": "16, 16, 20",
+    },
+  },
+  light: {
+    label: "Parchment",
+    vars: {
+      "--bg": "#f2efe9", "--bg-panel": "#e6e1d8", "--fg": "#2a2620",
+      "--fg-dim": "#6b655c", "--border": "#c9c2b4", "--st": "#8a6d1f",
+      "--panel-rgb": "230, 225, 216",
+    },
+  },
+};
+
+// Adjustable panel opacities (percent), applied as CSS alpha variables.
+const OPACITY_SETTINGS = [
+  ["float", "Floating buttons", "--float-alpha", 82],
+  ["drawer", "Side drawers", "--drawer-alpha", 93],
+  ["sheet", "Bottom menus", "--sheet-alpha", 100],
+];
+
+const CHROME_TOGGLES = [
+  ["macrorail", "Macro bar (bottom)"],
+  ["compass", "Compass"],
+  ["vitals", "Vitals bars"],
+  ["hands", "Hands"],
+  ["rt", "RT label"],
+  ["fx", "Effect pills"],
+  ["chips", "Stream chips"],
+];
+
+function saveUiPrefs() {
+  try {
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs));
+  } catch { /* private mode */ }
+}
+
+function applyUiPrefs() {
+  const root = document.documentElement;
+  for (const theme of Object.values(THEMES)) {
+    for (const key of Object.keys(theme.vars)) root.style.removeProperty(key);
+  }
+  const active = THEMES[uiPrefs.theme] || THEMES.dark;
+  for (const [key, value] of Object.entries(active.vars)) {
+    root.style.setProperty(key, value);
+  }
+  for (const [key] of CHROME_TOGGLES) {
+    document.body.classList.toggle(`hide-${key}`, !!uiPrefs.hide[key]);
+  }
+  const opacity = uiPrefs.opacity || {};
+  for (const [key, , cssVar, dflt] of OPACITY_SETTINGS) {
+    const pct = Number.isFinite(opacity[key]) ? opacity[key] : dflt;
+    root.style.setProperty(cssVar, String(Math.min(100, Math.max(20, pct)) / 100));
+  }
+}
+applyUiPrefs();
+
+function openAppearanceSheet() {
+  openSheet("Appearance");
+
+  const themeRow = document.createElement("div");
+  themeRow.className = "theme-row";
+  const themeButtons = new Map();
+  for (const [key, theme] of Object.entries(THEMES)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "theme-btn";
+    btn.textContent = theme.label;
+    btn.addEventListener("click", () => {
+      uiPrefs.theme = key;
+      saveUiPrefs();
+      applyUiPrefs();
+      refreshThemeButtons();
+    });
+    themeButtons.set(key, btn);
+    themeRow.appendChild(btn);
+  }
+  const refreshThemeButtons = () => {
+    for (const [key, btn] of themeButtons) {
+      btn.classList.toggle("theme-active", key === (uiPrefs.theme || "dark"));
+    }
+  };
+  refreshThemeButtons();
+  sheetItems.appendChild(themeRow);
+
+  for (const [key, label, , dflt] of OPACITY_SETTINGS) {
+    const row = document.createElement("div");
+    row.className = "alpha-row";
+    const lab = document.createElement("label");
+    lab.textContent = label;
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "20";
+    slider.max = "100";
+    slider.step = "5";
+    const current = (uiPrefs.opacity || {})[key];
+    slider.value = String(Number.isFinite(current) ? current : dflt);
+    const value = document.createElement("span");
+    value.className = "alpha-value";
+    const refresh = () => { value.textContent = `${slider.value}%`; };
+    slider.addEventListener("input", () => {
+      uiPrefs.opacity = uiPrefs.opacity || {};
+      uiPrefs.opacity[key] = Number(slider.value);
+      saveUiPrefs();
+      applyUiPrefs();
+      refresh();
+    });
+    refresh();
+    row.append(lab, slider, value);
+    sheetItems.appendChild(row);
+  }
+
+  for (const [key, label] of CHROME_TOGGLES) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    const refresh = () => {
+      btn.textContent = `${label}: ${uiPrefs.hide[key] ? "hidden" : "shown"}`;
+    };
+    btn.addEventListener("click", () => {
+      uiPrefs.hide[key] = !uiPrefs.hide[key];
+      saveUiPrefs();
+      applyUiPrefs();
+      refresh();
+    });
+    refresh();
+    sheetItems.appendChild(btn);
+  }
+  sheetNote("Changes apply live — tap anywhere else to close", true);
+}
+
+function openSettingsSheet() {
+  openSheet("Settings");
+  sheetButton("Appearance", openAppearanceSheet);
+  sheetButton(
+    soundMuted ? "Sound alerts: off — tap to enable" : "Sound alerts: on — tap to mute",
+    () => {
+      soundMuted = !soundMuted;
+      try {
+        localStorage.setItem(SOUND_MUTE_KEY, soundMuted ? "1" : "");
+      } catch { /* private mode */ }
+    },
+  );
+  sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
+  sheetButton("Highlight rules (global)", () => openHighlightList("global"));
+  sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
+  sheetButton("Colors (global)", () => openColorsEditor("global"));
+  for (const file of EDITOR_FILES) {
+    sheetButton(file.label, () => openConfigEditor(file));
+  }
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettingsSheet);
+// The login screen covers the top bar; it gets its own settings entry so
+// highlights/appearance are reachable before logging in.
+document.getElementById("session-settings").addEventListener("click", openSettingsSheet);
+
+// ---- Highlight rule editor -------------------------------------------------
+// Structured editing of one scope's highlights file: list → tap → form.
+// The form covers the common fields; anything else a desktop hand-edit set
+// (redirects, replace, squelch, ...) is preserved by merging into the
+// fetched rule rather than rebuilding it.
+
+const hlOverlay = document.getElementById("hl-overlay");
+const hlTitle = document.getElementById("hl-title");
+const hlListView = document.getElementById("hl-list-view");
+const hlListEl = document.getElementById("hl-list");
+const hlForm = document.getElementById("hl-form");
+const hlStatus = document.getElementById("hl-status");
+let hlScope = null;
+let hlRules = {};
+let hlSounds = [];
+let hlEditingName = null; // null = list view, "" = new rule
+let hlRequestCounter = 0;
+let hlPendingRequest = null;
+let hlAwaitingSave = false;
+
+function hlStatusMsg(text, isError) {
+  hlStatus.textContent = text;
+  hlStatus.classList.toggle("editor-error", !!isError);
+  hlStatus.hidden = !text;
+}
+
+function openHighlightList(scope) {
+  hlScope = scope;
+  hlTitle.textContent =
+    scope === "global" ? "Highlight rules (global)" : "Highlight rules (this profile)";
+  hlRules = {};
+  hlEditingName = null;
+  hlOverlay.hidden = false;
+  showHlList();
+  hlListEl.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading…",
+  }));
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlights_get", { request_id: hlPendingRequest, scope });
+}
+
+function showHlList() {
+  hlForm.hidden = true;
+  hlListView.hidden = false;
+  renderHlList();
+}
+
+function renderHlList() {
+  hlListEl.replaceChildren();
+  const names = Object.keys(hlRules).sort((a, b) => a.localeCompare(b));
+  if (!names.length) {
+    hlListEl.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: "No rules yet — tap New rule, or import a file from Settings.",
+    }));
+    return;
+  }
+  for (const name of names) {
+    const rule = hlRules[name];
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "hl-row";
+    const swatch = document.createElement("span");
+    swatch.className = "hl-swatch";
+    if (rule.fg) swatch.style.background = rule.fg;
+    const label = document.createElement("span");
+    label.className = "hl-row-name";
+    label.textContent = name;
+    const pattern = document.createElement("span");
+    pattern.className = "hl-row-pattern";
+    pattern.textContent = rule.pattern || "";
+    row.append(swatch, label, pattern);
+    row.addEventListener("click", () => openHlForm(name));
+    hlListEl.appendChild(row);
+  }
+}
+
+// Color state: null = "no color set". The native pickers can't represent
+// empty, so the None buttons carry that state and the preview reflects it.
+let hlColors = { fg: null, bg: null };
+
+function openHlForm(name) {
+  hlEditingName = name;
+  const rule = name ? hlRules[name] || {} : {};
+  document.getElementById("hl-name").value = name;
+  document.getElementById("hl-pattern").value = rule.pattern || "";
+  // New rules start with a selected text color (the 99% case); existing
+  // rules reflect exactly what they have. Picker widgets are reset per
+  // form so the previous rule's choices don't leak into this one.
+  if (name) {
+    hlColors = { fg: rule.fg || null, bg: rule.bg || null };
+  } else {
+    hlColors = { fg: "#ffff00", bg: null };
+  }
+  document.getElementById("hl-fg-pick").value =
+    hlColors.fg && /^#[0-9a-f]{6}$/i.test(hlColors.fg) ? hlColors.fg : "#ffff00";
+  document.getElementById("hl-bg-pick").value =
+    hlColors.bg && /^#[0-9a-f]{6}$/i.test(hlColors.bg) ? hlColors.bg : "#333333";
+  document.getElementById("hl-bold").checked = !!rule.bold;
+  document.getElementById("hl-line").checked = !!rule.color_entire_line;
+
+  // Sound dropdown: server-listed files, plus the rule's current value if
+  // it references something not in the folder (keeps it selectable).
+  const soundSel = document.getElementById("hl-sound");
+  soundSel.replaceChildren(new Option("None", ""));
+  const sounds = [...hlSounds];
+  if (rule.sound && !sounds.includes(rule.sound)) sounds.unshift(rule.sound);
+  for (const file of sounds) soundSel.appendChild(new Option(file, file));
+  soundSel.value = rule.sound || "";
+
+  document.getElementById("hl-delete").hidden = !name;
+  hlStatusMsg("", false);
+  updateHlPreview();
+  hlListView.hidden = true;
+  hlForm.hidden = false;
+}
+
+function updateHlPreview() {
+  const preview = document.getElementById("hl-preview");
+  const text = document.getElementById("hl-preview-text");
+  const pattern = document.getElementById("hl-pattern").value.trim();
+  // Show the pattern itself when it reads like plain text; regex syntax
+  // gets a generic sample.
+  text.textContent =
+    pattern && !/[\\^$.|?*+()\[\]{}]/.test(pattern) ? pattern : "Sample game text";
+  const wholeLine = document.getElementById("hl-line").checked;
+  const target = wholeLine ? preview : text;
+  const other = wholeLine ? text : preview;
+  other.style.color = "";
+  other.style.background = "";
+  target.style.color = hlColors.fg || "";
+  target.style.background = hlColors.bg || "";
+  preview.style.fontWeight = text.style.fontWeight =
+    document.getElementById("hl-bold").checked ? "bold" : "";
+  document.getElementById("hl-fg-clear").classList.toggle("hl-none-active", !hlColors.fg);
+  document.getElementById("hl-bg-clear").classList.toggle("hl-none-active", !hlColors.bg);
+  document.getElementById("hl-fg-pick").classList.toggle("hl-inactive", !hlColors.fg);
+  document.getElementById("hl-bg-pick").classList.toggle("hl-inactive", !hlColors.bg);
+}
+
+// Tapping a picker adopts the color it already shows (choosing the shown
+// color in the dialog fires no input event — the value didn't change);
+// dragging in the dialog then updates live via input.
+for (const [pickId, key] of [["hl-fg-pick", "fg"], ["hl-bg-pick", "bg"]]) {
+  const pick = document.getElementById(pickId);
+  pick.addEventListener("click", () => {
+    hlColors[key] = pick.value;
+    updateHlPreview();
+  });
+  pick.addEventListener("input", () => {
+    hlColors[key] = pick.value;
+    updateHlPreview();
+  });
+}
+document.getElementById("hl-fg-clear").addEventListener("click", () => {
+  hlColors.fg = null;
+  updateHlPreview();
+});
+document.getElementById("hl-bg-clear").addEventListener("click", () => {
+  hlColors.bg = null;
+  updateHlPreview();
+});
+document.getElementById("hl-pattern").addEventListener("input", updateHlPreview);
+document.getElementById("hl-bold").addEventListener("change", updateHlPreview);
+document.getElementById("hl-line").addEventListener("change", updateHlPreview);
+
+function handleHighlightsReply(d) {
+  if (d.request_id !== hlPendingRequest) return;
+  if (d.error) {
+    // Show the error wherever the user is (form save or list load).
+    if (!hlForm.hidden) {
+      hlStatusMsg(d.error, true);
+    } else {
+      hlListEl.replaceChildren(Object.assign(document.createElement("p"), {
+        className: "hl-empty editor-error", textContent: d.error,
+      }));
+    }
+    hlAwaitingSave = false;
+    return;
+  }
+  hlRules = d.rules || {};
+  hlSounds = d.sounds || [];
+  if (hlAwaitingSave) {
+    hlAwaitingSave = false;
+    showHlList();
+  } else {
+    renderHlList();
+  }
+}
+
+hlForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const name = document.getElementById("hl-name").value.trim();
+  const pattern = document.getElementById("hl-pattern").value;
+  if (!name || !pattern.trim()) {
+    hlStatusMsg("Name and pattern are required.", true);
+    return;
+  }
+  // Merge the form over the existing rule so fields the form doesn't
+  // cover survive the round trip.
+  const base = (hlEditingName && hlRules[hlEditingName]) || {};
+  const rule = { ...base, pattern };
+  const sound = document.getElementById("hl-sound").value;
+  if (hlColors.fg) rule.fg = hlColors.fg; else delete rule.fg;
+  if (hlColors.bg) rule.bg = hlColors.bg; else delete rule.bg;
+  if (sound) rule.sound = sound; else delete rule.sound;
+  rule.bold = document.getElementById("hl-bold").checked;
+  rule.color_entire_line = document.getElementById("hl-line").checked;
+
+  hlStatusMsg("Saving…", false);
+  hlAwaitingSave = true;
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlight_put", {
+    request_id: hlPendingRequest,
+    scope: hlScope,
+    name,
+    rule,
+  });
+  // Renaming: the old rule is a separate entry — remove it after the new
+  // one saves. Server replies with the updated map either way.
+  if (hlEditingName && hlEditingName !== name) {
+    sendJson("highlight_delete", {
+      request_id: hlPendingRequest,
+      scope: hlScope,
+      name: hlEditingName,
+    });
+  }
+});
+
+document.getElementById("hl-delete").addEventListener("click", () => {
+  if (!hlEditingName) return;
+  hlStatusMsg("Deleting…", false);
+  hlAwaitingSave = true;
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlight_delete", {
+    request_id: hlPendingRequest,
+    scope: hlScope,
+    name: hlEditingName,
+  });
+});
+
+document.getElementById("hl-back").addEventListener("click", showHlList);
+document.getElementById("hl-new").addEventListener("click", () => openHlForm(""));
+document.getElementById("hl-close").addEventListener("click", () => {
+  hlOverlay.hidden = true;
+  hlScope = null;
+});
+
+// ---- Sound alerts ----------------------------------------------------------
+// Highlight-triggered sounds arrive as `sound` messages; the browser is
+// the audio device (the Android core has no native audio). Files are
+// fetched from /sounds/ with the pairing token.
+
+const SOUND_MUTE_KEY = "vellum-sound-muted";
+let soundMuted = false;
+try {
+  soundMuted = !!localStorage.getItem(SOUND_MUTE_KEY);
+} catch { /* default unmuted */ }
+
+function playRemoteSound(d) {
+  if (soundMuted || !d.file) return;
+  const url = `/sounds/${encodeURIComponent(d.file)}?token=${encodeURIComponent(pairingToken)}`;
+  const audio = new Audio(url);
+  if (typeof d.volume === "number") {
+    audio.volume = Math.max(0, Math.min(1, d.volume));
+  }
+  audio.play().catch((e) => {
+    // Autoplay policy: needs one interaction first; normal before login.
+    console.debug("sound blocked or missing", d.file, e);
+  });
+}
+
+function editorStatusMsg(text, isError) {
+  editorStatus.textContent = text;
+  editorStatus.classList.toggle("editor-error", !!isError);
+  editorStatus.hidden = !text;
+}
+
+function openConfigEditor(file) {
+  editorFile = file;
+  editorTitle.textContent = file.label;
+  editorText.value = "";
+  editorText.disabled = true;
+  editorStatusMsg("Loading…", false);
+  editorOverlay.hidden = false;
+  pendingConfigRequest = ++configRequestCounter;
+  sendJson("config_get", { request_id: pendingConfigRequest, file: file.id });
+}
+
+function handleConfigReply(d) {
+  if (d.request_id !== pendingConfigRequest) return;
+  if (d.error) {
+    editorStatusMsg(d.error, true);
+    editorText.disabled = false;
+    return;
+  }
+  if (d.saved) {
+    editorStatusMsg("Saved — applied live.", false);
+    editorText.disabled = false;
+    return;
+  }
+  if (typeof d.content === "string") {
+    editorText.value = d.content;
+    editorText.disabled = false;
+    editorStatusMsg(d.content ? "" : "Empty — paste or import a file.", false);
+  }
+}
+
+document.getElementById("editor-close").addEventListener("click", () => {
+  editorOverlay.hidden = true;
+  editorFile = null;
+});
+
+document.getElementById("editor-save").addEventListener("click", () => {
+  if (!editorFile) return;
+  editorStatusMsg("Saving…", false);
+  pendingConfigRequest = ++configRequestCounter;
+  sendJson("config_put", {
+    request_id: pendingConfigRequest,
+    file: editorFile.id,
+    content: editorText.value,
+  });
+});
+
+document.getElementById("editor-export").addEventListener("click", () => {
+  if (!editorFile) return;
+  const blob = new Blob([editorText.value], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = editorFile.filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+const editorFileInput = document.getElementById("editor-file");
+document.getElementById("editor-import").addEventListener("click", () => {
+  editorFileInput.click();
+});
+editorFileInput.addEventListener("change", () => {
+  const picked = editorFileInput.files && editorFileInput.files[0];
+  if (!picked) return;
+  picked.text().then((text) => {
+    editorText.value = text;
+    editorStatusMsg("Imported — review, then Save.", false);
+  });
+  editorFileInput.value = "";
+});
 
 // ---- Bottom sheet (noun menus + local pickers) ---------------------------
 
@@ -768,7 +1567,14 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#chips")) return; // long-press opens arrange
   if (ev.target.closest(".fx-pill")) return; // opens the effects sheet
   if (ev.target.closest("#textsize-btn")) return; // opens the size stepper
+  if (ev.target.closest("#settings-btn")) return; // opens the settings sheet
+  if (ev.target.closest("#session-settings")) return; // login-screen settings
+  if (ev.target.closest("#logout-btn")) return; // opens the disconnect confirm
+  if (ev.target.closest("#session-banner")) return; // opens stop-reconnect
+  if (ev.target.closest(".theme-row")) return; // appearance picks retarget
   if (ev.target.closest(".float-btn")) return;
+  if (ev.target.closest(".drawer")) return; // tray buttons open option sheets
+  if (ev.target.closest(".drawer-handle")) return;
   closeSheet();
 });
 
@@ -924,6 +1730,11 @@ function openMacroArrange(group, btn) {
 
 function renderMacros() {
   renderFloating();
+  // Keep the left drawer tray in sync with definition changes.
+  if (typeof renderTray === "function" &&
+      document.getElementById("drawer-left").classList.contains("open")) {
+    renderTray();
+  }
   // Rail shows once definitions arrive, even empty: the + button is how
   // the first macro gets created from the phone.
   macroRail.hidden = macros === null;
@@ -1368,7 +2179,9 @@ cmdInput.addEventListener("keydown", (ev) => {
 // device (a phone and a tablet want different sizes).
 
 const TEXT_SIZE_KEY = "vellum-text-size";
-const TEXT_SIZE_MIN = 11;
+// 6px is genuinely tiny, but more text on screen beats enforced comfort —
+// high-DPI phones keep it legible and it's the user's call (playtest ask).
+const TEXT_SIZE_MIN = 6;
 const TEXT_SIZE_MAX = 24;
 let storySize = parseInt(localStorage.getItem(TEXT_SIZE_KEY) || "14", 10);
 if (isNaN(storySize)) storySize = 14;
@@ -1486,3 +2299,506 @@ ensureStream("main");
 setActiveStream("main");
 setInterval(tickRt, 100);
 connect();
+
+// ---- Side drawers: macro tray (left) + status/injuries (right) ------------
+// Swipe in from either edge (starting inside the screen so Android's back
+// gesture keeps the literal edge) or tap the handles; text keeps flowing
+// beneath the translucent panel. Swipe back or tap the pane to close.
+
+const drawerLeft = document.getElementById("drawer-left");
+const drawerRight = document.getElementById("drawer-right");
+const paneWrap = document.getElementById("pane-wrap");
+let injuries = {};
+let targets = [];
+let charInfo = {};
+
+function setCharInfo(info) {
+  charInfo = info || {};
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+function setTargets(list) {
+  targets = list || [];
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+// Tap-to-target rides the ordinary link machinery: the server resolves
+// the creature's menu (attack, look, target, ...) exactly like tapping
+// its name in the story text.
+function tapCreature(t) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const requestId = ++menuRequestCounter;
+  pendingMenuRequest = requestId;
+  openSheetLoading(t.noun || t.name);
+  state.ws.send(JSON.stringify({
+    t: "link_tap",
+    d: {
+      request_id: requestId,
+      exist_id: t.id,
+      noun: t.noun || "",
+      text: t.name,
+      coord: null,
+    },
+  }));
+}
+
+function drawerOpen() {
+  return drawerLeft.classList.contains("open") || drawerRight.classList.contains("open");
+}
+
+function openDrawer(side) {
+  closeDrawers();
+  (side === "left" ? drawerLeft : drawerRight).classList.add("open");
+  if (side === "left") renderTray();
+  else renderStatusDrawer();
+}
+
+function closeDrawers() {
+  drawerLeft.classList.remove("open");
+  drawerRight.classList.remove("open");
+}
+
+document.getElementById("handle-left").addEventListener("click", () => openDrawer("left"));
+document.getElementById("handle-right").addEventListener("click", () => openDrawer("right"));
+for (const btn of document.querySelectorAll(".drawer-close")) {
+  btn.addEventListener("click", closeDrawers);
+}
+
+// Edge swipes. Track a touch that starts in the outer 48px of the pane
+// (drawer closed) or anywhere (drawer open, for swipe-to-close).
+let swipe = null;
+paneWrap.addEventListener("touchstart", (ev) => {
+  if (ev.touches.length !== 1) { swipe = null; return; }
+  const t = ev.touches[0];
+  const rect = paneWrap.getBoundingClientRect();
+  const x = t.clientX - rect.left;
+  if (drawerOpen()) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "close" };
+  } else if (x < 48) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "open-left" };
+  } else if (x > rect.width - 48) {
+    swipe = { x0: t.clientX, y0: t.clientY, mode: "open-right" };
+  } else {
+    swipe = null;
+  }
+}, { passive: true });
+
+paneWrap.addEventListener("touchmove", (ev) => {
+  if (!swipe) return;
+  const t = ev.touches[0];
+  const dx = t.clientX - swipe.x0;
+  const dy = t.clientY - swipe.y0;
+  if (Math.abs(dy) > Math.abs(dx) * 1.5) { swipe = null; return; } // vertical scroll
+  if (swipe.mode === "open-left" && dx > 56) { openDrawer("left"); swipe = null; }
+  else if (swipe.mode === "open-right" && dx < -56) { openDrawer("right"); swipe = null; }
+  else if (swipe.mode === "close") {
+    if ((drawerLeft.classList.contains("open") && dx < -56) ||
+        (drawerRight.classList.contains("open") && dx > 56)) {
+      closeDrawers();
+      swipe = null;
+    }
+  }
+}, { passive: true });
+paneWrap.addEventListener("touchend", () => { swipe = null; }, { passive: true });
+
+// Tapping the visible pane while a drawer is open closes it (capture phase
+// so the tap never reaches links beneath).
+paneWrap.addEventListener("click", (ev) => {
+  if (!drawerOpen()) return;
+  if (ev.target.closest(".drawer") || ev.target.closest(".drawer-handle")) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  closeDrawers();
+}, true);
+
+// ---- Left drawer: vertical macro tray --------------------------------------
+
+function renderTray() {
+  const tray = document.getElementById("tray-content");
+  tray.replaceChildren();
+  if (!macros || (!macros.groups.length && !macros.floating.length)) {
+    tray.appendChild(Object.assign(document.createElement("p"), {
+      className: "drawer-empty",
+      textContent: "No macros yet — use the + button on the macro rail to create one.",
+    }));
+    return;
+  }
+  for (const group of macros.groups) {
+    const head = document.createElement("div");
+    head.className = "tray-group";
+    head.textContent = group.name;
+    tray.appendChild(head);
+    for (const btn of orderedButtons(group)) {
+      const row = document.createElement("div");
+      row.className = "tray-row";
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "tray-btn";
+      el.textContent = btn.label;
+      if (btn.color) el.style.borderLeftColor = btn.color;
+      el.addEventListener("click", () => activateMacro(btn));
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "tray-more";
+      more.setAttribute("aria-label", `Edit or move ${btn.label}`);
+      more.textContent = "⋯";
+      more.addEventListener("click", () => openMacroArrange(group, btn));
+      row.append(el, more);
+      tray.appendChild(row);
+    }
+  }
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "tray-add";
+  add.textContent = "＋ Add or edit macros";
+  add.addEventListener("click", () => document.getElementById("macro-add").click());
+  tray.appendChild(add);
+}
+
+// ---- Right drawer: injury doll + status -------------------------------------
+
+const LEVEL_COLORS = {
+  1: "#d9b44f", 2: "#e08a2e", 3: "#d9534f", // wounds
+  4: "#8a8f98", 5: "#a98f6e", 6: "#7a5c49", // scars
+};
+
+// Viewer-mirrored like the game's doll: the character's left side draws on
+// the viewer's right. `back` and `nsys` get indicator chips, not geometry.
+const DOLL_PARTS = [
+  ["head", "<circle cx='70' cy='16' r='13'/>"],
+  ["rightEye", "<circle cx='64' cy='13' r='3'/>"],
+  ["leftEye", "<circle cx='76' cy='13' r='3'/>"],
+  ["neck", "<rect x='63' y='29' width='14' height='7' rx='2'/>"],
+  ["chest", "<rect x='50' y='36' width='40' height='26' rx='3'/>"],
+  ["abdomen", "<rect x='52' y='62' width='36' height='20' rx='3'/>"],
+  ["rightArm", "<rect x='33' y='38' width='14' height='42' rx='6'/>"],
+  ["leftArm", "<rect x='93' y='38' width='14' height='42' rx='6'/>"],
+  ["rightHand", "<rect x='33' y='82' width='14' height='12' rx='4'/>"],
+  ["leftHand", "<rect x='93' y='82' width='14' height='12' rx='4'/>"],
+  ["rightLeg", "<rect x='52' y='84' width='16' height='46' rx='6'/>"],
+  ["leftLeg", "<rect x='72' y='84' width='16' height='46' rx='6'/>"],
+];
+
+const PART_LABELS = {
+  head: "head", neck: "neck", chest: "chest", abdomen: "abdomen",
+  back: "back", leftArm: "left arm", rightArm: "right arm",
+  leftHand: "left hand", rightHand: "right hand", leftLeg: "left leg",
+  rightLeg: "right leg", leftEye: "left eye", rightEye: "right eye",
+  nsys: "nerves",
+};
+
+function injuryText(level) {
+  return level <= 3 ? `wound ${level}` : `scar ${level - 3}`;
+}
+
+function setInjuries(map) {
+  injuries = map || {};
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+function renderStatusDrawer() {
+  const panel = document.getElementById("status-content");
+  panel.replaceChildren();
+
+  // Targets first: mid-combat is when this drawer earns its keep.
+  if (targets.length) {
+    panel.appendChild(sectionTitle("Targets"));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const t of targets) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "status-row target-row";
+      if (t.current) row.classList.add("target-current");
+      const name = document.createElement("span");
+      name.textContent = (t.current ? "▸ " : "") + t.name;
+      row.appendChild(name);
+      if (t.status) {
+        const status = document.createElement("span");
+        status.className = "status-time";
+        status.textContent = t.status;
+        row.appendChild(status);
+      }
+      row.addEventListener("click", () => tapCreature(t));
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
+  // Doll
+  const doll = document.createElement("div");
+  doll.id = "status-doll";
+  const shapes = DOLL_PARTS.map(([id, shape]) => {
+    const level = injuries[id] || 0;
+    const fill = LEVEL_COLORS[level] || "var(--border)";
+    return shape.replace("/>", ` fill="${fill}"/>`);
+  }).join("");
+  doll.innerHTML =
+    `<svg viewBox="0 0 140 132" role="img" aria-label="Injury doll">${shapes}</svg>`;
+  panel.appendChild(doll);
+
+  // Back / nervous system indicator chips (no geometry on the doll).
+  const chipRow = document.createElement("div");
+  chipRow.id = "status-chiprow";
+  for (const id of ["back", "nsys"]) {
+    const level = injuries[id] || 0;
+    if (!level) continue;
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    chip.style.borderColor = LEVEL_COLORS[level];
+    chip.textContent = `${PART_LABELS[id]}: ${injuryText(level)}`;
+    chipRow.appendChild(chip);
+  }
+  if (chipRow.children.length) panel.appendChild(chipRow);
+
+  // Injured-part list (exact severities beat squinting at colors).
+  const injured = Object.entries(injuries).sort();
+  if (injured.length) {
+    panel.appendChild(sectionTitle("Injuries"));
+    const list = document.createElement("div");
+    list.className = "status-section";
+    for (const [id, level] of injured) {
+      const row = document.createElement("div");
+      row.className = "status-row";
+      const dot = document.createElement("span");
+      dot.className = "hl-swatch";
+      dot.style.background = LEVEL_COLORS[level] || "transparent";
+      row.append(dot, ` ${PART_LABELS[id] || id}: ${injuryText(level)}`);
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+  } else {
+    const ok = document.createElement("p");
+    ok.className = "drawer-empty";
+    ok.textContent = "No injuries.";
+    panel.appendChild(ok);
+  }
+
+  // Hands
+  panel.appendChild(sectionTitle("Hands"));
+  const hands = document.createElement("div");
+  hands.className = "status-section";
+  for (const [tag, id] of [["L", "hand-left"], ["R", "hand-right"]]) {
+    const row = document.createElement("div");
+    row.className = "status-row";
+    row.textContent = `${tag}: ${document.getElementById(id).textContent}`;
+    hands.appendChild(row);
+  }
+  panel.appendChild(hands);
+
+  // Character sheet (pre-formatted lines from the core).
+  const CHAR_SECTIONS = [
+    ["experience", "Experience"],
+    ["encumbrance", "Encumbrance"],
+    ["bounty", "Bounty"],
+    ["society", "Society"],
+  ];
+  for (const [key, label] of CHAR_SECTIONS) {
+    const lines = charInfo[key];
+    if (!lines || !lines.length) continue;
+    panel.appendChild(sectionTitle(label));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const line of lines) {
+      const row = document.createElement("div");
+      row.className = "status-row status-wrap";
+      row.textContent = line;
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
+  // Active effects with countdowns
+  for (const cat of effectCategories) {
+    if (!cat.effects.length) continue;
+    panel.appendChild(sectionTitle(CATEGORY_LABELS[cat.category] || cat.category));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const effect of cat.effects) {
+      const row = document.createElement("div");
+      row.className = "status-row status-effect";
+      const name = document.createElement("span");
+      name.textContent = effect.text;
+      const time = document.createElement("span");
+      time.className = "status-time";
+      time.dataset.expires = effect.expiresAt ?? "";
+      time.textContent =
+        effect.expiresAt === null ? "" : fmtRemaining(effect.expiresAt - Date.now());
+      row.append(name, time);
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+}
+
+function sectionTitle(text) {
+  const el = document.createElement("div");
+  el.className = "status-title";
+  el.textContent = text;
+  return el;
+}
+
+// Tick the visible countdowns once a second alongside the pill timer.
+setInterval(() => {
+  if (!drawerRight.classList.contains("open")) return;
+  for (const el of document.querySelectorAll(".status-time")) {
+    if (el.dataset.expires) {
+      el.textContent = fmtRemaining(Number(el.dataset.expires) - Date.now());
+    }
+  }
+}, 1000);
+
+// Debug/test handle: the module scope hides everything from the console
+// and from UI test drivers; this exposes the state setters (display-only
+// helpers, no privileged actions) for both.
+window.vellumDebug = {
+  setRoom, setTargets, setCharInfo, setInjuries, setEffects, setSession,
+};
+
+
+// ---- Colors editor ----------------------------------------------------------
+// Structured editing of colors.toml: preset colors (what the text engine
+// references for speech/whispers/etc.) and prompt-character colors, with
+// native pickers. Sections the UI does not cover (TUI chrome, spell
+// colors, palette) live in the fetched document and survive the save.
+
+const colorsOverlay = document.getElementById("colors-overlay");
+const colorsList = document.getElementById("colors-list");
+const colorsStatus = document.getElementById("colors-status");
+let colorsScope = null;
+let colorsDoc = null; // the full fetched ColorConfig JSON
+let colorsRequestCounter = 0;
+let colorsPendingRequest = null;
+
+function colorsStatusMsg(text, isError) {
+  colorsStatus.textContent = text;
+  colorsStatus.classList.toggle("editor-error", !!isError);
+  colorsStatus.hidden = !text;
+}
+
+function openColorsEditor(scope) {
+  colorsScope = scope;
+  colorsDoc = null;
+  document.getElementById("colors-title").textContent =
+    scope === "global" ? "Colors (global)" : "Colors (this profile)";
+  colorsList.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading\u2026",
+  }));
+  colorsStatusMsg("", false);
+  colorsOverlay.hidden = false;
+  colorsPendingRequest = ++colorsRequestCounter;
+  sendJson("colors_get", { request_id: colorsPendingRequest, scope });
+}
+
+function handleColorsReply(d) {
+  if (d.request_id !== colorsPendingRequest) return;
+  if (d.error) {
+    colorsStatusMsg(d.error, true);
+    return;
+  }
+  if (d.saved) {
+    colorsStatusMsg("Saved \u2014 applied live.", false);
+    return;
+  }
+  colorsDoc = d.colors || {};
+  renderColorsList();
+}
+
+// One row: label + fg/bg pickers with clear buttons (select-on-tap, same
+// lesson as the highlight form: picking the shown color fires no event).
+function colorRow(label, obj, fgKey, bgKey) {
+  const row = document.createElement("div");
+  row.className = "color-row";
+  const name = document.createElement("span");
+  name.className = "color-row-name";
+  name.textContent = label;
+  row.appendChild(name);
+
+  const makePicker = (key) => {
+    const wrap = document.createElement("span");
+    wrap.className = "color-cell";
+    const pick = document.createElement("input");
+    pick.type = "color";
+    const current = obj[key];
+    if (current && /^#[0-9a-f]{6}$/i.test(current)) pick.value = current;
+    pick.classList.toggle("hl-inactive", !current);
+    const none = document.createElement("button");
+    none.type = "button";
+    none.textContent = "\u2715";
+    none.className = "color-none";
+    none.classList.toggle("hl-none-active", !current);
+    const setVal = (v) => {
+      if (v) obj[key] = v; else delete obj[key];
+      pick.classList.toggle("hl-inactive", !v);
+      none.classList.toggle("hl-none-active", !v);
+    };
+    pick.addEventListener("click", () => setVal(pick.value));
+    pick.addEventListener("input", () => setVal(pick.value));
+    none.addEventListener("click", () => setVal(null));
+    wrap.append(pick, none);
+    return wrap;
+  };
+
+  row.appendChild(makePicker(fgKey));
+  if (bgKey) row.appendChild(makePicker(bgKey));
+  return row;
+}
+
+function colorsSection(title) {
+  const el = document.createElement("div");
+  el.className = "status-title";
+  el.textContent = title;
+  return el;
+}
+
+function renderColorsList() {
+  colorsList.replaceChildren();
+  const doc = colorsDoc || {};
+
+  const presets = doc.presets || {};
+  const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+  if (names.length) {
+    colorsList.appendChild(colorsSection("Text presets (color \u00b7 background)"));
+    for (const name of names) {
+      colorsList.appendChild(colorRow(name, presets[name], "fg", "bg"));
+    }
+  }
+
+  const prompts = doc.prompt_colors || [];
+  if (prompts.length) {
+    colorsList.appendChild(colorsSection("Prompt characters"));
+    for (const p of prompts) {
+      colorsList.appendChild(colorRow('"' + p.character + '"', p, "fg", "bg"));
+    }
+  }
+
+  if (!names.length && !prompts.length) {
+    colorsList.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: "No presets or prompt colors in this file.",
+    }));
+  }
+
+  const note = document.createElement("p");
+  note.className = "hl-empty";
+  note.textContent =
+    "Other sections (TUI chrome, spell colors, palette) are preserved as-is; edit them under Advanced.";
+  colorsList.appendChild(note);
+}
+
+document.getElementById("colors-save").addEventListener("click", () => {
+  if (!colorsDoc) return;
+  colorsStatusMsg("Saving\u2026", false);
+  colorsPendingRequest = ++colorsRequestCounter;
+  sendJson("colors_put", {
+    request_id: colorsPendingRequest,
+    scope: colorsScope,
+    colors: colorsDoc,
+  });
+});
+
+document.getElementById("colors-close").addEventListener("click", () => {
+  colorsOverlay.hidden = true;
+  colorsScope = null;
+  colorsDoc = null;
+});

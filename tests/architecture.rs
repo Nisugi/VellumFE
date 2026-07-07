@@ -88,6 +88,49 @@ fn core_and_data_do_not_reference_egui() {
 }
 
 #[test]
+fn core_is_android_safe() {
+    // The Android build is `--no-default-features`: core/, data/, and the
+    // parser must never reference desktop-only crates directly. Platform
+    // integrations go through the feature-gated wrapper modules instead:
+    // crate::clipboard (arboard), crate::platform (open), crate::tts,
+    // crate::sound (rodio). The remaining desktop crates (sysinfo, keyring,
+    // rpassword) are gated at their designated sites: src/performance.rs,
+    // src/config/profiles.rs, src/network.rs, src/frontend/web/server.rs.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let needles = &[
+        "arboard::",
+        "open::that",
+        "sysinfo::",
+        "keyring::",
+        "rpassword::",
+        "rodio::",
+        "use tts::",
+    ];
+    let mut violations = Vec::new();
+    for layer in ["core", "data"] {
+        scan_dir(&src.join(layer), needles, &mut violations);
+    }
+    for (idx, line) in fs::read_to_string(src.join("parser.rs"))
+        .expect("read parser.rs")
+        .lines()
+        .enumerate()
+    {
+        if needles.iter().any(|needle| line.contains(needle)) {
+            violations.push(format!("src/parser.rs:{}: {}", idx + 1, line.trim()));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "core/, data/, and parser.rs must not use desktop-only crates directly \
+         (the Android build compiles them with --no-default-features).\n\
+         Use the feature-gated wrappers: crate::clipboard, crate::platform, \
+         crate::tts, crate::sound.\n\
+         Violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn config_root_stays_a_facade() {
     // config.rs was split into focused submodules (templates, widgets,
     // window_def, settings, layout, colors, paths, io). The root should

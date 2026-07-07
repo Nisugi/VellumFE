@@ -413,7 +413,9 @@ impl VellumGuiApp {
                                 {
                                     if let Ok(dir) = crate::config::Config::skins_dir() {
                                         let _ = std::fs::create_dir_all(&dir);
-                                        if let Err(err) = open::that(&dir) {
+                                        if let Err(err) =
+                                            crate::platform::open_url(&dir.to_string_lossy())
+                                        {
                                             tracing::warn!(
                                                 "Failed to open skins folder {}: {}",
                                                 dir.display(),

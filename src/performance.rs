@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+#[cfg(feature = "desktop")]
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 
 /// Performance statistics tracker
@@ -48,8 +49,10 @@ pub struct PerformanceStats {
     text_wrap_times: VecDeque<Duration>, // Text wrapping time
     max_render_samples: usize,
     render_spike_threshold_ms: f64,
-    // System/process sampling
+    // System/process sampling (desktop-only; stubs report zeros elsewhere)
+    #[cfg(feature = "desktop")]
     sysinfo: System,
+    #[cfg(feature = "desktop")]
     sysinfo_pid: Option<Pid>,
     last_sys_sample: Instant,
     process_cpu_percent: f32,
@@ -120,9 +123,11 @@ impl PerformanceStats {
             text_wrap_times: VecDeque::with_capacity(60),
             max_render_samples: 60,
             render_spike_threshold_ms: 10.0,
+            #[cfg(feature = "desktop")]
             sysinfo: System::new_with_specifics(
                 RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
             ),
+            #[cfg(feature = "desktop")]
             sysinfo_pid: sysinfo::get_current_pid().ok(),
             last_sys_sample: now,
             process_cpu_percent: 0.0,
@@ -409,21 +414,24 @@ impl PerformanceStats {
         // Refresh global CPU usage plus our own process only - refreshing
         // ProcessRefreshKind::everything() enumerated every process on the
         // machine once per second
-        self.sysinfo.refresh_specifics(
-            RefreshKind::new().with_cpu(CpuRefreshKind::new().with_cpu_usage()),
-        );
-
-        self.system_cpu_percent = self.sysinfo.global_cpu_info().cpu_usage();
-
-        if let Some(pid) = self.sysinfo_pid {
-            self.sysinfo.refresh_process_specifics(
-                pid,
-                ProcessRefreshKind::new().with_cpu().with_memory(),
+        #[cfg(feature = "desktop")]
+        {
+            self.sysinfo.refresh_specifics(
+                RefreshKind::new().with_cpu(CpuRefreshKind::new().with_cpu_usage()),
             );
-            if let Some(proc) = self.sysinfo.process(pid) {
-                self.process_cpu_percent = proc.cpu_usage();
-                self.process_rss_bytes = proc.memory() * 1024; // KiB -> bytes
-                self.process_virt_bytes = proc.virtual_memory() * 1024; // KiB -> bytes
+
+            self.system_cpu_percent = self.sysinfo.global_cpu_info().cpu_usage();
+
+            if let Some(pid) = self.sysinfo_pid {
+                self.sysinfo.refresh_process_specifics(
+                    pid,
+                    ProcessRefreshKind::new().with_cpu().with_memory(),
+                );
+                if let Some(proc) = self.sysinfo.process(pid) {
+                    self.process_cpu_percent = proc.cpu_usage();
+                    self.process_rss_bytes = proc.memory() * 1024; // KiB -> bytes
+                    self.process_virt_bytes = proc.virtual_memory() * 1024; // KiB -> bytes
+                }
             }
         }
 

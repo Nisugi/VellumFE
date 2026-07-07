@@ -19,6 +19,7 @@ use super::Config;
 const LAUNCHER_FILE: &str = "launcher.toml";
 
 /// Keyring service identifier (the "folder" credentials appear under).
+#[cfg(feature = "desktop")]
 const KEYRING_SERVICE: &str = "vellum-fe";
 
 /// Environment variable the launcher uses to hand a just-prompted password
@@ -271,6 +272,7 @@ impl LauncherStore {
 
 /// Keyring entry for an account. Keyed by account (not per-character or
 /// per-game) because play.net passwords are account-wide.
+#[cfg(feature = "desktop")]
 fn keyring_entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, &account.to_lowercase())
         .context("Failed to open OS credential store")
@@ -278,6 +280,7 @@ fn keyring_entry(account: &str) -> Result<keyring::Entry> {
 
 /// Store a password in the OS credential store. Errors are surfaced so the
 /// launcher can tell the user the password was NOT saved.
+#[cfg(feature = "desktop")]
 pub fn save_password(account: &str, password: &str) -> Result<()> {
     keyring_entry(account)?
         .set_password(password)
@@ -286,6 +289,7 @@ pub fn save_password(account: &str, password: &str) -> Result<()> {
 
 /// Fetch a saved password. Any failure (no backend, no entry, access denied)
 /// is treated as "not saved here" - callers fall back to prompting.
+#[cfg(feature = "desktop")]
 pub fn load_password(account: &str) -> Option<String> {
     match keyring_entry(account).and_then(|entry| {
         entry
@@ -301,10 +305,153 @@ pub fn load_password(account: &str) -> Option<String> {
 }
 
 /// Best-effort delete; a missing entry or backend is not an error.
+#[cfg(feature = "desktop")]
 pub fn delete_password(account: &str) {
     if let Ok(entry) = keyring_entry(account) {
         if let Err(err) = entry.delete_credential() {
             tracing::debug!(account, "Keyring delete skipped: {err:#}");
+        }
+    }
+}
+
+// Without the `desktop` feature there is no OS credential store. Passwords
+// live in `<VELLUM_FE_DIR>/passwords.toml` instead — on Android that resolves
+// to the app's private internal storage, which is sandboxed per-app (the same
+// trust level as Lich's config on desktop). Keystore-backed encryption at
+// rest is a planned hardening (see the Android port plan).
+
+#[cfg(not(feature = "desktop"))]
+fn passwords_path() -> Result<PathBuf> {
+    Ok(Config::base_dir()?.join("passwords.toml"))
+}
+
+#[cfg(not(feature = "desktop"))]
+fn load_password_map() -> std::collections::HashMap<String, String> {
+    let Ok(path) = passwords_path() else {
+        return Default::default();
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(not(feature = "desktop"))]
+fn store_password_map(map: &std::collections::HashMap<String, String>) -> Result<()> {
+    let path = passwords_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string(map).context("Failed to serialize password store")?;
+    fs::write(&path, text).context("Failed to write password store")
+}
+
+/// Sealing for stored password values (non-desktop builds). The 32-byte
+/// key arrives as hex in VELLUM_PASSWORD_KEY — on Android the Kotlin shell
+/// derives it from an Android-Keystore-wrapped master key before starting
+/// the core. Without the key (desktop headless testing), values stay
+/// plaintext; legacy plaintext entries always remain readable and are
+/// re-sealed on the next save.
+#[cfg(not(feature = "desktop"))]
+mod seal {
+    use base64::Engine as _;
+    use chacha20poly1305::aead::{Aead, KeyInit};
+    use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+
+    const PREFIX: &str = "enc:";
+
+    fn decode_hex(s: &str) -> Option<Vec<u8>> {
+        if s.len() % 2 != 0 {
+            return None;
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+            .collect()
+    }
+
+    fn cipher() -> Option<ChaCha20Poly1305> {
+        let hex = std::env::var("VELLUM_PASSWORD_KEY").ok()?;
+        let bytes = decode_hex(hex.trim())?;
+        if bytes.len() != 32 {
+            return None;
+        }
+        Some(ChaCha20Poly1305::new(Key::from_slice(&bytes)))
+    }
+
+    pub fn seal(value: &str) -> String {
+        let Some(c) = cipher() else {
+            return value.to_string();
+        };
+        let mut nonce = [0u8; 12];
+        if getrandom::fill(&mut nonce).is_err() {
+            return value.to_string();
+        }
+        match c.encrypt(Nonce::from_slice(&nonce), value.as_bytes()) {
+            Ok(ct) => {
+                let mut blob = nonce.to_vec();
+                blob.extend(ct);
+                format!(
+                    "{PREFIX}{}",
+                    base64::engine::general_purpose::STANDARD.encode(blob)
+                )
+            }
+            Err(_) => value.to_string(),
+        }
+    }
+
+    pub fn open(value: &str) -> Option<String> {
+        let Some(b64) = value.strip_prefix(PREFIX) else {
+            // Legacy plaintext entry.
+            return Some(value.to_string());
+        };
+        let blob = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+        if blob.len() < 13 {
+            return None;
+        }
+        let (nonce, ct) = blob.split_at(12);
+        let pt = cipher()?.decrypt(Nonce::from_slice(nonce), ct).ok()?;
+        String::from_utf8(pt).ok()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn seal_roundtrip_with_key() {
+            std::env::set_var(
+                "VELLUM_PASSWORD_KEY",
+                "0101010101010101010101010101010101010101010101010101010101010101",
+            );
+            let sealed = super::seal("hunter2 with spaces");
+            assert!(sealed.starts_with("enc:"));
+            assert_eq!(super::open(&sealed).as_deref(), Some("hunter2 with spaces"));
+            // Legacy plaintext passes through.
+            assert_eq!(super::open("plain").as_deref(), Some("plain"));
+            std::env::remove_var("VELLUM_PASSWORD_KEY");
+        }
+    }
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn save_password(account: &str, password: &str) -> Result<()> {
+    let mut map = load_password_map();
+    map.insert(account.to_lowercase(), seal::seal(password));
+    store_password_map(&map)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn load_password(account: &str) -> Option<String> {
+    load_password_map()
+        .get(&account.to_lowercase())
+        .and_then(|v| seal::open(v))
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn delete_password(account: &str) {
+    let mut map = load_password_map();
+    if map.remove(&account.to_lowercase()).is_some() {
+        if let Err(err) = store_password_map(&map) {
+            tracing::debug!(account, "Password store delete failed: {err:#}");
         }
     }
 }

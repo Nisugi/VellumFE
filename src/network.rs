@@ -36,7 +36,24 @@ pub const SERVER_CHANNEL_CAPACITY: usize = 4096;
 /// Stub type that exposes the async `start` helper.
 pub struct LichConnection;
 
+/// Marker error for eAccess credential rejection (bad password, unknown
+/// character) as opposed to transport failures. The headless reconnect
+/// supervisor stops retrying when it finds this in an error chain —
+/// hammering the auth server with a wrong password would be pointless
+/// and could lock the account.
+#[derive(Debug)]
+pub struct AuthFailed(pub String);
+
+impl std::fmt::Display for AuthFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for AuthFailed {}
+
 /// Runtime configuration for direct (non-Lich) connections.
+#[derive(Clone)]
 pub struct DirectConnectConfig {
     pub account: String,
     pub password: String,
@@ -251,12 +268,18 @@ impl DirectConnectConfig {
                 "Account required for --direct. Use --account or set connection.account in config",
             )?;
 
-        // Password: CLI → config → prompt
+        // Password: CLI → config → prompt (terminal prompt is desktop-only;
+        // headless/Android builds must supply the password up front)
         let password = match direct_password.or_else(|| config.connection.password.clone()) {
             Some(pwd) => pwd,
             None => {
-                let prompt = format!("Password for account {}: ", account);
-                rpassword::prompt_password(prompt).context("Failed to read password")?
+                #[cfg(feature = "desktop")]
+                {
+                    let prompt = format!("Password for account {}: ", account);
+                    rpassword::prompt_password(prompt).context("Failed to read password")?
+                }
+                #[cfg(not(feature = "desktop"))]
+                anyhow::bail!("Password required for account {account} (no prompt available in this build)")
             }
         };
 
@@ -360,9 +383,13 @@ impl DirectConnection {
 
         let (host, port) = fix_game_host_port(&ticket.game_host, ticket.game_port);
         info!("Connecting directly to {}:{}...", host, port);
-        let mut stream = TcpStream::connect(format!("{}:{}", host, port))
-            .await
-            .context("Failed to connect to game server")?;
+        let mut stream = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            TcpStream::connect(format!("{}:{}", host, port)),
+        )
+        .await
+        .context("Timed out connecting to game server")?
+        .context("Failed to connect to game server")?;
 
         send_direct_handshake(&mut stream, &ticket).await?;
 
@@ -414,7 +441,16 @@ async fn run_stream(
         }
     });
 
-    let _ = async {
+    // Run the writer until the command channel closes or a write fails —
+    // but end the whole task the moment the reader ends, because the reader
+    // ending IS the connection ending (server close or read error). The old
+    // sequential form (writer loop, then await reader) left this future
+    // parked in command_rx.recv() after a server-side close until some
+    // later command's write failed; the headless supervisor keys logout/
+    // reconnect off this task completing, so a `quit` didn't return to the
+    // login screen until the user happened to send another command.
+    let mut read_handle = read_handle;
+    let write_loop = async {
         while let Some(cmd) = command_rx.recv().await {
             // Build the complete message: command prefix + command + newline.
             // The prefix is mode-dependent (see call sites): "<c>" when we talk
@@ -434,10 +470,19 @@ async fn run_stream(
                 break;
             }
         }
+    };
+    tokio::select! {
+        _ = &mut read_handle => {
+            // Server closed the connection (or read error): session over.
+            // Queued-but-unsent commands are moot on a dead socket.
+        }
+        _ = write_loop => {
+            // Command channel closed (session being torn down) or a write
+            // failed: stop the reader too so this future completes.
+            read_handle.abort();
+            let _ = read_handle.await;
+        }
     }
-    .await;
-
-    let _ = read_handle.await;
 
     Ok(())
 }
@@ -587,11 +632,11 @@ mod eaccess {
         let auth_response = read_response(&mut stream)?;
 
         if !auth_response.contains("KEY") {
-            bail!(
+            return Err(anyhow::Error::new(super::AuthFailed(format!(
                 "Authentication failed for account {}: {}",
                 account,
                 auth_response.trim()
-            );
+            ))));
         }
 
         send_line(&mut stream, &format!("F\t{}", game_code))?;
@@ -604,11 +649,10 @@ mod eaccess {
         send_line(&mut stream, "C")?;
         let characters_response = read_response(&mut stream)?;
         let char_code = parse_character_code(&characters_response, character).ok_or_else(|| {
-            anyhow!(
+            anyhow::Error::new(super::AuthFailed(format!(
                 "Character '{}' not found in account '{}'",
-                character,
-                account
-            )
+                character, account
+            )))
         })?;
 
         send_line(&mut stream, &format!("L\t{}\tSTORM", char_code))?;
@@ -633,7 +677,15 @@ mod eaccess {
     /// The old OpenSSL code also disabled session caching to send an empty
     /// Session ID; native-tls has no knob for that, but a fresh connector per
     /// login starts with no session to resume, which has the same effect.
+    /// How long any single eAccess connect/read/write may take. Without
+    /// these the blocking socket waits forever when the auth server stalls
+    /// (observed in playtests as "Authenticating…" hanging until quit) —
+    /// with them, a stall becomes an error the reconnect supervisor retries.
+    const AUTH_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
     fn tls_handshake() -> Result<TlsStream<TcpStream>> {
+        use std::net::ToSocketAddrs;
+
         let connector = TlsConnector::builder()
             .use_sni(false)
             .danger_accept_invalid_certs(true)
@@ -641,8 +693,29 @@ mod eaccess {
             .build()
             .context("Failed to build TLS connector")?;
 
-        let stream = TcpStream::connect((HOST, PORT)).context("Failed to open TLS socket")?;
+        let mut last_err = None;
+        let mut stream = None;
+        for addr in (HOST, PORT)
+            .to_socket_addrs()
+            .context("Failed to resolve eAccess host")?
+        {
+            match TcpStream::connect_timeout(&addr, AUTH_IO_TIMEOUT) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        let stream = stream.ok_or_else(|| {
+            anyhow!(
+                "Failed to open TLS socket: {}",
+                last_err.map(|e| e.to_string()).unwrap_or_default()
+            )
+        })?;
         stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(AUTH_IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(AUTH_IO_TIMEOUT))?;
         connector
             .connect(HOST, stream)
             .map_err(|e| anyhow!("TLS handshake with eAccess failed: {e}"))

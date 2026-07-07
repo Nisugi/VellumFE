@@ -1,0 +1,126 @@
+name: Android Check
+
+# Cross-compiles the Android core (vendored OpenSSL + NDK — the port's
+# highest-risk build) and guards the no-default-features dependency graph
+# on every Rust-touching PR/push.
+
+# The web assets are embedded into the binary via include_str!, so JS/CSS/
+# HTML changes rebuild the core too — they must trigger this workflow.
+on:
+  push:
+    branches: ["main", "feat/android-port"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "android/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
+      - ".github/workflows/android-check.yml"
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "android/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
+      - ".github/workflows/android-check.yml"
+  workflow_dispatch:
+
+jobs:
+  android-core:
+    name: Cross-compile Android core (arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android core (vendored OpenSSL via NDK)
+        # ANDROID_NDK_LATEST_HOME is a runner machine variable — only
+        # visible to the shell, not to ${{ env }} expressions.
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          echo "Using NDK: $ANDROID_NDK_HOME"
+          cargo ndk -t arm64-v8a build --release -p vellum-android
+
+      - name: Show produced library
+        run: ls -lah target/aarch64-linux-android/release/*.so
+
+  debug-apk:
+    name: Assemble debug APK (sideload-testable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build core for device + emulator ABIs
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs \
+            build --release -p vellum-android
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK
+        run: gradle -p android :app:assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vellum-fe-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  no-default-features:
+    name: Android dependency graph (host check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libspeechd-dev libclang-dev
+
+      - name: Check core without desktop features
+        run: cargo check --no-default-features
+
+      - name: Check Android crate on host
+        run: cargo check -p vellum-android

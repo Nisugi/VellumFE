@@ -5,6 +5,7 @@
 //! that frontends read from.
 
 mod commands;
+mod config_editor;
 mod keybinds;
 mod layout;
 mod state;

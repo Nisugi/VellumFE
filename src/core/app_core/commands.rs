@@ -168,7 +168,7 @@ impl AppCore {
         // SVG QR into a local page and pop the default browser instead.
         match Self::write_pairing_page(&url) {
             Ok(path) => {
-                if open::that(&path).is_ok() {
+                if crate::platform::open_url(&path.to_string_lossy()).is_ok() {
                     self.add_system_message("Opened the pairing QR in your browser.");
                 } else {
                     self.add_system_message(&format!(

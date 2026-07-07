@@ -17,19 +17,44 @@
 <body>
   <div id="app">
     <header id="topbar">
+      <div id="topbar-controls">
+        <span id="conn" class="conn conn-down">connecting&hellip;</span>
+        <span id="topbar-right">
+          <button id="settings-btn" type="button" aria-label="Settings" title="Settings">&#9881;</button>
+          <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
+          <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
+          <button id="logout-btn" type="button" aria-label="Disconnect from the game"
+                  title="Disconnect from the game" hidden>&#9211;</button>
+        </span>
+      </div>
       <button id="topbar-title" type="button"
               title="Toggle between room and character name">&mdash;</button>
-      <span id="topbar-right">
-        <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
-        <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
-        <span id="conn" class="conn conn-down">connecting&hellip;</span>
-      </span>
     </header>
+    <div id="session-banner" hidden></div>
     <nav id="chips"></nav>
     <main id="pane-wrap">
       <div id="text-pane"></div>
       <aside id="effects-panel"></aside>
       <div id="floating-layer"></div>
+      <aside id="drawer-left" class="drawer drawer-l" aria-label="Macro tray">
+        <div class="drawer-head">
+          <span>Macros</span>
+          <button class="drawer-close" data-side="left" type="button" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="drawer-inner" id="tray-content"></div>
+      </aside>
+      <aside id="drawer-right" class="drawer drawer-r" aria-label="Status">
+        <div class="drawer-head">
+          <span>Status</span>
+          <button class="drawer-close" data-side="right" type="button" aria-label="Close">&#10005;</button>
+        </div>
+        <div class="drawer-inner" id="status-content"></div>
+      </aside>
+      <button id="handle-left" class="drawer-handle handle-l" type="button"
+              aria-label="Open macro tray">&#9002;</button>
+      <button id="handle-right" class="drawer-handle handle-r" type="button"
+              aria-label="Open status panel">&#9001;</button>
+      <div id="compass" hidden></div>
     </main>
     <footer id="bottombar">
       <div id="rt-bar"><div id="rt-fill"></div></div>
@@ -75,6 +100,116 @@
              autocorrect="off" spellcheck="false" placeholder="pairing token">
       <button type="submit">Connect</button>
     </form>
+  </div>
+  <div id="session-overlay" hidden>
+    <div id="session-card">
+      <div id="session-head">
+        <h2>VellumFE</h2>
+        <button id="session-settings" type="button" aria-label="Settings"
+                title="Settings">&#9881;</button>
+      </div>
+      <p id="session-status" hidden></p>
+      <p id="session-error" hidden></p>
+      <div id="session-profiles"></div>
+      <form id="session-form" autocomplete="off">
+        <h3>New login</h3>
+        <input id="login-account" type="text" placeholder="play.net account"
+               autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input id="login-password" type="password" placeholder="password"
+               autocomplete="current-password">
+        <input id="login-character" type="text" placeholder="character"
+               autocapitalize="off" autocorrect="off" spellcheck="false">
+        <select id="login-game">
+          <option value="prime" selected>GemStone IV</option>
+          <option value="platinum">GemStone IV Platinum</option>
+          <option value="shattered">GemStone IV Shattered</option>
+          <option value="test">GemStone IV Test</option>
+          <option value="dr">DragonRealms</option>
+          <option value="drplatinum">DragonRealms Platinum</option>
+          <option value="drfallen">DragonRealms Fallen</option>
+          <option value="drtest">DragonRealms Test</option>
+        </select>
+        <label id="login-save-row"><input id="login-save" type="checkbox"> Remember this login</label>
+        <button id="login-submit" type="submit">Connect</button>
+      </form>
+    </div>
+  </div>
+  <div id="editor-overlay" hidden>
+    <div id="editor-card">
+      <div id="editor-titlebar">
+        <span id="editor-title"></span>
+        <button id="editor-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <textarea id="editor-text" autocomplete="off" autocapitalize="off"
+                autocorrect="off" spellcheck="false"></textarea>
+      <p id="editor-status" hidden></p>
+      <div id="editor-actions">
+        <input id="editor-file" type="file" accept=".toml,text/plain" hidden>
+        <button id="editor-import" type="button">Import file</button>
+        <button id="editor-export" type="button">Export</button>
+        <button id="editor-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="hl-overlay" hidden>
+    <div id="hl-card">
+      <div id="hl-titlebar">
+        <span id="hl-title"></span>
+        <button id="hl-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <div id="hl-list-view">
+        <button id="hl-new" type="button">&#65291; New rule</button>
+        <div id="hl-list"></div>
+      </div>
+      <form id="hl-form" hidden autocomplete="off">
+        <div id="hl-fields">
+          <div id="hl-preview"><span id="hl-preview-text">Sample game text</span></div>
+          <label>Name <input id="hl-name" type="text" autocapitalize="off" spellcheck="false"></label>
+          <label>Pattern (text or regex) <input id="hl-pattern" type="text" autocapitalize="off"
+                 autocorrect="off" spellcheck="false"></label>
+          <div class="hl-colors">
+            <div class="hl-color-field">
+              <span class="hl-color-label">Text color</span>
+              <div class="hl-color-row">
+                <input id="hl-fg-pick" type="color" value="#ffff00" aria-label="Pick text color">
+                <button id="hl-fg-clear" type="button">None</button>
+              </div>
+            </div>
+            <div class="hl-color-field">
+              <span class="hl-color-label">Background</span>
+              <div class="hl-color-row">
+                <input id="hl-bg-pick" type="color" value="#333333" aria-label="Pick background color">
+                <button id="hl-bg-clear" type="button">None</button>
+              </div>
+            </div>
+          </div>
+          <label class="hl-check"><input id="hl-bold" type="checkbox"> Bold</label>
+          <label class="hl-check"><input id="hl-line" type="checkbox"> Color entire line</label>
+          <label>Sound
+            <select id="hl-sound"><option value="">None</option></select>
+          </label>
+        </div>
+        <p id="hl-status" hidden></p>
+        <div id="hl-actions">
+          <button id="hl-back" type="button">Back</button>
+          <button id="hl-delete" type="button">Delete</button>
+          <button id="hl-save" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div id="colors-overlay" hidden>
+    <div id="colors-card">
+      <div id="colors-titlebar">
+        <span id="colors-title"></span>
+        <button id="colors-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <div id="colors-list"></div>
+      <p id="colors-status" hidden></p>
+      <div id="colors-actions">
+        <button id="colors-save" type="button">Save</button>
+      </div>
+    </div>
   </div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" hidden>
