@@ -1,5 +1,5 @@
 [workspace]
-members = ["android/rust"]
+members = ["android/rust", "ios/rust"]
 
 [package]
 name = "vellum-fe"

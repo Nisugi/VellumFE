@@ -1,12 +1,14 @@
 [package]
-name = "vellum-android"
+name = "vellum-ios"
 version = "0.3.0-beta.2"
 edition = "2021"
 publish = false
-description = "JNI embedding of the VellumFE headless runtime for the Android shell"
+description = "C-ABI embedding of the VellumFE headless runtime for the iOS shell"
 
 [lib]
-crate-type = ["cdylib"]
+# iOS apps link Rust statically; the Xcode project consumes libvellum_ios.a
+# plus include/vellum_core.h via the Swift bridging header.
+crate-type = ["staticlib"]
 
 [dependencies]
 # The core: parser, network, AppCore, web frontend, headless runtime.
@@ -14,12 +16,12 @@ crate-type = ["cdylib"]
 vellum-fe = { path = "../..", default-features = false }
 # The "log" feature forwards tracing events from the whole graph to the
 # `log` crate when no tracing subscriber is installed — which is how core
-# logs reach logcat via android_logger without a bridge layer. Declared
-# here (not just transitively) because the forwarding is this crate's
-# load-bearing behavior, not an accident of feature unification.
+# logs reach os_log (Xcode console / Console.app) via the oslog backend.
 tracing = { version = "0.1", features = ["log"] }
 log = "0.4"
 
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
-android_logger = "0.14"
+[target.'cfg(target_vendor = "apple")'.dependencies]
+oslog = "0.2"
+
+[dev-dependencies]
+serde_json = "1"
