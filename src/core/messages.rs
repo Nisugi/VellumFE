@@ -342,6 +342,13 @@ impl MessageProcessor {
                     room_window_dirty,
                 );
             }
+            ParsedElement::AppInfo { character } => {
+                self.chunk_has_silent_updates = true;
+                // Game feed is authoritative (the headless supervisor's
+                // login-derived write-back is the fallback).
+                game_state.character_name = Some(character.clone());
+                tracing::debug!("Character name from <app>: {}", character);
+            }
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
                 *room_window_dirty = true;
