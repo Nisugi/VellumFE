@@ -27,7 +27,7 @@ tui-textarea = { version = "0.7", optional = true }
 
 # GUI (numpad-aware fork)
 egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui", optional = true }
-eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "eframe", default-features = false, features = ["default_fonts", "wgpu"], optional = true }
+eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "eframe", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland"], optional = true }
 fontdb = { version = "0.23", optional = true }  # System font discovery for per-window font selection
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"], optional = true }  # Skin image decoding (backgrounds, icons)
 
@@ -57,6 +57,9 @@ chacha20poly1305 = "0.10"
 
 # Web server (mobile web frontend) - HTTP + WebSocket sidecar
 axum = { version = "0.8", features = ["ws"] }
+# WebSocket client for the Lich WebUI bridge (loopback only, no TLS)
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .webinfo pairing QR
 
 # Sound (optional)
