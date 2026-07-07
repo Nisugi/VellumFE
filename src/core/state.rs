@@ -95,6 +95,11 @@ pub struct GameState {
     /// Compass directions
     pub compass_dirs: Vec<String>,
 
+    /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars). Cleared
+    /// parts are removed. Owned here (not only by the injury-doll widget)
+    /// so headless/remote clients get injuries without a doll window.
+    pub injuries: HashMap<String, u8>,
+
     /// Last prompt text (for command echoes)
     pub last_prompt: String,
 
@@ -721,6 +726,7 @@ impl GameState {
             active_effects: Vec::new(),
             effects: HashMap::new(),
             compass_dirs: Vec::new(),
+            injuries: HashMap::new(),
             last_prompt: String::from(">"), // Default prompt
             target_list: TargetListState::default(),
             room_creatures: Vec::new(),

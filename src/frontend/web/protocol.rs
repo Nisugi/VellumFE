@@ -110,6 +110,7 @@ struct SnapshotPayload {
     indicators: StatusInfo,
     rt: RtPayload,
     effects: Vec<ActiveEffectsContent>,
+    injuries: std::collections::HashMap<String, u8>,
     session: RemoteSessionInfo,
     text: Vec<SnapshotLine>,
 }
@@ -159,6 +160,7 @@ pub fn snapshot(
             server_time: state.server_time,
         },
         effects: state.effects.clone(),
+        injuries: state.injuries.clone(),
         session: state.session.clone(),
         text: lines
             .into_iter()
@@ -233,6 +235,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
+        RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Sound { file, volume } => encode(
             "sound",
             last_seq,

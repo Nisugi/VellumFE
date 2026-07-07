@@ -827,6 +827,14 @@ impl MessageProcessor {
                     0 // Unknown injury type - treat as cleared
                 };
 
+                // Game state owns injuries (remote clients and windows added
+                // mid-session read from here); widget copy below.
+                if level == 0 {
+                    game_state.injuries.remove(id);
+                } else {
+                    game_state.injuries.insert(id.clone(), level);
+                }
+
                 // Update injury doll widget if it exists (singleton)
                 if let Some(injury_window) =
                     ui_state.get_window_by_type_mut(crate::data::WidgetType::InjuryDoll, None)

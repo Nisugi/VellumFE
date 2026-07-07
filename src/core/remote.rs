@@ -224,6 +224,9 @@ pub enum RemoteDelta {
     /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
     /// category order.
     Effects(Vec<crate::data::ActiveEffectsContent>),
+    /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
+    /// cleared parts are absent.
+    Injuries(std::collections::HashMap<String, u8>),
     /// Game-session status changed (headless runtime only).
     Session(RemoteSessionInfo),
     /// A highlight-triggered sound. Clients fetch the file from /sounds/
@@ -370,6 +373,8 @@ pub struct RemoteStateSnapshot {
     pub server_time: i64,
     /// Active effects in fixed category order (empty categories omitted).
     pub effects: Vec<crate::data::ActiveEffectsContent>,
+    /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
+    pub injuries: std::collections::HashMap<String, u8>,
     /// Session status + session-control capability. Overlaid by the sink in
     /// `flush_state` (the sink owns it, not GameState).
     pub session: RemoteSessionInfo,
@@ -400,6 +405,7 @@ impl RemoteStateSnapshot {
                 .filter_map(|category| game_state.effects.get(*category))
                 .cloned()
                 .collect(),
+            injuries: game_state.injuries.clone(),
             session: RemoteSessionInfo::default(),
         }
     }
@@ -650,6 +656,11 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Effects(snap.effects.clone()));
+        }
+        if snap.injuries != self.last.injuries {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Injuries(snap.injuries.clone()));
         }
         // Send on RT/CT end changes AND on every prompt (server_time
         // tick). The per-prompt resend matters: a <roundTime> can be
