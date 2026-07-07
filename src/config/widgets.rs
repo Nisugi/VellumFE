@@ -883,6 +883,14 @@ pub struct BetrayerWidgetData {
     pub bar_color: Option<String>,
 }
 
+/// Lich WebUI panel data - binds the window to one registered page
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WebUiWidgetData {
+    /// Page id, "script/page" (e.g. "creaturebar/main")
+    #[serde(default)]
+    pub page: String,
+}
+
 pub fn default_minivitals_bar_order() -> Vec<String> {
     vec![
         "health".to_string(),

@@ -2688,6 +2688,10 @@ impl VellumGuiApp {
                 Self::render_active_effects_content(ui, content, settings);
                 None
             }
+            WindowContent::WebUi(content) => {
+                Self::render_webui_content(ui, content);
+                None
+            }
             WindowContent::Targets => Self::render_targets_content(app_core, ui),
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {

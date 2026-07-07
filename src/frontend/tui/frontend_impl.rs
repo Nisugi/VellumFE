@@ -432,6 +432,16 @@ impl Frontend for TuiFrontend {
                             betrayer_widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::WebUi(content) => {
+                        // Native WebUI panels are GUI-only for now; show the
+                        // binding so the window isn't a mystery in the TUI.
+                        let note = ratatui::widgets::Paragraph::new(format!(
+                            "Lich WebUI panel '{}'\n(GUI frontend only for now)",
+                            content.page_id
+                        ))
+                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        f.render_widget(note, area);
+                    }
                 }
             }
 

@@ -1745,6 +1745,9 @@ impl WindowEditor {
                 fields.push(FieldRef::BetrayerShowItems);
                 fields.push(FieldRef::BetrayerBarColor);
             }
+            WindowDef::WebUi { .. } => {
+                // Page binding is set by .webui; nothing editable beyond base
+            }
         }
 
         fields

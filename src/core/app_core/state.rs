@@ -704,6 +704,7 @@ impl AppCore {
             crate::data::WidgetType::MiniVitals => "minivitals",
             crate::data::WidgetType::Betrayer => "betrayer",
             crate::data::WidgetType::Items => "items",
+            crate::data::WidgetType::WebUi => "webui",
         };
         focusable.contains(kind)
     }
@@ -1148,6 +1149,14 @@ impl AppCore {
                 WidgetType::Quickbar => WindowContent::Quickbar,
                 WidgetType::MiniVitals => WindowContent::MiniVitals,
                 WidgetType::Betrayer => WindowContent::Betrayer,
+                WidgetType::WebUi => {
+                    let page = if let crate::config::WindowDef::WebUi { data, .. } = window_def {
+                        data.page.clone()
+                    } else {
+                        String::new()
+                    };
+                    WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
+                }
                 _ => WindowContent::Empty,
             };
 
@@ -1440,6 +1449,14 @@ impl AppCore {
             WidgetType::Quickbar => WindowContent::Quickbar,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            WidgetType::WebUi => {
+                let page = if let crate::config::WindowDef::WebUi { data, .. } = window_def {
+                    data.page.clone()
+                } else {
+                    String::new()
+                };
+                WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
+            }
             _ => WindowContent::Empty,
         };
 
@@ -2593,6 +2610,9 @@ impl AppCore {
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            WidgetType::WebUi => WindowContent::WebUi(
+                crate::data::webui::WebUiPanelContent::new(name, name),
+            ),
             _ => WindowContent::Empty,
         };
 
@@ -2695,6 +2715,12 @@ impl AppCore {
                 base,
                 data: CommandInputWidgetData::default(),
             },
+            "webui" | "lichui" => WindowDef::WebUi {
+                base,
+                data: crate::config::WebUiWidgetData {
+                    page: name.to_string(),
+                },
+            },
             _ => {
                 // Default to text window for unknown types
                 WindowDef::Text {
@@ -2738,6 +2764,88 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    /// Create (or reuse) a window bound to a Lich WebUI page. Returns the
+    /// window name (`webui:<page_id>`). The size hint is the descriptor's
+    /// preferred content size in CSS pixels, mapped to core layout cells.
+    pub fn add_webui_window(
+        &mut self,
+        page_id: &str,
+        title: &str,
+        size_hint: Option<[f32; 2]>,
+    ) -> String {
+        use crate::data::{WidgetType, WindowContent, WindowPosition, WindowState};
+
+        let name = format!("webui:{}", page_id);
+        if self.ui_state.windows.contains_key(&name) {
+            return name;
+        }
+
+        // Rough CSS-px -> layout-cell mapping (8x16 px cells), floored to a
+        // usable minimum so tiny hints still get a visible window.
+        let (width, height) = match size_hint {
+            Some([w, h]) => (
+                ((w / 8.0).ceil() as u16).clamp(20, 120),
+                ((h / 16.0).ceil() as u16).clamp(4, 60),
+            ),
+            None => (40, 12),
+        };
+
+        let window = WindowState {
+            name: name.clone(),
+            widget_type: WidgetType::WebUi,
+            content: WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(
+                page_id, title,
+            )),
+            position: WindowPosition {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            visible: true,
+            content_align: None,
+            focused: false,
+            ephemeral: false,
+        };
+        self.ui_state.set_window(name.clone(), window);
+
+        let base = crate::config::WindowBase {
+            name: name.clone(),
+            row: 0,
+            col: 0,
+            rows: height,
+            cols: width,
+            show_border: true,
+            border_style: "single".to_string(),
+            border_sides: crate::config::BorderSides::default(),
+            border_color: None,
+            show_title: true,
+            title: Some(title.to_string()),
+            title_position: "top-left".to_string(),
+            background_color: None,
+            text_color: None,
+            transparent_background: false,
+            locked: false,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visible: true,
+            content_align: None,
+        };
+        self.layout.windows.insert(
+            0,
+            crate::config::WindowDef::WebUi {
+                base,
+                data: crate::config::WebUiWidgetData {
+                    page: page_id.to_string(),
+                },
+            },
+        );
+        self.needs_render = true;
+        name
     }
 
     /// Rename a window's title

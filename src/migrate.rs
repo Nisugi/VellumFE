@@ -773,6 +773,7 @@ impl BaseMut for WindowDef {
             WindowDef::Encumbrance { base, .. } => Some(base),
             WindowDef::MiniVitals { base, .. } => Some(base),
             WindowDef::Betrayer { base, .. } => Some(base),
+            WindowDef::WebUi { base, .. } => Some(base),
         }
     }
 }

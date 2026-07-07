@@ -16,4 +16,5 @@ pub mod sound;
 pub mod spell_abbrevs;
 pub mod theme;
 pub mod tts;
+pub mod webui;
 pub mod window_position;

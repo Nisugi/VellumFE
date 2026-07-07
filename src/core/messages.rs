@@ -85,9 +85,19 @@ pub struct MessageProcessor {
     /// Built from widget configs at startup and on layout reload
     text_stream_subscribers: std::collections::HashMap<String, Vec<String>>,
 
+    /// Every stream id Lich has pushed this session, mapped to a friendly label
+    /// when one is known (from a `<streamWindow title="...">`). Populated as
+    /// streams arrive; powers the custom-window authoring "seen this session"
+    /// pick-list. Ordered so the picker lists ids deterministically.
+    seen_streams: std::collections::BTreeMap<String, Option<String>>,
+
     /// Newly registered container (for container discovery mode)
     /// Set when a container is first seen, cleared after processing
     pub newly_registered_container: Option<(String, String)>, // (id, title)
+
+    /// Latest Lich WebUI handshake reply (`;ui handshake` -> `<LichWebUI/>`).
+    /// Set on parse; the frontend takes it and connects the WebUI bridge.
+    pub pending_webui_handshake: Option<crate::data::webui::WebUiHandshake>,
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
@@ -179,7 +189,9 @@ impl MessageProcessor {
             redirect_literal_meta: Vec::new(),
             redirect_regexes: Vec::new(),
             text_stream_subscribers: std::collections::HashMap::new(),
+            seen_streams: std::collections::BTreeMap::new(),
             newly_registered_container: None,
+            pending_webui_handshake: None,
             pending_sounds: Vec::new(),
             saved_dialog_positions,
             bounty_buffer: None,
@@ -324,7 +336,8 @@ impl MessageProcessor {
         mut tts_manager: Option<&mut crate::tts::TtsManager>,
     ) {
         match element {
-            ParsedElement::StreamWindow { id, subtitle } => {
+            ParsedElement::StreamWindow { id, subtitle, title } => {
+                self.note_seen_stream(id, title.as_deref());
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
@@ -356,6 +369,7 @@ impl MessageProcessor {
             }
             ParsedElement::StreamPush { id } => {
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
+                self.note_seen_stream(id, None);
                 self.current_stream = id.clone();
 
                 // Check if any widget subscribes to this stream (using pre-built subscriber map)
@@ -1668,6 +1682,15 @@ impl MessageProcessor {
 
                 tracing::trace!("Added item to container '{}': {}", container_id,
                     if content.len() > 50 { format!("{}...", &content[..50]) } else { content.clone() });
+            }
+            ParsedElement::LichWebUI(handshake) => {
+                self.chunk_has_silent_updates = true; // control line, not game text
+                tracing::info!(
+                    "LichWebUI handshake received: status={} port={}",
+                    handshake.status,
+                    handshake.port
+                );
+                self.pending_webui_handshake = Some(handshake.clone());
             }
             ParsedElement::LaunchURL { url } => {
                 // Build full URL by prepending play.net base
@@ -3456,6 +3479,41 @@ impl MessageProcessor {
         );
     }
 
+    /// Record that a stream id was seen this session, upgrading its label if a
+    /// friendly title arrives later. Called for every pushStream/streamWindow so
+    /// the custom-window picker can offer streams Lich actually sent. The `main`
+    /// stream is always present and not worth listing, so it is skipped.
+    fn note_seen_stream(&mut self, id: &str, title: Option<&str>) {
+        let id = id.trim();
+        if id.is_empty() || id.eq_ignore_ascii_case("main") {
+            return;
+        }
+        let label = title.map(str::trim).filter(|t| !t.is_empty());
+        match self.seen_streams.get_mut(id) {
+            Some(existing) => {
+                // Only fill in a label; never clobber a known one with None.
+                if existing.is_none() {
+                    if let Some(label) = label {
+                        *existing = Some(label.to_string());
+                    }
+                }
+            }
+            None => {
+                self.seen_streams
+                    .insert(id.to_string(), label.map(str::to_string));
+            }
+        }
+    }
+
+    /// Streams seen this session as `(id, optional friendly label)`, sorted by id.
+    /// Consumed by the custom-window authoring panel's "seen this session" list.
+    pub fn seen_streams(&self) -> Vec<(String, Option<String>)> {
+        self.seen_streams
+            .iter()
+            .map(|(id, label)| (id.clone(), label.clone()))
+            .collect()
+    }
+
     /// Build the text stream subscriber map from widget configurations.
     /// Call this on startup and after layout reload to update routing.
     pub fn update_text_stream_subscribers(&mut self, ui_state: &UiState) {
@@ -3690,6 +3748,52 @@ mod tests {
             window: None,
             compiled_regex: None,
         }
+    }
+
+    // ===========================================
+    // seen-streams registry (custom-window authoring source)
+    // ===========================================
+
+    #[test]
+    fn test_note_seen_stream_records_ids_sorted() {
+        let mut processor = create_test_processor();
+        processor.note_seen_stream("familiar", None);
+        processor.note_seen_stream("bounty", None);
+        let seen = processor.seen_streams();
+        assert_eq!(
+            seen,
+            vec![
+                ("bounty".to_string(), None),
+                ("familiar".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_note_seen_stream_skips_main_and_blank() {
+        let mut processor = create_test_processor();
+        processor.note_seen_stream("main", None);
+        processor.note_seen_stream("MAIN", None);
+        processor.note_seen_stream("   ", None);
+        assert!(processor.seen_streams().is_empty());
+    }
+
+    #[test]
+    fn test_note_seen_stream_label_fills_without_clobber() {
+        let mut processor = create_test_processor();
+        // First seen with no label, then a title arrives -> label fills in.
+        processor.note_seen_stream("room", None);
+        processor.note_seen_stream("room", Some("Room"));
+        assert_eq!(
+            processor.seen_streams(),
+            vec![("room".to_string(), Some("Room".to_string()))]
+        );
+        // A later push without a title must not wipe the known label.
+        processor.note_seen_stream("room", None);
+        assert_eq!(
+            processor.seen_streams(),
+            vec![("room".to_string(), Some("Room".to_string()))]
+        );
     }
 
     // ===========================================
