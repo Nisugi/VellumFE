@@ -230,6 +230,7 @@ impl VellumGuiApp {
         let mut open = true;
         let mut load_request: Option<String> = None;
         let mut save_request = false;
+        let mut delete_request = false;
 
         egui::Window::new("Window Editor")
             .id(egui::Id::new("gui_window_editor"))
@@ -324,6 +325,20 @@ impl VellumGuiApp {
                     if ui.button("Back").clicked() {
                         load_request = Some(String::new());
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Delete Window")
+                                    .color(ui.visuals().error_fg_color),
+                            )
+                            .on_hover_text(
+                                "Remove this window from the layout entirely (not just hide).",
+                            )
+                            .clicked()
+                        {
+                            delete_request = true;
+                        }
+                    });
                 });
             });
 
@@ -344,6 +359,28 @@ impl VellumGuiApp {
             match self.apply_window_editor(&state) {
                 Ok(()) => state.error = None,
                 Err(err) => state.error = Some(err),
+            }
+        }
+
+        if delete_request {
+            if let Some(name) = state.selected.clone() {
+                let locked = self
+                    .app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| w.name() == name)
+                    .map(|w| w.base().locked)
+                    .unwrap_or(false);
+                if locked {
+                    state.error = Some(format!(
+                        "Window '{}' is locked; unlock it before deleting.",
+                        name
+                    ));
+                } else {
+                    self.delete_custom_window(&name);
+                    state = WindowEditorState::picker();
+                }
             }
         }
 

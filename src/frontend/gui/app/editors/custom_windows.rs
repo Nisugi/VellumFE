@@ -186,9 +186,10 @@ impl VellumGuiApp {
         Ok(())
     }
 
-    /// Delete a custom window entirely (not just hide) — remove it from the live
+    /// Delete a window entirely (not just hide) — remove it from the live
     /// UI and from the layout so it does not reappear, then rebuild routing.
-    fn delete_custom_window(&mut self, name: &str) {
+    /// Shared by the Custom Windows panel and the Window Editor.
+    pub(in super::super) fn delete_custom_window(&mut self, name: &str) {
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
         self.app_core.layout_modified_since_save = true;
