@@ -36,7 +36,24 @@ pub const SERVER_CHANNEL_CAPACITY: usize = 4096;
 /// Stub type that exposes the async `start` helper.
 pub struct LichConnection;
 
+/// Marker error for eAccess credential rejection (bad password, unknown
+/// character) as opposed to transport failures. The headless reconnect
+/// supervisor stops retrying when it finds this in an error chain —
+/// hammering the auth server with a wrong password would be pointless
+/// and could lock the account.
+#[derive(Debug)]
+pub struct AuthFailed(pub String);
+
+impl std::fmt::Display for AuthFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for AuthFailed {}
+
 /// Runtime configuration for direct (non-Lich) connections.
+#[derive(Clone)]
 pub struct DirectConnectConfig {
     pub account: String,
     pub password: String,
@@ -593,11 +610,11 @@ mod eaccess {
         let auth_response = read_response(&mut stream)?;
 
         if !auth_response.contains("KEY") {
-            bail!(
+            return Err(anyhow::Error::new(super::AuthFailed(format!(
                 "Authentication failed for account {}: {}",
                 account,
                 auth_response.trim()
-            );
+            ))));
         }
 
         send_line(&mut stream, &format!("F\t{}", game_code))?;
@@ -610,11 +627,10 @@ mod eaccess {
         send_line(&mut stream, "C")?;
         let characters_response = read_response(&mut stream)?;
         let char_code = parse_character_code(&characters_response, character).ok_or_else(|| {
-            anyhow!(
+            anyhow::Error::new(super::AuthFailed(format!(
                 "Character '{}' not found in account '{}'",
-                character,
-                account
-            )
+                character, account
+            )))
         })?;
 
         send_line(&mut stream, &format!("L\t{}\tSTORM", char_code))?;

@@ -7,6 +7,7 @@ pub mod common;
 pub mod events;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod headless;
 #[cfg(feature = "tui")]
 pub mod tui;
 pub mod web;
