@@ -27,7 +27,9 @@ pub struct SoundPlayer {
     stream_handle: OutputStreamHandle,
     enabled: bool,
     volume: f32,
+    #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     cooldown_map: Arc<Mutex<std::collections::HashMap<String, Instant>>>,
+    #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     cooldown_duration: std::time::Duration,
 }
 
@@ -81,6 +83,7 @@ impl SoundPlayer {
         debug!("Sound player volume set to: {}", self.volume);
     }
 
+    #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     fn lock_cooldown_map(
         &self,
     ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Instant>> {
@@ -94,6 +97,7 @@ impl SoundPlayer {
     }
 
     /// Check if a sound is on cooldown
+    #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     fn is_on_cooldown(&self, sound_id: &str) -> bool {
         let map = self.lock_cooldown_map();
         if let Some(last_played) = map.get(sound_id) {
@@ -104,6 +108,7 @@ impl SoundPlayer {
     }
 
     /// Set the cooldown for a sound
+    #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     fn set_cooldown(&self, sound_id: String) {
         let mut map = self.lock_cooldown_map();
         map.insert(sound_id, Instant::now());

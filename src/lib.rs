@@ -9,6 +9,7 @@ pub mod frontend;
 pub mod network;
 pub mod parser;
 pub mod performance;
+pub mod platform;
 pub mod selection;
 pub mod session_cache;
 pub mod sound;

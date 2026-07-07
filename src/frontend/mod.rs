@@ -5,13 +5,16 @@
 
 pub mod common;
 pub mod events;
+#[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(feature = "tui")]
 pub mod tui;
 pub mod web;
 
 use anyhow::Result;
 
 pub use events::FrontendEvent;
+#[cfg(feature = "gui")]
 pub use gui::EguiApp;
 
 /// Frontend trait - must be implemented by both TUI and GUI frontends

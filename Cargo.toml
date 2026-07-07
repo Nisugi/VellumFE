@@ -8,6 +8,9 @@ description = "Modern, high-performance multi-frontend (TUI/GUI) client for GemS
 [[bin]]
 name = "vellum-fe"
 path = "src/main.rs"
+# The desktop binary always ships both frontends; the feature split exists so
+# the library builds with --no-default-features for Android (headless + web).
+required-features = ["tui", "gui", "desktop"]
 
 [dependencies]
 # Core async runtime
@@ -15,15 +18,15 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 
 # Terminal UI
-ratatui = "0.29"
-crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"] }
-tui-textarea = "0.7"
+ratatui = { version = "0.29", optional = true }
+crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
+tui-textarea = { version = "0.7", optional = true }
 
 # GUI (numpad-aware fork)
-egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui" }
-eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "eframe", default-features = false, features = ["default_fonts", "wgpu"] }
-fontdb = "0.23"  # System font discovery for per-window font selection
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }  # Skin image decoding (backgrounds, icons)
+egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui", optional = true }
+eframe = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "eframe", default-features = false, features = ["default_fonts", "wgpu"], optional = true }
+fontdb = { version = "0.23", optional = true }  # System font discovery for per-window font selection
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"], optional = true }  # Skin image decoding (backgrounds, icons)
 
 # Serialization
 serde = { version = "1", features = ["derive", "rc"] }
@@ -36,7 +39,7 @@ regex = "1"
 aho-corasick = "1"  # Fast literal string matching for highlights
 quick-xml = "0.36"  # XML parsing
 include_dir = "0.7"  # Embed default config files
-rpassword = "7"
+rpassword = { version = "7", optional = true }
 # eAccess login TLS via the OS stack: SChannel (Windows), Security.framework
 # (macOS), system OpenSSL (Linux). No vendored OpenSSL build, no Perl, no vcpkg.
 # NOTE: rustls cannot replace this — eaccess.play.net only speaks TLS 1.2 with
@@ -51,8 +54,8 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
 
-# TTS - Text-to-speech (always included)
-tts = "0.26"
+# TTS - Text-to-speech (feature-gated; stub on non-desktop builds)
+tts = { version = "0.26", optional = true }
 
 # Logging
 tracing = "0.1"
@@ -66,26 +69,35 @@ clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
 
 # Clipboard
-arboard = "3"
+arboard = { version = "3", optional = true }
 base64 = "0.22.1"
-sysinfo = "0.30"
+sysinfo = { version = "0.30", optional = true }
 
 # URL opening (for LaunchURL)
-open = "5"
+open = { version = "5", optional = true }
 
 # OS credential store for launcher profiles (Windows Credential Manager /
 # macOS Keychain / Linux Secret Service). Best-effort: launcher falls back
 # to prompting when no secure store is available (headless, WSL, bare WMs).
-keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "vendored"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "vendored"], optional = true }
 
 [features]
-default = ["sound"]
+# The Android build is `--no-default-features`: core + parser + network +
+# web frontend + (Phase A2) headless runtime only.
+default = ["tui", "gui", "sound", "tts", "desktop"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea"]
+gui = ["dep:egui", "dep:eframe", "dep:fontdb", "dep:image"]
 sound = ["dep:rodio"]
+tts = ["dep:tts"]
+# Desktop OS integrations: clipboard, browser-open, process inspection,
+# credential store, terminal password prompt.
+desktop = ["dep:arboard", "dep:open", "dep:sysinfo", "dep:keyring", "dep:rpassword"]
 
-# Linux: statically link a vendored OpenSSL so release binaries don't depend
-# on the user's libssl. (Perl is needed to build it, but it's universal on
-# Linux — the vendored-build pain this swap removed was Windows-only.)
-[target.'cfg(target_os = "linux")'.dependencies]
+# Linux/Android: statically link a vendored OpenSSL so binaries don't depend
+# on the system libssl (Android has none). Perl is needed to build it, but
+# it's universal on Linux and present on CI runners; the vendored-build pain
+# the native-tls swap removed was Windows-only.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 native-tls = { version = "0.2", features = ["vendored"] }
 
 # Platform-specific dependencies for window position persistence

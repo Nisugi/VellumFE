@@ -12,6 +12,7 @@ mod migrate;
 mod network;
 mod parser;
 mod performance;
+mod platform;
 mod selection;
 mod session_cache;
 mod sound;

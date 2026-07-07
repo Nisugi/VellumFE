@@ -202,7 +202,9 @@ pub mod registry {
         let Ok(read) = fs::read_dir(&dir) else {
             return Vec::new();
         };
+        #[cfg(feature = "desktop")]
         let mut system = sysinfo::System::new();
+        #[cfg(feature = "desktop")]
         system.refresh_processes();
         let mut entries = Vec::new();
         for file in read.flatten() {
@@ -217,9 +219,14 @@ pub mod registry {
                 let _ = fs::remove_file(&path);
                 continue;
             };
+            #[cfg(feature = "desktop")]
             let alive = system
                 .process(sysinfo::Pid::from_u32(entry.pid))
                 .is_some();
+            // Without process inspection (Android: single-process app), only
+            // our own entry can be live; anything else is a stale leftover.
+            #[cfg(not(feature = "desktop"))]
+            let alive = entry.pid == std::process::id();
             if alive {
                 entries.push(entry);
             } else {

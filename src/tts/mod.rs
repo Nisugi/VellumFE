@@ -11,6 +11,7 @@
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(feature = "tts")]
 use tts::Tts;
 
 /// Events sent from TTS callbacks to the main event loop
@@ -43,6 +44,10 @@ pub struct SpeechEntry {
 /// Manages the speech queue and TTS engine.
 /// When TTS is disabled (config disabled), this is a no-op.
 pub struct TtsManager {
+    // Without the `tts` feature the engine field doesn't exist and
+    // `ensure_initialized` never runs: every public method is a queue-only
+    // no-op, which is also the behavior when TTS is disabled in config.
+    #[cfg(feature = "tts")]
     engine: Option<Tts>,
 
     /// Speech queue (sorted by priority)
@@ -69,6 +74,7 @@ pub struct TtsManager {
     max_queue_size: usize,
 
     /// Event channel for TTS callbacks
+    #[cfg_attr(not(feature = "tts"), allow(dead_code))]
     event_tx: Sender<TtsEvent>,
     event_rx: Receiver<TtsEvent>,
 
@@ -85,6 +91,7 @@ impl TtsManager {
         let (event_tx, event_rx) = channel();
 
         Self {
+            #[cfg(feature = "tts")]
             engine: None,
             queue: VecDeque::new(),
             current_index: None,
@@ -105,6 +112,7 @@ impl TtsManager {
 
     /// Initialize the TTS engine (lazy initialization)
     fn ensure_initialized(&mut self) -> Result<()> {
+        #[cfg(feature = "tts")]
         if self.enabled && self.engine.is_none() {
             tracing::info!("Initializing TTS engine...");
             let mut tts = Tts::default()?;
@@ -340,8 +348,10 @@ impl TtsManager {
 
     /// Speak the entry at a specific index
     /// interrupt: if true, stops current speech before speaking (for manual navigation)
+    #[cfg_attr(not(feature = "tts"), allow(unused_variables))]
     fn speak_at_index(&mut self, index: usize, interrupt: bool) -> Result<()> {
         if let Some(entry) = self.queue.get_mut(index) {
+            #[cfg(feature = "tts")]
             if let Some(ref mut engine) = self.engine {
                 tracing::debug!("Speaking [{}]: {}", entry.source_window, entry.text);
 
@@ -372,6 +382,7 @@ impl TtsManager {
 
     /// Stop current speech (does NOT change current_index position)
     pub fn stop(&mut self) -> Result<()> {
+        #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.stop()?;
         }
@@ -426,10 +437,12 @@ impl TtsManager {
     }
 
     /// Increase speech rate by 0.1
+    #[cfg_attr(not(feature = "tts"), allow(unused_variables))]
     pub fn increase_rate(&mut self) -> Result<()> {
         self.rate = (self.rate + 0.1).min(2.0); // Cap at 2.0
         let normalized = self.normalize_rate(self.rate);
 
+        #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.set_rate(normalized)?;
             tracing::info!(
@@ -442,10 +455,12 @@ impl TtsManager {
     }
 
     /// Decrease speech rate by 0.1
+    #[cfg_attr(not(feature = "tts"), allow(unused_variables))]
     pub fn decrease_rate(&mut self) -> Result<()> {
         self.rate = (self.rate - 0.1).max(0.5); // Don't go below 0.5
         let normalized = self.normalize_rate(self.rate);
 
+        #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.set_rate(normalized)?;
             tracing::info!(
@@ -458,10 +473,12 @@ impl TtsManager {
     }
 
     /// Increase volume by 0.1
+    #[cfg_attr(not(feature = "tts"), allow(unused_variables))]
     pub fn increase_volume(&mut self) -> Result<()> {
         self.volume = (self.volume + 0.1).min(1.0); // Cap at 1.0
         let normalized = self.normalize_volume(self.volume);
 
+        #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.set_volume(normalized)?;
             tracing::info!(
@@ -474,10 +491,12 @@ impl TtsManager {
     }
 
     /// Decrease volume by 0.1
+    #[cfg_attr(not(feature = "tts"), allow(unused_variables))]
     pub fn decrease_volume(&mut self) -> Result<()> {
         self.volume = (self.volume - 0.1).max(0.0); // Don't go below 0.0
         let normalized = self.normalize_volume(self.volume);
 
+        #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.set_volume(normalized)?;
             tracing::info!(

@@ -1660,7 +1660,7 @@ impl MessageProcessor {
                 tracing::info!("Launching URL in browser: {}", full_url);
 
                 // Open in default browser
-                if let Err(e) = open::that(&full_url) {
+                if let Err(e) = crate::platform::open_url(&full_url) {
                     tracing::error!("Failed to open browser: {}", e);
                 }
             }

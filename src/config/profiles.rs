@@ -19,6 +19,7 @@ use super::Config;
 const LAUNCHER_FILE: &str = "launcher.toml";
 
 /// Keyring service identifier (the "folder" credentials appear under).
+#[cfg(feature = "desktop")]
 const KEYRING_SERVICE: &str = "vellum-fe";
 
 /// Environment variable the launcher uses to hand a just-prompted password
@@ -271,6 +272,7 @@ impl LauncherStore {
 
 /// Keyring entry for an account. Keyed by account (not per-character or
 /// per-game) because play.net passwords are account-wide.
+#[cfg(feature = "desktop")]
 fn keyring_entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, &account.to_lowercase())
         .context("Failed to open OS credential store")
@@ -278,6 +280,7 @@ fn keyring_entry(account: &str) -> Result<keyring::Entry> {
 
 /// Store a password in the OS credential store. Errors are surfaced so the
 /// launcher can tell the user the password was NOT saved.
+#[cfg(feature = "desktop")]
 pub fn save_password(account: &str, password: &str) -> Result<()> {
     keyring_entry(account)?
         .set_password(password)
@@ -286,6 +289,7 @@ pub fn save_password(account: &str, password: &str) -> Result<()> {
 
 /// Fetch a saved password. Any failure (no backend, no entry, access denied)
 /// is treated as "not saved here" - callers fall back to prompting.
+#[cfg(feature = "desktop")]
 pub fn load_password(account: &str) -> Option<String> {
     match keyring_entry(account).and_then(|entry| {
         entry
@@ -301,10 +305,65 @@ pub fn load_password(account: &str) -> Option<String> {
 }
 
 /// Best-effort delete; a missing entry or backend is not an error.
+#[cfg(feature = "desktop")]
 pub fn delete_password(account: &str) {
     if let Ok(entry) = keyring_entry(account) {
         if let Err(err) = entry.delete_credential() {
             tracing::debug!(account, "Keyring delete skipped: {err:#}");
+        }
+    }
+}
+
+// Without the `desktop` feature there is no OS credential store. Passwords
+// live in `<VELLUM_FE_DIR>/passwords.toml` instead — on Android that resolves
+// to the app's private internal storage, which is sandboxed per-app (the same
+// trust level as Lich's config on desktop). Keystore-backed encryption at
+// rest is a planned hardening (see the Android port plan).
+
+#[cfg(not(feature = "desktop"))]
+fn passwords_path() -> Result<PathBuf> {
+    Ok(Config::base_dir()?.join("passwords.toml"))
+}
+
+#[cfg(not(feature = "desktop"))]
+fn load_password_map() -> std::collections::HashMap<String, String> {
+    let Ok(path) = passwords_path() else {
+        return Default::default();
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(not(feature = "desktop"))]
+fn store_password_map(map: &std::collections::HashMap<String, String>) -> Result<()> {
+    let path = passwords_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string(map).context("Failed to serialize password store")?;
+    fs::write(&path, text).context("Failed to write password store")
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn save_password(account: &str, password: &str) -> Result<()> {
+    let mut map = load_password_map();
+    map.insert(account.to_lowercase(), password.to_string());
+    store_password_map(&map)
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn load_password(account: &str) -> Option<String> {
+    load_password_map().get(&account.to_lowercase()).cloned()
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn delete_password(account: &str) {
+    let mut map = load_password_map();
+    if map.remove(&account.to_lowercase()).is_some() {
+        if let Err(err) = store_password_map(&map) {
+            tracing::debug!(account, "Password store delete failed: {err:#}");
         }
     }
 }

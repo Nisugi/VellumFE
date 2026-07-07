@@ -251,12 +251,18 @@ impl DirectConnectConfig {
                 "Account required for --direct. Use --account or set connection.account in config",
             )?;
 
-        // Password: CLI → config → prompt
+        // Password: CLI → config → prompt (terminal prompt is desktop-only;
+        // headless/Android builds must supply the password up front)
         let password = match direct_password.or_else(|| config.connection.password.clone()) {
             Some(pwd) => pwd,
             None => {
-                let prompt = format!("Password for account {}: ", account);
-                rpassword::prompt_password(prompt).context("Failed to read password")?
+                #[cfg(feature = "desktop")]
+                {
+                    let prompt = format!("Password for account {}: ", account);
+                    rpassword::prompt_password(prompt).context("Failed to read password")?
+                }
+                #[cfg(not(feature = "desktop"))]
+                anyhow::bail!("Password required for account {account} (no prompt available in this build)")
             }
         };
 
