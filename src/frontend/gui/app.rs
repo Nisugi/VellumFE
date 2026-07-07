@@ -1414,6 +1414,23 @@ impl VellumGuiApp {
                 crate::core::remote::RemoteEvent::Notice(message) => {
                     self.app_core.add_system_message(&message);
                 }
+                crate::core::remote::RemoteEvent::ConfigGet {
+                    client_id,
+                    request_id,
+                    file,
+                } => {
+                    self.app_core
+                        .handle_remote_config_get(client_id, request_id, file);
+                }
+                crate::core::remote::RemoteEvent::ConfigPut {
+                    client_id,
+                    request_id,
+                    file,
+                    content,
+                } => {
+                    self.app_core
+                        .handle_remote_config_put(client_id, request_id, file, content);
+                }
                 crate::core::remote::RemoteEvent::SessionConnect { .. }
                 | crate::core::remote::RemoteEvent::SessionDisconnect => {
                     // Sidecar sessions are owned by this local UI; the web

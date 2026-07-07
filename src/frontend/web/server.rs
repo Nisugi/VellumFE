@@ -531,6 +531,29 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::SessionDisconnect)
             .is_ok(),
+        ClientMessage::ConfigGet { request_id, file } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ConfigGet {
+                client_id,
+                request_id,
+                file,
+            })
+            .is_ok(),
+        ClientMessage::ConfigPut {
+            request_id,
+            file,
+            content,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::ConfigPut {
+                client_id,
+                request_id,
+                file,
+                content,
+            })
+            .is_ok(),
         // Profile list/delete touch only launcher.toml via the config
         // layer — answered here without a round-trip through the app loop.
         ClientMessage::GetProfiles => {
@@ -679,9 +702,11 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         tokio::select! {
             delta = delta_rx.recv() => match delta {
                 Ok(d) => {
-                    // Menus are addressed: only the requesting client's
-                    // task forwards them.
-                    if let RemoteDelta::Menu { client_id: target, .. } = &d {
+                    // Menus and config replies are addressed: only the
+                    // requesting client's task forwards them.
+                    if let RemoteDelta::Menu { client_id: target, .. }
+                    | RemoteDelta::ConfigFile { client_id: target, .. } = &d
+                    {
                         if *target != client_id {
                             continue;
                         }

@@ -226,6 +226,17 @@ pub enum RemoteDelta {
     Effects(Vec<crate::data::ActiveEffectsContent>),
     /// Game-session status changed (headless runtime only).
     Session(RemoteSessionInfo),
+    /// Reply to one client's config get/put (addressed like `Menu`).
+    /// `content` is set for reads; `error` for validation/IO failures;
+    /// `saved` for successful writes.
+    ConfigFile {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -289,6 +300,20 @@ pub enum RemoteEvent {
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,
+    /// Read a whitelisted config file (settings sheet editor). The reply
+    /// routes back to the requesting client as `RemoteDelta::ConfigFile`.
+    ConfigGet {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+    },
+    /// Validate and write a whitelisted config file, then hot-reload it.
+    ConfigPut {
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: String,
+    },
 }
 
 /// Latest coalesced game state, published via `watch` so the server can
@@ -483,6 +508,27 @@ impl RemoteSink {
             stream: stream.to_string(),
             line,
         }));
+    }
+
+    /// Route a config get/put reply to the remote client that requested it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_config_file(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        file: String,
+        content: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::ConfigFile {
+            client_id,
+            request_id,
+            file,
+            content,
+            error,
+            saved,
+        });
     }
 
     /// Route a game menu response to the remote client that requested it.

@@ -20,6 +20,7 @@
       <button id="topbar-title" type="button"
               title="Toggle between room and character name">&mdash;</button>
       <span id="topbar-right">
+        <button id="settings-btn" type="button" aria-label="Settings" title="Settings">&#9881;</button>
         <button id="textsize-btn" type="button" aria-label="Text size" title="Text size">Aa</button>
         <button id="wake-btn" type="button" aria-label="Keep screen awake" title="Keep screen awake">&#9789;</button>
         <button id="logout-btn" type="button" aria-label="Disconnect from the game"
@@ -106,6 +107,23 @@
         <label id="login-save-row"><input id="login-save" type="checkbox"> Remember this login</label>
         <button id="login-submit" type="submit">Connect</button>
       </form>
+    </div>
+  </div>
+  <div id="editor-overlay" hidden>
+    <div id="editor-card">
+      <div id="editor-titlebar">
+        <span id="editor-title"></span>
+        <button id="editor-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <textarea id="editor-text" autocomplete="off" autocapitalize="off"
+                autocorrect="off" spellcheck="false"></textarea>
+      <p id="editor-status" hidden></p>
+      <div id="editor-actions">
+        <input id="editor-file" type="file" accept=".toml,text/plain" hidden>
+        <button id="editor-import" type="button">Import file</button>
+        <button id="editor-export" type="button">Export</button>
+        <button id="editor-save" type="button">Save</button>
+      </div>
     </div>
   </div>
   <div id="sheet-backdrop" hidden></div>

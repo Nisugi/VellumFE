@@ -748,6 +748,23 @@ fn handle_remote_event(
             session_requests.push(SessionRequest::Disconnect);
             true
         }
+        RemoteEvent::ConfigGet {
+            client_id,
+            request_id,
+            file,
+        } => {
+            app_core.handle_remote_config_get(client_id, request_id, file);
+            true
+        }
+        RemoteEvent::ConfigPut {
+            client_id,
+            request_id,
+            file,
+            content,
+        } => {
+            app_core.handle_remote_config_put(client_id, request_id, file, content);
+            true
+        }
     }
 }
 

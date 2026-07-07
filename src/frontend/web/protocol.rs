@@ -233,6 +233,25 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
+        // client_id stays server-side: the ws task already filtered on it.
+        RemoteDelta::ConfigFile {
+            request_id,
+            file,
+            content,
+            error,
+            saved,
+            ..
+        } => encode(
+            "config_file",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "file": file,
+                "content": content,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
     }
 }
 
@@ -324,6 +343,14 @@ pub enum ClientMessage {
     GetProfiles,
     /// Delete a saved profile (and its stored password if unshared).
     DeleteProfile { name: String },
+    /// Read a whitelisted config file (settings sheet editor).
+    ConfigGet { request_id: u64, file: String },
+    /// Validate + write a whitelisted config file, then hot-reload.
+    ConfigPut {
+        request_id: u64,
+        file: String,
+        content: String,
+    },
 }
 
 fn opt_str(value: Option<&serde_json::Value>) -> Option<String> {
@@ -471,6 +498,21 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "disconnect" => Some(ClientMessage::Disconnect),
         "get_profiles" => Some(ClientMessage::GetProfiles),
+        "config_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let file = msg.d.get("file")?.as_str()?.to_string();
+            Some(ClientMessage::ConfigGet { request_id, file })
+        }
+        "config_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let file = msg.d.get("file")?.as_str()?.to_string();
+            let content = msg.d.get("content")?.as_str()?.to_string();
+            Some(ClientMessage::ConfigPut {
+                request_id,
+                file,
+                content,
+            })
+        }
         "delete_profile" => {
             let name = msg.d.get("name")?.as_str()?.to_string();
             Some(ClientMessage::DeleteProfile { name })
@@ -594,6 +636,51 @@ mod tests {
             serde_json::from_str(&snapshot(&state, Vec::new(), SnapshotMode::Full, 0)).unwrap();
         assert_eq!(json["d"]["session"]["state"], "reconnecting");
         assert_eq!(json["d"]["session"]["character"], "Testy");
+    }
+
+    #[test]
+    fn parse_config_editor_messages() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"config_get","d":{"request_id":7,"file":"highlights"}}"#),
+            Some(ClientMessage::ConfigGet {
+                request_id: 7,
+                file: "highlights".to_string()
+            })
+        );
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"config_put","d":{"request_id":8,"file":"colors","content":"[presets]"}}"#
+            ),
+            Some(ClientMessage::ConfigPut {
+                request_id: 8,
+                file: "colors".to_string(),
+                content: "[presets]".to_string()
+            })
+        );
+        // Missing content → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"config_put","d":{"request_id":8,"file":"colors"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn config_file_delta_shape() {
+        let d = RemoteDelta::ConfigFile {
+            client_id: 3,
+            request_id: 9,
+            file: "highlights".to_string(),
+            content: None,
+            error: Some("Invalid TOML: boom".to_string()),
+            saved: false,
+        };
+        let json: serde_json::Value = serde_json::from_str(&delta(&d, 1)).unwrap();
+        assert_eq!(json["t"], "config_file");
+        assert_eq!(json["d"]["request_id"], 9);
+        assert_eq!(json["d"]["error"], "Invalid TOML: boom");
+        assert_eq!(json["d"]["saved"], false);
+        // client_id stays server-side.
+        assert!(json["d"].get("client_id").is_none());
     }
 
     #[test]

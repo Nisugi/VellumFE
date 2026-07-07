@@ -650,6 +650,7 @@ function handleMessage(msg) {
     case "macros": macros = msg.d; renderMacros(); break;
     case "session": setSession(msg.d); break;
     case "profiles": renderProfiles(msg.d.list || []); break;
+    case "config_file": handleConfigReply(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -864,6 +865,110 @@ sessionBanner.addEventListener("click", () => {
   openSheet("Stop reconnecting?");
   sheetButton("Stop and log out", () => sendJson("disconnect"));
   sheetNote("Or close this to keep trying.", true);
+});
+
+// ---- Settings sheet + config editor ---------------------------------------
+// Config files live server-side (on Android, in the app's private storage
+// where no file manager reaches) — the editor is how highlights and colors
+// get onto the device: paste or import a desktop file, Save validates the
+// TOML server-side and hot-reloads.
+
+const EDITOR_FILES = [
+  { id: "highlights", label: "Highlights (this profile)", filename: "highlights.toml" },
+  { id: "highlights-global", label: "Highlights (global)", filename: "highlights.toml" },
+  { id: "colors", label: "Colors (this profile)", filename: "colors.toml" },
+  { id: "colors-global", label: "Colors (global)", filename: "colors.toml" },
+];
+
+const editorOverlay = document.getElementById("editor-overlay");
+const editorTitle = document.getElementById("editor-title");
+const editorText = document.getElementById("editor-text");
+const editorStatus = document.getElementById("editor-status");
+let editorFile = null; // active EDITOR_FILES entry
+let configRequestCounter = 0;
+let pendingConfigRequest = null;
+
+document.getElementById("settings-btn").addEventListener("click", () => {
+  openSheet("Settings");
+  for (const file of EDITOR_FILES) {
+    sheetButton(file.label, () => openConfigEditor(file));
+  }
+});
+
+function editorStatusMsg(text, isError) {
+  editorStatus.textContent = text;
+  editorStatus.classList.toggle("editor-error", !!isError);
+  editorStatus.hidden = !text;
+}
+
+function openConfigEditor(file) {
+  editorFile = file;
+  editorTitle.textContent = file.label;
+  editorText.value = "";
+  editorText.disabled = true;
+  editorStatusMsg("Loading…", false);
+  editorOverlay.hidden = false;
+  pendingConfigRequest = ++configRequestCounter;
+  sendJson("config_get", { request_id: pendingConfigRequest, file: file.id });
+}
+
+function handleConfigReply(d) {
+  if (d.request_id !== pendingConfigRequest) return;
+  if (d.error) {
+    editorStatusMsg(d.error, true);
+    editorText.disabled = false;
+    return;
+  }
+  if (d.saved) {
+    editorStatusMsg("Saved — applied live.", false);
+    editorText.disabled = false;
+    return;
+  }
+  if (typeof d.content === "string") {
+    editorText.value = d.content;
+    editorText.disabled = false;
+    editorStatusMsg(d.content ? "" : "Empty — paste or import a file.", false);
+  }
+}
+
+document.getElementById("editor-close").addEventListener("click", () => {
+  editorOverlay.hidden = true;
+  editorFile = null;
+});
+
+document.getElementById("editor-save").addEventListener("click", () => {
+  if (!editorFile) return;
+  editorStatusMsg("Saving…", false);
+  pendingConfigRequest = ++configRequestCounter;
+  sendJson("config_put", {
+    request_id: pendingConfigRequest,
+    file: editorFile.id,
+    content: editorText.value,
+  });
+});
+
+document.getElementById("editor-export").addEventListener("click", () => {
+  if (!editorFile) return;
+  const blob = new Blob([editorText.value], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = editorFile.filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+const editorFileInput = document.getElementById("editor-file");
+document.getElementById("editor-import").addEventListener("click", () => {
+  editorFileInput.click();
+});
+editorFileInput.addEventListener("change", () => {
+  const picked = editorFileInput.files && editorFileInput.files[0];
+  if (!picked) return;
+  picked.text().then((text) => {
+    editorText.value = text;
+    editorStatusMsg("Imported — review, then Save.", false);
+  });
+  editorFileInput.value = "";
 });
 
 // ---- Bottom sheet (noun menus + local pickers) ---------------------------
