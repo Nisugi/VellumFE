@@ -30,6 +30,12 @@ const NOMINAL_ROWS: u16 = 40;
 /// Reconnect backoff schedule (capped at the last entry), ±20% jitter.
 const BACKOFF: &[u64] = &[1, 2, 5, 10, 30];
 
+/// Consecutive connection losses with zero user input in between before
+/// the supervisor stops reconnecting. Guards the abandoned-phone case:
+/// the game idle-kicks after ~30 minutes, and without this cap the
+/// supervisor would re-login all night (battery + pointless auth churn).
+const MAX_UNATTENDED_LOSSES: u32 = 2;
+
 fn backoff_delay(attempt: u32) -> Duration {
     let base = BACKOFF[(attempt as usize).min(BACKOFF.len() - 1)];
     // ±20% jitter from OS randomness (rand isn't a dependency; getrandom is).
@@ -76,6 +82,11 @@ struct Supervisor {
     reconnect_at: Option<Instant>,
     /// Set by a user-initiated disconnect: suppresses reconnection.
     user_disconnected: bool,
+    /// Any command/macro/link since the current connection came up.
+    saw_input_since_connect: bool,
+    /// Consecutive connection losses without user input (see
+    /// MAX_UNATTENDED_LOSSES).
+    unattended_losses: u32,
     /// Display fields for session status pushes.
     character: Option<String>,
     game: Option<String>,
@@ -89,6 +100,7 @@ impl Supervisor {
     }
 
     fn spawn(&mut self, app_core: &AppCore, server_tx: mpsc::Sender<ServerMessage>) {
+        self.saw_input_since_connect = false;
         let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
         let raw_logger = match RawLogger::new(&app_core.config) {
             Ok(logger) => logger,
@@ -271,6 +283,8 @@ pub async fn async_run(
         reconnect_attempt: 0,
         reconnect_at: None,
         user_disconnected: false,
+        saw_input_since_connect: false,
+        unattended_losses: 0,
     };
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
@@ -322,12 +336,17 @@ pub async fn async_run(
                         tracing::warn!("Web server event channel closed");
                         break;
                     }
-                    Some(event) => handle_remote_event(
-                        &mut app_core,
-                        supervisor.connection.as_ref(),
-                        event,
-                        &mut session_requests,
-                    ),
+                    Some(event) => {
+                        if handle_remote_event(
+                            &mut app_core,
+                            supervisor.connection.as_ref(),
+                            event,
+                            &mut session_requests,
+                        ) {
+                            supervisor.saw_input_since_connect = true;
+                            supervisor.unattended_losses = 0;
+                        }
+                    }
                 }
             }
             maybe_msg = server_rx.recv() => {
@@ -355,8 +374,18 @@ pub async fn async_run(
             } => {
                 supervisor.connection = None;
                 app_core.game_state.connected = false;
+                // Unattended tracking: a loss with zero user input since
+                // the connection came up counts toward the cap — without
+                // it, an abandoned phone would re-login in a loop all
+                // night as the game idle-kicks every ~30 minutes.
+                if supervisor.saw_input_since_connect {
+                    supervisor.unattended_losses = 0;
+                } else {
+                    supervisor.unattended_losses += 1;
+                }
+                let unattended = supervisor.unattended_losses >= MAX_UNATTENDED_LOSSES;
                 let mut error_text = None;
-                let stop = match result {
+                let stop_from_result = match result {
                     Ok(Ok(())) => {
                         app_core.add_system_message("Connection closed.");
                         !supervisor.can_reconnect()
@@ -378,7 +407,7 @@ pub async fn async_run(
                         !supervisor.can_reconnect()
                     }
                 };
-                if stop {
+                if stop_from_result || unattended {
                     supervisor.reconnect_at = None;
                     if supervisor.user_disconnected {
                         // Intentional logout (quit / disconnect button):
@@ -387,6 +416,17 @@ pub async fn async_run(
                         app_core.set_remote_session_state(
                             supervisor.status(SessionState::Idle),
                         );
+                    } else if unattended && !stop_from_result {
+                        tracing::info!(
+                            "No user input across {} connections; not reconnecting",
+                            supervisor.unattended_losses
+                        );
+                        app_core.add_system_message(
+                            "Session looked idle — not reconnecting. Log in from the app to continue.",
+                        );
+                        let mut info = supervisor.status(SessionState::Disconnected);
+                        info.error = Some("Idle session ended".to_string());
+                        app_core.set_remote_session_state(info);
                     } else {
                         app_core.add_system_message(
                             "Session ended. Log in again from the web UI to reconnect.",
@@ -433,12 +473,15 @@ pub async fn async_run(
 
         // Drain whatever else queued up while we were handling the wake-up.
         while let Ok(event) = remote_rx.try_recv() {
-            handle_remote_event(
+            if handle_remote_event(
                 &mut app_core,
                 supervisor.connection.as_ref(),
                 event,
                 &mut session_requests,
-            );
+            ) {
+                supervisor.saw_input_since_connect = true;
+                supervisor.unattended_losses = 0;
+            }
         }
         while let Ok(msg) = server_rx.try_recv() {
             let newly_connected = handle_server_message(&mut app_core, msg);
@@ -565,12 +608,15 @@ fn dispatch_command(
     }
 }
 
+/// Returns true when the event was direct user input (command, macro,
+/// link tap) — the supervisor uses this to tell attended sessions from
+/// abandoned ones.
 fn handle_remote_event(
     app_core: &mut AppCore,
     connection: Option<&Connection>,
     event: crate::core::remote::RemoteEvent,
     session_requests: &mut Vec<SessionRequest>,
-) {
+) -> bool {
     use crate::core::remote::RemoteEvent;
     match event {
         RemoteEvent::Command(text) => {
@@ -578,6 +624,7 @@ fn handle_remote_event(
             if dispatch_command(app_core, connection, text) {
                 session_requests.push(SessionRequest::UserQuit);
             }
+            true
         }
         RemoteEvent::LinkTap {
             client_id,
@@ -605,6 +652,7 @@ fn handle_remote_event(
                     let _ = conn.command_tx.send(cmd);
                 }
             }
+            true
         }
         RemoteEvent::MacroSave {
             group,
@@ -624,12 +672,15 @@ fn handle_remote_event(
                 ..Default::default()
             };
             app_core.apply_macro_save(group, button, original);
+            true
         }
         RemoteEvent::MacroDelete { group, label } => {
             app_core.apply_macro_delete(group, label);
+            true
         }
         RemoteEvent::Notice(message) => {
             app_core.add_system_message(&message);
+            false
         }
         RemoteEvent::Macro { id } => {
             match app_core.config.macros.resolve(&id).map(String::from) {
@@ -643,6 +694,7 @@ fn handle_remote_event(
                     tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id)
                 }
             }
+            true
         }
         RemoteEvent::SessionConnect {
             profile,
@@ -652,16 +704,22 @@ fn handle_remote_event(
             game,
             save_password,
             profile_name,
-        } => session_requests.push(SessionRequest::Connect {
-            profile,
-            account,
-            password,
-            character,
-            game,
-            save_password,
-            profile_name,
-        }),
-        RemoteEvent::SessionDisconnect => session_requests.push(SessionRequest::Disconnect),
+        } => {
+            session_requests.push(SessionRequest::Connect {
+                profile,
+                account,
+                password,
+                character,
+                game,
+                save_password,
+                profile_name,
+            });
+            true
+        }
+        RemoteEvent::SessionDisconnect => {
+            session_requests.push(SessionRequest::Disconnect);
+            true
+        }
     }
 }
 

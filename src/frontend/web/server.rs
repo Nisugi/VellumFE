@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
@@ -260,6 +260,7 @@ pub async fn serve_listener_with_token(
         .route("/sw.js", get(sw_js))
         .route("/icon.svg", get(icon_svg))
         .route("/health", get(health))
+        .route("/status", get(status_json))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
     axum::serve(listener, router)
@@ -354,6 +355,29 @@ async fn health() -> impl IntoResponse {
     (
         [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
         "ok",
+    )
+}
+
+/// Session status for native shells (the Android foreground service polls
+/// this to scope its wakelock and to self-stop when the session is idle
+/// and the app was swiped away). Token-gated: session state and character
+/// name shouldn't be readable by arbitrary local processes.
+async fn status_json(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"forbidden"}"#.to_string(),
+        );
+    }
+    let session = state.handles.state_rx.borrow().session.clone();
+    (
+        axum::http::StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&session).unwrap_or_else(|_| "{}".to_string()),
     )
 }
 
