@@ -516,7 +516,11 @@ impl VellumGuiApp {
             .as_deref()
             .and_then(parse_hex_color)
             .unwrap_or_else(|| ui.visuals().selection.bg_fill);
-        let text = if data.label.is_empty() {
+        let text = if data.current_only {
+            data.value.to_string()
+        } else if data.numbers_only {
+            format!("{}/{}", data.value, data.max)
+        } else if data.label.is_empty() {
             format!("{}%", (fraction * 100.0).round() as u32)
         } else {
             data.label.clone()
@@ -750,11 +754,19 @@ impl VellumGuiApp {
             now_f,
         );
         let fraction = remaining_f.min(FULL_BAR_SECONDS as f32) / FULL_BAR_SECONDS as f32;
-        let fill = match countdown.countdown_id.to_ascii_lowercase().as_str() {
-            "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
-            "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
-            _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
-        };
+        // Custom color override from the window config wins; otherwise the
+        // fill falls back to the well-known per-timer defaults.
+        let fill = countdown
+            .color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(
+                || match countdown.countdown_id.to_ascii_lowercase().as_str() {
+                    "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                    "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
+                    _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
+                },
+            );
         let text = if countdown.label.is_empty() {
             format!("{remaining}")
         } else {

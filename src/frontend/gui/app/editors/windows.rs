@@ -76,8 +76,12 @@ struct FeedFields {
     kind: FeedKind,
     id: String,
     label: String,
-    /// Bar color override (hex or palette name); empty = default.
+    /// Bar/fill color override (hex or palette name); empty = default.
     color: String,
+    /// Progress only: show "value/max" instead of the label.
+    numbers_only: bool,
+    /// Progress only: show just the current value.
+    current_only: bool,
 }
 
 /// Valid ActiveEffects feed categories (matched exactly by the router).
@@ -189,13 +193,17 @@ impl VellumGuiApp {
                     kind: FeedKind::Countdown,
                     id: countdown.countdown_id.clone(),
                     label: countdown.label.clone(),
-                    color: String::new(),
+                    color: countdown.color.clone().unwrap_or_default(),
+                    numbers_only: false,
+                    current_only: false,
                 }),
                 WindowContent::Progress(progress) => Some(FeedFields {
                     kind: FeedKind::Progress,
                     id: progress.progress_id.clone(),
                     label: progress.label.clone(),
                     color: progress.color.clone().unwrap_or_default(),
+                    numbers_only: progress.numbers_only,
+                    current_only: progress.current_only,
                 }),
                 _ => None,
             };
@@ -282,6 +290,12 @@ impl VellumGuiApp {
                 (WindowContent::Countdown(countdown), FeedKind::Countdown) => {
                     countdown.countdown_id = id.clone();
                     countdown.label = label.clone();
+                    let color = feed.color.trim();
+                    countdown.color = if color.is_empty() {
+                        None
+                    } else {
+                        Some(color.to_string())
+                    };
                 }
                 (WindowContent::Progress(progress), FeedKind::Progress) => {
                     progress.progress_id = id.clone();
@@ -292,6 +306,8 @@ impl VellumGuiApp {
                     } else {
                         Some(color.to_string())
                     };
+                    progress.numbers_only = feed.numbers_only;
+                    progress.current_only = feed.current_only;
                 }
                 _ => {
                     return Err(format!(
@@ -320,11 +336,14 @@ impl VellumGuiApp {
                     (crate::config::WindowDef::Countdown { data, .. }, FeedKind::Countdown) => {
                         data.id = opt(&id);
                         data.label = opt(&label);
+                        data.color = opt(feed.color.trim());
                     }
                     (crate::config::WindowDef::Progress { data, .. }, FeedKind::Progress) => {
                         data.id = opt(&id);
                         data.label = opt(&label);
                         data.color = opt(feed.color.trim());
+                        data.numbers_only = feed.numbers_only;
+                        data.current_only = feed.current_only;
                     }
                     _ => {}
                 }
@@ -476,9 +495,22 @@ impl VellumGuiApp {
                             ui.label("Label");
                             ui.text_edit_singleline(&mut feed.label);
                             ui.end_row();
+                            ui.label(match feed.kind {
+                                FeedKind::Countdown => "Fill color",
+                                FeedKind::Progress => "Bar color",
+                            });
+                            color_field(ui, &mut feed.color);
+                            ui.end_row();
                             if feed.kind == FeedKind::Progress {
-                                ui.label("Bar color");
-                                color_field(ui, &mut feed.color);
+                                ui.label("Display");
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut feed.numbers_only, "value/max")
+                                        .on_hover_text(
+                                            "Show the numbers instead of the label.",
+                                        );
+                                    ui.checkbox(&mut feed.current_only, "value only")
+                                        .on_hover_text("Show just the current value.");
+                                });
                                 ui.end_row();
                             }
                         }

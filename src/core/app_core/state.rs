@@ -1019,44 +1019,58 @@ impl AppCore {
                     history: Vec::new(),
                     history_index: None,
                 },
-                WidgetType::Progress => WindowContent::Progress(ProgressData {
-                    value: 100,
-                    max: 100,
-                    label: if let crate::config::WindowDef::Progress { data, .. } = window_def {
-                        data.label.clone().unwrap_or_else(|| title.to_string())
-                    } else {
-                        title.to_string()
-                    },
-                    color: None,
-                    progress_id: if let crate::config::WindowDef::Progress { data, .. } = window_def
-                    {
-                        data.id
-                            .clone()
-                            .unwrap_or_else(|| window_def.name().to_string())
-                    } else {
-                        window_def.name().to_string()
-                    },
-                }),
+                WidgetType::Progress => {
+                    let (label, progress_id, color, numbers_only, current_only) =
+                        if let crate::config::WindowDef::Progress { data, .. } = window_def {
+                            (
+                                data.label.clone().unwrap_or_else(|| title.to_string()),
+                                data.id
+                                    .clone()
+                                    .unwrap_or_else(|| window_def.name().to_string()),
+                                data.color.clone(),
+                                data.numbers_only,
+                                data.current_only,
+                            )
+                        } else {
+                            (
+                                title.to_string(),
+                                window_def.name().to_string(),
+                                None,
+                                false,
+                                false,
+                            )
+                        };
+                    WindowContent::Progress(ProgressData {
+                        value: 100,
+                        max: 100,
+                        label,
+                        color,
+                        progress_id,
+                        numbers_only,
+                        current_only,
+                    })
+                }
                 WidgetType::Countdown => {
-                    let (label, countdown_id) = if let crate::config::WindowDef::Countdown { data, .. } =
-                        window_def
-                    {
-                        (
-                            data.label
-                                .clone()
-                                .unwrap_or_else(|| title.to_string()),
-                            data.id
-                                .clone()
-                                .unwrap_or_else(|| window_def.name().to_string()),
-                        )
-                    } else {
-                        (title.to_string(), window_def.name().to_string())
-                    };
+                    let (label, countdown_id, color) =
+                        if let crate::config::WindowDef::Countdown { data, .. } = window_def {
+                            (
+                                data.label
+                                    .clone()
+                                    .unwrap_or_else(|| title.to_string()),
+                                data.id
+                                    .clone()
+                                    .unwrap_or_else(|| window_def.name().to_string()),
+                                data.color.clone(),
+                            )
+                        } else {
+                            (title.to_string(), window_def.name().to_string(), None)
+                        };
 
                     WindowContent::Countdown(CountdownData {
                         end_time: 0,
                         label,
                         countdown_id,
+                        color,
                     })
                 }
                 WidgetType::Compass => WindowContent::Compass(CompassData {
@@ -1330,36 +1344,57 @@ impl AppCore {
                 history: Vec::new(),
                 history_index: None,
             },
-            WidgetType::Progress => WindowContent::Progress(ProgressData {
-                value: 100,
-                max: 100,
-                label: title.to_string(),
-                color: None,
-                progress_id: if let crate::config::WindowDef::Progress { data, .. } = window_def {
-                    data.id
-                        .clone()
-                        .unwrap_or_else(|| window_def.name().to_string())
-                } else {
-                    window_def.name().to_string()
-                },
-            }),
-            WidgetType::Countdown => WindowContent::Countdown(CountdownData {
-                end_time: 0,
-                label: if let crate::config::WindowDef::Countdown { data, .. } = window_def {
-                    data.label.clone().unwrap_or_else(|| title.to_string())
-                } else {
-                    title.to_string()
-                },
-                countdown_id: if let crate::config::WindowDef::Countdown { data, .. } =
-                    window_def
-                {
-                    data.id
-                        .clone()
-                        .unwrap_or_else(|| window_def.name().to_string())
-                } else {
-                    window_def.name().to_string()
-                },
-            }),
+            WidgetType::Progress => {
+                let (label, progress_id, color, numbers_only, current_only) =
+                    if let crate::config::WindowDef::Progress { data, .. } = window_def {
+                        (
+                            data.label.clone().unwrap_or_else(|| title.to_string()),
+                            data.id
+                                .clone()
+                                .unwrap_or_else(|| window_def.name().to_string()),
+                            data.color.clone(),
+                            data.numbers_only,
+                            data.current_only,
+                        )
+                    } else {
+                        (
+                            title.to_string(),
+                            window_def.name().to_string(),
+                            None,
+                            false,
+                            false,
+                        )
+                    };
+                WindowContent::Progress(ProgressData {
+                    value: 100,
+                    max: 100,
+                    label,
+                    color,
+                    progress_id,
+                    numbers_only,
+                    current_only,
+                })
+            }
+            WidgetType::Countdown => {
+                let (label, countdown_id, color) =
+                    if let crate::config::WindowDef::Countdown { data, .. } = window_def {
+                        (
+                            data.label.clone().unwrap_or_else(|| title.to_string()),
+                            data.id
+                                .clone()
+                                .unwrap_or_else(|| window_def.name().to_string()),
+                            data.color.clone(),
+                        )
+                    } else {
+                        (title.to_string(), window_def.name().to_string(), None)
+                    };
+                WindowContent::Countdown(CountdownData {
+                    end_time: 0,
+                    label,
+                    countdown_id,
+                    color,
+                })
+            }
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),
@@ -2543,11 +2578,14 @@ impl AppCore {
                 label: name.to_string(),
                 color: None,
                 progress_id: name.to_string(),
+                numbers_only: false,
+                current_only: false,
             }),
             WidgetType::Countdown => WindowContent::Countdown(CountdownData {
                 end_time: 0,
                 label: name.to_string(),
                 countdown_id: name.to_string(),
+                color: None,
             }),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),

@@ -155,14 +155,17 @@ pub struct ProgressData {
     pub label: String,         // Display label
     pub color: Option<String>, // Hex color override (or custom text like "clear as a bell")
     pub progress_id: String,   // Feed id (XML progressBar id), case-sensitive
+    pub numbers_only: bool,    // Show "value/max" instead of the label
+    pub current_only: bool,    // Show only the current value
 }
 
 /// Countdown timer state
 #[derive(Clone, Debug)]
 pub struct CountdownData {
-    pub end_time: i64,        // Unix timestamp when timer expires
-    pub label: String,        // Display label
-    pub countdown_id: String, // Feed id (XML event id), case-sensitive
+    pub end_time: i64,         // Unix timestamp when timer expires
+    pub label: String,         // Display label
+    pub countdown_id: String,  // Feed id (XML event id), case-sensitive
+    pub color: Option<String>, // Fill color override; None = id-based default
 }
 
 /// Compass directions
@@ -923,6 +926,8 @@ mod tests {
             label: "Health".to_string(),
             color: Some("#00FF00".to_string()),
             progress_id: "health".to_string(),
+            numbers_only: false,
+            current_only: false,
         };
 
         assert_eq!(progress.value, 75);
