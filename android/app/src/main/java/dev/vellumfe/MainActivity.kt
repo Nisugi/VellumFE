@@ -3,8 +3,11 @@ package dev.vellumfe
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
@@ -32,6 +35,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
         }
+        requestBatteryExemptionOnce()
         startForegroundService(Intent(this, CoreService::class.java))
 
         Log.i(TAG, "WebView engine: ${WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } ?: "unknown"}")
@@ -117,6 +121,30 @@ class MainActivity : Activity() {
                 </body></html>
             """.trimIndent()
             webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+        }
+    }
+
+    /**
+     * Ask once for a battery-optimization exemption: Doze can throttle the
+     * network mid-session even with the wakelock held. Only prompts when
+     * not already exempt, and never re-prompts a user who said no (the
+     * dialog is available any time under system battery settings).
+     */
+    private fun requestBatteryExemptionOnce() {
+        val prefs = getSharedPreferences("vellum", MODE_PRIVATE)
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        if (prefs.getBoolean("battery_prompted", false)) return
+        prefs.edit().putBoolean("battery_prompted", true).apply()
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "battery exemption dialog unavailable: $e")
         }
     }
 
