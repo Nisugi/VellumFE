@@ -1431,6 +1431,33 @@ impl VellumGuiApp {
                     self.app_core
                         .handle_remote_config_put(client_id, request_id, file, content);
                 }
+                crate::core::remote::RemoteEvent::HighlightsGet {
+                    client_id,
+                    request_id,
+                    scope,
+                } => {
+                    self.app_core
+                        .handle_remote_highlights_get(client_id, request_id, scope);
+                }
+                crate::core::remote::RemoteEvent::HighlightPut {
+                    client_id,
+                    request_id,
+                    scope,
+                    name,
+                    rule,
+                } => {
+                    self.app_core
+                        .handle_remote_highlight_put(client_id, request_id, scope, name, rule);
+                }
+                crate::core::remote::RemoteEvent::HighlightDelete {
+                    client_id,
+                    request_id,
+                    scope,
+                    name,
+                } => {
+                    self.app_core
+                        .handle_remote_highlight_delete(client_id, request_id, scope, name);
+                }
                 crate::core::remote::RemoteEvent::SessionConnect { .. }
                 | crate::core::remote::RemoteEvent::SessionDisconnect => {
                     // Sidecar sessions are owned by this local UI; the web

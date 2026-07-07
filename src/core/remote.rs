@@ -241,6 +241,15 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// Reply to one client's structured highlight get/put/delete: the full
+    /// rule map for the scope (or an error).
+    Highlights {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        rules: serde_json::Value,
+        error: Option<String>,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -317,6 +326,29 @@ pub enum RemoteEvent {
         request_id: u64,
         file: String,
         content: String,
+    },
+    /// Structured highlight-rule listing for the phone editor. `scope` is
+    /// "profile" or "global".
+    HighlightsGet {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    },
+    /// Create/update one highlight rule by name (JSON matching
+    /// HighlightPattern); replies with the full updated rule map.
+    HighlightPut {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
+        rule: serde_json::Value,
+    },
+    /// Delete one highlight rule by name; replies with the updated map.
+    HighlightDelete {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
     },
 }
 
@@ -540,6 +572,24 @@ impl RemoteSink {
             content,
             error,
             saved,
+        });
+    }
+
+    /// Route a structured highlights reply to the requesting client.
+    pub fn push_highlights(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        rules: serde_json::Value,
+        error: Option<String>,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Highlights {
+            client_id,
+            request_id,
+            scope,
+            rules,
+            error,
         });
     }
 

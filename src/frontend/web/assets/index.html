@@ -126,6 +126,39 @@
       </div>
     </div>
   </div>
+  <div id="hl-overlay" hidden>
+    <div id="hl-card">
+      <div id="hl-titlebar">
+        <span id="hl-title"></span>
+        <button id="hl-close" type="button" aria-label="Close">&#10005;</button>
+      </div>
+      <div id="hl-list-view">
+        <button id="hl-new" type="button">&#65291; New rule</button>
+        <div id="hl-list"></div>
+      </div>
+      <form id="hl-form" hidden autocomplete="off">
+        <label>Name <input id="hl-name" type="text" autocapitalize="off" spellcheck="false"></label>
+        <label>Pattern (regex) <input id="hl-pattern" type="text" autocapitalize="off"
+               autocorrect="off" spellcheck="false"></label>
+        <div class="hl-colors">
+          <label>Text color <span class="hl-swatch" id="hl-fg-swatch"></span>
+            <input id="hl-fg" type="text" placeholder="#ff0000 or empty" autocapitalize="off" spellcheck="false"></label>
+          <label>Background <span class="hl-swatch" id="hl-bg-swatch"></span>
+            <input id="hl-bg" type="text" placeholder="empty = none" autocapitalize="off" spellcheck="false"></label>
+        </div>
+        <label class="hl-check"><input id="hl-bold" type="checkbox"> Bold</label>
+        <label class="hl-check"><input id="hl-line" type="checkbox"> Color entire line</label>
+        <label>Sound file <input id="hl-sound" type="text" placeholder="e.g. alert (from sounds folder)"
+               autocapitalize="off" spellcheck="false"></label>
+        <p id="hl-status" hidden></p>
+        <div id="hl-actions">
+          <button id="hl-back" type="button">Back</button>
+          <button id="hl-delete" type="button">Delete</button>
+          <button id="hl-save" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" hidden>
     <div id="sheet-titlebar">

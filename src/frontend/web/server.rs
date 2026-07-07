@@ -606,6 +606,45 @@ async fn handle_client_message(
                 content,
             })
             .is_ok(),
+        ClientMessage::HighlightsGet { request_id, scope } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightsGet {
+                client_id,
+                request_id,
+                scope,
+            })
+            .is_ok(),
+        ClientMessage::HighlightPut {
+            request_id,
+            scope,
+            name,
+            rule,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightPut {
+                client_id,
+                request_id,
+                scope,
+                name,
+                rule,
+            })
+            .is_ok(),
+        ClientMessage::HighlightDelete {
+            request_id,
+            scope,
+            name,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::HighlightDelete {
+                client_id,
+                request_id,
+                scope,
+                name,
+            })
+            .is_ok(),
         // Profile list/delete touch only launcher.toml via the config
         // layer — answered here without a round-trip through the app loop.
         ClientMessage::GetProfiles => {
@@ -754,10 +793,11 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         tokio::select! {
             delta = delta_rx.recv() => match delta {
                 Ok(d) => {
-                    // Menus and config replies are addressed: only the
-                    // requesting client's task forwards them.
+                    // Menus and config/highlight replies are addressed:
+                    // only the requesting client's task forwards them.
                     if let RemoteDelta::Menu { client_id: target, .. }
-                    | RemoteDelta::ConfigFile { client_id: target, .. } = &d
+                    | RemoteDelta::ConfigFile { client_id: target, .. }
+                    | RemoteDelta::Highlights { client_id: target, .. } = &d
                     {
                         if *target != client_id {
                             continue;

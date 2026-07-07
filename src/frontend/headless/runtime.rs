@@ -765,6 +765,33 @@ fn handle_remote_event(
             app_core.handle_remote_config_put(client_id, request_id, file, content);
             true
         }
+        RemoteEvent::HighlightsGet {
+            client_id,
+            request_id,
+            scope,
+        } => {
+            app_core.handle_remote_highlights_get(client_id, request_id, scope);
+            true
+        }
+        RemoteEvent::HighlightPut {
+            client_id,
+            request_id,
+            scope,
+            name,
+            rule,
+        } => {
+            app_core.handle_remote_highlight_put(client_id, request_id, scope, name, rule);
+            true
+        }
+        RemoteEvent::HighlightDelete {
+            client_id,
+            request_id,
+            scope,
+            name,
+        } => {
+            app_core.handle_remote_highlight_delete(client_id, request_id, scope, name);
+            true
+        }
     }
 }
 

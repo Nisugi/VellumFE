@@ -62,6 +62,132 @@ impl AppCore {
         }
     }
 
+    // ---- Structured highlight editing (phone editor UI) ----------------
+    // Operates on one scope's file (profile or global), never the merged
+    // view. Rewriting from the parsed map drops comments/ordering in the
+    // file — order was already non-semantic at runtime (HashMap).
+
+    fn highlights_scope_path(&self, scope: &str) -> Result<std::path::PathBuf, String> {
+        match scope {
+            "profile" => Config::highlights_path(self.config.character.as_deref()),
+            "global" => Config::common_highlights_path(),
+            _ => return Err(format!("Unknown highlights scope '{scope}'")),
+        }
+        .map_err(|e| format!("Path unavailable: {e}"))
+    }
+
+    fn load_highlights_map(
+        path: &std::path::Path,
+    ) -> Result<std::collections::HashMap<String, crate::config::HighlightPattern>, String> {
+        if !path.exists() {
+            return Ok(Default::default());
+        }
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("Read failed: {e}"))?;
+        toml::from_str(&content).map_err(|e| format!("Existing file is invalid TOML: {e}"))
+    }
+
+    fn save_highlights_map(
+        path: &std::path::Path,
+        map: &std::collections::HashMap<String, crate::config::HighlightPattern>,
+    ) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let content =
+            toml::to_string_pretty(map).map_err(|e| format!("Serialize failed: {e}"))?;
+        std::fs::write(path, content).map_err(|e| format!("Write failed: {e}"))
+    }
+
+    fn reply_highlights(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        result: Result<std::collections::HashMap<String, crate::config::HighlightPattern>, String>,
+    ) {
+        let (rules, error) = match result {
+            Ok(map) => (
+                serde_json::to_value(&map).unwrap_or(serde_json::Value::Null),
+                None,
+            ),
+            Err(e) => (serde_json::Value::Null, Some(e)),
+        };
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_highlights(client_id, request_id, scope, rules, error);
+        }
+    }
+
+    pub fn handle_remote_highlights_get(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    ) {
+        let result = self
+            .highlights_scope_path(&scope)
+            .and_then(|path| Self::load_highlights_map(&path));
+        self.reply_highlights(client_id, request_id, scope, result);
+    }
+
+    pub fn handle_remote_highlight_put(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
+        rule: serde_json::Value,
+    ) {
+        let result = (|| {
+            if name.trim().is_empty() {
+                return Err("Rule name is required".to_string());
+            }
+            let rule: crate::config::HighlightPattern =
+                serde_json::from_value(rule).map_err(|e| format!("Invalid rule: {e}"))?;
+            if rule.pattern.trim().is_empty() {
+                return Err("Pattern is required".to_string());
+            }
+            // fast_parse patterns are literal alternations; everything else
+            // must compile as a regex or the engine will reject it later.
+            if !rule.fast_parse {
+                regex::Regex::new(&rule.pattern).map_err(|e| format!("Bad regex: {e}"))?;
+            }
+            let path = self.highlights_scope_path(&scope)?;
+            let mut map = Self::load_highlights_map(&path)?;
+            map.insert(name.trim().to_string(), rule);
+            Self::save_highlights_map(&path, &map)?;
+            Ok(map)
+        })();
+        let ok = result.is_ok();
+        self.reply_highlights(client_id, request_id, scope, result);
+        if ok {
+            self.reload_highlights();
+        }
+    }
+
+    pub fn handle_remote_highlight_delete(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        name: String,
+    ) {
+        let result = (|| {
+            let path = self.highlights_scope_path(&scope)?;
+            let mut map = Self::load_highlights_map(&path)?;
+            if map.remove(&name).is_none() {
+                return Err(format!("No rule named '{name}'"));
+            }
+            Self::save_highlights_map(&path, &map)?;
+            Ok(map)
+        })();
+        let ok = result.is_ok();
+        self.reply_highlights(client_id, request_id, scope, result);
+        if ok {
+            self.reload_highlights();
+        }
+    }
+
     /// Validate, write, and hot-reload a config file for a remote client.
     pub fn handle_remote_config_put(
         &mut self,

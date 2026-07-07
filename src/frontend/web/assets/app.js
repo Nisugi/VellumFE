@@ -652,6 +652,7 @@ function handleMessage(msg) {
     case "profiles": renderProfiles(msg.d.list || []); break;
     case "config_file": handleConfigReply(msg.d); break;
     case "sound": playRemoteSound(msg.d); break;
+    case "highlights": handleHighlightsReply(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -900,9 +901,196 @@ document.getElementById("settings-btn").addEventListener("click", () => {
       } catch { /* private mode */ }
     },
   );
+  sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
+  sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   for (const file of EDITOR_FILES) {
     sheetButton(file.label, () => openConfigEditor(file));
   }
+});
+
+// ---- Highlight rule editor -------------------------------------------------
+// Structured editing of one scope's highlights file: list → tap → form.
+// The form covers the common fields; anything else a desktop hand-edit set
+// (redirects, replace, squelch, ...) is preserved by merging into the
+// fetched rule rather than rebuilding it.
+
+const hlOverlay = document.getElementById("hl-overlay");
+const hlTitle = document.getElementById("hl-title");
+const hlListView = document.getElementById("hl-list-view");
+const hlListEl = document.getElementById("hl-list");
+const hlForm = document.getElementById("hl-form");
+const hlStatus = document.getElementById("hl-status");
+let hlScope = null;
+let hlRules = {};
+let hlEditingName = null; // null = list view, "" = new rule
+let hlRequestCounter = 0;
+let hlPendingRequest = null;
+let hlAwaitingSave = false;
+
+function hlStatusMsg(text, isError) {
+  hlStatus.textContent = text;
+  hlStatus.classList.toggle("editor-error", !!isError);
+  hlStatus.hidden = !text;
+}
+
+function openHighlightList(scope) {
+  hlScope = scope;
+  hlTitle.textContent =
+    scope === "global" ? "Highlight rules (global)" : "Highlight rules (this profile)";
+  hlRules = {};
+  hlEditingName = null;
+  hlOverlay.hidden = false;
+  showHlList();
+  hlListEl.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading…",
+  }));
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlights_get", { request_id: hlPendingRequest, scope });
+}
+
+function showHlList() {
+  hlForm.hidden = true;
+  hlListView.hidden = false;
+  renderHlList();
+}
+
+function renderHlList() {
+  hlListEl.replaceChildren();
+  const names = Object.keys(hlRules).sort((a, b) => a.localeCompare(b));
+  if (!names.length) {
+    hlListEl.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: "No rules yet — tap New rule, or import a file from Settings.",
+    }));
+    return;
+  }
+  for (const name of names) {
+    const rule = hlRules[name];
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "hl-row";
+    const swatch = document.createElement("span");
+    swatch.className = "hl-swatch";
+    if (rule.fg) swatch.style.background = rule.fg;
+    const label = document.createElement("span");
+    label.className = "hl-row-name";
+    label.textContent = name;
+    const pattern = document.createElement("span");
+    pattern.className = "hl-row-pattern";
+    pattern.textContent = rule.pattern || "";
+    row.append(swatch, label, pattern);
+    row.addEventListener("click", () => openHlForm(name));
+    hlListEl.appendChild(row);
+  }
+}
+
+function openHlForm(name) {
+  hlEditingName = name;
+  const rule = name ? hlRules[name] || {} : {};
+  document.getElementById("hl-name").value = name;
+  document.getElementById("hl-pattern").value = rule.pattern || "";
+  document.getElementById("hl-fg").value = rule.fg || "";
+  document.getElementById("hl-bg").value = rule.bg || "";
+  document.getElementById("hl-bold").checked = !!rule.bold;
+  document.getElementById("hl-line").checked = !!rule.color_entire_line;
+  document.getElementById("hl-sound").value = rule.sound || "";
+  document.getElementById("hl-delete").hidden = !name;
+  hlStatusMsg("", false);
+  updateHlSwatches();
+  hlListView.hidden = true;
+  hlForm.hidden = false;
+}
+
+function updateHlSwatches() {
+  document.getElementById("hl-fg-swatch").style.background =
+    document.getElementById("hl-fg").value || "transparent";
+  document.getElementById("hl-bg-swatch").style.background =
+    document.getElementById("hl-bg").value || "transparent";
+}
+document.getElementById("hl-fg").addEventListener("input", updateHlSwatches);
+document.getElementById("hl-bg").addEventListener("input", updateHlSwatches);
+
+function handleHighlightsReply(d) {
+  if (d.request_id !== hlPendingRequest) return;
+  if (d.error) {
+    // Show the error wherever the user is (form save or list load).
+    if (!hlForm.hidden) {
+      hlStatusMsg(d.error, true);
+    } else {
+      hlListEl.replaceChildren(Object.assign(document.createElement("p"), {
+        className: "hl-empty editor-error", textContent: d.error,
+      }));
+    }
+    hlAwaitingSave = false;
+    return;
+  }
+  hlRules = d.rules || {};
+  if (hlAwaitingSave) {
+    hlAwaitingSave = false;
+    showHlList();
+  } else {
+    renderHlList();
+  }
+}
+
+hlForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const name = document.getElementById("hl-name").value.trim();
+  const pattern = document.getElementById("hl-pattern").value;
+  if (!name || !pattern.trim()) {
+    hlStatusMsg("Name and pattern are required.", true);
+    return;
+  }
+  // Merge the form over the existing rule so fields the form doesn't
+  // cover survive the round trip.
+  const base = (hlEditingName && hlRules[hlEditingName]) || {};
+  const rule = { ...base, pattern };
+  const fg = document.getElementById("hl-fg").value.trim();
+  const bg = document.getElementById("hl-bg").value.trim();
+  const sound = document.getElementById("hl-sound").value.trim();
+  if (fg) rule.fg = fg; else delete rule.fg;
+  if (bg) rule.bg = bg; else delete rule.bg;
+  if (sound) rule.sound = sound; else delete rule.sound;
+  rule.bold = document.getElementById("hl-bold").checked;
+  rule.color_entire_line = document.getElementById("hl-line").checked;
+
+  hlStatusMsg("Saving…", false);
+  hlAwaitingSave = true;
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlight_put", {
+    request_id: hlPendingRequest,
+    scope: hlScope,
+    name,
+    rule,
+  });
+  // Renaming: the old rule is a separate entry — remove it after the new
+  // one saves. Server replies with the updated map either way.
+  if (hlEditingName && hlEditingName !== name) {
+    sendJson("highlight_delete", {
+      request_id: hlPendingRequest,
+      scope: hlScope,
+      name: hlEditingName,
+    });
+  }
+});
+
+document.getElementById("hl-delete").addEventListener("click", () => {
+  if (!hlEditingName) return;
+  hlStatusMsg("Deleting…", false);
+  hlAwaitingSave = true;
+  hlPendingRequest = ++hlRequestCounter;
+  sendJson("highlight_delete", {
+    request_id: hlPendingRequest,
+    scope: hlScope,
+    name: hlEditingName,
+  });
+});
+
+document.getElementById("hl-back").addEventListener("click", showHlList);
+document.getElementById("hl-new").addEventListener("click", () => openHlForm(""));
+document.getElementById("hl-close").addEventListener("click", () => {
+  hlOverlay.hidden = true;
+  hlScope = null;
 });
 
 // ---- Sound alerts ----------------------------------------------------------

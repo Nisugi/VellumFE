@@ -238,6 +238,22 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             last_seq,
             serde_json::json!({ "file": file, "volume": volume }),
         ),
+        RemoteDelta::Highlights {
+            request_id,
+            scope,
+            rules,
+            error,
+            ..
+        } => encode(
+            "highlights",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "scope": scope,
+                "rules": rules,
+                "error": error,
+            }),
+        ),
         // client_id stays server-side: the ws task already filtered on it.
         RemoteDelta::ConfigFile {
             request_id,
@@ -355,6 +371,21 @@ pub enum ClientMessage {
         request_id: u64,
         file: String,
         content: String,
+    },
+    /// Structured highlight-rule list for the editor UI.
+    HighlightsGet { request_id: u64, scope: String },
+    /// Create/update one highlight rule by name.
+    HighlightPut {
+        request_id: u64,
+        scope: String,
+        name: String,
+        rule: serde_json::Value,
+    },
+    /// Delete one highlight rule by name.
+    HighlightDelete {
+        request_id: u64,
+        scope: String,
+        name: String,
     },
 }
 
@@ -516,6 +547,36 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 request_id,
                 file,
                 content,
+            })
+        }
+        "highlights_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            Some(ClientMessage::HighlightsGet { request_id, scope })
+        }
+        "highlight_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            let name = msg.d.get("name")?.as_str()?.to_string();
+            let rule = msg.d.get("rule")?.clone();
+            if !rule.is_object() {
+                return None;
+            }
+            Some(ClientMessage::HighlightPut {
+                request_id,
+                scope,
+                name,
+                rule,
+            })
+        }
+        "highlight_delete" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            let name = msg.d.get("name")?.as_str()?.to_string();
+            Some(ClientMessage::HighlightDelete {
+                request_id,
+                scope,
+                name,
             })
         }
         "delete_profile" => {
