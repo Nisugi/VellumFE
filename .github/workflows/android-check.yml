@@ -4,6 +4,8 @@ name: Android Check
 # highest-risk build) and guards the no-default-features dependency graph
 # on every Rust-touching PR/push.
 
+# The web assets are embedded into the binary via include_str!, so JS/CSS/
+# HTML changes rebuild the core too — they must trigger this workflow.
 on:
   push:
     branches: ["main", "feat/android-port"]
@@ -12,6 +14,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "android/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
       - ".github/workflows/android-check.yml"
   pull_request:
     paths:
@@ -19,6 +23,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "android/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
       - ".github/workflows/android-check.yml"
   workflow_dispatch:
 
