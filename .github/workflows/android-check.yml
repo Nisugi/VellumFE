@@ -1,0 +1,74 @@
+name: Android Check
+
+# Cross-compiles the Android core (vendored OpenSSL + NDK — the port's
+# highest-risk build) and guards the no-default-features dependency graph
+# on every Rust-touching PR/push.
+
+on:
+  push:
+    branches: ["main", "feat/android-port"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "android/**"
+      - ".github/workflows/android-check.yml"
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "android/**"
+      - ".github/workflows/android-check.yml"
+  workflow_dispatch:
+
+jobs:
+  android-core:
+    name: Cross-compile Android core (arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android core (vendored OpenSSL via NDK)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: cargo ndk -t arm64-v8a build --release -p vellum-android
+
+      - name: Show produced library
+        run: ls -lah target/aarch64-linux-android/release/*.so
+
+  no-default-features:
+    name: Android dependency graph (host check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libspeechd-dev libclang-dev
+
+      - name: Check core without desktop features
+        run: cargo check --no-default-features
+
+      - name: Check Android crate on host
+        run: cargo check -p vellum-android
