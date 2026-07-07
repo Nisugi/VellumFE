@@ -437,7 +437,16 @@ async fn run_stream(
         }
     });
 
-    let _ = async {
+    // Run the writer until the command channel closes or a write fails —
+    // but end the whole task the moment the reader ends, because the reader
+    // ending IS the connection ending (server close or read error). The old
+    // sequential form (writer loop, then await reader) left this future
+    // parked in command_rx.recv() after a server-side close until some
+    // later command's write failed; the headless supervisor keys logout/
+    // reconnect off this task completing, so a `quit` didn't return to the
+    // login screen until the user happened to send another command.
+    let mut read_handle = read_handle;
+    let write_loop = async {
         while let Some(cmd) = command_rx.recv().await {
             // Build the complete message: command prefix + command + newline.
             // The prefix is mode-dependent (see call sites): "<c>" when we talk
@@ -457,10 +466,19 @@ async fn run_stream(
                 break;
             }
         }
+    };
+    tokio::select! {
+        _ = &mut read_handle => {
+            // Server closed the connection (or read error): session over.
+            // Queued-but-unsent commands are moot on a dead socket.
+        }
+        _ = write_loop => {
+            // Command channel closed (session being torn down) or a write
+            // failed: stop the reader too so this future completes.
+            read_handle.abort();
+            let _ = read_handle.await;
+        }
     }
-    .await;
-
-    let _ = read_handle.await;
 
     Ok(())
 }
