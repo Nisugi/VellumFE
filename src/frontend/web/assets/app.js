@@ -1548,7 +1548,9 @@ cmdInput.addEventListener("keydown", (ev) => {
 // device (a phone and a tablet want different sizes).
 
 const TEXT_SIZE_KEY = "vellum-text-size";
-const TEXT_SIZE_MIN = 11;
+// 6px is genuinely tiny, but more text on screen beats enforced comfort —
+// high-DPI phones keep it legible and it's the user's call (playtest ask).
+const TEXT_SIZE_MIN = 6;
 const TEXT_SIZE_MAX = 24;
 let storySize = parseInt(localStorage.getItem(TEXT_SIZE_KEY) || "14", 10);
 if (isNaN(storySize)) storySize = 14;
