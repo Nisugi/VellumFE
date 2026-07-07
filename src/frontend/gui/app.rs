@@ -3831,6 +3831,11 @@ impl eframe::App for VellumGuiApp {
         }
         // Flush any debounced layout changes while the app is still intact.
         self.save_layout_state();
+        // Persist the config layout (WindowDef data: streams, feed ids,
+        // added/removed windows) and session cache. Without this, closing
+        // the window with the X button silently discarded every window-def
+        // edit — only the `quit` command path saved them.
+        self.app_core.save_on_quit();
     }
 }
 
