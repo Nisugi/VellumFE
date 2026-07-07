@@ -5,6 +5,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -31,10 +34,23 @@ class MainActivity : Activity() {
         }
         startForegroundService(Intent(this, CoreService::class.java))
 
+        Log.i(TAG, "WebView engine: ${WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } ?: "unknown"}")
+
         webView = WebView(this).apply {
             setBackgroundColor(Color.parseColor("#111318"))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            // Surface page JS errors in logcat: an engine too old for the
+            // client's JavaScript otherwise fails as a silent static page.
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    Log.i(
+                        TAG,
+                        "js[${message.messageLevel()}] ${message.sourceId()}:${message.lineNumber()} ${message.message()}",
+                    )
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(
                     view: WebView,
@@ -102,6 +118,10 @@ class MainActivity : Activity() {
             """.trimIndent()
             webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
         }
+    }
+
+    companion object {
+        private const val TAG = "VellumShell"
     }
 
     @Deprecated("Deprecated in API 33; fine with legacy back handling")
