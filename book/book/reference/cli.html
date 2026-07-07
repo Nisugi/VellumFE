@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-97ed8572.js";
+            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-03608cc9.js"></script>
+        <script src="../toc-c3d5192d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,7 +190,7 @@
 <tbody>
 <tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
 <tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
-<tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
+<tr><td><code>-f, --frontend &lt;tui|gui|headless&gt;</code></td><td>Frontend to run (default <code>tui</code>); <code>headless</code> = core + web server only, browser is the UI</td></tr>
 <tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
 <tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
 <tr><td><code>--character &lt;NAME&gt;</code></td><td>Character name (login + per-character profile)</td></tr>
@@ -238,6 +238,9 @@ vellum-fe --frontend gui --port 8000 --character Rolfard
 
 # TUI plus phone access
 vellum-fe --port 8000 --character Rolfard --web-port 8040
+
+# Headless: no local UI, log in from the browser
+vellum-fe --frontend headless
 
 # Debug logging
 RUST_LOG=debug vellum-fe --port 8000

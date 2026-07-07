@@ -1,11 +1,16 @@
 # Mobile Web
 
-An optional embedded web server that lets your **phone's browser join the
-running session**. It's a sidecar, not a separate mode — the TUI or GUI
-keeps running on your PC, and the phone becomes a second screen and
-controller for the same character.
+A touch-first client that runs in any browser, served by an embedded web
+server. It works two ways:
 
-## Enabling
+- **Second screen for a desktop session** — the TUI or GUI keeps running
+  on your PC and the phone joins the *same* character (a sidecar).
+- **The whole interface** — [headless mode](#headless-mode) runs just the
+  core plus the web server; you log in and play entirely from the
+  browser. (The [Android app](./android.md) packages exactly this into a
+  phone app.)
+
+## Enabling (Desktop Sidecar)
 
 In `config.toml`:
 
@@ -55,33 +60,81 @@ that character's profile config — it then binds exactly that port or
 disables web for the session with a loud warning, never a silent neighbor
 port.
 
-## What You Can Do from the Phone
+## Playing from the Browser
 
 - **Read the game** live, with streams as filter chips (unread badges;
   long-press a chip to reorder — remembered per device).
-- **Send commands** from the input bar — identical to typing at the PC,
-  including dot-commands and command history shared both ways.
-- **Tap links and nouns** — context menus open in a bottom sheet; tap
-  exits in the room bar to move.
+- **Send commands** — identical to typing at the PC, including
+  dot-commands. With a keyboard, Up/Down browse command history; the ↻
+  button resends the last command, and long-pressing it opens a history
+  sheet.
+- **Tap links, nouns, and exits** — context menus open in a bottom
+  sheet; a mini **compass** floats over the text pane (exits light up,
+  tap to move).
+- **Side drawers** — swipe from the screen edges (or tap the handles):
+  the left drawer is a vertical **macro tray**; the right is a **status
+  panel** with the injury doll, injuries list, hands, character sheet
+  (experience, encumbrance, bounty, society), active effects with live
+  countdowns, and **tap-to-target** — tap a creature to get its
+  attack/look/target menu.
 - **Vitals, hands, RT/CT** — a status strip with live countdowns.
-- **Active effects** — buffs/debuffs as pills on phones, a sidebar on
-  tablets.
-- **Adjust text size** — the **Aa** control resizes story text, remembered
-  per device.
-- **Macro buttons** — the macro rail, menu buttons, and draggable floating
-  buttons defined in [macros.toml](../configuration/macros-toml.md).
-- **Create and edit macros on the phone** — the rail's **+** button;
-  phone-created buttons are saved server-side (`macros-local.toml`) and
-  survive restarts. Hand-written buttons are read-only from the phone.
-- **Reconnect gracefully** — on reconnect the client resumes where it left
-  off, with a "missed output" marker if the gap was long. Multiple phones
-  can connect at once.
+- **Macro buttons** — the macro rail, menu buttons, and draggable
+  floating buttons from [macros.toml](../configuration/macros-toml.md);
+  create and edit them from the phone with the rail's **+** button.
+- **Sound alerts** — highlight sounds play in the browser (toggle in
+  Settings; the first sound may need one tap due to autoplay rules).
+- **Reconnect gracefully** — resumes where you left off, with a "missed
+  output" marker for long gaps. Multiple devices can connect at once.
+
+## Settings on the Phone
+
+The gear button (also reachable from the login screen) opens Settings:
+
+- **Appearance** — four theme presets (Vellum dark, OLED black, high
+  contrast, parchment), show/hide toggles for every piece of chrome
+  (macro bar, compass, vitals, hands, RT label, effect pills, chips),
+  and opacity sliders for floating buttons, drawers, and bottom sheets.
+  The **Aa** button sets story text from 6 to 24 px. All per-device.
+- **Highlight editor** — add/edit highlight rules with color pickers, a
+  sound dropdown, and a live preview; fields the form doesn't cover
+  (redirects, squelch, ...) are preserved for desktop editing.
+- **Colors editor** — stream preset and prompt colors with native
+  pickers.
+- **Advanced** — raw TOML editors for highlights and colors (profile or
+  global) with **import file / export** — the practical way to move a
+  desktop config onto the phone.
+
+Edits save to the same config files the desktop uses and apply live.
+
+## Headless Mode
+
+```bash
+vellum-fe --frontend headless
+```
+
+Runs the core and web server with **no local UI** — it prints the ready
+`/play` URL (token included) at startup, and the browser does the rest.
+Give it credentials (`--direct --account ... --character ...`) to
+auto-connect, or give it nothing and it waits at the **browser login
+screen**: enter account/password/character/game, or tap a saved profile
+(shared with the [desktop Launcher](../getting-started/launcher.md)'s
+`launcher.toml`). "Remember this login" saves the password securely.
+
+Headless sessions manage themselves:
+
+- Drops reconnect automatically with backoff; typing again resets it.
+- If the connection drops repeatedly with **no input from you**, it
+  stops reconnecting — an abandoned session winds down instead of
+  relogging all night.
+- If login hangs, a watchdog retries it.
+- `quit` (or the logout button) returns to the login screen.
+
+The login screen only appears in headless/Android mode — a desktop
+sidecar session is controlled from the desktop, as before.
 
 ## Tips
 
 - After editing `macros.toml` on the PC, run `.reloadmacros` — connected
   phones update instantly.
-- The wake-lock toggle in the phone UI keeps the screen on while hunting.
-- If the phone can't connect at all, check `bind` — the default
-  `127.0.0.1` is reachable only from the PC itself; `.webinfo` warns
-  about this.
+- The wake button in the top bar keeps the phone's screen on; tap the
+  title line to toggle between room name and character name.

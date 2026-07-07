@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-97ed8572.js";
+            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-03608cc9.js"></script>
+        <script src="../toc-c3d5192d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,8 +178,8 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="frontends"><a class="header" href="#frontends">Frontends</a></h1>
-<p>VellumFE has one core and three ways to use it. All frontends share the
-same configuration, highlights, keybinds, themes, and dot-commands.</p>
+<p>VellumFE is one core with several faces. All of them share the same
+configuration, highlights, keybinds, themes, and dot-commands.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -187,14 +187,22 @@ same configuration, highlights, keybinds, themes, and dot-commands.</p>
 </thead>
 <tbody>
 <tr><td><a href="./tui.html">Terminal (TUI)</a></td><td>default</td><td>Playing in a terminal; SSH; lowest footprint</td></tr>
-<tr><td><a href="./gui.html">Desktop GUI</a></td><td><code>--frontend gui</code></td><td>Native windows, mouse-first layout editing, system fonts</td></tr>
-<tr><td><a href="./web.html">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins the <em>same session</em> as a second screen/controller</td></tr>
+<tr><td><a href="./gui.html">Desktop GUI</a></td><td><code>--frontend gui</code></td><td>Native windows, mouse-first layout editing, graphics &amp; skins</td></tr>
+<tr><td><a href="./web.html">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins a <em>desktop session</em> as a second screen</td></tr>
+<tr><td><a href="./web.html#headless-mode">Headless</a></td><td><code>--frontend headless</code></td><td>No local UI — a browser is the whole interface</td></tr>
+<tr><td><a href="./android.html">Android App</a></td><td>sideloaded APK</td><td>The whole client on your phone, no PC at all</td></tr>
 </tbody>
 </table>
 </div>
-<p>The TUI and GUI are alternatives — you run one or the other. The mobile web
-frontend is a <strong>sidecar</strong>: it runs alongside whichever desktop frontend is
-active, and both control the same character at the same time.</p>
+<p>Three ways to think about it:</p>
+<ul>
+<li><strong>At the PC</strong>: run the TUI or GUI.</li>
+<li><strong>PC hosts, phone joins</strong>: run TUI/GUI with the web server enabled —
+the phone is a second controller for the same session.</li>
+<li><strong>No PC</strong>: headless mode on any machine with a browser pointed at it,
+or the Android app, which bundles the core and the web UI into one
+phone app.</li>
+</ul>
 
                     </main>
 

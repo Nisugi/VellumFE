@@ -12,7 +12,7 @@ Run with **no arguments** to open [the Launcher](../getting-started/launcher.md)
 |------|-------------|
 | `--launcher` | Open the graphical launcher (also the no-args default) |
 | `--launch-profile <NAME>` | Launch a saved launcher profile from launcher.toml |
-| `-f, --frontend <tui\|gui>` | Frontend to run (default `tui`) |
+| `-f, --frontend <tui\|gui\|headless>` | Frontend to run (default `tui`); `headless` = core + web server only, browser is the UI |
 | `-p, --port <PORT>` | Lich proxy port (overrides config.toml) |
 | `--host <HOST>` | Lich proxy host (overrides config.toml) |
 | `--character <NAME>` | Character name (login + per-character profile) |
@@ -73,6 +73,9 @@ vellum-fe --frontend gui --port 8000 --character Rolfard
 
 # TUI plus phone access
 vellum-fe --port 8000 --character Rolfard --web-port 8040
+
+# Headless: no local UI, log in from the browser
+vellum-fe --frontend headless
 
 # Debug logging
 RUST_LOG=debug vellum-fe --port 8000

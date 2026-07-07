@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-97ed8572.js";
+            window.path_to_searchindex_js = "searchindex-2fd63cd2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-03608cc9.js"></script>
+        <script src="toc-c3d5192d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,11 +180,12 @@
                     <main>
                         <h1 id="vellumfe"><a class="header" href="#vellumfe">VellumFE</a></h1>
 <p>A modern client for GemStone IV (and DragonRealms), built in Rust.</p>
-<p>One core, three ways to play:</p>
+<p>One core, four ways to play:</p>
 <ul>
 <li><strong>Terminal (TUI)</strong> — the default. Runs in any modern terminal.</li>
-<li><strong>Desktop GUI</strong> — native windowed client (<code>--frontend gui</code>).</li>
-<li><strong>Mobile Web</strong> — an optional sidecar server that lets your phone’s browser join the same session, with tap-to-move exits and configurable macro buttons.</li>
+<li><strong>Desktop GUI</strong> — native windowed client with graphics and skins (<code>--frontend gui</code>).</li>
+<li><strong>Mobile Web</strong> — your phone’s browser joins a desktop session as a second screen, or runs the whole show against a headless host.</li>
+<li><strong>Android App</strong> — the entire client on your phone, no PC required.</li>
 </ul>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
@@ -259,10 +260,31 @@ vellum-fe --direct --account ACCOUNT --character YourName --game prime
 <tr><td>Windows</td><td><code>vellum-fe-windows.zip</code></td></tr>
 <tr><td>macOS</td><td><code>vellum-fe-macos.tar.gz</code></td></tr>
 <tr><td>Linux</td><td><code>vellum-fe-linux.tar.gz</code></td></tr>
+<tr><td>Android</td><td><code>vellum-fe-android-arm64.apk</code></td></tr>
 </tbody>
 </table>
 </div>
 <p>Extract the archive and place <code>vellum-fe</code> (or <code>vellum-fe.exe</code>) somewhere in your PATH.</p>
+<h2 id="android"><a class="header" href="#android">Android</a></h2>
+<p>The Android app is a full standalone client: it connects directly to the
+game (no PC required) and uses the touch-first web interface.</p>
+<ol>
+<li>Download <code>vellum-fe-android-arm64.apk</code> onto the phone and tap it;
+allow installs from the source when Android asks. Requires Android
+8.0 or newer.</li>
+<li>On Android 8–9, update <strong>Chrome</strong> in the Play Store first — Chrome
+provides the app’s rendering engine there, and an out-of-date engine
+shows a blank client with a red “connecting…” that never resolves.</li>
+<li>Open VellumFE and log in. Saving the login stores the profile in the
+app’s private storage on the phone.</li>
+<li>Keep the app’s notification enabled: it is what keeps the game
+connection alive while the screen is off.</li>
+</ol>
+<p>Updates install in place over the previous version (releases share one
+signing key). For automatic update checks, add this repository to
+<a href="https://github.com/ImranR98/Obtainium">Obtainium</a>.</p>
+<p>See <a href="#android-app">Android App</a> for logging in, battery
+behavior, and everything else about playing on the phone.</p>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h2>
 <p>Requires <a href="https://rustup.rs/">Rust</a> 1.70+.</p>
 <pre><code class="language-bash">git clone https://github.com/Nisugi/VellumFE.git
@@ -278,7 +300,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.2.0-beta.11</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.1</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -440,8 +462,8 @@ Start with:</p>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="frontends"><a class="header" href="#frontends">Frontends</a></h1>
-<p>VellumFE has one core and three ways to use it. All frontends share the
-same configuration, highlights, keybinds, themes, and dot-commands.</p>
+<p>VellumFE is one core with several faces. All of them share the same
+configuration, highlights, keybinds, themes, and dot-commands.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -449,14 +471,22 @@ same configuration, highlights, keybinds, themes, and dot-commands.</p>
 </thead>
 <tbody>
 <tr><td><a href="#terminal-tui">Terminal (TUI)</a></td><td>default</td><td>Playing in a terminal; SSH; lowest footprint</td></tr>
-<tr><td><a href="#desktop-gui">Desktop GUI</a></td><td><code>--frontend gui</code></td><td>Native windows, mouse-first layout editing, system fonts</td></tr>
-<tr><td><a href="#mobile-web">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins the <em>same session</em> as a second screen/controller</td></tr>
+<tr><td><a href="#desktop-gui">Desktop GUI</a></td><td><code>--frontend gui</code></td><td>Native windows, mouse-first layout editing, graphics &amp; skins</td></tr>
+<tr><td><a href="#mobile-web">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins a <em>desktop session</em> as a second screen</td></tr>
+<tr><td><a href="#headless-mode">Headless</a></td><td><code>--frontend headless</code></td><td>No local UI — a browser is the whole interface</td></tr>
+<tr><td><a href="#android-app">Android App</a></td><td>sideloaded APK</td><td>The whole client on your phone, no PC at all</td></tr>
 </tbody>
 </table>
 </div>
-<p>The TUI and GUI are alternatives — you run one or the other. The mobile web
-frontend is a <strong>sidecar</strong>: it runs alongside whichever desktop frontend is
-active, and both control the same character at the same time.</p>
+<p>Three ways to think about it:</p>
+<ul>
+<li><strong>At the PC</strong>: run the TUI or GUI.</li>
+<li><strong>PC hosts, phone joins</strong>: run TUI/GUI with the web server enabled —
+the phone is a second controller for the same session.</li>
+<li><strong>No PC</strong>: headless mode on any machine with a browser pointed at it,
+or the Android app, which bundles the core and the web UI into one
+phone app.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="terminal-tui"><a class="header" href="#terminal-tui">Terminal (TUI)</a></h1>
 <p>The default frontend. Runs in any modern terminal:</p>
@@ -540,16 +570,24 @@ nine-slice borders, icon sprites, a sprite compass and paperdoll. See
 <ul>
 <li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>.</li>
 <li><code>Ctrl+F</code> opens in-window search with match highlighting.</li>
+<li>Up/Down in the input bar browse command history; whatever you were
+typing is stashed and restored when you come back down.</li>
 <li>Terminal-only commands (<code>.setpalette</code>, <code>.resetpalette</code>, <code>.transparent</code>)
 don’t apply; themes handle appearance instead.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="mobile-web"><a class="header" href="#mobile-web">Mobile Web</a></h1>
-<p>An optional embedded web server that lets your <strong>phone’s browser join the
-running session</strong>. It’s a sidecar, not a separate mode — the TUI or GUI
-keeps running on your PC, and the phone becomes a second screen and
-controller for the same character.</p>
-<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<p>A touch-first client that runs in any browser, served by an embedded web
+server. It works two ways:</p>
+<ul>
+<li><strong>Second screen for a desktop session</strong> — the TUI or GUI keeps running
+on your PC and the phone joins the <em>same</em> character (a sidecar).</li>
+<li><strong>The whole interface</strong> — <a href="#headless-mode">headless mode</a> runs just the
+core plus the web server; you log in and play entirely from the
+browser. (The <a href="#android-app">Android app</a> packages exactly this into a
+phone app.)</li>
+</ul>
+<h2 id="enabling-desktop-sidecar"><a class="header" href="#enabling-desktop-sidecar">Enabling (Desktop Sidecar)</a></h2>
 <p>In <code>config.toml</code>:</p>
 <pre><code class="language-toml">[web]
 enabled = true
@@ -588,36 +626,127 @@ a <strong>stable port</strong> (for a direct <code>/play</code> bookmark), set <
 that character’s profile config — it then binds exactly that port or
 disables web for the session with a loud warning, never a silent neighbor
 port.</p>
-<h2 id="what-you-can-do-from-the-phone"><a class="header" href="#what-you-can-do-from-the-phone">What You Can Do from the Phone</a></h2>
+<h2 id="playing-from-the-browser"><a class="header" href="#playing-from-the-browser">Playing from the Browser</a></h2>
 <ul>
 <li><strong>Read the game</strong> live, with streams as filter chips (unread badges;
 long-press a chip to reorder — remembered per device).</li>
-<li><strong>Send commands</strong> from the input bar — identical to typing at the PC,
-including dot-commands and command history shared both ways.</li>
-<li><strong>Tap links and nouns</strong> — context menus open in a bottom sheet; tap
-exits in the room bar to move.</li>
+<li><strong>Send commands</strong> — identical to typing at the PC, including
+dot-commands. With a keyboard, Up/Down browse command history; the ↻
+button resends the last command, and long-pressing it opens a history
+sheet.</li>
+<li><strong>Tap links, nouns, and exits</strong> — context menus open in a bottom
+sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
+tap to move).</li>
+<li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
+the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
+panel</strong> with the injury doll, injuries list, hands, character sheet
+(experience, encumbrance, bounty, society), active effects with live
+countdowns, and <strong>tap-to-target</strong> — tap a creature to get its
+attack/look/target menu.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
-<li><strong>Active effects</strong> — buffs/debuffs as pills on phones, a sidebar on
-tablets.</li>
-<li><strong>Adjust text size</strong> — the <strong>Aa</strong> control resizes story text, remembered
-per device.</li>
-<li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable floating
-buttons defined in <a href="#macrostoml">macros.toml</a>.</li>
-<li><strong>Create and edit macros on the phone</strong> — the rail’s <strong>+</strong> button;
-phone-created buttons are saved server-side (<code>macros-local.toml</code>) and
-survive restarts. Hand-written buttons are read-only from the phone.</li>
-<li><strong>Reconnect gracefully</strong> — on reconnect the client resumes where it left
-off, with a “missed output” marker if the gap was long. Multiple phones
-can connect at once.</li>
+<li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable
+floating buttons from <a href="#macrostoml">macros.toml</a>;
+create and edit them from the phone with the rail’s <strong>+</strong> button.</li>
+<li><strong>Sound alerts</strong> — highlight sounds play in the browser (toggle in
+Settings; the first sound may need one tap due to autoplay rules).</li>
+<li><strong>Reconnect gracefully</strong> — resumes where you left off, with a “missed
+output” marker for long gaps. Multiple devices can connect at once.</li>
 </ul>
+<h2 id="settings-on-the-phone"><a class="header" href="#settings-on-the-phone">Settings on the Phone</a></h2>
+<p>The gear button (also reachable from the login screen) opens Settings:</p>
+<ul>
+<li><strong>Appearance</strong> — four theme presets (Vellum dark, OLED black, high
+contrast, parchment), show/hide toggles for every piece of chrome
+(macro bar, compass, vitals, hands, RT label, effect pills, chips),
+and opacity sliders for floating buttons, drawers, and bottom sheets.
+The <strong>Aa</strong> button sets story text from 6 to 24 px. All per-device.</li>
+<li><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
+sound dropdown, and a live preview; fields the form doesn’t cover
+(redirects, squelch, …) are preserved for desktop editing.</li>
+<li><strong>Colors editor</strong> — stream preset and prompt colors with native
+pickers.</li>
+<li><strong>Advanced</strong> — raw TOML editors for highlights and colors (profile or
+global) with <strong>import file / export</strong> — the practical way to move a
+desktop config onto the phone.</li>
+</ul>
+<p>Edits save to the same config files the desktop uses and apply live.</p>
+<h2 id="headless-mode"><a class="header" href="#headless-mode">Headless Mode</a></h2>
+<pre><code class="language-bash">vellum-fe --frontend headless
+</code></pre>
+<p>Runs the core and web server with <strong>no local UI</strong> — it prints the ready
+<code>/play</code> URL (token included) at startup, and the browser does the rest.
+Give it credentials (<code>--direct --account ... --character ...</code>) to
+auto-connect, or give it nothing and it waits at the <strong>browser login
+screen</strong>: enter account/password/character/game, or tap a saved profile
+(shared with the <a href="#the-launcher">desktop Launcher</a>’s
+<code>launcher.toml</code>). “Remember this login” saves the password securely.</p>
+<p>Headless sessions manage themselves:</p>
+<ul>
+<li>Drops reconnect automatically with backoff; typing again resets it.</li>
+<li>If the connection drops repeatedly with <strong>no input from you</strong>, it
+stops reconnecting — an abandoned session winds down instead of
+relogging all night.</li>
+<li>If login hangs, a watchdog retries it.</li>
+<li><code>quit</code> (or the logout button) returns to the login screen.</li>
+</ul>
+<p>The login screen only appears in headless/Android mode — a desktop
+sidecar session is controlled from the desktop, as before.</p>
 <h2 id="tips"><a class="header" href="#tips">Tips</a></h2>
 <ul>
 <li>After editing <code>macros.toml</code> on the PC, run <code>.reloadmacros</code> — connected
 phones update instantly.</li>
-<li>The wake-lock toggle in the phone UI keeps the screen on while hunting.</li>
-<li>If the phone can’t connect at all, check <code>bind</code> — the default
-<code>127.0.0.1</code> is reachable only from the PC itself; <code>.webinfo</code> warns
-about this.</li>
+<li>The wake button in the top bar keeps the phone’s screen on; tap the
+title line to toggle between room name and character name.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="android-app"><a class="header" href="#android-app">Android App</a></h1>
+<p>A native Android app that runs the <strong>entire VellumFE client on your
+phone — no PC required</strong>. The same Rust core as the desktop app runs as a
+background service on the device, and the touch-first web client is the
+screen. You log in with your play.net account directly from the phone.</p>
+<h2 id="getting-it"><a class="header" href="#getting-it">Getting It</a></h2>
+<p>Download <code>vellum-fe-android-arm64.apk</code> from
+<a href="https://github.com/Nisugi/VellumFE/releases">GitHub releases</a> and
+sideload it — install steps, requirements (Android 8.0+, 64-bit), and
+update options are in <a href="#android">Installation</a>.</p>
+<h2 id="logging-in"><a class="header" href="#logging-in">Logging In</a></h2>
+<p>The app opens on a login screen: enter account, password, character, and
+game (all GemStone IV and DragonRealms worlds), or tap a saved profile.</p>
+<p>Check <strong>Remember this login</strong> and the password is saved on the device,
+encrypted with a hardware-backed key in the Android Keystore — the saved
+file is unreadable off the device.</p>
+<blockquote>
+<p><strong>No Lich on the phone.</strong> The app connects via direct eAccess only.
+If your setup depends on Lich scripts, run the session on your PC
+instead and join it from the phone via the
+<a href="#mobile-web">mobile web frontend</a>.</p>
+</blockquote>
+<h2 id="playing"><a class="header" href="#playing">Playing</a></h2>
+<p>The interface is the <a href="#mobile-web">mobile web client</a> — story pane, stream
+chips, tappable exits and nouns, macro rail, side drawers with the injury
+doll and character sheet, sounds, highlight and color editors. Everything
+on that page applies here.</p>
+<h2 id="battery--lifecycle"><a class="header" href="#battery--lifecycle">Battery &amp; Lifecycle</a></h2>
+<p>The session lives in a foreground service with a quiet status
+notification (“Playing — session live”, “Reconnecting…”, …) that has a
+<strong>Stop</strong> button.</p>
+<ul>
+<li>The app holds a wakelock <strong>only while a session is active</strong> — sitting
+at the login screen doesn’t drain the battery.</li>
+<li>Swiping the app away mid-session <strong>keeps playing</strong>; swiping it away at
+the login screen stops the service.</li>
+<li>If the connection drops repeatedly with no input from you, it stops
+reconnecting rather than relogging all night — a forgotten phone winds
+down on its own.</li>
+<li>On first launch it asks once for a battery-optimization exemption so
+Android doesn’t throttle the connection mid-hunt. If you decline, you
+can grant it later in system battery settings.</li>
+</ul>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<ul>
+<li>The UI runs in the system WebView. If the client is blank or stuck on
+“connecting…”, update <strong>Android System WebView</strong> from the Play Store —
+on Android 8–9, update <strong>Chrome</strong>, which provides the engine there.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h1>
@@ -2886,7 +3015,7 @@ sound = "danger.wav"
 <li>OGG</li>
 <li>FLAC</li>
 </ul>
-<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h2 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h2>
 <p><strong>No sound playing?</strong></p>
 <ol>
 <li>Check <code>[sound] enabled = true</code> in config.toml</li>
@@ -3183,7 +3312,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tbody>
 <tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
 <tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
-<tr><td><code>-f, --frontend &lt;tui|gui&gt;</code></td><td>Frontend to run (default <code>tui</code>)</td></tr>
+<tr><td><code>-f, --frontend &lt;tui|gui|headless&gt;</code></td><td>Frontend to run (default <code>tui</code>); <code>headless</code> = core + web server only, browser is the UI</td></tr>
 <tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
 <tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
 <tr><td><code>--character &lt;NAME&gt;</code></td><td>Character name (login + per-character profile)</td></tr>
@@ -3232,6 +3361,9 @@ vellum-fe --frontend gui --port 8000 --character Rolfard
 # TUI plus phone access
 vellum-fe --port 8000 --character Rolfard --web-port 8040
 
+# Headless: no local UI, log in from the browser
+vellum-fe --frontend headless
+
 # Debug logging
 RUST_LOG=debug vellum-fe --port 8000
 </code></pre>
@@ -3247,6 +3379,10 @@ battle-tested.</p>
 No. VellumFE can connect through Lich (recommended, for scripting) or
 directly via eAccess with <code>--direct</code>. VellumFE itself doesn’t run scripts —
 use Lich for that.</p>
+<p><strong>Can I play without a PC at all?</strong>
+Yes — the <a href="#android-app">Android app</a> runs the whole client on
+your phone, or run <code>--frontend headless</code> on any machine and play from a
+browser. Both connect via direct eAccess (no Lich on the phone).</p>
 <p><strong>Is it free?</strong>
 Yes, open source: <a href="https://github.com/Nisugi/VellumFE">github.com/Nisugi/VellumFE</a>.</p>
 <h2 id="connection-1"><a class="header" href="#connection-1">Connection</a></h2>
@@ -3292,7 +3428,7 @@ Yes — <code>squelch = true</code> on a highlight pattern. See
 Yes: <code>vellum-fe import-highlights settings.xml</code>. See the
 <a href="#cli-reference">CLI Reference</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h1>
+<h1 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h1>
 <h2 id="connection-2"><a class="header" href="#connection-2">Connection</a></h2>
 <p><strong>Can’t connect to Lich (“connection refused”)</strong></p>
 <ol>

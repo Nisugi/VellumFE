@@ -67,5 +67,7 @@ nine-slice borders, icon sprites, a sprite compass and paperdoll. See
 
 - Copying is plain text: select with the mouse, `Ctrl+C`.
 - `Ctrl+F` opens in-window search with match highlighting.
+- Up/Down in the input bar browse command history; whatever you were
+  typing is stashed and restored when you come back down.
 - Terminal-only commands (`.setpalette`, `.resetpalette`, `.transparent`)
   don't apply; themes handle appearance instead.

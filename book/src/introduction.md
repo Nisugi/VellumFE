@@ -2,11 +2,12 @@
 
 A modern client for GemStone IV (and DragonRealms), built in Rust.
 
-One core, three ways to play:
+One core, four ways to play:
 
 - **Terminal (TUI)** — the default. Runs in any modern terminal.
-- **Desktop GUI** — native windowed client (`--frontend gui`).
-- **Mobile Web** — an optional sidecar server that lets your phone's browser join the same session, with tap-to-move exits and configurable macro buttons.
+- **Desktop GUI** — native windowed client with graphics and skins (`--frontend gui`).
+- **Mobile Web** — your phone's browser joins a desktop session as a second screen, or runs the whole show against a headless host.
+- **Android App** — the entire client on your phone, no PC required.
 
 ## Features
 

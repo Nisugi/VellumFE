@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-97ed8572.js";
+            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-03608cc9.js"></script>
+        <script src="../toc-c3d5192d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -189,10 +189,31 @@
 <tr><td>Windows</td><td><code>vellum-fe-windows.zip</code></td></tr>
 <tr><td>macOS</td><td><code>vellum-fe-macos.tar.gz</code></td></tr>
 <tr><td>Linux</td><td><code>vellum-fe-linux.tar.gz</code></td></tr>
+<tr><td>Android</td><td><code>vellum-fe-android-arm64.apk</code></td></tr>
 </tbody>
 </table>
 </div>
 <p>Extract the archive and place <code>vellum-fe</code> (or <code>vellum-fe.exe</code>) somewhere in your PATH.</p>
+<h2 id="android"><a class="header" href="#android">Android</a></h2>
+<p>The Android app is a full standalone client: it connects directly to the
+game (no PC required) and uses the touch-first web interface.</p>
+<ol>
+<li>Download <code>vellum-fe-android-arm64.apk</code> onto the phone and tap it;
+allow installs from the source when Android asks. Requires Android
+8.0 or newer.</li>
+<li>On Android 8–9, update <strong>Chrome</strong> in the Play Store first — Chrome
+provides the app’s rendering engine there, and an out-of-date engine
+shows a blank client with a red “connecting…” that never resolves.</li>
+<li>Open VellumFE and log in. Saving the login stores the profile in the
+app’s private storage on the phone.</li>
+<li>Keep the app’s notification enabled: it is what keeps the game
+connection alive while the screen is off.</li>
+</ol>
+<p>Updates install in place over the previous version (releases share one
+signing key). For automatic update checks, add this repository to
+<a href="https://github.com/ImranR98/Obtainium">Obtainium</a>.</p>
+<p>See <a href="../frontends/android.html">Android App</a> for logging in, battery
+behavior, and everything else about playing on the phone.</p>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h2>
 <p>Requires <a href="https://rustup.rs/">Rust</a> 1.70+.</p>
 <pre><code class="language-bash">git clone https://github.com/Nisugi/VellumFE.git
@@ -208,7 +229,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.2.0-beta.11</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.1</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>

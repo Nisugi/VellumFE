@@ -33,6 +33,9 @@ Updates install in place over the previous version (releases share one
 signing key). For automatic update checks, add this repository to
 [Obtainium](https://github.com/ImranR98/Obtainium).
 
+See [Android App](../frontends/android.md) for logging in, battery
+behavior, and everything else about playing on the phone.
+
 ## Building from Source
 
 Requires [Rust](https://rustup.rs/) 1.70+.
@@ -58,7 +61,7 @@ only requires Perl, which virtually every distro ships by default.
 vellum-fe --version
 ```
 
-Should display the version number (e.g., `vellum-fe 0.2.0-beta.11`).
+Should display the version number (e.g., `vellum-fe 0.3.0-beta.1`).
 
 ## Configuration Directory
 

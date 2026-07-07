@@ -15,6 +15,7 @@
   - [Terminal (TUI)](./frontends/tui.md)
   - [Desktop GUI](./frontends/gui.md)
   - [Mobile Web](./frontends/web.md)
+  - [Android App](./frontends/android.md)
 
 - [Configuration](./configuration/README.md)
   - [config.toml](./configuration/config-toml.md)

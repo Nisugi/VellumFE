@@ -13,6 +13,11 @@ No. VellumFE can connect through Lich (recommended, for scripting) or
 directly via eAccess with `--direct`. VellumFE itself doesn't run scripts —
 use Lich for that.
 
+**Can I play without a PC at all?**
+Yes — the [Android app](../frontends/android.md) runs the whole client on
+your phone, or run `--frontend headless` on any machine and play from a
+browser. Both connect via direct eAccess (no Lich on the phone).
+
 **Is it free?**
 Yes, open source: [github.com/Nisugi/VellumFE](https://github.com/Nisugi/VellumFE).
 
