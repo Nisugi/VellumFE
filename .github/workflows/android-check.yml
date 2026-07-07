@@ -42,9 +42,12 @@ jobs:
         run: cargo install cargo-ndk
 
       - name: Build Android core (vendored OpenSSL via NDK)
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-        run: cargo ndk -t arm64-v8a build --release -p vellum-android
+        # ANDROID_NDK_LATEST_HOME is a runner machine variable — only
+        # visible to the shell, not to ${{ env }} expressions.
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          echo "Using NDK: $ANDROID_NDK_HOME"
+          cargo ndk -t arm64-v8a build --release -p vellum-android
 
       - name: Show produced library
         run: ls -lah target/aarch64-linux-android/release/*.so
