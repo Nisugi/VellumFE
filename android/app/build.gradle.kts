@@ -20,13 +20,29 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
+    // Release signing comes from CI env (decoded from repo secrets); local
+    // builds without the env fall back to debug signing so `assembleRelease`
+    // still works on dev machines. The keystore is permanent — sideload
+    // updates require a stable signature.
+    val releaseKeystore = System.getenv("VELLUM_ANDROID_KEYSTORE")
+    if (releaseKeystore != null) {
+        signingConfigs.create("release") {
+            storeFile = file(releaseKeystore)
+            storeType = "PKCS12"
+            storePassword = System.getenv("VELLUM_ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("VELLUM_ANDROID_KEY_ALIAS") ?: "vellumfe"
+            keyPassword = System.getenv("VELLUM_ANDROID_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Debug-signed until the release keystore lands (Phase C3):
-            // fine for sideload testing, but updates across CI runs need
-            // an uninstall because the debug key differs per machine.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (releaseKeystore != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

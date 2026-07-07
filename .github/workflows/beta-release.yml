@@ -134,6 +134,63 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
 
+  android:
+    name: Build (Android arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build core (arm64)
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs \
+            build --release -p vellum-android
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble signed release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          VELLUM_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VELLUM_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VELLUM_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          export VELLUM_ANDROID_KEYSTORE="$RUNNER_TEMP/release.p12"
+          gradle -p android :app:assembleRelease
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            dist/vellum-fe-android-arm64.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
   macos-arm:
     name: Build (macOS arm64)
     runs-on: macos-latest
@@ -245,7 +302,7 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, macos-arm, macos-intel, macos-universal]
+    needs: [build, android, macos-arm, macos-intel, macos-universal]
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -261,7 +318,7 @@ jobs:
         run: |
           pushd dist >/dev/null
           shopt -s nullglob
-          sha256sum *.zip *.tar.gz | tee SHA256SUMS.txt
+          sha256sum *.zip *.tar.gz *.apk | tee SHA256SUMS.txt
           popd >/dev/null
 
       - name: Create GitHub prerelease and upload assets
@@ -276,6 +333,7 @@ jobs:
           files: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.apk
             dist/SHA256SUMS.txt
           prerelease: ${{ inputs.prerelease || contains(github.ref_name, '-beta') }}
         env:
