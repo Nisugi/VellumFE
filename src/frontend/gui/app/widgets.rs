@@ -193,6 +193,22 @@ impl VellumGuiApp {
         ui.add(egui::Label::new(job));
     }
 
+    /// Format a line's arrival time for display, matching the TUI's style
+    /// (" [7:08 PM]" at end, "[7:08 PM] " at start).
+    fn format_line_timestamp(
+        timestamp: i64,
+        position: crate::config::TimestampPosition,
+    ) -> Option<String> {
+        use chrono::TimeZone;
+        let local = chrono::Local.timestamp_opt(timestamp, 0).single()?;
+        let time = local.format("%l:%M %p").to_string();
+        let time = time.trim();
+        Some(match position {
+            crate::config::TimestampPosition::Start => format!("[{}] ", time),
+            crate::config::TimestampPosition::End => format!(" [{}]", time),
+        })
+    }
+
     pub(super) fn render_styled_line(
         ui: &mut egui::Ui,
         line: &StyledLine,
@@ -200,8 +216,20 @@ impl VellumGuiApp {
         search_query: Option<&str>,
         font_id: &egui::FontId,
         wrap: bool,
+        timestamps: Option<crate::config::TimestampPosition>,
     ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
+        // Pre-rendered timestamp run for this line, if enabled and stamped.
+        let ts_run = timestamps.and_then(|position| {
+            line.timestamp
+                .and_then(|ts| Self::format_line_timestamp(ts, position))
+                .map(|text| (text, position))
+        });
+        let ts_format = egui::text::TextFormat {
+            font_id: font_id.clone(),
+            color: visuals.weak_text_color(),
+            ..Default::default()
+        };
 
         ui.scope(|ui| {
             // Keep inter-widget spacing at zero so links don't introduce
@@ -217,6 +245,10 @@ impl VellumGuiApp {
                 // Consecutive non-link segments accumulate into one LayoutJob;
                 // links flush it and render as their own clickable widgets.
                 let mut job = egui::text::LayoutJob::default();
+
+                if let Some((text, crate::config::TimestampPosition::Start)) = &ts_run {
+                    job.append(text, 0.0, ts_format.clone());
+                }
 
                 for segment in &line.segments {
                     if segment.text.is_empty() {
@@ -281,6 +313,10 @@ impl VellumGuiApp {
                             Self::segment_text_format(segment, visuals, false, font_id),
                         );
                     }
+                }
+
+                if let Some((text, crate::config::TimestampPosition::End)) = &ts_run {
+                    job.append(text, 0.0, ts_format.clone());
                 }
 
                 Self::flush_text_job(ui, &mut job);
@@ -516,7 +552,11 @@ impl VellumGuiApp {
             .as_deref()
             .and_then(parse_hex_color)
             .unwrap_or_else(|| ui.visuals().selection.bg_fill);
-        let text = if data.label.is_empty() {
+        let text = if data.current_only {
+            data.value.to_string()
+        } else if data.numbers_only {
+            format!("{}/{}", data.value, data.max)
+        } else if data.label.is_empty() {
             format!("{}%", (fraction * 100.0).round() as u32)
         } else {
             data.label.clone()
@@ -750,11 +790,19 @@ impl VellumGuiApp {
             now_f,
         );
         let fraction = remaining_f.min(FULL_BAR_SECONDS as f32) / FULL_BAR_SECONDS as f32;
-        let fill = match countdown.countdown_id.to_ascii_lowercase().as_str() {
-            "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
-            "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
-            _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
-        };
+        // Custom color override from the window config wins; otherwise the
+        // fill falls back to the well-known per-timer defaults.
+        let fill = countdown
+            .color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(
+                || match countdown.countdown_id.to_ascii_lowercase().as_str() {
+                    "roundtime" => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                    "casttime" => Color32::from_rgb(0x47, 0x84, 0xd9),
+                    _ => Color32::from_rgb(0xd9, 0x9a, 0x2b),
+                },
+            );
         let text = if countdown.label.is_empty() {
             format!("{remaining}")
         } else {
@@ -2501,7 +2549,15 @@ impl VellumGuiApp {
                 {
                     let before = ui.cursor().min.y;
                     if let Some(link) =
-                        Self::render_styled_line(ui, line, &visuals, search_query, font_id, wrap)
+                        Self::render_styled_line(
+                            ui,
+                            line,
+                            &visuals,
+                            search_query,
+                            font_id,
+                            wrap,
+                            content.show_timestamps.then_some(content.timestamp_position),
+                        )
                     {
                         clicked_link = Some(link);
                     }
@@ -2548,7 +2604,7 @@ impl VellumGuiApp {
             .show(ui, |ui| {
                 for line in lines {
                     if let Some(link) =
-                        Self::render_styled_line(ui, line, &visuals, None, font_id, true)
+                        Self::render_styled_line(ui, line, &visuals, None, font_id, true, None)
                     {
                         clicked_link = Some(link);
                     }
@@ -2686,6 +2742,10 @@ impl VellumGuiApp {
             }
             WindowContent::ActiveEffects(content) => {
                 Self::render_active_effects_content(ui, content, settings);
+                None
+            }
+            WindowContent::WebUi(content) => {
+                Self::render_webui_content(ui, content);
                 None
             }
             WindowContent::Targets => Self::render_targets_content(app_core, ui),

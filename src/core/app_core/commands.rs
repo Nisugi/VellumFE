@@ -75,6 +75,7 @@ impl AppCore {
             let styled_line = StyledLine {
                 segments,
                 stream: String::from("main"),
+                timestamp: None,
             };
 
             // Echo bypasses the message pipeline, so mirror it to remote
@@ -307,6 +308,13 @@ impl AppCore {
                     self.add_system_message("Usage: .deletewindow <name>");
                 }
             }
+            // Lich WebUI bridge: no args -> handshake + page picker;
+            // ".webui <script/page>" -> open that page as a native panel.
+            "webui" => match parts.get(1) {
+                None => return Ok("action:webui".to_string()),
+                Some(&"off") => return Ok("action:webui:off".to_string()),
+                Some(page) => return Ok(format!("action:webui:open:{}", page)),
+            },
             "addwindow" => {
                 if parts.len() >= 6 {
                     let name = parts[1];

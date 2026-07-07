@@ -50,7 +50,7 @@ pub use widgets::{
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
     SpacerWidgetData, SpellsWidgetData, TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData,
-    TextReplacement, TextWidgetData, WindowBase,
+    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase,
 };
 pub use window_def::WindowDef;
 

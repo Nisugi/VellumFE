@@ -19,6 +19,7 @@ mod sound;
 mod spell_abbrevs;
 mod theme;
 mod tts;
+mod webui;
 mod window_position;
 
 use anyhow::{Context, Result};

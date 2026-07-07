@@ -357,7 +357,7 @@ fn default_tab_bar_position() -> String {
 }
 
 /// Tab configuration for TabbedText widget
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TabbedTextTab {
     pub name: String,
     /// Single stream (for compatibility) - converts to streams array
@@ -881,6 +881,14 @@ pub struct BetrayerWidgetData {
     /// Progress bar color (default: dark red #8b0000)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bar_color: Option<String>,
+}
+
+/// Lich WebUI panel data - binds the window to one registered page
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WebUiWidgetData {
+    /// Page id, "script/page" (e.g. "creaturebar/main")
+    #[serde(default)]
+    pub page: String,
 }
 
 pub fn default_minivitals_bar_order() -> Vec<String> {

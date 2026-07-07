@@ -100,6 +100,20 @@ pub enum TabKey {
 
     /// Perception/awareness display
     Perception,
+
+    /// Lich WebUI panel bound to a page ("script/page")
+    WebUi {
+        /// Page id, e.g. "creaturebar/main"
+        page: String,
+    },
+
+    /// Fallback key for an extra window whose natural singleton key is
+    /// already claimed (e.g. a second targets window added alongside the
+    /// canonical one). Keyed by window name so every window gets a tab.
+    WindowByName {
+        /// Window name (stable internal id)
+        id: String,
+    },
 }
 
 impl TabKey {
@@ -135,6 +149,8 @@ impl TabKey {
             TabKey::Dashboard => "Dashboard".to_string(),
             TabKey::Encumbrance => "Encumbrance".to_string(),
             TabKey::Perception => "Perception".to_string(),
+            TabKey::WebUi { page } => page.clone(),
+            TabKey::WindowByName { id } => id.clone(),
         }
     }
 
@@ -164,6 +180,8 @@ impl TabKey {
             TabKey::Dashboard => "dashboard".to_string(),
             TabKey::Encumbrance => "encumbrance".to_string(),
             TabKey::Perception => "perception".to_string(),
+            TabKey::WebUi { page } => format!("webui:{}", page),
+            TabKey::WindowByName { id } => format!("win:{}", id),
         }
     }
 }
@@ -249,6 +267,26 @@ mod tests {
 
         let parsed: TabKey = serde_json::from_str(&json).unwrap();
         assert_eq!(key, parsed);
+    }
+
+    #[test]
+    fn test_tab_key_webui_roundtrip() {
+        let key = TabKey::WebUi {
+            page: "creaturebar/main".to_string(),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(json.contains("web_ui"));
+        assert!(json.contains("creaturebar/main"));
+        assert_eq!(serde_json::from_str::<TabKey>(&json).unwrap(), key);
+        assert_eq!(key.short_id(), "webui:creaturebar/main");
+        assert_eq!(key.default_title(), "creaturebar/main");
+
+        // A WebUI panel and a text window whose name happens to equal the
+        // page id must NOT collide on the same TabKey.
+        let text = TabKey::TextByName {
+            id: "creaturebar/main".to_string(),
+        };
+        assert_ne!(key, text);
     }
 
     #[test]

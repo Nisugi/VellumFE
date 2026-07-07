@@ -231,6 +231,15 @@ pub enum WindowDef {
         #[serde(flatten)]
         data: BetrayerWidgetData,
     },
+
+    /// Lich WebUI panel (native rendering of a script's registered page)
+    #[serde(rename = "webui")]
+    WebUi {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: WebUiWidgetData,
+    },
 }
 
 impl WindowDef {
@@ -264,6 +273,7 @@ impl WindowDef {
             WindowDef::Encumbrance { base, .. } => &base.name,
             WindowDef::MiniVitals { base, .. } => &base.name,
             WindowDef::Betrayer { base, .. } => &base.name,
+            WindowDef::WebUi { base, .. } => &base.name,
         }
     }
 
@@ -297,6 +307,7 @@ impl WindowDef {
             WindowDef::Encumbrance { .. } => "encum",
             WindowDef::MiniVitals { .. } => "minivitals",
             WindowDef::Betrayer { .. } => "betrayer",
+            WindowDef::WebUi { .. } => "webui",
         }
     }
 
@@ -330,6 +341,7 @@ impl WindowDef {
             WindowDef::Encumbrance { base, .. } => base,
             WindowDef::MiniVitals { base, .. } => base,
             WindowDef::Betrayer { base, .. } => base,
+            WindowDef::WebUi { base, .. } => base,
         }
     }
 
@@ -363,6 +375,7 @@ impl WindowDef {
             WindowDef::Encumbrance { base, .. } => base,
             WindowDef::MiniVitals { base, .. } => base,
             WindowDef::Betrayer { base, .. } => base,
+            WindowDef::WebUi { base, .. } => base,
         }
     }
 }

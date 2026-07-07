@@ -8,7 +8,8 @@ use crate::cmdlist::CmdList;
 use crate::config::{AppKeybinds, Config, KeyBindAction, TargetListConfig};
 use crate::core::AppCore;
 use crate::data::{
-    InputMode, LinkData, PopupMenu, StyledLine, TabbedTextContent, TextContent, TextSegment,
+    InputMode, LinkData, PopupMenu, PopupMenuItem, StyledLine, TabbedTextContent, TextContent,
+    TextSegment,
     WidgetType, WindowContent, WindowState,
 };
 use crate::network::{LichConnection, RawLogger, ServerMessage};
@@ -27,6 +28,7 @@ mod editors;
 mod menus;
 mod status_icons;
 mod theme;
+mod webui_panel;
 mod widgets;
 mod zones;
 
@@ -214,6 +216,7 @@ pub struct VellumGuiApp {
     theme_editor: Option<editors::ThemeEditorState>,
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
+    custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     search_bar_needs_focus: bool,
     /// Cached search-bar match count: (lowercased query, content fingerprint, count).
     search_match_cache: Option<(String, u64, usize)>,
@@ -240,6 +243,35 @@ pub struct VellumGuiApp {
     /// Latest main OS window geometry, persisted so the next launch opens
     /// at the same size (per-window rects are saved against this geometry).
     main_viewport_state: Option<MainViewportState>,
+    /// Lich WebUI bridge socket (Some while a session's WebUI is connected).
+    webui_bridge: Option<crate::webui::WebUiHandle>,
+    /// Bridge events, forwarded through a repaint-waking hop like server_rx.
+    webui_rx: Option<mpsc::UnboundedReceiver<crate::webui::WebUiEvent>>,
+    /// Pages currently registered on the connected Lich session.
+    webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
+    /// Actions deferred until the handshake/hello completes.
+    webui_pending: Vec<WebUiPendingAction>,
+    /// True while direct-connected (no Lich): `;ui` commands would reach the
+    /// game itself, so the bridge is unavailable.
+    is_direct_connection: bool,
+    /// Ensures the layout-driven auto-handshake fires once per connect.
+    webui_handshake_sent: bool,
+    /// (port, auth token) of the connected WebUI server, for /files/ image
+    /// fetches. The token is script-level power: never log it.
+    webui_endpoint: Option<(u16, String)>,
+    /// Raw bridge event sender; image fetch tasks report through it.
+    webui_event_tx: Option<mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
+    /// Image srcs with a fetch task in flight (dedupes re-queues).
+    webui_fetches_inflight: HashSet<String>,
+}
+
+/// What to do once the Lich WebUI bridge says hello.
+#[derive(Clone, Debug, PartialEq)]
+enum WebUiPendingAction {
+    /// Open the page-picker popup menu.
+    Picker,
+    /// Subscribe and open a panel for this page id.
+    Open(String),
 }
 
 impl VellumGuiApp {
@@ -252,6 +284,7 @@ impl VellumGuiApp {
     ) -> Result<Self> {
         let core_layout_size = (initial_width.max(1.0) as u16, initial_height.max(1.0) as u16);
         app_core.init_windows(core_layout_size.0, core_layout_size.1);
+        let is_direct_connection = direct.is_some();
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
@@ -506,6 +539,7 @@ impl VellumGuiApp {
             theme_editor: None,
             indicator_templates_editor: None,
             window_editor: None,
+            custom_windows_editor: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
@@ -520,6 +554,15 @@ impl VellumGuiApp {
             hand_resize_tab: None,
             last_monitor_bounds: None,
             main_viewport_state,
+            webui_bridge: None,
+            webui_rx: None,
+            webui_pages: Vec::new(),
+            webui_pending: Vec::new(),
+            is_direct_connection,
+            webui_handshake_sent: false,
+            webui_endpoint: None,
+            webui_event_tx: None,
+            webui_fetches_inflight: HashSet::new(),
         })
     }
 
@@ -539,7 +582,10 @@ impl VellumGuiApp {
 
     fn collect_available_tabs(app_core: &AppCore) -> HashMap<TabKey, GuiTab> {
         let mut keys: Vec<String> = app_core.ui_state.windows.keys().cloned().collect();
-        keys.sort();
+        // Canonical windows first so they claim singleton keys (Targets,
+        // Room, …) ahead of user-added "custom-*" duplicates, which fall
+        // back to name-keyed tabs below instead of hijacking the slot.
+        keys.sort_by_key(|name| (name.starts_with("custom-"), name.clone()));
 
         let mut tabs = HashMap::new();
         for name in keys {
@@ -547,9 +593,15 @@ impl VellumGuiApp {
                 continue;
             };
 
-            let Some(tab_key) = Self::tab_key_for_window(&name, window) else {
+            let Some(mut tab_key) = Self::tab_key_for_window(&name, window) else {
                 continue;
             };
+            // A second window of a singleton type would silently lose the
+            // entry race and never get a tab (invisible, unlisted). Key
+            // extras by window name so every window stays reachable.
+            if tabs.contains_key(&tab_key) {
+                tab_key = TabKey::WindowByName { id: name.clone() };
+            }
 
             // The main story window keeps its canonical title regardless of the
             // layout's window name (legacy layouts call it "main"/"primary").
@@ -623,6 +675,15 @@ impl VellumGuiApp {
                 } else {
                     TabKey::SpellHand
                 }
+            }
+            WidgetType::WebUi => {
+                // Key on the bound page id, not the window name, so a WebUI
+                // panel never shares TabByName's keyspace with text windows.
+                let page = match &window.content {
+                    WindowContent::WebUi(content) => content.page_id.clone(),
+                    _ => name.to_string(),
+                };
+                TabKey::WebUi { page }
             }
             _ => TabKey::TextByName {
                 id: name.to_string(),
@@ -723,6 +784,7 @@ impl VellumGuiApp {
                     .map(|segments| StyledLine {
                         segments: segments.clone(),
                         stream: "room".to_string(),
+                        timestamp: None,
                     })
                     .collect()
             })
@@ -1531,6 +1593,15 @@ impl VellumGuiApp {
                 ServerMessage::Connected => {
                     self.app_core.game_state.connected = true;
                     self.app_core.needs_render = true;
+                    // Layout has saved WebUI panels: bring them back up
+                    // automatically (Lich proxy connections only - a direct
+                    // connection has no Lich to answer the handshake).
+                    if !self.is_direct_connection
+                        && !self.webui_handshake_sent
+                        && self.has_webui_windows()
+                    {
+                        self.request_webui_handshake();
+                    }
                 }
                 ServerMessage::Disconnected => {
                     self.app_core.game_state.connected = false;
@@ -1568,7 +1639,20 @@ impl VellumGuiApp {
             }
             self.app_core
                 .process_pending_window_additions(layout_width, layout_height);
+
+            // A `;ui handshake` reply arrived on the game stream: connect
+            // (or reconnect) the WebUI bridge with the fresh port + token.
+            if let Some(handshake) = self
+                .app_core
+                .message_processor
+                .pending_webui_handshake
+                .take()
+            {
+                self.handle_webui_handshake(handshake);
+            }
         }
+
+        self.pump_webui_events();
 
         // Flush coalesced state deltas to web clients once per batch
         // (no-op unless [web] is enabled)
@@ -1585,6 +1669,355 @@ impl VellumGuiApp {
 
         // Poll TTS callback events for auto-play.
         self.app_core.poll_tts_events();
+    }
+
+    // ==================== Lich WebUI bridge ====================
+
+    fn has_webui_windows(&self) -> bool {
+        self.app_core
+            .ui_state
+            .windows
+            .values()
+            .any(|w| matches!(w.content, WindowContent::WebUi(_)))
+    }
+
+    /// Asks Lich for the WebUI endpoint. The reply comes back on the game
+    /// stream as one `<LichWebUI .../>` line (handled in pump_server_messages).
+    fn request_webui_handshake(&mut self) {
+        if self.is_direct_connection {
+            self.app_core.add_system_message(
+                "The Lich WebUI needs a Lich proxy connection (direct connections bypass Lich).",
+            );
+            self.webui_pending.clear();
+            return;
+        }
+        self.webui_handshake_sent = true;
+        // Accounted raw send (byte counters, no dot-command re-interception),
+        // matching every other outbound line.
+        self.dispatch_raw_command(";ui handshake".to_string());
+    }
+
+    fn handle_webui_handshake(&mut self, handshake: crate::data::webui::WebUiHandshake) {
+        match handshake.status.as_str() {
+            "ok" => {}
+            "disabled" => {
+                self.app_core.add_system_message(
+                    "Lich WebUI is disabled. Run ;ui on (persists), then .webui again.",
+                );
+                self.webui_pending.clear();
+                return;
+            }
+            other => {
+                self.app_core.add_system_message(&format!(
+                    "Lich WebUI is not running (status: {}). Check ;ui status in Lich.",
+                    other
+                ));
+                self.webui_pending.clear();
+                return;
+            }
+        }
+        let Some(token) = handshake.token().map(String::from) else {
+            self.app_core
+                .add_system_message("Lich WebUI handshake had no auth token; cannot connect.");
+            return;
+        };
+
+        // Replace any prior bridge (Lich restarts change port and token).
+        self.webui_bridge = None;
+        self.webui_rx = None;
+        self.webui_endpoint = Some((handshake.port, token.clone()));
+        self.webui_fetches_inflight.clear();
+
+        // Same waking hop as server messages: forward bridge events and
+        // repaint so panel updates aren't stuck waiting for an idle frame.
+        let (event_tx, mut raw_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
+        self.webui_event_tx = Some(event_tx.clone());
+        let (forward_tx, forward_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
+        let waker_ctx = std::sync::Arc::clone(&self.repaint_ctx);
+        self._runtime.spawn(async move {
+            while let Some(event) = raw_rx.recv().await {
+                if forward_tx.send(event).is_err() {
+                    break;
+                }
+                if let Some(ctx) = waker_ctx.lock().ok().and_then(|slot| slot.clone()) {
+                    ctx.request_repaint();
+                }
+            }
+        });
+
+        let handle =
+            crate::webui::start(self._runtime.handle(), handshake.port, token, event_tx);
+        self.webui_bridge = Some(handle);
+        self.webui_rx = Some(forward_rx);
+        tracing::info!("WebUI bridge connecting to port {}", handshake.port);
+    }
+
+    /// Applies bridge events to panel windows. Called once per frame.
+    fn pump_webui_events(&mut self) {
+        let Some(rx) = self.webui_rx.as_mut() else {
+            return;
+        };
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        for event in events {
+            match event {
+                crate::webui::WebUiEvent::Hello { session, pages, .. } => {
+                    self.webui_pages = pages;
+                    self.set_webui_windows_connected(true);
+                    // Fresh connection: failed images are worth retrying, and
+                    // Loading entries are orphans of the previous socket.
+                    if let Some(ctx) = self.repaint_ctx.lock().ok().and_then(|slot| slot.clone()) {
+                        Self::clear_stale_webui_images(&ctx);
+                    }
+                    self.app_core.add_system_message(&format!(
+                        "Lich WebUI connected ({} - {} page{}).",
+                        session.name,
+                        self.webui_pages.len(),
+                        if self.webui_pages.len() == 1 { "" } else { "s" }
+                    ));
+                    // Re-subscribe every panel window (fresh socket has no
+                    // subscriptions; renders re-arrive and clear stale trees).
+                    let pages: Vec<String> = self
+                        .app_core
+                        .ui_state
+                        .windows
+                        .values()
+                        .filter_map(|w| match &w.content {
+                            WindowContent::WebUi(content) => Some(content.page_id.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(bridge) = &self.webui_bridge {
+                        for page in pages {
+                            bridge.subscribe(&page);
+                        }
+                    }
+                    let pending = std::mem::take(&mut self.webui_pending);
+                    for action in pending {
+                        match action {
+                            WebUiPendingAction::Picker => self.open_webui_picker(),
+                            WebUiPendingAction::Open(page) => self.open_webui_page(&page),
+                        }
+                    }
+                }
+                crate::webui::WebUiEvent::Pages(pages) => {
+                    // A page we host may have just re-registered (script
+                    // restart): subscribe again so it resumes.
+                    let hosted_ended: Vec<String> = self
+                        .app_core
+                        .ui_state
+                        .windows
+                        .values()
+                        .filter_map(|w| match &w.content {
+                            WindowContent::WebUi(content) if content.ended.is_some() => {
+                                Some(content.page_id.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(bridge) = &self.webui_bridge {
+                        for page in hosted_ended {
+                            if pages.iter().any(|p| p.id == page) {
+                                bridge.subscribe(&page);
+                            }
+                        }
+                    }
+                    self.webui_pages = pages;
+                }
+                crate::webui::WebUiEvent::Render { page, seq, tree } => {
+                    self.apply_webui_render(&page, seq, tree);
+                }
+                crate::webui::WebUiEvent::PageClosed { page } => {
+                    self.with_webui_window(&page, |content| {
+                        content.ended = Some("The owning script exited.".to_string());
+                    });
+                }
+                crate::webui::WebUiEvent::Notice { level, text } => {
+                    self.app_core
+                        .add_system_message(&format!("[WebUI {}] {}", level, text));
+                }
+                crate::webui::WebUiEvent::Disconnected { gave_up } => {
+                    self.set_webui_windows_connected(false);
+                    if gave_up {
+                        self.app_core.add_system_message(
+                            "Lich WebUI connection lost (Lich restarted?). Run .webui to reconnect.",
+                        );
+                        self.webui_bridge = None;
+                        self.webui_rx = None;
+                        self.webui_endpoint = None;
+                        self.webui_event_tx = None;
+                        self.webui_handshake_sent = false;
+                        break;
+                    }
+                }
+                crate::webui::WebUiEvent::ImageFetched { src, data } => {
+                    self.webui_fetches_inflight.remove(&src);
+                    let Some(ctx) = self.repaint_ctx.lock().ok().and_then(|slot| slot.clone())
+                    else {
+                        continue;
+                    };
+                    let state = match data {
+                        Ok(bytes) => Self::decode_webui_image(&ctx, &src, &bytes),
+                        Err(err) => {
+                            tracing::warn!("WebUI image '{}' fetch failed: {}", src, err);
+                            webui_panel::WebUiImageState::Failed(err)
+                        }
+                    };
+                    Self::set_webui_image(&ctx, src, state);
+                    self.app_core.needs_render = true;
+                }
+            }
+        }
+    }
+
+    fn apply_webui_render(&mut self, page: &str, seq: u64, tree: crate::data::webui::WebUiNode) {
+        let mut applied = false;
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::WebUi(content) = &mut window.content {
+                if content.page_id == page {
+                    // Drop stale out-of-order renders (reconnect replays can
+                    // race a live push).
+                    if seq != 0 && seq <= content.seq && content.tree.is_some() {
+                        return;
+                    }
+                    content.tree = Some(tree);
+                    content.seq = seq;
+                    content.generation = content.generation.wrapping_add(1);
+                    content.connected = true;
+                    content.ended = None;
+                    applied = true;
+                    break;
+                }
+            }
+        }
+        if applied {
+            self.app_core.needs_render = true;
+        } else {
+            tracing::debug!("WebUI render for unhosted page '{}' ignored", page);
+        }
+    }
+
+    fn with_webui_window(
+        &mut self,
+        page: &str,
+        apply: impl FnOnce(&mut crate::data::webui::WebUiPanelContent),
+    ) {
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::WebUi(content) = &mut window.content {
+                if content.page_id == page {
+                    apply(content);
+                    self.app_core.needs_render = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn set_webui_windows_connected(&mut self, connected: bool) {
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::WebUi(content) = &mut window.content {
+                content.connected = connected;
+            }
+        }
+        self.app_core.needs_render = true;
+    }
+
+    /// Popup menu of the session's registered pages (like `.addwindow`).
+    fn open_webui_picker(&mut self) {
+        if self.webui_pages.is_empty() {
+            self.app_core.add_system_message(
+                "No WebUI pages are registered. Start a script that opens one (e.g. ;webui-demo).",
+            );
+            return;
+        }
+        let items: Vec<PopupMenuItem> = self
+            .webui_pages
+            .iter()
+            .map(|page| {
+                let text = if page.title.is_empty() {
+                    page.id.clone()
+                } else {
+                    format!("{} ({})", page.title, page.id)
+                };
+                PopupMenuItem {
+                    text,
+                    command: format!(".webui {}", page.id),
+                    disabled: false,
+                }
+            })
+            .collect();
+        self.close_all_popup_menus();
+        self.app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (8, 4)));
+        self.app_core.ui_state.input_mode = InputMode::Menu;
+    }
+
+    /// Creates (or focuses) the panel window for a page and subscribes.
+    fn open_webui_page(&mut self, page_id: &str) {
+        let descriptor = self.webui_pages.iter().find(|p| p.id == page_id);
+        let title = descriptor
+            .map(|d| {
+                if d.title.is_empty() {
+                    d.id.clone()
+                } else {
+                    d.title.clone()
+                }
+            })
+            .unwrap_or_else(|| page_id.to_string());
+        let size = descriptor.and_then(|d| d.size);
+
+        let name = self.app_core.add_webui_window(page_id, &title, size);
+        self.with_webui_window(page_id, |content| {
+            content.connected = true;
+        });
+        if let Some(bridge) = &self.webui_bridge {
+            bridge.subscribe(page_id);
+        }
+        self.layout_dirty = true;
+        tracing::info!("WebUI panel '{}' opened for page '{}'", name, page_id);
+    }
+
+    /// `.webui` action entry points (returns true when handled).
+    fn handle_webui_action(&mut self, action: &str) -> bool {
+        if action == "action:webui" {
+            if self.webui_bridge.is_some() && !self.webui_pages.is_empty() {
+                self.open_webui_picker();
+            } else {
+                self.webui_pending.push(WebUiPendingAction::Picker);
+                self.app_core
+                    .add_system_message("Requesting WebUI handshake from Lich...");
+                self.request_webui_handshake();
+            }
+            return true;
+        }
+        if action == "action:webui:off" {
+            self.webui_bridge = None;
+            self.webui_rx = None;
+            self.webui_pages.clear();
+            self.webui_pending.clear();
+            self.webui_handshake_sent = false;
+            self.webui_endpoint = None;
+            self.webui_event_tx = None;
+            self.webui_fetches_inflight.clear();
+            self.set_webui_windows_connected(false);
+            self.app_core
+                .add_system_message("Lich WebUI bridge disconnected.");
+            return true;
+        }
+        if let Some(page) = action.strip_prefix("action:webui:open:") {
+            let page = page.to_string();
+            if self.webui_bridge.is_some() {
+                self.open_webui_page(&page);
+            } else {
+                self.webui_pending.push(WebUiPendingAction::Open(page));
+                self.app_core
+                    .add_system_message("Requesting WebUI handshake from Lich...");
+                self.request_webui_handshake();
+            }
+            return true;
+        }
+        false
     }
 
     fn handle_global_input(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -2414,6 +2847,12 @@ impl VellumGuiApp {
                     self.app_core.layout_modified_since_save = true;
                     self.app_core
                         .add_system_message(&format!("Window '{}' added.", actual_name));
+                    // Blank custom widgets start unconfigured (e.g. a countdown
+                    // with no feed id renders as nothing) — drop the user
+                    // straight into the editor, like the TUI does.
+                    if template.ends_with("_custom") {
+                        self.open_window_editor(Some(&actual_name));
+                    }
                 } else {
                     self.app_core.add_system_message(&format!(
                         "Window '{}' added but its definition could not be retrieved.",
@@ -2625,8 +3064,26 @@ impl VellumGuiApp {
             );
             return true;
         }
+        if self.handle_webui_action(action) {
+            return true;
+        }
+        if action == "action:customwindows" {
+            self.open_custom_windows_editor();
+            return true;
+        }
         if action == "action:addwindow" {
-            let items = self.app_core.build_add_window_menu();
+            let mut items = self.app_core.build_add_window_menu();
+            // Surface the custom-window authoring panel at the top of the Add
+            // Widget menu so creating a stream-fed window is discoverable
+            // (GUI-local; the shared core menu builder stays untouched).
+            items.insert(
+                0,
+                PopupMenuItem {
+                    text: "Custom Window…".to_string(),
+                    command: "action:customwindows".to_string(),
+                    disabled: false,
+                },
+            );
             if items.is_empty() {
                 self.app_core
                     .add_system_message("No window templates available to add.");
@@ -3278,6 +3735,56 @@ impl eframe::App for VellumGuiApp {
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);
         self.render_search_bar(&ctx);
+
+        // Interactions queued by WebUI panels during this frame go out over
+        // the bridge socket (button clicks, input submits, row clicks).
+        let webui_events = Self::take_pending_webui_events(&ctx);
+        if !webui_events.is_empty() {
+            if let Some(bridge) = &self.webui_bridge {
+                for event in webui_events {
+                    bridge.send(event);
+                }
+            }
+        }
+
+        // Images the panels asked for: /files/ srcs fetch over the bridge's
+        // HTTP endpoint (cookie-authed); anything else fails visibly.
+        for src in Self::take_pending_webui_fetches(&ctx) {
+            if self.webui_fetches_inflight.contains(&src) {
+                continue;
+            }
+            match (&self.webui_endpoint, &self.webui_event_tx) {
+                (Some((port, token)), Some(event_tx)) if src.starts_with("/files/") => {
+                    self.webui_fetches_inflight.insert(src.clone());
+                    crate::webui::fetch_image(
+                        self._runtime.handle(),
+                        *port,
+                        token.clone(),
+                        src,
+                        event_tx.clone(),
+                    );
+                }
+                _ => {
+                    let reason = if src.starts_with("/files/") {
+                        "not connected to the Lich WebUI".to_string()
+                    } else {
+                        "external image URLs are not supported yet".to_string()
+                    };
+                    Self::set_webui_image(
+                        &ctx,
+                        src,
+                        webui_panel::WebUiImageState::Failed(reason),
+                    );
+                }
+            }
+        }
+
+        // Pages an image_map right-click asked to open (popup:).
+        for page in Self::take_pending_webui_page_opens(&ctx) {
+            if !page.is_empty() {
+                self.open_webui_page(&page);
+            }
+        }
         // Layout mutations mark `layout_dirty` at their call sites; debounce the
         // blocking disk write until the layout has been stable for a while. Any
         // still-pending save is flushed on shutdown.
@@ -3325,6 +3832,11 @@ impl eframe::App for VellumGuiApp {
         }
         // Flush any debounced layout changes while the app is still intact.
         self.save_layout_state();
+        // Persist the config layout (WindowDef data: streams, feed ids,
+        // added/removed windows) and session cache. Without this, closing
+        // the window with the X button silently discarded every window-def
+        // edit — only the `quit` command path saved them.
+        self.app_core.save_on_quit();
     }
 }
 

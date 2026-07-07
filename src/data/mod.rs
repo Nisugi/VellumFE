@@ -7,11 +7,13 @@
 pub mod input;
 pub mod remote_buffer;
 pub mod ui_state;
+pub mod webui;
 pub mod widget;
 pub mod window;
 
 pub use input::*;
 pub use remote_buffer::*;
 pub use ui_state::*;
+pub use webui::*;
 pub use widget::*;
 pub use window::*;

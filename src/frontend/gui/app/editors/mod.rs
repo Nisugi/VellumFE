@@ -3,6 +3,7 @@
 //! the shared core config layer, so both frontends stay in sync.
 
 mod colors;
+mod custom_windows;
 mod highlights;
 mod indicators;
 mod keybinds;
@@ -11,6 +12,7 @@ mod themes;
 mod windows;
 
 pub(super) use colors::ColorsEditorState;
+pub(super) use custom_windows::CustomWindowsEditorState;
 pub(super) use highlights::HighlightEditorState;
 pub(super) use indicators::IndicatorTemplatesEditorState;
 pub(super) use keybinds::KeybindEditorState;
@@ -32,6 +34,7 @@ impl VellumGuiApp {
         self.render_theme_editor(ctx);
         self.render_indicator_templates_editor(ctx);
         self.render_window_editor(ctx);
+        self.render_custom_windows_editor(ctx);
     }
 }
 

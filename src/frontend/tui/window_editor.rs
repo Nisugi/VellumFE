@@ -735,6 +735,48 @@ impl PerformanceMetricsEditor {
     }
 }
 
+/// Modal list of stream ids Lich has pushed this session, opened from the
+/// Streams field so the user can subscribe a window to a stream without typing
+/// its id. Selecting a row appends the id to the Streams field. Parity with the
+/// GUI custom-windows "seen this session" picker.
+#[derive(Clone, Debug)]
+struct StreamPicker {
+    /// (stream id, optional friendly label), sorted by id — the snapshot taken
+    /// when the picker was opened.
+    streams: Vec<(String, Option<String>)>,
+    selected: usize,
+    /// Click areas for mouse support: (row_index, y, x, width).
+    click_areas: Vec<(usize, u16, u16, u16)>,
+}
+
+impl StreamPicker {
+    fn new(streams: Vec<(String, Option<String>)>) -> Self {
+        Self {
+            streams,
+            selected: 0,
+            click_areas: Vec::new(),
+        }
+    }
+
+    fn move_selection(&mut self, down: bool) {
+        if self.streams.is_empty() {
+            return;
+        }
+        if down {
+            self.selected = (self.selected + 1) % self.streams.len();
+        } else if self.selected == 0 {
+            self.selected = self.streams.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    /// The id of the currently highlighted row, if any.
+    fn selected_id(&self) -> Option<&str> {
+        self.streams.get(self.selected).map(|(id, _)| id.as_str())
+    }
+}
+
 impl IndicatorEditor {
     fn from_defs(defs: &[DashboardIndicatorDef], available: Vec<IndicatorItem>) -> Self {
         // Merge available templates with current defs; mark enabled when present in defs
@@ -1434,6 +1476,13 @@ pub struct WindowEditor {
     performance_metrics_editor: Option<PerformanceMetricsEditor>,
     text_replacements_editor: Option<TextReplacementsEditor>,
     bar_order_editor: Option<BarOrderEditor>,
+    /// Modal picker over streams Lich has sent this session (opened from the
+    /// Streams field). `None` when not active.
+    stream_picker: Option<StreamPicker>,
+    /// Snapshot of streams seen this session, seeded by the caller (which has
+    /// AppCore in scope) since the editor holds no app reference — mirrors how
+    /// `available_indicators` is populated.
+    seen_streams: Vec<(String, Option<String>)>,
     /// Stores (y_position, field_ref) for click-to-select
     field_click_areas: Vec<(u16, u16, FieldRef)>, // (y, x_start, field)
 }
@@ -1744,6 +1793,9 @@ impl WindowEditor {
                 // Betrayer widget - show_items toggle and bar color
                 fields.push(FieldRef::BetrayerShowItems);
                 fields.push(FieldRef::BetrayerBarColor);
+            }
+            WindowDef::WebUi { .. } => {
+                // Page binding is set by .webui; nothing editable beyond base
             }
         }
 
@@ -2349,6 +2401,8 @@ impl WindowEditor {
             performance_metrics_editor: None,
             text_replacements_editor: None,
             bar_order_editor: None,
+            stream_picker: None,
+            seen_streams: Vec::new(),
             field_click_areas: Vec::new(),
         }
     }
@@ -2692,6 +2746,8 @@ impl WindowEditor {
             performance_metrics_editor: None,
             text_replacements_editor: None,
             bar_order_editor: None,
+            stream_picker: None,
+            seen_streams: Vec::new(),
             field_click_areas: Vec::new(),
         }
     }
@@ -2765,10 +2821,13 @@ impl WindowEditor {
     }
 
     pub fn is_sub_editor_active(&self) -> bool {
-        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some() || self.bar_order_editor.is_some()
+        self.tab_editor.is_some() || self.indicator_editor.is_some() || self.performance_metrics_editor.is_some() || self.text_replacements_editor.is_some() || self.bar_order_editor.is_some() || self.stream_picker.is_some()
     }
 
     fn footer_help_text(&self) -> &str {
+        if self.stream_picker.is_some() {
+            return "[Enter: Add stream]─[Esc: Back]";
+        }
         if self.performance_metrics_editor.is_some() {
             return "[Space/Enter/T: Toggle]─[Esc: Back]";
         }
@@ -2818,6 +2877,50 @@ impl WindowEditor {
     fn open_performance_metrics_editor(&mut self) {
         let items = self.perf_group_states();
         self.performance_metrics_editor = Some(PerformanceMetricsEditor::new(items));
+    }
+
+    /// Seed the streams-seen-this-session snapshot. Called by the input layer,
+    /// which has AppCore in scope, right after the editor is constructed.
+    pub fn set_seen_streams(&mut self, seen: Vec<(String, Option<String>)>) {
+        self.seen_streams = seen;
+    }
+
+    /// Open the seen-streams picker over the current snapshot. Does nothing if
+    /// no streams have been observed yet (the caller surfaces a status message).
+    pub fn open_stream_picker(&mut self) -> bool {
+        if self.seen_streams.is_empty() {
+            self.status_message =
+                "No custom streams seen yet this session.".to_string();
+            return false;
+        }
+        self.stream_picker = Some(StreamPicker::new(self.seen_streams.clone()));
+        true
+    }
+
+    /// Append a stream id to the Streams field's comma-separated list, skipping
+    /// duplicates (case-insensitive). Mirrors the GUI `append_stream_id` helper.
+    fn append_stream_to_field(&mut self, id: &str) {
+        let current = self
+            .streams_input
+            .lines()
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let already = current
+            .split(',')
+            .any(|s| s.trim().eq_ignore_ascii_case(id));
+        if already {
+            return;
+        }
+        let trimmed = current.trim_end().trim_end_matches(',');
+        let next = if trimmed.is_empty() {
+            id.to_string()
+        } else {
+            format!("{}, {}", trimmed, id)
+        };
+        // Replace the single-line TextArea contents wholesale.
+        self.streams_input = Self::create_textarea();
+        self.streams_input.insert_str(&next);
     }
 
     fn open_perception_replacements_editor(&mut self) {
@@ -3016,6 +3119,11 @@ impl WindowEditor {
     }
 
     fn close_sub_editor(&mut self) -> bool {
+        if self.stream_picker.is_some() {
+            // Selections are applied immediately on Enter; nothing to commit.
+            self.stream_picker = None;
+            return true;
+        }
         if self.tab_editor.is_some() {
             self.commit_tab_editor();
             self.tab_editor = None;
@@ -3114,6 +3222,12 @@ impl WindowEditor {
     /// Check if the current field is the Edit Tabs button
     pub fn is_on_edit_tabs(&self) -> bool {
         matches!(self.current_field_ref(), Some(FieldRef::EditTabs))
+    }
+
+    /// Whether the Streams text field is currently focused (used to gate the
+    /// seen-streams picker hotkey).
+    pub fn is_on_streams(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::Streams))
     }
 
     /// Check if the current field is the Edit Indicators button
@@ -3801,6 +3915,11 @@ impl WindowEditor {
             return true;
         }
 
+        if let Some(picker) = self.stream_picker.as_mut() {
+            picker.move_selection(down);
+            return true;
+        }
+
         if let Some(editor) = self.performance_metrics_editor.as_mut() {
             editor.move_selection(down);
             return true;
@@ -4070,6 +4189,41 @@ impl WindowEditor {
                         return true;
                     }
                 },
+            }
+        }
+
+        if self.stream_picker.is_some() {
+            match key_event.code {
+                KeyCode::Up => {
+                    if let Some(picker) = self.stream_picker.as_mut() {
+                        picker.move_selection(false);
+                    }
+                    return true;
+                }
+                KeyCode::Down => {
+                    if let Some(picker) = self.stream_picker.as_mut() {
+                        picker.move_selection(true);
+                    }
+                    return true;
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    // Append the highlighted id; keep the picker open so several
+                    // streams can be added in a row.
+                    let id = self
+                        .stream_picker
+                        .as_ref()
+                        .and_then(|picker| picker.selected_id())
+                        .map(str::to_string);
+                    if let Some(id) = id {
+                        self.append_stream_to_field(&id);
+                    }
+                    return true;
+                }
+                KeyCode::Esc => {
+                    self.close_sub_editor();
+                    return true;
+                }
+                _ => {}
             }
         }
 
@@ -5016,6 +5170,12 @@ impl WindowEditor {
             return;
         }
 
+        if let Some(mut picker) = self.stream_picker.take() {
+            self.render_stream_picker(area, buf, theme, &mut picker);
+            self.stream_picker = Some(picker);
+            return;
+        }
+
         if let Some(mut editor) = self.performance_metrics_editor.take() {
             self.render_performance_metrics_editor(area, buf, theme, &mut editor);
             self.performance_metrics_editor = Some(editor);
@@ -5379,6 +5539,56 @@ impl WindowEditor {
                     footer_style,
                 );
             }
+        }
+    }
+
+    fn render_stream_picker(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &EditorTheme,
+        picker: &mut StreamPicker,
+    ) {
+        let header_style =
+            Style::default().fg(crossterm_bridge::to_ratatui_color(theme.section_header_color));
+        buf.set_string(area.x + 1, area.y, "Streams seen this session", header_style);
+
+        picker.click_areas.clear();
+
+        if picker.streams.is_empty() {
+            let msg_style = Style::default()
+                .fg(crossterm_bridge::to_ratatui_color(theme.label_color))
+                .add_modifier(Modifier::DIM);
+            buf.set_string(
+                area.x + 1,
+                area.y + 2,
+                "(No custom streams seen yet)",
+                msg_style,
+            );
+            return;
+        }
+
+        let max_rows = area.height.saturating_sub(2);
+        for (idx, (id, label)) in picker.streams.iter().enumerate() {
+            if idx as u16 >= max_rows {
+                break;
+            }
+            let y = area.y + 1 + idx as u16;
+            let is_sel = idx == picker.selected;
+            let prefix = if is_sel { "> " } else { "  " };
+            let color = if is_sel {
+                crossterm_bridge::to_ratatui_color(theme.focused_label_color)
+            } else {
+                crossterm_bridge::to_ratatui_color(theme.label_color)
+            };
+            let line = match label {
+                Some(label) => format!("{}{} ({})", prefix, id, label),
+                None => format!("{}{}", prefix, id),
+            };
+            let text = self.truncate_to_width(&line, area.width.saturating_sub(2));
+            let width = text.chars().count() as u16;
+            buf.set_string(area.x + 1, y, text, Style::default().fg(color));
+            picker.click_areas.push((idx, y, area.x + 1, width));
         }
     }
 
@@ -7549,5 +7759,88 @@ mod tests {
         assert!(ids.contains(&"diseased".to_string()));
         assert!(ids.contains(&"stunned".to_string()));
         assert!(ids.contains(&"webbed".to_string()));
+    }
+
+    // ===========================================
+    // Stream picker (seen-streams parity with GUI)
+    // ===========================================
+
+    fn sample_seen() -> Vec<(String, Option<String>)> {
+        vec![
+            ("bounty".to_string(), None),
+            ("familiar".to_string(), Some("Familiar".to_string())),
+        ]
+    }
+
+    #[test]
+    fn test_stream_picker_move_selection_wraps() {
+        let mut picker = StreamPicker::new(sample_seen());
+        assert_eq!(picker.selected_id(), Some("bounty"));
+        picker.move_selection(true);
+        assert_eq!(picker.selected_id(), Some("familiar"));
+        // Wrap forward back to the first entry.
+        picker.move_selection(true);
+        assert_eq!(picker.selected_id(), Some("bounty"));
+        // Wrap backward to the last entry.
+        picker.move_selection(false);
+        assert_eq!(picker.selected_id(), Some("familiar"));
+    }
+
+    #[test]
+    fn test_stream_picker_empty_has_no_selection() {
+        let mut picker = StreamPicker::new(Vec::new());
+        assert_eq!(picker.selected_id(), None);
+        // Navigating an empty list must not panic or change anything.
+        picker.move_selection(true);
+        assert_eq!(picker.selected_id(), None);
+    }
+
+    #[test]
+    fn test_open_stream_picker_guards_on_empty_snapshot() {
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+        let mut editor = WindowEditor::new_window_with_layout("text_custom".to_string(), &layout);
+        // No streams seeded yet -> picker does not open.
+        assert!(!editor.open_stream_picker());
+        assert!(!editor.is_sub_editor_active());
+        // Once seeded, it opens.
+        editor.set_seen_streams(sample_seen());
+        assert!(editor.open_stream_picker());
+        assert!(editor.is_sub_editor_active());
+    }
+
+    #[test]
+    fn test_append_stream_to_field_dedups_and_separates() {
+        let layout = Layout {
+            windows: vec![],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+        };
+        let mut editor = WindowEditor::new_window_with_layout("text_custom".to_string(), &layout);
+        // text_custom seeds streams = ["custom"]; start from a clean field.
+        editor.streams_input = WindowEditor::create_textarea();
+
+        editor.append_stream_to_field("bounty");
+        assert_eq!(editor.streams_input.lines().first().map(String::as_str), Some("bounty"));
+
+        editor.append_stream_to_field("notes");
+        assert_eq!(
+            editor.streams_input.lines().first().map(String::as_str),
+            Some("bounty, notes")
+        );
+
+        // Duplicate (case-insensitive) is ignored.
+        editor.append_stream_to_field("Bounty");
+        assert_eq!(
+            editor.streams_input.lines().first().map(String::as_str),
+            Some("bounty, notes")
+        );
     }
 }

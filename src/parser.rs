@@ -155,6 +155,9 @@ pub enum ParsedElement {
     StreamWindow {
         id: String,
         subtitle: Option<String>,
+        /// Human-friendly stream label (e.g. title="Room"). Used to give
+        /// custom-window authoring a readable name for a stream id.
+        title: Option<String>,
     },
     InjuryImage {
         id: String,   // Body part: "head", "leftArm", etc.
@@ -230,6 +233,8 @@ pub enum ParsedElement {
     LaunchURL {
         url: String, // URL path to append to https://www.play.net
     },
+    /// Lich WebUI handshake reply (`;ui handshake` -> one `<LichWebUI .../>` line)
+    LichWebUI(crate::data::webui::WebUiHandshake),
     /// Target list from combat dialog dropdown (for direct-connect users)
     TargetList {
         current_target: String,  // from value attribute
@@ -674,6 +679,8 @@ impl XmlParser {
             self.handle_menu_item(tag);
         } else if tag.starts_with("<LaunchURL ") {
             self.handle_launch_url(tag, elements);
+        } else if tag.starts_with("<LichWebUI ") || tag.starts_with("<LichWebUI/") {
+            self.handle_lich_webui(tag, elements);
         }
         // Handle paired inv tags: <inv id='X'>content</inv>
         else if tag.starts_with("<inv ") && tag.contains("</inv>") {
@@ -1900,7 +1907,12 @@ impl XmlParser {
         // names (e.g. Scrivener&apos;s) - decode like text content.
         if let Some(id) = Self::extract_attribute(tag, "id") {
             let subtitle = Self::extract_attribute(tag, "subtitle").map(Self::decode_entities);
-            elements.push(ParsedElement::StreamWindow { id, subtitle });
+            let title = Self::extract_attribute(tag, "title").map(Self::decode_entities);
+            elements.push(ParsedElement::StreamWindow {
+                id,
+                subtitle,
+                title,
+            });
         }
     }
 
@@ -2090,6 +2102,35 @@ impl XmlParser {
         } else {
             tracing::warn!("LaunchURL tag without src attribute: {}", tag);
         }
+    }
+
+    fn handle_lich_webui(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <LichWebUI status="ok" port="51423" url="http://127.0.0.1:51423/"
+        //            auth="http://127.0.0.1:51423/auth?token=<64 hex>" schema="1"/>
+        // Also: <LichWebUI status="disabled"/> and <LichWebUI status="stopped"/>
+        let status = Self::extract_attribute(tag, "status").unwrap_or_default();
+        if status.is_empty() {
+            tracing::warn!("LichWebUI tag without status attribute: {}", tag);
+            return;
+        }
+        let handshake = crate::data::webui::WebUiHandshake {
+            status,
+            port: Self::extract_attribute(tag, "port")
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(0),
+            url: Self::extract_attribute(tag, "url").unwrap_or_default(),
+            auth: Self::extract_attribute(tag, "auth").unwrap_or_default(),
+            schema: Self::extract_attribute(tag, "schema")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
+        };
+        tracing::info!(
+            "Parsed LichWebUI handshake: status={} port={} schema={}",
+            handshake.status,
+            handshake.port,
+            handshake.schema
+        );
+        elements.push(ParsedElement::LichWebUI(handshake));
     }
 
     fn handle_menu_close(&mut self, elements: &mut Vec<ParsedElement>) {
@@ -3701,7 +3742,7 @@ mod tests {
         let sw_elements: Vec<_> = elements.iter().filter(|e| matches!(e, ParsedElement::StreamWindow { .. })).collect();
         assert_eq!(sw_elements.len(), 1);
 
-        let ParsedElement::StreamWindow { id, subtitle } = sw_elements[0] else {
+        let ParsedElement::StreamWindow { id, subtitle, .. } = sw_elements[0] else {
             panic!("Expected StreamWindow element, got {:?}", sw_elements[0]);
         };
         assert_eq!(id, "room");
@@ -3775,6 +3816,56 @@ mod tests {
             panic!("Expected LaunchURL element, got {:?}", url_elements[0]);
         };
         assert_eq!(url, "/gs4/play/cm/loader.asp?uname=test");
+    }
+
+    // ==================== LichWebUI Handshake Parsing ====================
+
+    #[test]
+    fn test_lich_webui_handshake_ok() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            r#"<LichWebUI status="ok" port="51423" url="http://127.0.0.1:51423/" auth="http://127.0.0.1:51423/auth?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" schema="1"/>"#,
+        );
+
+        let webui: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::LichWebUI(hs) => Some(hs),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(webui.len(), 1);
+        assert_eq!(webui[0].status, "ok");
+        assert_eq!(webui[0].port, 51423);
+        assert_eq!(webui[0].url, "http://127.0.0.1:51423/");
+        assert_eq!(webui[0].schema, 1);
+        assert_eq!(
+            webui[0].token(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+        // The handshake line is a control tag: no visible text should be emitted.
+        assert!(!elements.iter().any(|e| matches!(
+            e,
+            ParsedElement::Text { content, .. } if !content.trim().is_empty()
+        )));
+    }
+
+    #[test]
+    fn test_lich_webui_handshake_disabled() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(r#"<LichWebUI status="disabled"/>"#);
+
+        let webui: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::LichWebUI(hs) => Some(hs),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(webui.len(), 1);
+        assert_eq!(webui[0].status, "disabled");
+        assert_eq!(webui[0].port, 0);
+        assert_eq!(webui[0].token(), None);
     }
 
     // ==================== Menu Response Parsing ====================

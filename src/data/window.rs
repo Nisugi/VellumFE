@@ -48,6 +48,8 @@ pub enum WidgetType {
     Quickbar,
     MiniVitals,
     Betrayer,
+    /// Lich WebUI page rendered natively from its JSON component tree
+    WebUi,
 }
 
 impl WidgetType {
@@ -90,6 +92,7 @@ impl WidgetType {
             "quickbar" => Some(WidgetType::Quickbar),
             "minivitals" => Some(WidgetType::MiniVitals),
             "betrayer" => Some(WidgetType::Betrayer),
+            "webui" | "lichui" => Some(WidgetType::WebUi),
             _ => None,
         }
     }
@@ -122,6 +125,7 @@ impl WidgetType {
         "quickbar",
         "minivitals",
         "betrayer",
+        "webui",
     ];
 }
 
@@ -183,6 +187,8 @@ pub enum WindowContent {
     /// Betrayer window - displays blood points progress bar and item list
     /// Reads from GameState.betrayer (no data stored here)
     Betrayer,
+    /// Lich WebUI panel - carries its page binding and latest component tree
+    WebUi(super::webui::WebUiPanelContent),
     Empty, // For spacers or not-yet-implemented widgets
 }
 

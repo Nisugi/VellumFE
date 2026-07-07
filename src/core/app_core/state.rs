@@ -704,6 +704,7 @@ impl AppCore {
             crate::data::WidgetType::MiniVitals => "minivitals",
             crate::data::WidgetType::Betrayer => "betrayer",
             crate::data::WidgetType::Items => "items",
+            crate::data::WidgetType::WebUi => "webui",
         };
         focusable.contains(kind)
     }
@@ -940,15 +941,24 @@ impl AppCore {
 
             let content = match widget_type {
                 WidgetType::Text => {
-                    let (buffer_size, streams, compact) =
+                    let (buffer_size, streams, compact, show_ts, ts_pos) =
                         if let crate::config::WindowDef::Text { data, .. } = window_def {
-                            (data.buffer_size, data.streams.clone(), data.compact)
+                            (
+                                data.buffer_size,
+                                data.streams.clone(),
+                                data.compact,
+                                data.show_timestamps,
+                                data.timestamp_position
+                                    .unwrap_or(self.config.ui.timestamp_position),
+                            )
                         } else {
-                            (1000, vec![], false) // fallback
+                            (1000, vec![], false, false, self.config.ui.timestamp_position)
                         };
                     let mut text_content = TextContent::new(title, buffer_size);
                     text_content.streams = streams.clone();
                     text_content.compact = compact;
+                    text_content.show_timestamps = show_ts;
+                    text_content.timestamp_position = ts_pos;
 
                     // Pre-populate bounty window with cached data on reload
                     if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
@@ -1018,44 +1028,58 @@ impl AppCore {
                     history: Vec::new(),
                     history_index: None,
                 },
-                WidgetType::Progress => WindowContent::Progress(ProgressData {
-                    value: 100,
-                    max: 100,
-                    label: if let crate::config::WindowDef::Progress { data, .. } = window_def {
-                        data.label.clone().unwrap_or_else(|| title.to_string())
-                    } else {
-                        title.to_string()
-                    },
-                    color: None,
-                    progress_id: if let crate::config::WindowDef::Progress { data, .. } = window_def
-                    {
-                        data.id
-                            .clone()
-                            .unwrap_or_else(|| window_def.name().to_string())
-                    } else {
-                        window_def.name().to_string()
-                    },
-                }),
+                WidgetType::Progress => {
+                    let (label, progress_id, color, numbers_only, current_only) =
+                        if let crate::config::WindowDef::Progress { data, .. } = window_def {
+                            (
+                                data.label.clone().unwrap_or_else(|| title.to_string()),
+                                data.id
+                                    .clone()
+                                    .unwrap_or_else(|| window_def.name().to_string()),
+                                data.color.clone(),
+                                data.numbers_only,
+                                data.current_only,
+                            )
+                        } else {
+                            (
+                                title.to_string(),
+                                window_def.name().to_string(),
+                                None,
+                                false,
+                                false,
+                            )
+                        };
+                    WindowContent::Progress(ProgressData {
+                        value: 100,
+                        max: 100,
+                        label,
+                        color,
+                        progress_id,
+                        numbers_only,
+                        current_only,
+                    })
+                }
                 WidgetType::Countdown => {
-                    let (label, countdown_id) = if let crate::config::WindowDef::Countdown { data, .. } =
-                        window_def
-                    {
-                        (
-                            data.label
-                                .clone()
-                                .unwrap_or_else(|| title.to_string()),
-                            data.id
-                                .clone()
-                                .unwrap_or_else(|| window_def.name().to_string()),
-                        )
-                    } else {
-                        (title.to_string(), window_def.name().to_string())
-                    };
+                    let (label, countdown_id, color) =
+                        if let crate::config::WindowDef::Countdown { data, .. } = window_def {
+                            (
+                                data.label
+                                    .clone()
+                                    .unwrap_or_else(|| title.to_string()),
+                                data.id
+                                    .clone()
+                                    .unwrap_or_else(|| window_def.name().to_string()),
+                                data.color.clone(),
+                            )
+                        } else {
+                            (title.to_string(), window_def.name().to_string(), None)
+                        };
 
                     WindowContent::Countdown(CountdownData {
                         end_time: 0,
                         label,
                         countdown_id,
+                        color,
                     })
                 }
                 WidgetType::Compass => WindowContent::Compass(CompassData {
@@ -1148,6 +1172,14 @@ impl AppCore {
                 WidgetType::Quickbar => WindowContent::Quickbar,
                 WidgetType::MiniVitals => WindowContent::MiniVitals,
                 WidgetType::Betrayer => WindowContent::Betrayer,
+                WidgetType::WebUi => {
+                    let page = if let crate::config::WindowDef::WebUi { data, .. } = window_def {
+                        data.page.clone()
+                    } else {
+                        String::new()
+                    };
+                    WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
+                }
                 _ => WindowContent::Empty,
             };
 
@@ -1249,14 +1281,24 @@ impl AppCore {
 
         let content = match widget_type {
             WidgetType::Text => {
-                let (buffer_size, streams, compact) = if let crate::config::WindowDef::Text { data, .. } = window_def {
-                    (data.buffer_size, data.streams.clone(), data.compact)
-                } else {
-                    (1000, vec![], false) // fallback
-                };
+                let (buffer_size, streams, compact, show_ts, ts_pos) =
+                    if let crate::config::WindowDef::Text { data, .. } = window_def {
+                        (
+                            data.buffer_size,
+                            data.streams.clone(),
+                            data.compact,
+                            data.show_timestamps,
+                            data.timestamp_position
+                                .unwrap_or(self.config.ui.timestamp_position),
+                        )
+                    } else {
+                        (1000, vec![], false, false, self.config.ui.timestamp_position)
+                    };
                 let mut text_content = TextContent::new(title, buffer_size);
                 text_content.streams = streams;
                 text_content.compact = compact;
+                text_content.show_timestamps = show_ts;
+                text_content.timestamp_position = ts_pos;
 
                 // For bounty windows: pre-populate with buffered bounty data if available
                 if window_def.name().eq_ignore_ascii_case("bounty") && self.game_state.bounty.has_data() {
@@ -1321,36 +1363,57 @@ impl AppCore {
                 history: Vec::new(),
                 history_index: None,
             },
-            WidgetType::Progress => WindowContent::Progress(ProgressData {
-                value: 100,
-                max: 100,
-                label: title.to_string(),
-                color: None,
-                progress_id: if let crate::config::WindowDef::Progress { data, .. } = window_def {
-                    data.id
-                        .clone()
-                        .unwrap_or_else(|| window_def.name().to_string())
-                } else {
-                    window_def.name().to_string()
-                },
-            }),
-            WidgetType::Countdown => WindowContent::Countdown(CountdownData {
-                end_time: 0,
-                label: if let crate::config::WindowDef::Countdown { data, .. } = window_def {
-                    data.label.clone().unwrap_or_else(|| title.to_string())
-                } else {
-                    title.to_string()
-                },
-                countdown_id: if let crate::config::WindowDef::Countdown { data, .. } =
-                    window_def
-                {
-                    data.id
-                        .clone()
-                        .unwrap_or_else(|| window_def.name().to_string())
-                } else {
-                    window_def.name().to_string()
-                },
-            }),
+            WidgetType::Progress => {
+                let (label, progress_id, color, numbers_only, current_only) =
+                    if let crate::config::WindowDef::Progress { data, .. } = window_def {
+                        (
+                            data.label.clone().unwrap_or_else(|| title.to_string()),
+                            data.id
+                                .clone()
+                                .unwrap_or_else(|| window_def.name().to_string()),
+                            data.color.clone(),
+                            data.numbers_only,
+                            data.current_only,
+                        )
+                    } else {
+                        (
+                            title.to_string(),
+                            window_def.name().to_string(),
+                            None,
+                            false,
+                            false,
+                        )
+                    };
+                WindowContent::Progress(ProgressData {
+                    value: 100,
+                    max: 100,
+                    label,
+                    color,
+                    progress_id,
+                    numbers_only,
+                    current_only,
+                })
+            }
+            WidgetType::Countdown => {
+                let (label, countdown_id, color) =
+                    if let crate::config::WindowDef::Countdown { data, .. } = window_def {
+                        (
+                            data.label.clone().unwrap_or_else(|| title.to_string()),
+                            data.id
+                                .clone()
+                                .unwrap_or_else(|| window_def.name().to_string()),
+                            data.color.clone(),
+                        )
+                    } else {
+                        (title.to_string(), window_def.name().to_string(), None)
+                    };
+                WindowContent::Countdown(CountdownData {
+                    end_time: 0,
+                    label,
+                    countdown_id,
+                    color,
+                })
+            }
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),
@@ -1440,6 +1503,14 @@ impl AppCore {
             WidgetType::Quickbar => WindowContent::Quickbar,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            WidgetType::WebUi => {
+                let page = if let crate::config::WindowDef::WebUi { data, .. } = window_def {
+                    data.page.clone()
+                } else {
+                    String::new()
+                };
+                WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
+            }
             _ => WindowContent::Empty,
         };
 
@@ -1869,6 +1940,7 @@ impl AppCore {
                 link_data: None,
             }],
             stream: String::from("main"),
+            timestamp: None,
         };
 
         // System messages bypass the message pipeline, so mirror them to
@@ -2526,11 +2598,14 @@ impl AppCore {
                 label: name.to_string(),
                 color: None,
                 progress_id: name.to_string(),
+                numbers_only: false,
+                current_only: false,
             }),
             WidgetType::Countdown => WindowContent::Countdown(CountdownData {
                 end_time: 0,
                 label: name.to_string(),
                 countdown_id: name.to_string(),
+                color: None,
             }),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
@@ -2593,6 +2668,9 @@ impl AppCore {
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            WidgetType::WebUi => WindowContent::WebUi(
+                crate::data::webui::WebUiPanelContent::new(name, name),
+            ),
             _ => WindowContent::Empty,
         };
 
@@ -2695,6 +2773,12 @@ impl AppCore {
                 base,
                 data: CommandInputWidgetData::default(),
             },
+            "webui" | "lichui" => WindowDef::WebUi {
+                base,
+                data: crate::config::WebUiWidgetData {
+                    page: name.to_string(),
+                },
+            },
             _ => {
                 // Default to text window for unknown types
                 WindowDef::Text {
@@ -2738,6 +2822,88 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    /// Create (or reuse) a window bound to a Lich WebUI page. Returns the
+    /// window name (`webui:<page_id>`). The size hint is the descriptor's
+    /// preferred content size in CSS pixels, mapped to core layout cells.
+    pub fn add_webui_window(
+        &mut self,
+        page_id: &str,
+        title: &str,
+        size_hint: Option<[f32; 2]>,
+    ) -> String {
+        use crate::data::{WidgetType, WindowContent, WindowPosition, WindowState};
+
+        let name = format!("webui:{}", page_id);
+        if self.ui_state.windows.contains_key(&name) {
+            return name;
+        }
+
+        // Rough CSS-px -> layout-cell mapping (8x16 px cells), floored to a
+        // usable minimum so tiny hints still get a visible window.
+        let (width, height) = match size_hint {
+            Some([w, h]) => (
+                ((w / 8.0).ceil() as u16).clamp(20, 120),
+                ((h / 16.0).ceil() as u16).clamp(4, 60),
+            ),
+            None => (40, 12),
+        };
+
+        let window = WindowState {
+            name: name.clone(),
+            widget_type: WidgetType::WebUi,
+            content: WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(
+                page_id, title,
+            )),
+            position: WindowPosition {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            visible: true,
+            content_align: None,
+            focused: false,
+            ephemeral: false,
+        };
+        self.ui_state.set_window(name.clone(), window);
+
+        let base = crate::config::WindowBase {
+            name: name.clone(),
+            row: 0,
+            col: 0,
+            rows: height,
+            cols: width,
+            show_border: true,
+            border_style: "single".to_string(),
+            border_sides: crate::config::BorderSides::default(),
+            border_color: None,
+            show_title: true,
+            title: Some(title.to_string()),
+            title_position: "top-left".to_string(),
+            background_color: None,
+            text_color: None,
+            transparent_background: false,
+            locked: false,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visible: true,
+            content_align: None,
+        };
+        self.layout.windows.insert(
+            0,
+            crate::config::WindowDef::WebUi {
+                base,
+                data: crate::config::WebUiWidgetData {
+                    page: page_id.to_string(),
+                },
+            },
+        );
+        self.needs_render = true;
+        name
     }
 
     /// Rename a window's title
