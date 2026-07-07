@@ -67,6 +67,10 @@ targets:
           - "$(SRCROOT)/../target/aarch64-apple-ios/release"
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(SRCROOT)/../target/aarch64-apple-ios-sim/release"
+        # The Rust staticlib is built for arm64 simulator only (no
+        # x86_64-apple-ios target); generic simulator builds would otherwise
+        # also try an x86_64 slice and fail to link.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: "1" # CI overrides with the run number
         MARKETING_VERSION: "0.3.0"

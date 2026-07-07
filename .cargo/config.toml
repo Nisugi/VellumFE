@@ -1,0 +1,8 @@
+# Workspace-wide cargo configuration.
+
+[env]
+# Rust objects for iOS embed the build SDK's version as their minimum OS
+# unless this is set, which breaks running on older devices. Keep in
+# lockstep with deploymentTarget in ios/project.yml. Ignored by non-iOS
+# targets; an existing environment value wins.
+IPHONEOS_DEPLOYMENT_TARGET = "16.0"
