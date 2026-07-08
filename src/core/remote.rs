@@ -51,7 +51,9 @@ pub struct RemoteMenuItem {
 
 /// Macro buttons serialized for remote clients: ids and labels only —
 /// commands stay server-side and are resolved by id on activation
-/// (`MacrosConfig::resolve`).
+/// (`MacrosConfig::resolve`). Exception: type-in (`insert`) buttons ship
+/// their text, since its whole purpose is to appear in the client's
+/// input box; the client handles those taps locally.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteMacros {
     pub groups: Vec<RemoteMacroGroup>,
@@ -72,6 +74,9 @@ pub struct RemoteMacroButton {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub confirm: bool,
+    /// Type-in button: the client inserts `command` into its input box
+    /// instead of sending the id back (a trailing `\r` also submits).
+    pub insert: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<RemoteMacroOption>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,7 +86,9 @@ pub struct RemoteMacroButton {
     /// Phone-authored (macros-local.toml): may be edited/deleted remotely.
     pub editable: bool,
     /// The command behind an editable action button, echoed back so the
-    /// phone editor can prefill its form. Hand-file commands stay private.
+    /// phone editor can prefill its form. Hand-file commands stay private
+    /// unless the button is type-in (`insert`) — that text is the client's
+    /// to display by definition.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
 }
@@ -91,7 +98,10 @@ pub struct RemoteMacroOption {
     pub id: String,
     pub label: String,
     pub confirm: bool,
-    /// Echoed for phone-authored buttons only, so the editor can prefill.
+    /// Type-in option (see `RemoteMacroButton::insert`).
+    pub insert: bool,
+    /// Echoed for phone-authored buttons and type-in options, so the
+    /// editor can prefill and insert taps stay client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
 }
@@ -108,7 +118,8 @@ impl RemoteMacros {
                         id: format!("{id}:o:{oi}"),
                         label: option.label.clone(),
                         confirm: option.confirm,
-                        command: if button.editable {
+                        insert: option.insert,
+                        command: if button.editable || option.insert {
                             Some(option.command.clone())
                         } else {
                             None
@@ -119,10 +130,11 @@ impl RemoteMacros {
                 label: button.label.clone(),
                 color: button.color.clone(),
                 confirm: button.confirm,
+                insert: button.insert,
                 x: button.x,
                 y: button.y,
                 editable: button.editable,
-                command: if button.editable {
+                command: if button.editable || button.insert {
                     button.command.clone()
                 } else {
                     None
@@ -306,6 +318,9 @@ pub enum RemoteEvent {
         command: String,
         color: Option<String>,
         confirm: bool,
+        /// Type-in button: the client inserts the text instead of
+        /// sending the id (options carry their own flag).
+        insert: bool,
         /// Non-empty makes this a menu button (tap opens the sheet).
         options: Vec<crate::config::MacroOption>,
         /// Set when editing: the button's previous (group, label).
@@ -331,6 +346,9 @@ pub enum RemoteEvent {
         game: Option<String>,
         save_password: bool,
         profile_name: Option<String>,
+        /// Set (both) for a Lich attach instead of a direct eAccess login.
+        lich_host: Option<String>,
+        lich_port: Option<u16>,
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,
@@ -505,10 +523,9 @@ impl RemoteStateSnapshot {
                     ));
                 }
                 if !exp.next_level_text.is_empty() {
-                    info.experience.push(format!(
-                        "Next level: {}% ({})",
-                        exp.next_level_value, exp.next_level_text
-                    ));
+                    // nextLvlPB's value is raw experience, not a percent, and
+                    // the text already carries it ("63667 until next level").
+                    info.experience.push(format!("Next level: {}", exp.next_level_text));
                 }
                 let enc = &game_state.encumbrance;
                 if !enc.text.is_empty() {

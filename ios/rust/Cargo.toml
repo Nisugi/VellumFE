@@ -1,0 +1,27 @@
+[package]
+name = "vellum-ios"
+version = "0.3.0-beta.5"
+edition = "2021"
+publish = false
+description = "C-ABI embedding of the VellumFE headless runtime for the iOS shell"
+
+[lib]
+# iOS apps link Rust statically; the Xcode project consumes libvellum_ios.a
+# plus include/vellum_core.h via the Swift bridging header.
+crate-type = ["staticlib"]
+
+[dependencies]
+# The core: parser, network, AppCore, web frontend, headless runtime.
+# No TUI/GUI/desktop integrations — see the feature table in the root manifest.
+vellum-fe = { path = "../..", default-features = false }
+# The "log" feature forwards tracing events from the whole graph to the
+# `log` crate when no tracing subscriber is installed — which is how core
+# logs reach os_log (Xcode console / Console.app) via the oslog backend.
+tracing = { version = "0.1", features = ["log"] }
+log = "0.4"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+oslog = "0.2"
+
+[dev-dependencies]
+serde_json = "1"

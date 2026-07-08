@@ -399,6 +399,21 @@ impl DirectConnection {
     }
 }
 
+/// Aborts the wrapped task when dropped. The session supervisor aborts the
+/// outer network future at any await point (disconnect button, stall
+/// watchdog, quit teardown); a plain JoinHandle drop would *detach* the
+/// spawned reader, leaving it running with its half of the split socket —
+/// and `tokio::io::split` keeps the TCP connection open until both halves
+/// drop. A leaked reader kept Lich's single detachable-client slot occupied
+/// after a disconnect, so re-attaching hung until the app was force-closed.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn run_stream(
     stream: TcpStream,
     server_tx: mpsc::Sender<ServerMessage>,
@@ -449,7 +464,7 @@ async fn run_stream(
     // later command's write failed; the headless supervisor keys logout/
     // reconnect off this task completing, so a `quit` didn't return to the
     // login screen until the user happened to send another command.
-    let mut read_handle = read_handle;
+    let mut read_handle = AbortOnDrop(read_handle);
     let write_loop = async {
         while let Some(cmd) = command_rx.recv().await {
             // Build the complete message: command prefix + command + newline.
@@ -472,15 +487,15 @@ async fn run_stream(
         }
     };
     tokio::select! {
-        _ = &mut read_handle => {
+        _ = &mut read_handle.0 => {
             // Server closed the connection (or read error): session over.
             // Queued-but-unsent commands are moot on a dead socket.
         }
         _ = write_loop => {
             // Command channel closed (session being torn down) or a write
             // failed: stop the reader too so this future completes.
-            read_handle.abort();
-            let _ = read_handle.await;
+            read_handle.0.abort();
+            let _ = (&mut read_handle.0).await;
         }
     }
 
@@ -579,7 +594,7 @@ fn fix_game_host_port(host: &str, port: u16) -> (String, u16) {
 mod eaccess {
     use anyhow::{anyhow, bail, Context, Result};
     use base64::Engine as _;
-    use native_tls::{Certificate, TlsConnector, TlsStream};
+    use native_tls::{TlsConnector, TlsStream};
     use std::collections::HashMap;
     use std::fs;
     use std::io::{Read, Write};
@@ -748,14 +763,31 @@ mod eaccess {
         Ok(())
     }
 
+    /// Decode the first PEM certificate block to DER by hand. native-tls's
+    /// `Certificate::from_pem` is a macOS-only stub that panics at runtime on
+    /// iOS (it needs SecItemImport, which iOS doesn't have).
+    fn pem_to_der(pem: &[u8]) -> Result<Vec<u8>> {
+        let text = std::str::from_utf8(pem).context("Certificate file is not UTF-8")?;
+        let b64: String = text
+            .lines()
+            .map(str::trim)
+            .skip_while(|l| *l != "-----BEGIN CERTIFICATE-----")
+            .skip(1)
+            .take_while(|l| *l != "-----END CERTIFICATE-----")
+            .collect();
+        if b64.is_empty() {
+            bail!("No PEM certificate block found");
+        }
+        base64::engine::general_purpose::STANDARD
+            .decode(b64.as_bytes())
+            .context("Invalid base64 in PEM certificate")
+    }
+
     fn connect_with_cert(cert_path: &Path) -> Result<TlsStream<TcpStream>> {
         let cert_data = fs::read(cert_path).context("Failed to read stored certificate")?;
         // Compare in DER form so PEM formatting differences (line width,
         // trailing newline) between OpenSSL-era and current files don't matter.
-        let stored_der = Certificate::from_pem(&cert_data)
-            .context("Invalid PEM certificate")?
-            .to_der()
-            .context("Failed to encode stored certificate")?;
+        let stored_der = pem_to_der(&cert_data).context("Invalid PEM certificate")?;
 
         let tls_stream = tls_handshake()?;
         tracing::debug!("TLS handshake with eAccess succeeded");
@@ -900,6 +932,27 @@ mod eaccess {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        // ========== pem_to_der tests ==========
+
+        #[test]
+        fn test_pem_der_round_trip() {
+            let der: Vec<u8> = (0u8..=255).cycle().take(300).collect();
+            assert_eq!(pem_to_der(der_to_pem(&der).as_bytes()).unwrap(), der);
+        }
+
+        #[test]
+        fn test_pem_to_der_ignores_leading_garbage() {
+            // OpenSSL-era files can carry human-readable text before the block.
+            let der = b"\x30\x03\x02\x01\x01".to_vec();
+            let pem = format!("subject=/C=US/O=Simutronics\n{}", der_to_pem(&der));
+            assert_eq!(pem_to_der(pem.as_bytes()).unwrap(), der);
+        }
+
+        #[test]
+        fn test_pem_to_der_rejects_missing_block() {
+            assert!(pem_to_der(b"not a certificate").is_err());
+        }
 
         // ========== obfuscate_password tests ==========
 

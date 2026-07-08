@@ -269,25 +269,24 @@ impl AppCore {
                 self.show_webinfo();
             }
 
-            // Layout commands
+            // Layout commands. The TUI intercepts both in
+            // handle_command_submission with the real terminal size, so these
+            // fallbacks only run in frontends without a cell grid (GUI,
+            // headless), where TOML cell layouts don't apply.
             "savelayout" => {
                 let name = parts.get(1).unwrap_or(&"default");
                 tracing::info!("[APP_CORE] User entered .savelayout command: '{}'", name);
-                // Note: This is a placeholder - actual handling should be in main.rs with terminal size
-                // For now, we'll use the layout's terminal size or fallback
                 let width = self.layout.terminal_width.unwrap_or(80);
                 let height = self.layout.terminal_height.unwrap_or(24);
-                tracing::warn!(
-                    "savelayout called without terminal size - using layout size {}x{}",
-                    width,
-                    height
-                );
                 self.save_layout(name, width, height);
+                self.add_system_message(&format!(
+                    "Saved TUI layout '{}' at {}x{} cells (this frontend has no terminal grid; the GUI saves its own window layout automatically).",
+                    name, width, height
+                ));
             }
             "loadlayout" => {
-                // This is just a placeholder - actual handling is in main.rs with terminal size
                 self.add_system_message(
-                    "Layout loading requires terminal size - handled by main event loop",
+                    "TOML layouts are a TUI feature. The GUI manages its own window layout and saves it automatically.",
                 );
             }
             "layouts" => {

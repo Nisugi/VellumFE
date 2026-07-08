@@ -7,6 +7,7 @@
 //! then live deltas from the broadcast channel. A client that lags behind
 //! the broadcast capacity is re-synced with a fresh snapshot.
 
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -51,6 +52,18 @@ const AUTH_MAX_FAILURES: usize = 5;
 const AUTH_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 /// How long a client gets to present its token.
 const AUTH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Compare a presented token against the expected one without leaking the
+/// mismatch position through timing. Length still leaks; tokens are fixed
+/// length so that reveals nothing.
+fn token_matches(presented: &str, expected: &str) -> bool {
+    let a = presented.as_bytes();
+    let b = expected.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
 
 impl WebState {
     fn auth_locked_out(&self) -> bool {
@@ -240,6 +253,14 @@ pub mod registry {
 
 /// Serve on an already-bound listener with a fixed token (integration
 /// tests bind port 0 and pass a known token).
+///
+/// Serving runs in a supervised loop: iOS marks every open socket defunct
+/// when the app is suspended past its background grace window, so the
+/// listener silently stops accepting and never recovers while the web
+/// client retries against a dead port forever (the only way out used to
+/// be force-closing the app). There is no reliable accept-side error to
+/// react to, so a watchdog dials our own port and rebinds the listener
+/// when it stops answering.
 pub async fn serve_listener_with_token(
     listener: tokio::net::TcpListener,
     handles: RemoteServerHandles,
@@ -264,10 +285,76 @@ pub async fn serve_listener_with_token(
         .route("/sounds/{name}", get(sound_file))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
-    axum::serve(listener, router)
-        .await
-        .context("web server exited")?;
-    Ok(())
+    let addr = listener
+        .local_addr()
+        .context("web listener has no local address")?;
+    let mut listener = Some(listener);
+    loop {
+        let current = match listener.take() {
+            Some(l) => l,
+            None => rebind(addr).await,
+        };
+        let serve_task = tokio::spawn(axum::serve(current, router.clone()).into_future());
+        probe_until_unreachable(addr).await;
+        // Abort only the accept loop; per-connection tasks are spawned
+        // independently (and are dead anyway if the listener went defunct).
+        serve_task.abort();
+        let _ = serve_task.await;
+        tracing::warn!("web listener on {addr} stopped answering; rebinding");
+    }
+}
+
+/// Returns once the listener stops accepting connections. A single failed
+/// dial could be transient, so a failure only counts when a confirming
+/// dial fails too.
+async fn probe_until_unreachable(addr: std::net::SocketAddr) {
+    const PROBE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+    const CONFIRM_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+    loop {
+        tokio::time::sleep(PROBE_EVERY).await;
+        if probe(addr).await {
+            continue;
+        }
+        tokio::time::sleep(CONFIRM_GAP).await;
+        if !probe(addr).await {
+            return;
+        }
+    }
+}
+
+/// One self-dial: can anything connect to the listener right now?
+async fn probe(mut addr: std::net::SocketAddr) -> bool {
+    if addr.ip().is_unspecified() {
+        addr.set_ip(match addr.ip() {
+            std::net::IpAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+            std::net::IpAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+        });
+    }
+    matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::net::TcpStream::connect(addr),
+        )
+        .await,
+        Ok(Ok(_))
+    )
+}
+
+/// Re-bind the same address, retrying until it works (right after resume
+/// the defunct socket may not have released the port yet).
+async fn rebind(addr: std::net::SocketAddr) -> tokio::net::TcpListener {
+    loop {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                tracing::info!("web listener rebound on {addr}");
+                return l;
+            }
+            Err(e) => {
+                tracing::warn!("rebinding web listener on {addr} failed: {e}; retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+    }
 }
 
 // no-cache: assets are embedded in the binary and change with every
@@ -371,10 +458,15 @@ async fn sound_file(
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
 
-    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
         return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     }
-    if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+    // ':' rejected too: on Windows, joining "c:name" replaces the whole
+    // path prefix (drive-relative), escaping the sounds dir
+    if name.contains(['/', '\\', ':']) || name.contains("..") || name.is_empty() {
         return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     }
     let Ok(sounds_dir) = crate::config::Config::sounds_dir() else {
@@ -418,7 +510,10 @@ async fn status_json(
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<Arc<WebState>>,
 ) -> impl IntoResponse {
-    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
         return (
             axum::http::StatusCode::FORBIDDEN,
             [(header::CONTENT_TYPE, "application/json")],
@@ -537,6 +632,7 @@ async fn handle_client_message(
             command,
             color,
             confirm,
+            insert,
             options,
             original,
         } => state
@@ -548,6 +644,7 @@ async fn handle_client_message(
                 command,
                 color,
                 confirm,
+                insert,
                 options,
                 original,
             })
@@ -565,6 +662,8 @@ async fn handle_client_message(
             game,
             save_password,
             profile_name,
+            lich_host,
+            lich_port,
         } => state
             .handles
             .event_tx
@@ -576,6 +675,8 @@ async fn handle_client_message(
                 game,
                 save_password,
                 profile_name,
+                lich_host,
+                lich_port,
             })
             .is_ok(),
         ClientMessage::Disconnect => state
@@ -682,21 +783,36 @@ async fn handle_client_message(
     }
 }
 
-/// Direct-mode saved profiles serialized for the session screen. Lich
-/// profiles are desktop-launcher concerns and are filtered out.
+/// Saved profiles serialized for the session screen: direct-mode logins
+/// and Lich attach targets (mode-tagged so the client renders each kind).
 fn profiles_reply(state: &WebState) -> String {
+    use crate::config::profiles::LaunchMode;
     let list: Vec<protocol::ProfileEntry> = crate::config::profiles::LauncherStore::load()
         .map(|store| {
             store
                 .profiles
                 .iter()
-                .filter(|p| p.mode == crate::config::profiles::LaunchMode::Direct)
-                .map(|p| protocol::ProfileEntry {
-                    name: p.name.clone(),
-                    account_masked: protocol::mask_account(&p.account),
-                    character: p.character.clone(),
-                    game: p.game.clone(),
-                    has_password: p.password_saved,
+                .map(|p| match p.mode {
+                    LaunchMode::Direct => protocol::ProfileEntry {
+                        name: p.name.clone(),
+                        mode: "direct".to_string(),
+                        account_masked: protocol::mask_account(&p.account),
+                        character: p.character.clone(),
+                        game: p.game.clone(),
+                        has_password: p.password_saved,
+                        host: None,
+                        port: None,
+                    },
+                    LaunchMode::Lich => protocol::ProfileEntry {
+                        name: p.name.clone(),
+                        mode: "lich".to_string(),
+                        account_masked: String::new(),
+                        character: p.character.clone(),
+                        game: String::new(),
+                        has_password: false,
+                        host: Some(p.host.clone()),
+                        port: Some(p.port),
+                    },
                 })
                 .collect()
         })
@@ -746,7 +862,7 @@ async fn authenticate(socket: &mut WebSocket, state: &WebState) -> bool {
         Ok(Some(Ok(Message::Text(ref text))))
             if matches!(
                 protocol::parse_client_message(text),
-                Some(ClientMessage::Auth { ref token }) if *token == state.auth_token
+                Some(ClientMessage::Auth { ref token }) if token_matches(token, &state.auth_token)
             )
     );
     if !ok {

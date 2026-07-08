@@ -10,6 +10,11 @@
 //! - action button: `command` fires immediately on tap
 //! - menu button: `option` entries open a bottom-sheet picker
 //!
+//! Either shape may set `insert = true`: the command text is typed into
+//! the client's input box instead of being sent, so word buttons compose
+//! phrases ("go" + "second" + "door"). A trailing `\r` submits the
+//! composed line. Insert taps never round-trip through the server.
+//!
 //! Buttons live either in switchable `[[group]]`s (rendered as a rail) or
 //! in `[[floating]]` (overlay buttons, always visible; the client owns
 //! their on-screen positions).
@@ -26,6 +31,11 @@ pub struct MacroOption {
     /// Ask before sending (two-button confirm sheet on the client).
     #[serde(default)]
     pub confirm: bool,
+    /// Type-in option: the client types `command` into its input box
+    /// instead of sending it. A trailing `\r` means "then press Send"
+    /// (submits the whole composed line) — same convention as keybinds.
+    #[serde(default)]
+    pub insert: bool,
 }
 
 /// A macro button: either an immediate action (`command`) or a menu
@@ -40,6 +50,10 @@ pub struct MacroButton {
     pub color: Option<String>,
     #[serde(default)]
     pub confirm: bool,
+    /// Type-in button: the client types `command` into its input box
+    /// instead of sending it (see [`MacroOption::insert`]).
+    #[serde(default)]
+    pub insert: bool,
     #[serde(default, rename = "option", skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<MacroOption>,
     /// Default position for floating buttons, as fractions of the text
@@ -215,11 +229,24 @@ impl MacrosConfig {
             }
             _ => return None,
         };
+        // Type-in (insert) macros are handled entirely client-side: their
+        // text goes into the client's input box, never through server
+        // dispatch. A stale client that missed a reload could send an id
+        // that now points at one — refuse rather than execute input text.
         match rest {
-            [] => button.command.as_deref(),
+            [] => {
+                if button.insert {
+                    return None;
+                }
+                button.command.as_deref()
+            }
             ["o", option] => {
                 let option: usize = option.parse().ok()?;
-                Some(button.options.get(option)?.command.as_str())
+                let option = button.options.get(option)?;
+                if option.insert {
+                    return None;
+                }
+                Some(option.command.as_str())
             }
             _ => None,
         }
@@ -344,6 +371,43 @@ mod tests {
         assert!(local.delete_button(None, "Heal"));
         assert!(local.groups.is_empty());
         assert!(local.floating.is_empty());
+    }
+
+    #[test]
+    fn insert_buttons_parse_and_never_resolve() {
+        let macros: MacrosConfig = toml::from_str(
+            r#"
+            [[group]]
+            name = "Words"
+
+            [[group.button]]
+            label = "go"
+            command = "go"
+            insert = true
+
+            [[group.button]]
+            label = "places"
+
+            [[group.button.option]]
+            label = "door"
+            command = "door\r"
+            insert = true
+
+            [[group.button.option]]
+            label = "look"
+            command = "look"
+            "#,
+        )
+        .expect("insert macros parse");
+        assert!(macros.groups[0].buttons[0].insert);
+        let options = &macros.groups[0].buttons[1].options;
+        assert!(options[0].insert);
+        assert_eq!(options[0].command, "door\r", "trailing \\r survives parse");
+        // Insert text belongs in the client's input box; the server must
+        // never execute it, even for a stale client's tap.
+        assert_eq!(macros.resolve("g:0:b:0"), None);
+        assert_eq!(macros.resolve("g:0:b:1:o:0"), None);
+        assert_eq!(macros.resolve("g:0:b:1:o:1"), Some("look"));
     }
 
     #[test]

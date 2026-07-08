@@ -26,6 +26,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- vellum://lich?host=...&port=... deep links (QR / tapped link
+                 on Lich's connect-a-device panel) prefill the Lich login
+                 tab. singleTask above routes these through onNewIntent when
+                 the app is already running. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vellum" android:host="lich" />
+            </intent-filter>
         </activity>
 
         <!-- specialUse (not dataSync): a persistent game connection has no

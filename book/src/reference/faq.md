@@ -4,7 +4,8 @@
 
 **What is VellumFE?**
 A modern, multi-frontend client for GemStone IV built in Rust — terminal
-(TUI), desktop GUI, and a mobile web sidecar, all driving the same core.
+(TUI), desktop GUI, mobile web, and Android/iOS apps, all driving the
+same core.
 DragonRealms is supported by the parser and connection layer but less
 battle-tested.
 
@@ -14,9 +15,12 @@ directly via eAccess with `--direct`. VellumFE itself doesn't run scripts —
 use Lich for that.
 
 **Can I play without a PC at all?**
-Yes — the [Android app](../frontends/android.md) runs the whole client on
-your phone, or run `--frontend headless` on any machine and play from a
-browser. Both connect via direct eAccess (no Lich on the phone).
+Yes — the [Android](../frontends/android.md) or [iOS](../frontends/ios.md)
+app runs the whole client on your phone, or run `--frontend headless` on
+any machine and play from a browser. They connect via direct eAccess, or
+— for scripted characters — the login screen's **Lich** tab attaches to a
+Lich session running on another machine (Lich itself never runs on the
+phone). See [Mobile Web](../frontends/web.md#connecting-through-lich).
 
 **Is it free?**
 Yes, open source: [github.com/Nisugi/VellumFE](https://github.com/Nisugi/VellumFE).
@@ -47,7 +51,8 @@ Yes — files in `profiles/<name>/` override the global ones when you launch
 with `--character` (or `--profile`).
 
 **Can I have multiple layouts?**
-Yes: `.savelayout hunting`, then `.loadlayout hunting`. You can also switch
+Yes: `.savelayout hunting`, then `.loadlayout hunting` — in both the TUI
+and the GUI (each keeps its own set). In the TUI you can also switch
 automatically by terminal size with `layout_mappings` in config.toml.
 
 **How do I reset to defaults?**

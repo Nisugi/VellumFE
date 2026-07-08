@@ -1,0 +1,93 @@
+# XcodeGen spec — the checked-in source of truth for the Xcode project.
+# `xcodegen generate` (run from ios/) writes VellumFE.xcodeproj and
+# app/Info.plist; both are gitignored. Build the Rust staticlib first:
+#   cargo build --release -p vellum-ios --target aarch64-apple-ios       (device)
+#   cargo build --release -p vellum-ios --target aarch64-apple-ios-sim   (simulator)
+name: VellumFE
+options:
+  bundleIdPrefix: dev.vellumfe
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    # Not a secret: the Team ID ships inside every signed app. Baking it in
+    # keeps local Xcode runs and CI archive builds on the same team without
+    # per-machine setup.
+    DEVELOPMENT_TEAM: 37YA6ZBNY2
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  VellumFE:
+    type: application
+    platform: iOS
+    sources:
+      - path: app/Sources
+      - path: app/Assets.xcassets
+      - path: app/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    info:
+      path: app/Info.plist
+      properties:
+        CFBundleDisplayName: VellumFE
+        # Without these, XcodeGen bakes literal values into Info.plist and
+        # CI's CURRENT_PROJECT_VERSION/MARKETING_VERSION overrides never
+        # reach the uploaded build (App Store Connect then rejects the next
+        # upload as a duplicate bundle version).
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        # Storyboard-free launch screen: solid app-background color.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        # Scoped ATS relaxation for http://127.0.0.1 (the embedded server).
+        # Loopback is lenient in practice; this is the documented switch.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # vellum://lich?host=…&port=… deep links (QR code / tapped link on
+        # Lich's connect-a-device panel) prefill the Lich login tab.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.vellumfe.deeplink
+            CFBundleURLSchemes:
+              - vellum
+        # TLS + standard algorithms (ChaCha20-Poly1305) are exempt; skips
+        # the per-build export-compliance question in App Store Connect.
+        ITSAppUsesNonExemptEncryption: false
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vellumfe
+        PRODUCT_NAME: VellumFE
+        SWIFT_OBJC_BRIDGING_HEADER: app/BridgingHeader.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/rust/include"
+        OTHER_LDFLAGS:
+          - "-lvellum_ios"
+        # Device vs simulator staticlib slices: distinct cargo target dirs,
+        # selected per SDK so an archive can never link the sim slice.
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(SRCROOT)/../target/aarch64-apple-ios/release"
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - "$(SRCROOT)/../target/aarch64-apple-ios-sim/release"
+        # The Rust staticlib is built for arm64 simulator only (no
+        # x86_64-apple-ios target); generic simulator builds would otherwise
+        # also try an x86_64 slice and fail to link.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CURRENT_PROJECT_VERSION: "1" # CI overrides with the run number
+        MARKETING_VERSION: "0.3.0"
+        DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+    dependencies:
+      # native-tls -> security-framework; getrandom -> SecRandomCopyBytes.
+      - sdk: Security.framework
+      - sdk: CoreFoundation.framework

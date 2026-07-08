@@ -103,6 +103,26 @@ function setConnected(up) {
 
 const TOKEN_KEY = "vellum-token";
 
+// A vellum://lich?host=…&port=… deep link (QR scan / tapped link) arrives
+// from the native shells as #lich=host:port&name=… alongside the boot
+// token. Captured here, before loadToken scrubs the fragment; applied to
+// the login form once it exists (prefill only — never auto-connect, so a
+// malicious QR can't point the app at an attacker's socket unseen).
+const bootLich = (() => {
+  const m = location.hash.match(/lich=([^&]+)/);
+  if (!m) return null;
+  // Split on the last colon so bracketed/bare IPv6 hosts survive.
+  const target = decodeURIComponent(m[1]);
+  const split = target.match(/^(.+):(\d+)$/);
+  if (!split) return null;
+  const name = location.hash.match(/name=([^&]+)/);
+  return {
+    host: split[1],
+    port: split[2],
+    name: name ? decodeURIComponent(name[1]) : "",
+  };
+})();
+
 function loadToken() {
   const match = location.hash.match(/token=([0-9a-f]+)/i);
   if (match) {
@@ -385,8 +405,8 @@ let roomExits = [];
 
 const COMPASS_CELLS = [
   "nw", "n", "ne", "up",
-  "w", "out", "e", "down",
-  "sw", "s", "se", "",
+  "w", "out", "e", "",
+  "sw", "s", "se", "down",
 ];
 
 const EXIT_ALIASES = {
@@ -726,6 +746,15 @@ function handleMessage(msg) {
 }
 
 function connect() {
+  // A connection is already up or in flight (the visibility handler and a
+  // pending retry timer can race) — let it finish.
+  if (
+    state.ws &&
+    (state.ws.readyState === WebSocket.CONNECTING ||
+      state.ws.readyState === WebSocket.OPEN)
+  ) {
+    return;
+  }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
   state.ws = ws;
@@ -751,6 +780,14 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+// Coming back from the background, the socket is dead and the retry timer
+// may be maxed out (10s) — reconnect immediately instead of waiting it out.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || authDenied) return;
+  state.reconnectDelay = 1000;
+  connect();
+});
 
 // ---- Session screen (headless runtimes only) ------------------------------
 // Servers with session_control (the headless/Android runtime) mirror the
@@ -845,10 +882,13 @@ function renderProfiles(list) {
     label.textContent = p.character || p.name;
     const detail = document.createElement("span");
     detail.className = "profile-detail";
-    detail.textContent = `${p.name} · ${p.account_masked} · ${p.game}`;
+    detail.textContent = p.mode === "lich"
+      ? `${p.name} · Lich @ ${p.host}:${p.port}`
+      : `${p.name} · ${p.account_masked} · ${p.game}`;
     btn.append(label, detail);
     btn.addEventListener("click", () => {
-      if (p.has_password) {
+      if (p.mode === "lich" || p.has_password) {
+        // Lich attaches have no credentials of their own.
         sendJson("connect", { profile: p.name });
       } else {
         // No stored password: reveal a one-off password prompt for it.
@@ -865,7 +905,9 @@ function renderProfiles(list) {
       ev.stopPropagation();
       openSheet(`Delete profile '${p.name}'?`);
       sheetButton("Delete", () => sendJson("delete_profile", { name: p.name }));
-      sheetNote("The saved password is removed too.", true);
+      if (p.mode !== "lich") {
+        sheetNote("The saved password is removed too.", true);
+      }
     });
 
     row.append(btn, del);
@@ -894,8 +936,86 @@ function askProfilePassword(row, profile) {
   input.focus();
 }
 
+// ---- Login mode toggle (play.net direct vs Lich attach) --------------------
+
+const modeDirectBtn = document.getElementById("mode-direct");
+const modeLichBtn = document.getElementById("mode-lich");
+const directFields = document.getElementById("direct-fields");
+const lichFields = document.getElementById("lich-fields");
+const lichHostInput = document.getElementById("lich-host");
+const lichPortInput = document.getElementById("lich-port");
+const lichNameInput = document.getElementById("lich-name");
+const lichWarning = document.getElementById("lich-warning");
+let loginMode = "direct";
+
+function setLoginMode(mode) {
+  loginMode = mode;
+  modeDirectBtn.classList.toggle("mode-active", mode === "direct");
+  modeDirectBtn.setAttribute("aria-selected", String(mode === "direct"));
+  modeLichBtn.classList.toggle("mode-active", mode === "lich");
+  modeLichBtn.setAttribute("aria-selected", String(mode === "lich"));
+  directFields.hidden = mode !== "direct";
+  lichFields.hidden = mode !== "lich";
+}
+modeDirectBtn.addEventListener("click", () => setLoginMode("direct"));
+modeLichBtn.addEventListener("click", () => setLoginMode("lich"));
+
+// Deep-linked Lich target: open the Lich tab prefilled and let the user
+// press Connect.
+if (bootLich) {
+  lichHostInput.value = bootLich.host;
+  lichPortInput.value = bootLich.port;
+  lichNameInput.value = bootLich.name;
+  lichHostInput.dispatchEvent(new Event("input"));
+  setLoginMode("lich");
+}
+
+// The Lich port is unauthenticated: nudge (don't block) when the target
+// doesn't look like loopback / RFC1918 / Tailscale CGNAT / mDNS / tailnet.
+// Non-IP hostnames can't be classified — assume the user knows their DNS.
+function lichHostLooksPrivate(host) {
+  const h = host.toLowerCase();
+  if (h === "localhost" || h === "::1" || h.endsWith(".local") || h.endsWith(".ts.net")) {
+    return true;
+  }
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!v4) return !h.includes(":") || h.startsWith("fd") || h.startsWith("fe80");
+  const a = Number(v4[1]);
+  const b = Number(v4[2]);
+  if (a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // Tailscale (CGNAT)
+  return false;
+}
+
+lichHostInput.addEventListener("input", () => {
+  const host = lichHostInput.value.trim();
+  const risky = host !== "" && !lichHostLooksPrivate(host);
+  lichWarning.textContent = risky
+    ? "This address looks public. The Lich connection has no password — reach your PC over a VPN (Tailscale/WireGuard) instead of the open internet."
+    : "";
+  lichWarning.hidden = !risky;
+});
+
 sessionForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
+  if (loginMode === "lich") {
+    const host = lichHostInput.value.trim();
+    const port = lichPortInput.value.trim();
+    const name = lichNameInput.value.trim();
+    if (!host || !/^\d+$/.test(port)) return;
+    const save = document.getElementById("lich-save").checked;
+    sendJson("connect", {
+      mode: "lich",
+      host,
+      port,
+      character: name || null,
+      profile_name: save ? (name || `${host}:${port}`) : null,
+    });
+    profilesRequested = false;
+    return;
+  }
   const account = document.getElementById("login-account").value.trim();
   const password = document.getElementById("login-password").value;
   const character = document.getElementById("login-character").value.trim();
@@ -1632,6 +1752,11 @@ function handleMenu(d) {
 // tap; a menu button opens the bottom sheet; `confirm` inserts a
 // two-step confirm sheet. Floating buttons overlay the text pane — tap
 // to fire, hold to drag; positions persist per device.
+//
+// Type-in (`insert`) buttons never round-trip: their text arrives with
+// the definition and a tap types it into the command input, so word
+// buttons compose phrases ("go" + "second" + "door"). A trailing \r in
+// the text means "then press Send" — the whole composed line goes.
 
 const macroRail = document.getElementById("macro-rail");
 const macroGroupBtn = document.getElementById("macro-group-btn");
@@ -1650,6 +1775,28 @@ function sendMacro(id) {
   state.ws.send(JSON.stringify({ t: "macro", d: { id } }));
 }
 
+// Type a macro's text into the command input. Words join with a space
+// (authored text is trimmed everywhere, so "go" + "second" must not
+// become "gosecond"). Deliberately no focus() — popping the soft
+// keyboard would defeat the button workflow.
+function insertMacroText(text) {
+  if (!text) return;
+  const send = text.endsWith("\r");
+  if (send) text = text.slice(0, -1);
+  if (text && cmdInput.value && !/\s$/.test(cmdInput.value)) {
+    cmdInput.value += " ";
+  }
+  cmdInput.value += text;
+  if (send) submitInput();
+}
+
+// A button or menu option, post-confirm: type-in entries stay local,
+// everything else round-trips by id.
+function fireMacro(entry) {
+  if (entry.insert) insertMacroText(entry.command || "");
+  else sendMacro(entry.id);
+}
+
 function confirmSheet(label, onConfirm) {
   openSheet(label);
   sheetButton(`Confirm: ${label}`, onConfirm);
@@ -1661,14 +1808,14 @@ function activateMacro(btn) {
     openSheet(btn.label);
     for (const opt of btn.options) {
       sheetButton(opt.label, () => {
-        if (opt.confirm) confirmSheet(opt.label, () => sendMacro(opt.id));
-        else sendMacro(opt.id);
+        if (opt.confirm) confirmSheet(opt.label, () => fireMacro(opt));
+        else fireMacro(opt);
       });
     }
     return;
   }
-  if (btn.confirm) confirmSheet(btn.label, () => sendMacro(btn.id));
-  else sendMacro(btn.id);
+  if (btn.confirm) confirmSheet(btn.label, () => fireMacro(btn));
+  else fireMacro(btn);
 }
 
 function currentGroup() {
@@ -1914,6 +2061,35 @@ document.getElementById("macro-add").addEventListener("click", () => {
   }
 });
 
+// The editor never exposes the \r storage convention: tap behavior is a
+// three-way picker, and the trailing \r ("type, then send") is appended
+// and stripped here on save/load.
+const TAP_MODES = [
+  ["send", "Send the command"],
+  ["insert", "Type into input"],
+  ["insert-send", "Type, then send"],
+];
+
+function tapModeOf(entry) {
+  if (!entry || !entry.insert) return "send";
+  return (entry.command || "").endsWith("\r") ? "insert-send" : "insert";
+}
+
+function tapSelect(mode) {
+  const select = document.createElement("select");
+  for (const [value, label] of TAP_MODES) select.append(new Option(label, value));
+  select.value = mode;
+  return select;
+}
+
+function encodeTapMode(command, mode) {
+  return mode === "insert-send" && command ? command + "\r" : command;
+}
+
+function stripTapEnter(command) {
+  return (command || "").replace(/\r$/, "");
+}
+
 function openMacroEditor(existing) {
   openSheet(existing ? `Edit: ${existing.btn.label}` : "New macro button");
   const form = document.createElement("form");
@@ -1931,18 +2107,26 @@ function openMacroEditor(existing) {
   cmdInputEl.placeholder = "e.g. ;sellgems";
   cmdInputEl.autocapitalize = "off";
   cmdInputEl.spellcheck = false;
-  cmdInputEl.value = existing ? existing.btn.command || "" : "";
+  cmdInputEl.value = existing ? stripTapEnter(existing.btn.command) : "";
   const cmdWrap = document.createElement("label");
   cmdWrap.append("Command (leave empty for a menu button)", cmdInputEl);
+
+  // Tap behavior: send now, type into the input (composable word
+  // buttons), or type and submit the whole composed line.
+  const tapModeIn = tapSelect(tapModeOf(existing?.btn));
+  const tapWrap = document.createElement("label");
+  tapWrap.append("On tap", tapModeIn);
 
   // Menu options: with any options, tapping the button opens a picker
   // sheet instead of firing a command — "a button that is a category".
   const optionsWrap = document.createElement("div");
   optionsWrap.className = "option-rows";
   const optionRows = [];
-  function addOptionRow(label = "", command = "", confirmed = false) {
+  function addOptionRow(label = "", command = "", confirmed = false, tapMode = "send") {
     const row = document.createElement("div");
     row.className = "option-row";
+    const main = document.createElement("div");
+    main.className = "option-row-main";
     const labelIn = document.createElement("input");
     labelIn.type = "text";
     labelIn.placeholder = "option label";
@@ -1953,10 +2137,6 @@ function openMacroEditor(existing) {
     cmdIn.autocapitalize = "off";
     cmdIn.spellcheck = false;
     cmdIn.value = command;
-    const confirmIn = document.createElement("input");
-    confirmIn.type = "checkbox";
-    confirmIn.checked = confirmed;
-    confirmIn.title = "Ask before sending";
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "option-remove";
@@ -1965,13 +2145,23 @@ function openMacroEditor(existing) {
       row.remove();
       optionRows.splice(optionRows.indexOf(entry), 1);
     });
-    const entry = { labelIn, cmdIn, confirmIn };
+    main.append(labelIn, cmdIn, remove);
+    const extras = document.createElement("div");
+    extras.className = "option-row-extras";
+    const tapIn = tapSelect(tapMode);
+    const confirmIn = document.createElement("input");
+    confirmIn.type = "checkbox";
+    confirmIn.checked = confirmed;
+    const confirmLabel = document.createElement("label");
+    confirmLabel.append(confirmIn, "confirm");
+    extras.append(tapIn, confirmLabel);
+    const entry = { labelIn, cmdIn, confirmIn, tapIn };
     optionRows.push(entry);
-    row.append(labelIn, cmdIn, confirmIn, remove);
+    row.append(main, extras);
     optionsWrap.appendChild(row);
   }
   for (const opt of existing?.btn.options || []) {
-    addOptionRow(opt.label, opt.command || "", opt.confirm);
+    addOptionRow(opt.label, stripTapEnter(opt.command), opt.confirm, tapModeOf(opt));
   }
   const addOptionBtn = document.createElement("button");
   addOptionBtn.type = "button";
@@ -2056,16 +2246,17 @@ function openMacroEditor(existing) {
     actions.appendChild(deleteBtn);
   }
 
-  form.append(labelWrap, cmdWrap, optionsLabel, placeWrap, colorRow, confirmRow, actions);
+  form.append(labelWrap, cmdWrap, tapWrap, optionsLabel, placeWrap, colorRow, confirmRow, actions);
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const label = labelInput.value.trim();
-    const command = cmdInputEl.value.trim();
+    const command = encodeTapMode(cmdInputEl.value.trim(), tapModeIn.value);
     const options = optionRows
       .map((row) => ({
         label: row.labelIn.value.trim(),
-        command: row.cmdIn.value.trim(),
+        command: encodeTapMode(row.cmdIn.value.trim(), row.tapIn.value),
         confirm: row.confirmIn.checked,
+        insert: row.tapIn.value !== "send",
       }))
       .filter((o) => o.label && o.command);
     if (!label || (!command && !options.length)) return;
@@ -2083,6 +2274,7 @@ function openMacroEditor(existing) {
         group,
         label,
         command,
+        insert: tapModeIn.value !== "send",
         options,
         color: chosenColor,
         confirm: confirmToggle.checked,
@@ -2114,14 +2306,20 @@ function recordHistory(text) {
   } catch { /* storage full/blocked — cmdHistory just won't persist */ }
 }
 
-// The echo comes back over the text stream, so nothing renders locally.
-inputForm.addEventListener("submit", (ev) => {
-  ev.preventDefault();
+// Send whatever is in the input: the Send button, hardware enter, and
+// type-in macros ending in \r all land here. The echo comes back over
+// the text stream, so nothing renders locally.
+function submitInput() {
   const text = cmdInput.value.trim();
   if (!text) return;
   sendCommand(text);
   recordHistory(text);
   cmdInput.value = "";
+}
+
+inputForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  submitInput();
 });
 
 // Repeat button: tap = resend last command; hold = cmdHistory sheet.
@@ -2232,11 +2430,15 @@ document.getElementById("textsize-btn").addEventListener("click", () => {
 // ---- Soft keyboard / viewport --------------------------------------------
 
 // Pin the app to the *visual* viewport so the soft keyboard never covers
-// the input bar (iOS Safari doesn't resize the layout viewport).
+// the input bar (iOS Safari doesn't resize the layout viewport). iOS also
+// *scrolls* the page to reveal the focused input instead of resizing, so
+// --vvt follows the viewport's offset to keep the app under the visible
+// region (stays 0 on platforms that resize).
 const vv = window.visualViewport;
 function syncViewport() {
   if (!vv) return;
   document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+  document.documentElement.style.setProperty("--vvt", `${vv.offsetTop}px`);
   if (autoScroll) scrollToBottom();
 }
 if (vv) {
@@ -2369,6 +2571,9 @@ for (const btn of document.querySelectorAll(".drawer-close")) {
 let swipe = null;
 paneWrap.addEventListener("touchstart", (ev) => {
   if (ev.touches.length !== 1) { swipe = null; return; }
+  // The compass can be parked in an edge zone; touches on it are taps or
+  // compass drags, never drawer swipes.
+  if (ev.target.closest && ev.target.closest("#compass")) { swipe = null; return; }
   const t = ev.touches[0];
   const rect = paneWrap.getBoundingClientRect();
   const x = t.clientX - rect.left;
@@ -2400,6 +2605,87 @@ paneWrap.addEventListener("touchmove", (ev) => {
   }
 }, { passive: true });
 paneWrap.addEventListener("touchend", () => { swipe = null; }, { passive: true });
+
+// ---- Compass position ------------------------------------------------------
+// Same feel as the floating macro buttons: a quick tap on a lit direction
+// still walks; holding ~half a second lifts the whole compass to drag it.
+// The position (compass center, as pane fractions) persists per device.
+
+const COMPASS_POS_KEY = "vellum-compass-pos";
+const compassEl = document.getElementById("compass");
+
+function placeCompass(cx, cy) {
+  compassEl.style.left = `${cx * 100}%`;
+  compassEl.style.top = `${cy * 100}%`;
+  compassEl.style.right = "auto";
+  compassEl.style.bottom = "auto";
+  compassEl.style.transform = "translate(-50%, -50%)";
+}
+
+try {
+  const pos = JSON.parse(localStorage.getItem(COMPASS_POS_KEY) || "null");
+  if (Array.isArray(pos)) placeCompass(pos[0], pos[1]);
+} catch { /* corrupt entry — default corner */ }
+
+(() => {
+  let holdTimer = null;
+  let dragging = false;
+  compassEl.addEventListener("pointerdown", (ev) => {
+    dragging = false;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      dragging = true;
+      compassEl.classList.add("dragging");
+      try {
+        compassEl.setPointerCapture(ev.pointerId);
+      } catch { /* pointer already gone */ }
+    }, 450);
+  });
+  compassEl.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    const rect = paneWrap.getBoundingClientRect();
+    const halfW = compassEl.offsetWidth / 2;
+    const halfH = compassEl.offsetHeight / 2;
+    const px = Math.min(rect.width - halfW - 4, Math.max(halfW + 4, ev.clientX - rect.left));
+    const py = Math.min(rect.height - halfH - 4, Math.max(halfH + 4, ev.clientY - rect.top));
+    const cx = px / rect.width;
+    const cy = py / rect.height;
+    placeCompass(cx, cy);
+    compassEl.dataset.cx = cx;
+    compassEl.dataset.cy = cy;
+  });
+  const endDrag = () => {
+    clearTimeout(holdTimer);
+    if (dragging && compassEl.dataset.cx) {
+      try {
+        localStorage.setItem(
+          COMPASS_POS_KEY,
+          JSON.stringify([parseFloat(compassEl.dataset.cx), parseFloat(compassEl.dataset.cy)]),
+        );
+      } catch { /* storage blocked — position just won't persist */ }
+    }
+    compassEl.classList.remove("dragging");
+    // Cleared on a timeout so the click that follows pointerup still sees
+    // dragging=true and gets swallowed below.
+    setTimeout(() => {
+      dragging = false;
+    }, 0);
+  };
+  compassEl.addEventListener("pointerup", endDrag);
+  compassEl.addEventListener("pointercancel", endDrag);
+  compassEl.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  // Capture phase: the tap that ends a drag must not walk the character.
+  compassEl.addEventListener(
+    "click",
+    (ev) => {
+      if (dragging) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    },
+    true,
+  );
+})();
 
 // Tapping the visible pane while a drawer is open closes it (capture phase
 // so the tap never reaches links beneath).

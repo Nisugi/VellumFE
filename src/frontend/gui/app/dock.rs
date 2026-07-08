@@ -30,7 +30,135 @@ pub(super) struct MainWindowRectSnapshot {
     pub(super) rect: [f32; 4],
 }
 
+/// Everything a persisted layout file restores, reconciled against the tabs
+/// that actually exist this session. Built by [`VellumGuiApp::restore_layout_state`],
+/// consumed by the constructor (startup restore) and `.loadlayout` (runtime
+/// apply).
+pub(super) struct RestoredLayoutState {
+    pub(super) hidden_tabs: HashSet<TabKey>,
+    pub(super) main_window_rects: HashMap<TabKey, [f32; 4]>,
+    pub(super) tab_zones: HashMap<TabKey, GuiShellZone>,
+    pub(super) no_title_tabs: HashSet<TabKey>,
+    pub(super) shell_layout: ShellLayoutSnapshot,
+    pub(super) tab_groups: Vec<TabGroup>,
+    pub(super) detached_tabs: HashMap<TabKey, DetachedWindowState>,
+    pub(super) ui_font: FontRef,
+    pub(super) ui_settings: GuiUiSettings,
+    pub(super) tab_settings: HashMap<TabKey, TabSettings>,
+    pub(super) main_viewport: Option<MainViewportState>,
+}
+
 impl VellumGuiApp {
+    /// Reconcile a persisted layout against this session's available tabs.
+    /// `None` yields the same defaults as a missing layout file. Saved state
+    /// referencing tabs that don't exist this session is dropped; tabs the
+    /// file doesn't know get their default zone.
+    pub(super) fn restore_layout_state(
+        persisted_layout: Option<&GuiLayoutFileV1>,
+        available_tabs: &HashMap<TabKey, GuiTab>,
+        content_width: f32,
+    ) -> RestoredLayoutState {
+        let ui_font = persisted_layout
+            .map(|layout| layout.ui_font.clone())
+            .unwrap_or_default();
+        let ui_settings = persisted_layout
+            .map(|layout| layout.ui_settings.clone())
+            .unwrap_or_default();
+        let tab_settings = persisted_layout
+            .map(|layout| layout.tab_settings_map())
+            .unwrap_or_default();
+        let main_viewport = persisted_layout.and_then(|layout| layout.main_viewport.clone());
+
+        let mut hidden_tabs: HashSet<TabKey> = persisted_layout
+            .map(|layout| layout.hidden_tabs.iter().cloned().collect())
+            .unwrap_or_default();
+        hidden_tabs.retain(|key| available_tabs.contains_key(key));
+
+        let snapshot = persisted_layout.and_then(Self::dock_snapshot_from_layout);
+        let mut main_window_rects = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .main_window_rects
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .map(|entry| (entry.key.clone(), entry.rect))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        main_window_rects.retain(|key, _| available_tabs.contains_key(key));
+        let mut tab_zones = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .tab_zones
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .map(|entry| (entry.key.clone(), entry.zone))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        tab_zones.retain(|key, _| available_tabs.contains_key(key));
+        let mut no_title_tabs: HashSet<TabKey> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .no_title_tabs
+                    .iter()
+                    .filter(|key| available_tabs.contains_key(*key))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        no_title_tabs.retain(|key| available_tabs.contains_key(key));
+        for key in available_tabs.keys() {
+            tab_zones
+                .entry(key.clone())
+                .or_insert_with(|| Self::default_zone_for_tab_key(key));
+        }
+        let mut shell_layout = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.shell_layout.clone())
+            .unwrap_or_default();
+        shell_layout.sanitize(content_width.max(1.0));
+
+        let tab_groups = Self::sanitize_tab_groups(
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.tab_groups.clone())
+                .unwrap_or_default(),
+            available_tabs,
+        );
+
+        let detached_tabs: HashMap<TabKey, DetachedWindowState> = persisted_layout
+            .map(|layout| {
+                Self::detached_viewports_from_layout(layout, available_tabs, &hidden_tabs)
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|viewport| {
+                let viewport = Self::sanitize_viewport_state(&viewport);
+                let key = viewport.tab.clone();
+                let state = DetachedWindowState::new(&key, viewport);
+                (key, state)
+            })
+            .collect();
+
+        RestoredLayoutState {
+            hidden_tabs,
+            main_window_rects,
+            tab_zones,
+            no_title_tabs,
+            shell_layout,
+            tab_groups,
+            detached_tabs,
+            ui_font,
+            ui_settings,
+            tab_settings,
+            main_viewport,
+        }
+    }
+
     pub(super) fn dock_snapshot_from_layout(
         layout: &GuiLayoutFileV1,
     ) -> Option<DockStateSnapshot> {

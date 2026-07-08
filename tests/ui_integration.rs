@@ -83,6 +83,8 @@ fn add_progress_window(ui_state: &mut UiState, name: &str, progress_id: &str) {
             label: String::new(),
             color: None,
             progress_id: progress_id.to_string(),
+            numbers_only: false,
+            current_only: false,
         }),
         position: position(),
         visible: true,
@@ -101,6 +103,7 @@ fn add_countdown_window(ui_state: &mut UiState, name: &str, countdown_id: &str) 
             end_time: 0,
             label: name.to_string(),
             countdown_id: countdown_id.to_string(),
+            color: None,
         }),
         position: position(),
         visible: true,
@@ -2270,12 +2273,12 @@ fn ui_stores_room_components_when_room_window_present() {
 
     let desc = room_components
         .get("room desc")
-        .and_then(|lines| lines.get(0))
+        .and_then(|lines| lines.first())
         .map(|segments| segments_to_string(segments))
         .unwrap_or_default();
     let exits = room_components
         .get("room exits")
-        .and_then(|lines| lines.get(0))
+        .and_then(|lines| lines.first())
         .map(|segments| segments_to_string(segments))
         .unwrap_or_default();
 

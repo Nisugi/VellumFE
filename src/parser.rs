@@ -18,7 +18,6 @@ pub enum SpanType {
     Monsterbold, // <preset id="monsterbold"> from parser
     Spell,       // <spell> tag from parser
     Speech,      // <preset id="speech"> from parser
-    System,      // Client/system messages (not produced by parser; used for UI echoes)
 }
 
 /// Parse numeric current/max out of a progress bar text string.
@@ -63,19 +62,6 @@ fn last_number(input: &str) -> Option<u32> {
         .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '%')
         .rev()
         .find_map(|token| token.trim_matches(|c: char| !c.is_ascii_digit()).parse().ok())
-}
-
-/// Convenience struct used while normalizing spans before they are wrapped in a
-/// higher-level `ParsedElement`.
-#[derive(Clone, Debug)]
-pub struct ParsedSpan {
-    pub text: String,
-    pub fg: Option<String>,
-    pub bg: Option<String>,
-    pub bold: bool,
-    pub span_type: SpanType,
-    pub preset: Option<String>,
-    pub link_data: Option<LinkData>,
 }
 
 /// Top-level representation of any XML fragment we care about.
@@ -238,14 +224,12 @@ pub enum ParsedElement {
     /// Target list from combat dialog dropdown (for direct-connect users)
     TargetList {
         current_target: String,  // from value attribute
-        targets: Vec<String>,    // from content_text (comma-split)
         target_ids: Vec<String>, // from content_value (comma-split)
     },
     /// Container window definition
     Container {
         id: String,
         title: String,
-        target: String,
     },
     /// Clear container contents
     ClearContainer {
@@ -286,7 +270,6 @@ pub struct DialogProgressBarSpec {
 pub(crate) struct ColorStyle {
     fg: Option<String>,
     bg: Option<String>,
-    bold: bool,
 }
 
 
@@ -311,9 +294,6 @@ pub struct XmlParser {
     // Menu tracking
     current_menu_id: Option<String>, // ID of menu being parsed
     current_menu_coords: Vec<(String, Option<String>)>, // (coord, optional noun) pairs for current menu
-
-    // Container/Inventory tracking
-    current_container_id: Option<String>, // ID of container currently receiving items
 
     // Event pattern matching
     event_matchers: Vec<(Regex, crate::config::EventPattern)>, // Compiled regexes + patterns
@@ -374,7 +354,6 @@ impl XmlParser {
             current_preset_id: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
-            current_container_id: None,
             event_matchers,
         }
     }
@@ -723,7 +702,6 @@ impl XmlParser {
                 self.preset_stack.push(ColorStyle {
                     fg: fg.clone(),
                     bg: bg.clone(),
-                    bold: false,
                 });
             } else {
                 self.preset_stack.push(ColorStyle::default());
@@ -745,7 +723,6 @@ impl XmlParser {
         self.color_stack.push(ColorStyle {
             fg,
             bg,
-            bold: false,
         });
     }
 
@@ -762,7 +739,6 @@ impl XmlParser {
                 self.style_stack.push(ColorStyle {
                     fg: fg.clone(),
                     bg: bg.clone(),
-                    bold: false,
                 });
             }
         }
@@ -1955,7 +1931,6 @@ impl XmlParser {
             self.color_stack.push(ColorStyle {
                 fg,
                 bg,
-                bold: false,
             });
         } else {
             // Use commands preset (like links preset for <a> tags)
@@ -1963,7 +1938,6 @@ impl XmlParser {
                 self.color_stack.push(ColorStyle {
                     fg: preset_fg.clone(),
                     bg: preset_bg.clone(),
-                    bold: false,
                 });
             }
         }
@@ -2029,7 +2003,6 @@ impl XmlParser {
             self.color_stack.push(ColorStyle {
                 fg,
                 bg,
-                bold: false,
             });
         } else {
             // Use links preset
@@ -2037,7 +2010,6 @@ impl XmlParser {
                 self.color_stack.push(ColorStyle {
                     fg: preset_fg.clone(),
                     bg: preset_bg.clone(),
-                    bold: false,
                 });
             }
         }
@@ -2152,7 +2124,6 @@ impl XmlParser {
             self.preset_stack.push(ColorStyle {
                 fg: fg.clone(),
                 bg: bg.clone(),
-                bold: false,
             });
         }
     }
@@ -2452,8 +2423,7 @@ impl XmlParser {
         // <container id='225766824' title='Bandolier' target='#225766824' location='right'/>
         if let Some(id) = Self::extract_attribute(tag, "id") {
             let title = Self::extract_attribute(tag, "title").unwrap_or_default();
-            let target = Self::extract_attribute(tag, "target").unwrap_or_default();
-            elements.push(ParsedElement::Container { id, title, target });
+            elements.push(ParsedElement::Container { id, title });
         }
     }
 
@@ -2508,7 +2478,6 @@ impl XmlParser {
 
                 elements.push(ParsedElement::TargetList {
                     current_target,
-                    targets,
                     target_ids,
                 });
             }

@@ -19,6 +19,15 @@ config files, so changes carry over if you switch frontends.
 TUI's layout.toml. Window size, position, and zoom are restored between
 sessions automatically.
 
+`.savelayout <name>` / `.loadlayout <name>` / `.layouts` work here too,
+on GUI-native layouts: save the current arrangement as a named
+checkpoint (say, `combat` vs `town`), then swap with one command.
+Loading applies instantly — windows, zones, tab groups, detached
+windows, fonts, zoom — and later rearranging never rewrites a
+checkpoint; only an explicit `.savelayout` does. TUI `.toml` layouts
+are a separate format and can't be loaded here (`.resize` is also
+TUI-only).
+
 ## Windows and Zones
 
 The GUI arranges windows in five zones: header, footer, left sidebar,
@@ -29,10 +38,54 @@ center, and right sidebar. Toggle zones from the top toolbar.
 - **Resize**: drag any window edge or corner.
 - **Add/hide windows**: the **Windows** menu in the toolbar — add from
   categorized templates, toggle visibility, or reassign a window's zone.
-- **Right-click** a window body for its context menu; title bars can be
-  hidden per-window.
+- **Right-click** a window body for its context menu — including **Edit
+  Window…**, which opens the window editor; title bars can be hidden
+  per-window.
 - Windows can be **detached** into separate OS windows (restored across
   sessions), or locked together into tab groups that move as a unit.
+
+## The Window Editor
+
+Right-click a window → **Edit Window…** (or `.editwindow`) to configure
+it in place. Beyond title, streams, and buffer size, the editor exposes:
+
+- **Text windows**: per-line **timestamps** (with an at-line-start
+  toggle) and **compact** mode (drop blank lines).
+- **Tabbed windows**: add, remove, rename, and reorder tabs; edit each
+  tab's stream subscriptions; a **Quiet** toggle stops a tab from
+  marking unread; per-tab timestamps.
+- **Progress bars**: bar color (hex or palette picker) and display
+  modes (`value/max` or bare `value` instead of a filled bar).
+- **Countdowns**: a **fill color** override (defaults: roundtime red,
+  casttime blue).
+- **Active effects**: category (spells/buffs/debuffs/cooldowns).
+- **Delete Window** — actually removes the window from the layout
+  (unlike hiding, or the `.deletewindow` command, which only hides).
+
+## Custom Windows
+
+**Windows menu → Add → Custom Window…** opens an authoring panel for
+custom text windows fed by any Lich stream id. Name the window, type
+comma-separated stream ids — or click one from the **streams seen this
+session** list — and it starts collecting that output. The panel also
+edits or deletes existing custom windows. (The TUI can do the same from
+its window editor's Streams field; `Ctrl+P` there opens the same
+seen-streams picker.)
+
+## Lich WebUI Panels
+
+Lich 5.18+ scripts can register live UI pages (`;ui`). The GUI renders
+those pages as **native docked panels** — real widgets, not an embedded
+browser:
+
+```
+.webui            # connect to Lich's WebUI and pick from its pages
+.webui <page>     # open a specific script's page as a panel
+.webui off        # disconnect the bridge
+```
+
+Open panels are saved with your layout and reconnect automatically at
+login. Requires a Lich proxy connection (not `--direct`).
 
 ## Appearance
 

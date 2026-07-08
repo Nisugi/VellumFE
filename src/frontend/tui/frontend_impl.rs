@@ -13,8 +13,14 @@ impl Frontend for TuiFrontend {
     fn poll_events(&mut self) -> Result<Vec<FrontendEvent>> {
         let mut events = Vec::new();
 
-        // Poll for events (non-blocking)
-        if event::poll(std::time::Duration::from_millis(16))? {
+        // Wait briefly for the first event, then drain everything already
+        // queued (zero-timeout polls) so a paste or mouse drag doesn't pay a
+        // full sync/render pass per event. Capped so a pathological flood
+        // still lets the main loop breathe.
+        const MAX_EVENTS_PER_POLL: usize = 128;
+        let mut wait = std::time::Duration::from_millis(16);
+        while events.len() < MAX_EVENTS_PER_POLL && event::poll(wait)? {
+            wait = std::time::Duration::ZERO;
             match event::read()? {
                 Event::Key(key) => {
                     // Only process key press events, not release events
@@ -67,8 +73,9 @@ impl Frontend for TuiFrontend {
             .downcast_mut::<AppCore>()
             .ok_or_else(|| anyhow::anyhow!("Invalid app type"))?;
 
-        // Clone theme once so all sync tasks share the same palette
-        let theme = self.theme_cache.get_theme().clone();
+        // Arc handle so all sync tasks share the same palette without
+        // deep-cloning the theme every frame
+        let theme = self.theme_cache.get_theme_arc();
 
         // Def/theme-derived widget config (borders, colors, titles) only
         // needs re-applying when its inputs change; content sync below stays

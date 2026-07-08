@@ -41,6 +41,15 @@ buffer_size = 10000
 | `society` | Society messages |
 | `bounty` | Bounty information |
 
+### Custom Streams
+
+`streams` isn't limited to this list — any stream id a Lich script
+pushes can feed a text window, which is how you make a "custom window"
+for a script's output. You don't have to guess ids: in the TUI window
+editor, focus the Streams field and press `Ctrl+P` to pick from the
+streams actually seen this session; the GUI has a dedicated
+**Custom Windows** panel (Windows menu → Add → Custom Window…).
+
 ## Examples
 
 ### Main Window

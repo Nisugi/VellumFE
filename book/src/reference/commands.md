@@ -24,16 +24,16 @@ command `quit` also saves your settings on the way out.)
 |---------|---------|-------------|
 | `.windows` | | List all windows |
 | `.addwindow [name type x y w [h]]` | | Add a window (no args opens a picker) |
-| `.deletewindow <name>` | `.delwindow` | Delete a window |
+| `.deletewindow <name>` | `.delwindow` | Hide a window (kept in the layout; in the GUI, the window editor's Delete Window button removes it for real) |
 | `.editwindow [name]` | `.editwin` | Edit a window (no name opens a picker) |
 | `.hidewindow [name]` | `.hidewin` | Hide a window |
 | `.rename <window> <new title>` | | Rename a window's title |
 | `.border <window> <style> [color]` | | Set border sides: `all`, `none`, `top`, `bottom`, `left`, `right` |
 | `.lockwindows` | `.lockall`, `.unlockwindows`, `.unlockall` | Toggle move/resize lock on all windows |
-| `.savelayout [name]` | | Save the current layout |
-| `.loadlayout [name]` | | Load a saved layout |
-| `.layouts` | | List saved layouts |
-| `.resize` | | Refit layout to the current terminal size |
+| `.savelayout [name]` | | Save the current layout under a name (each frontend keeps its own: TUI `.toml` grids, GUI checkpoints) |
+| `.loadlayout <name>` | | Load a saved layout; in the GUI it applies live to the running session |
+| `.layouts` | | List saved layouts for this frontend |
+| `.resize` | | Refit layout to the current terminal size (TUI) |
 | `.nexttab` / `.prevtab` | | Switch tabs in a tabbed window |
 | `.gonew` | `.nextunread` | Jump to the next tab with unread messages |
 
@@ -87,3 +87,4 @@ command `quit` also saves your settings on the way out.)
 | `.hidecontainers [title]` | | Close container windows (all, or one by title) |
 | `.reloadmacros` | | Reload macros.toml and push to connected phones |
 | `.webinfo` | | Show the phone pairing URL and open its QR code |
+| `.webui [page\|off]` | | Lich WebUI panels (GUI, Lich 5.18+): no args picks from Lich's registered pages, a name opens that page, `off` disconnects |

@@ -42,6 +42,7 @@ fn styled(text: &str, stream: &str) -> Arc<StyledLine> {
     Arc::new(StyledLine {
         segments: vec![TextSegment::plain(text)],
         stream: stream.to_string(),
+        timestamp: None,
     })
 }
 
@@ -383,6 +384,10 @@ async fn macros_flow_definitions_out_taps_in() {
         [[group.button.option]]
         label = "Bank"
         command = ";go2 bank"
+        [[group.button]]
+        label = "go"
+        command = "go"
+        insert = true
         [[floating]]
         label = "Atk"
         command = ";bigshot"
@@ -408,6 +413,15 @@ async fn macros_flow_definitions_out_taps_in() {
         !macros.to_string().contains(";go2 bank"),
         "commands must never reach the client"
     );
+    // Type-in buttons are the exception: the client needs their text to
+    // put it in the input box, so it ships with the definition.
+    assert_eq!(d["groups"][0]["buttons"][2]["insert"], true);
+    assert_eq!(d["groups"][0]["buttons"][2]["command"], "go");
+    assert_eq!(d["groups"][0]["buttons"][0]["insert"], false);
+
+    // Stale-client guard: a tap id pointing at an insert button must not
+    // resolve to an executable command server-side.
+    assert_eq!(macros_config.resolve("g:0:b:2"), None);
 
     // A tap comes back as an id-only event.
     client.send_text(r#"{"t":"macro","d":{"id":"g:0:b:1:o:0"}}"#).await;
@@ -491,6 +505,7 @@ async fn macro_save_and_delete_arrive_as_events() {
         command,
         color,
         confirm,
+        insert,
         options,
         original,
     } = event
@@ -502,13 +517,31 @@ async fn macro_save_and_delete_arrive_as_events() {
     assert_eq!(command, "sleep");
     assert_eq!(color.as_deref(), Some("#d9b44f"));
     assert!(confirm);
+    assert!(!insert);
     assert!(options.is_empty());
     assert_eq!(original, Some((None, "Old nap".to_string())));
+
+    // A type-in button: the trailing \r ("type, then send") must survive
+    // the trim that protects ordinary commands.
+    client
+        .send_text(
+            r#"{"t":"macro_save","d":{"group":"Words","label":"door","command":"door\r","insert":true}}"#,
+        )
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::MacroSave { command, insert, .. } = event else {
+        panic!("expected MacroSave");
+    };
+    assert!(insert);
+    assert_eq!(command, "door\r");
 
     // A menu button: options and no direct command.
     client
         .send_text(
-            r#"{"t":"macro_save","d":{"group":"Couch","label":"Travel","command":"","options":[{"label":"Bank","command":";go2 bank"},{"label":"Gate","command":";go2 gate","confirm":true}]}}"#,
+            r#"{"t":"macro_save","d":{"group":"Couch","label":"Travel","command":"","options":[{"label":"Bank","command":";go2 bank"},{"label":"Gate","command":";go2 gate","confirm":true},{"label":"second","command":"second","insert":true}]}}"#,
         )
         .await;
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
@@ -520,9 +553,10 @@ async fn macro_save_and_delete_arrive_as_events() {
     };
     assert_eq!(label, "Travel");
     assert!(command.is_empty());
-    assert_eq!(options.len(), 2);
+    assert_eq!(options.len(), 3);
     assert_eq!(options[1].command, ";go2 gate");
     assert!(options[1].confirm);
+    assert!(options[2].insert, "per-option insert flag forwarded");
 
     // Empty label/command is rejected at parse time, not forwarded.
     client

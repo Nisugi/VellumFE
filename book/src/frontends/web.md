@@ -7,8 +7,8 @@ server. It works two ways:
   on your PC and the phone joins the *same* character (a sidecar).
 - **The whole interface** — [headless mode](#headless-mode) runs just the
   core plus the web server; you log in and play entirely from the
-  browser. (The [Android app](./android.md) packages exactly this into a
-  phone app.)
+  browser. (The [Android](./android.md) and [iOS](./ios.md) apps package
+  exactly this into a phone app.)
 
 ## Enabling (Desktop Sidecar)
 
@@ -70,7 +70,8 @@ port.
   sheet.
 - **Tap links, nouns, and exits** — context menus open in a bottom
   sheet; a mini **compass** floats over the text pane (exits light up,
-  tap to move).
+  tap to move). It starts bottom-right; hold it about half a second to
+  lift and drag it anywhere — the spot is remembered per device.
 - **Side drawers** — swipe from the screen edges (or tap the handles):
   the left drawer is a vertical **macro tray**; the right is a **status
   panel** with the injury doll, injuries list, hands, character sheet
@@ -80,7 +81,10 @@ port.
 - **Vitals, hands, RT/CT** — a status strip with live countdowns.
 - **Macro buttons** — the macro rail, menu buttons, and draggable
   floating buttons from [macros.toml](../configuration/macros-toml.md);
-  create and edit them from the phone with the rail's **+** button.
+  create and edit them from the phone with the rail's **+** button. A
+  button's **On tap** behavior can also *type into the input* instead of
+  sending, so word buttons ("go", "second", "door") compose phrases —
+  *Type, then send* submits the composed line in one tap.
 - **Sound alerts** — highlight sounds play in the browser (toggle in
   Settings; the first sound may need one tap due to autoplay rules).
 - **Reconnect gracefully** — resumes where you left off, with a "missed
@@ -120,6 +124,25 @@ screen**: enter account/password/character/game, or tap a saved profile
 (shared with the [desktop Launcher](../getting-started/launcher.md)'s
 `launcher.toml`). "Remember this login" saves the password securely.
 
+### Connecting Through Lich
+
+The login screen has a **play.net / Lich** toggle. The Lich tab attaches
+to a Lich session already running on another machine — so a headless
+host, the Android app, or the iOS app can still play a fully scripted
+character:
+
+- Launch Lich with `--detachable-client` on your PC, then enter its
+  host and port (an optional label names the saved entry). Saved Lich
+  connections reattach with one tap, no password.
+- Lich's connect-a-device panel shows a `vellum://` **QR code / link**;
+  scanning or tapping it opens the login screen with the Lich tab
+  prefilled. It never auto-connects — you always press Connect.
+- The detachable port is unauthenticated, so the form warns when the
+  host doesn't look private. Keep it to home Wi-Fi, Tailscale, or a
+  VPN — never the open internet.
+- If the link drops, the session reattaches to the same Lich target
+  automatically.
+
 Headless sessions manage themselves:
 
 - Drops reconnect automatically with backoff; typing again resets it.
@@ -129,8 +152,8 @@ Headless sessions manage themselves:
 - If login hangs, a watchdog retries it.
 - `quit` (or the logout button) returns to the login screen.
 
-The login screen only appears in headless/Android mode — a desktop
-sidecar session is controlled from the desktop, as before.
+The login screen only appears in headless and app (Android/iOS) mode — a
+desktop sidecar session is controlled from the desktop, as before.
 
 ## Tips
 

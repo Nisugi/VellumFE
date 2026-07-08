@@ -8,8 +8,8 @@
 //! Session lifecycle: the runtime starts connecting immediately when the
 //! CLI provided credentials (`--direct`) or a Lich key (`--key`); otherwise
 //! it idles with `session_control` advertised and waits for a web client's
-//! `connect` message (the login screen). Web-initiated sessions are always
-//! direct-mode.
+//! `connect` message (the login screen). Web-initiated sessions are either
+//! direct-mode or a Lich detachable-client attach (host+port).
 
 use anyhow::Result;
 use std::time::{Duration, Instant};
@@ -62,12 +62,21 @@ enum SessionRequest {
         game: Option<String>,
         save_password: bool,
         profile_name: Option<String>,
+        lich_host: Option<String>,
+        lich_port: Option<u16>,
     },
     Disconnect,
     /// The user sent `quit` to the game: the server will close the
     /// connection shortly — treat that close as an intentional logout
     /// (no reconnect, back to the login screen), not a network drop.
     UserQuit,
+}
+
+/// A web-requested Lich attach target (detachable-client mode).
+#[derive(Clone)]
+struct LichTarget {
+    host: String,
+    port: u16,
 }
 
 /// Everything the supervisor tracks about the desired/current session.
@@ -77,6 +86,8 @@ struct Supervisor {
     login_key: Option<String>,
     /// Lich sessions are only auto-started when the CLI asked for one.
     lich_configured: bool,
+    /// Web-supplied Lich target; None = CLI-configured host/port.
+    lich_target: Option<LichTarget>,
     connection: Option<Connection>,
     reconnect_attempt: u32,
     reconnect_at: Option<Instant>,
@@ -124,8 +135,13 @@ impl Supervisor {
                 })
             }
             None => {
-                let host = app_core.config.connection.host.clone();
-                let port = app_core.config.connection.port;
+                let (host, port) = match self.lich_target.as_ref() {
+                    Some(t) => (t.host.clone(), t.port),
+                    None => (
+                        app_core.config.connection.host.clone(),
+                        app_core.config.connection.port,
+                    ),
+                };
                 let login_key = self.login_key.clone();
                 tokio::spawn(async move {
                     LichConnection::start(&host, port, login_key, server_tx, command_rx, raw_logger)
@@ -148,10 +164,20 @@ impl Supervisor {
     }
 }
 
-/// Resolve a web `connect` request into direct credentials, saving the
-/// profile/password when asked. Returns a user-facing error string on
-/// failure (never echoes the password).
-fn resolve_connect(req: &SessionRequest) -> Result<DirectConnectConfig, String> {
+/// What a web `connect` request resolved to.
+enum ResolvedConnect {
+    Direct(DirectConnectConfig),
+    Lich {
+        target: LichTarget,
+        /// Display label only — Lich owns the actual login.
+        character: Option<String>,
+    },
+}
+
+/// Resolve a web `connect` request into direct credentials or a Lich
+/// attach target, saving the profile/password when asked. Returns a
+/// user-facing error string on failure (never echoes the password).
+fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
     let SessionRequest::Connect {
         profile,
         account,
@@ -160,6 +186,8 @@ fn resolve_connect(req: &SessionRequest) -> Result<DirectConnectConfig, String> 
         game,
         save_password,
         profile_name,
+        lich_host,
+        lich_port,
     } = req
     else {
         return Err("not a connect request".to_string());
@@ -168,29 +196,62 @@ fn resolve_connect(req: &SessionRequest) -> Result<DirectConnectConfig, String> 
     let data_dir = crate::config::Config::base_dir()
         .map_err(|e| format!("No data directory available: {e}"))?;
 
-    // Saved profile path: look up credentials by profile name.
+    // Saved profile path: look up the target/credentials by profile name.
     if let Some(name) = profile {
         let store = crate::config::profiles::LauncherStore::load()
             .map_err(|e| format!("Could not read saved profiles: {e}"))?;
         let saved = store
             .find(name)
             .ok_or_else(|| format!("Profile '{name}' not found"))?;
+        if saved.mode == crate::config::profiles::LaunchMode::Lich {
+            return Ok(ResolvedConnect::Lich {
+                target: LichTarget {
+                    host: saved.host.clone(),
+                    port: saved.port,
+                },
+                character: Some(saved.character.clone()).filter(|c| !c.is_empty()),
+            });
+        }
         let password = password
             .clone()
             .or_else(|| crate::config::profiles::load_password(&saved.account))
             .ok_or_else(|| {
                 format!("No saved password for '{name}' — enter it and connect again")
             })?;
-        return Ok(DirectConnectConfig {
+        return Ok(ResolvedConnect::Direct(DirectConnectConfig {
             account: saved.account.clone(),
             password,
             character: saved.character.clone(),
             game_code: DirectConnectConfig::game_name_to_code(&saved.game).to_string(),
             data_dir,
+        }));
+    }
+
+    // Inline Lich target path: host+port, no credentials involved.
+    if let (Some(host), Some(port)) = (lich_host.clone(), *lich_port) {
+        if profile_name.is_some() {
+            let mut store =
+                crate::config::profiles::LauncherStore::load().unwrap_or_default();
+            let mut saved = crate::config::profiles::LauncherProfile::new_direct();
+            saved.mode = crate::config::profiles::LaunchMode::Lich;
+            saved.name = profile_name
+                .clone()
+                .unwrap_or_else(|| format!("{host}:{port}"));
+            saved.character = character.clone().unwrap_or_default();
+            saved.host = host.clone();
+            saved.port = port;
+            store.upsert(saved, None);
+            if let Err(e) = store.save() {
+                tracing::warn!("failed to save launcher.toml: {e:#}");
+            }
+        }
+        return Ok(ResolvedConnect::Lich {
+            target: LichTarget { host, port },
+            character: character.clone(),
         });
     }
 
-    // Inline credentials path.
+    // Inline direct credentials path.
     let account = account.clone().ok_or("Account is required")?;
     let character = character.clone().ok_or("Character is required")?;
     let password = password
@@ -220,13 +281,13 @@ fn resolve_connect(req: &SessionRequest) -> Result<DirectConnectConfig, String> 
         }
     }
 
-    Ok(DirectConnectConfig {
+    Ok(ResolvedConnect::Direct(DirectConnectConfig {
         account,
         password,
         character,
         game_code: DirectConnectConfig::game_name_to_code(&game).to_string(),
         data_dir,
-    })
+    }))
 }
 
 pub async fn async_run(
@@ -286,6 +347,7 @@ pub async fn async_run(
         direct,
         lich_configured: login_key.is_some(),
         login_key,
+        lich_target: None,
         connection: None,
         reconnect_attempt: 0,
         reconnect_at: None,
@@ -603,18 +665,29 @@ pub async fn async_run(
                         continue;
                     }
                     match resolve_connect(&connect) {
-                        Ok(cfg) => {
-                            supervisor.character = Some(cfg.character.clone());
-                            supervisor.game = Some(cfg.game_code.clone());
-                            supervisor.direct = Some(cfg);
+                        Ok(resolved) => {
+                            let state = match resolved {
+                                ResolvedConnect::Direct(cfg) => {
+                                    supervisor.character = Some(cfg.character.clone());
+                                    supervisor.game = Some(cfg.game_code.clone());
+                                    supervisor.direct = Some(cfg);
+                                    supervisor.lich_target = None;
+                                    SessionState::Authenticating
+                                }
+                                ResolvedConnect::Lich { target, character } => {
+                                    supervisor.character = character;
+                                    supervisor.game = None;
+                                    supervisor.direct = None;
+                                    supervisor.lich_target = Some(target);
+                                    SessionState::Connecting
+                                }
+                            };
                             supervisor.login_key = None;
                             supervisor.user_disconnected = false;
                             supervisor.reconnect_attempt = 0;
                             supervisor.reconnect_at = None;
                             supervisor.spawn(&app_core, server_tx.clone());
-                            app_core.set_remote_session_state(
-                                supervisor.status(SessionState::Authenticating),
-                            );
+                            app_core.set_remote_session_state(supervisor.status(state));
                         }
                         Err(message) => {
                             app_core.add_system_message(&format!("Connect failed: {message}"));
@@ -738,6 +811,7 @@ fn handle_remote_event(
             command,
             color,
             confirm,
+            insert,
             options,
             original,
         } => {
@@ -746,6 +820,7 @@ fn handle_remote_event(
                 command: Some(command).filter(|c| !c.is_empty()),
                 color,
                 confirm,
+                insert,
                 options,
                 ..Default::default()
             };
@@ -782,6 +857,8 @@ fn handle_remote_event(
             game,
             save_password,
             profile_name,
+            lich_host,
+            lich_port,
         } => {
             session_requests.push(SessionRequest::Connect {
                 profile,
@@ -791,6 +868,8 @@ fn handle_remote_event(
                 game,
                 save_password,
                 profile_name,
+                lich_host,
+                lich_port,
             });
             true
         }

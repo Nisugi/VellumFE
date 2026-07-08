@@ -315,10 +315,17 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
 #[derive(Serialize)]
 pub struct ProfileEntry {
     pub name: String,
+    /// "direct" or "lich".
+    pub mode: String,
     pub account_masked: String,
     pub character: String,
     pub game: String,
     pub has_password: bool,
+    /// Lich target; absent on direct profiles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 /// Saved-profile list; direct reply to a `get_profiles` request.
@@ -364,7 +371,9 @@ pub enum ClientMessage {
         coord: Option<String>,
     },
     /// A macro button/option tap; the id is resolved to its command
-    /// server-side (the client never sends macro command text).
+    /// server-side (the client never sends macro command text). Type-in
+    /// (`insert`) buttons never arrive here — the client handles them
+    /// locally.
     Macro { id: String },
     /// Create/edit a phone-authored macro button (macros-local.toml).
     MacroSave {
@@ -373,6 +382,7 @@ pub enum ClientMessage {
         command: String,
         color: Option<String>,
         confirm: bool,
+        insert: bool,
         options: Vec<crate::config::MacroOption>,
         original: Option<(Option<String>, String)>,
     },
@@ -391,6 +401,9 @@ pub enum ClientMessage {
         game: Option<String>,
         save_password: bool,
         profile_name: Option<String>,
+        /// Set (both) for a Lich attach instead of a direct eAccess login.
+        lich_host: Option<String>,
+        lich_port: Option<u16>,
     },
     /// End the session and suppress reconnection (headless runtime only).
     Disconnect,
@@ -436,6 +449,17 @@ fn opt_str(value: Option<&serde_json::Value>) -> Option<String> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(str::to_string)
+}
+
+/// Trim a phone-authored macro command, preserving a deliberate trailing
+/// `\r` on type-in (`insert`) macros — it encodes "type, then send" and a
+/// plain trim would eat it.
+fn trim_macro_command(raw: &str, insert: bool) -> String {
+    let mut command = raw.trim().to_string();
+    if insert && !command.is_empty() && raw.trim_end_matches([' ', '\t']).ends_with('\r') {
+        command.push('\r');
+    }
+    command
 }
 
 #[derive(Deserialize)]
@@ -491,13 +515,11 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "macro_save" => {
             let label = msg.d.get("label")?.as_str()?.trim().to_string();
-            let command = msg
-                .d
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let insert = msg.d.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+            let command = trim_macro_command(
+                msg.d.get("command").and_then(|v| v.as_str()).unwrap_or_default(),
+                insert,
+            );
             let options: Vec<crate::config::MacroOption> = msg
                 .d
                 .get("options")
@@ -507,7 +529,9 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                         .iter()
                         .filter_map(|o| {
                             let label = o.get("label")?.as_str()?.trim().to_string();
-                            let command = o.get("command")?.as_str()?.trim().to_string();
+                            let insert =
+                                o.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let command = trim_macro_command(o.get("command")?.as_str()?, insert);
                             if label.is_empty() || command.is_empty() {
                                 return None;
                             }
@@ -515,6 +539,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                                 label,
                                 command,
                                 confirm: o.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                                insert,
                             })
                         })
                         .collect()
@@ -534,6 +559,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 command,
                 color: opt_str(msg.d.get("color")),
                 confirm: msg.d.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                insert,
                 options,
                 original,
             })
@@ -549,8 +575,23 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             let profile = opt_str(msg.d.get("profile"));
             let account = opt_str(msg.d.get("account"));
             let character = opt_str(msg.d.get("character"));
-            // A connect needs either a saved profile or inline credentials.
-            if profile.is_none() && (account.is_none() || character.is_none()) {
+            let lich = msg.d.get("mode").and_then(|v| v.as_str()) == Some("lich");
+            let lich_host = lich.then(|| opt_str(msg.d.get("host"))).flatten();
+            // Port may arrive as a number or as raw input-field text.
+            let lich_port = lich
+                .then(|| match msg.d.get("port") {
+                    Some(v) if v.is_u64() => v.as_u64().and_then(|p| u16::try_from(p).ok()),
+                    Some(v) => v.as_str().and_then(|s| s.trim().parse::<u16>().ok()),
+                    None => None,
+                })
+                .flatten();
+            // A connect needs a saved profile, direct credentials, or a
+            // complete Lich target.
+            if lich {
+                if profile.is_none() && (lich_host.is_none() || lich_port.is_none()) {
+                    return None;
+                }
+            } else if profile.is_none() && (account.is_none() || character.is_none()) {
                 return None;
             }
             Some(ClientMessage::Connect {
@@ -572,6 +613,8 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
                 profile_name: opt_str(msg.d.get("profile_name")),
+                lich_host,
+                lich_port,
             })
         }
         "disconnect" => Some(ClientMessage::Disconnect),
@@ -701,6 +744,8 @@ mod tests {
                 game: None,
                 save_password: false,
                 profile_name: None,
+                lich_host: None,
+                lich_port: None,
             })
         );
         // Inline credentials with save.
@@ -716,6 +761,8 @@ mod tests {
                 game: Some("prime".to_string()),
                 save_password: true,
                 profile_name: Some("Testy".to_string()),
+                lich_host: None,
+                lich_port: None,
             })
         );
         // Neither a profile nor complete inline credentials → rejected.
@@ -723,6 +770,36 @@ mod tests {
             parse_client_message(r#"{"t":"connect","d":{"account":"ACCT"}}"#),
             None
         );
+        // Lich attach: host + port, no credentials. Port accepted as a
+        // number or as raw input-field text.
+        for port_json in [r#""port":8000"#, r#""port":"8000""#] {
+            assert_eq!(
+                parse_client_message(&format!(
+                    r#"{{"t":"connect","d":{{"mode":"lich","host":"100.64.0.7","name":"Testy","character":"Testy",{port_json}}}}}"#
+                )),
+                Some(ClientMessage::Connect {
+                    profile: None,
+                    account: None,
+                    password: None,
+                    character: Some("Testy".to_string()),
+                    game: None,
+                    save_password: false,
+                    profile_name: None,
+                    lich_host: Some("100.64.0.7".to_string()),
+                    lich_port: Some(8000),
+                })
+            );
+        }
+        // Lich mode without a complete target or profile → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"connect","d":{"mode":"lich","host":"pc.local"}}"#),
+            None
+        );
+        // Lich mode by saved profile name alone is fine.
+        assert!(matches!(
+            parse_client_message(r#"{"t":"connect","d":{"mode":"lich","profile":"Home"}}"#),
+            Some(ClientMessage::Connect { profile: Some(_), .. })
+        ));
         assert_eq!(
             parse_client_message(r#"{"t":"disconnect","d":{}}"#),
             Some(ClientMessage::Disconnect)
@@ -815,17 +892,38 @@ mod tests {
         assert_eq!(mask_account("MYACCOUNT"), "MY*******");
         assert_eq!(mask_account("ab"), "ab");
         assert_eq!(mask_account("a"), "a");
-        let list = vec![ProfileEntry {
-            name: "Main".to_string(),
-            account_masked: mask_account("MYACCOUNT"),
-            character: "Testy".to_string(),
-            game: "prime".to_string(),
-            has_password: true,
-        }];
+        let list = vec![
+            ProfileEntry {
+                name: "Main".to_string(),
+                mode: "direct".to_string(),
+                account_masked: mask_account("MYACCOUNT"),
+                character: "Testy".to_string(),
+                game: "prime".to_string(),
+                has_password: true,
+                host: None,
+                port: None,
+            },
+            ProfileEntry {
+                name: "Home Lich".to_string(),
+                mode: "lich".to_string(),
+                account_masked: String::new(),
+                character: "Testy".to_string(),
+                game: String::new(),
+                has_password: false,
+                host: Some("100.64.0.7".to_string()),
+                port: Some(8000),
+            },
+        ];
         let json: serde_json::Value = serde_json::from_str(&profiles(&list, 9)).unwrap();
         assert_eq!(json["t"], "profiles");
         assert_eq!(json["d"]["list"][0]["account_masked"], "MY*******");
         assert_eq!(json["d"]["list"][0]["has_password"], true);
+        assert_eq!(json["d"]["list"][0]["mode"], "direct");
+        // Direct entries omit the Lich target fields entirely.
+        assert!(json["d"]["list"][0].get("host").is_none());
+        assert_eq!(json["d"]["list"][1]["mode"], "lich");
+        assert_eq!(json["d"]["list"][1]["host"], "100.64.0.7");
+        assert_eq!(json["d"]["list"][1]["port"], 8000);
     }
 
     #[test]

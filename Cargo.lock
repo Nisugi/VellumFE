@@ -989,6 +989,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "dasp_sample"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1788,6 +1801,12 @@ dependencies = [
  "read-fonts",
  "smallvec",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -3188,6 +3207,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "oslog"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d2043d1f61d77cb2f4b1f7b7b2295f40507f5f8e9d1c8bf10a1ca5f97a3969"
+dependencies = [
+ "cc",
+ "dashmap",
+ "log",
 ]
 
 [[package]]
@@ -4851,20 +4881,18 @@ dependencies = [
 
 [[package]]
 name = "vellum-android"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.5"
 dependencies = [
  "android_logger",
  "jni 0.21.1",
  "log",
- "serde_json",
- "tokio",
  "tracing",
  "vellum-fe",
 ]
 
 [[package]]
 name = "vellum-fe"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.5"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -4905,6 +4933,17 @@ dependencies = [
  "tts",
  "tui-textarea",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "vellum-ios"
+version = "0.3.0-beta.5"
+dependencies = [
+ "log",
+ "oslog",
+ "serde_json",
+ "tracing",
+ "vellum-fe",
 ]
 
 [[package]]

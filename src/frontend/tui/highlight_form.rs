@@ -81,8 +81,13 @@ pub struct HighlightFormWidget {
     sound_files: Vec<String>, // Available sound files (index 0 = "none", then actual files)
     sound_file_index: usize,  // Selected index in sound_files
 
-    // Redirect dropdown (Off=0, Only=1, Copy=2)
+    // Redirect dropdown (Off=0, Copy=1, Redirect-only=2)
     redirect_mode_index: usize,
+
+    // Filters carried through from the edited pattern; the form has no UI
+    // for them yet, but a round-trip must not strip them
+    stream: Option<String>,
+    window: Option<String>,
 
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
@@ -187,6 +192,8 @@ impl HighlightFormWidget {
             sound_files: Self::load_sound_files(),
             sound_file_index: 0,    // Default to "none"
             redirect_mode_index: 0, // Default to "Off"
+            stream: None,
+            window: None,
             is_global: true,        // Default to global scope
             popup_x: 0,
             popup_y: 0,
@@ -255,15 +262,20 @@ impl HighlightFormWidget {
             form.redirect_to.set_cursor_line_style(Style::default());
         }
 
-        // Set redirect mode index (0=Off, 1=Only, 2=Copy)
+        // Set redirect mode index (0=Off, 1=Copy, 2=Redirect-only),
+        // matching the dropdown display and the save-path mapping — the old
+        // reversed mapping silently swapped Copy/Only on every edit round-trip
         form.redirect_mode_index = if pattern.redirect_to.is_none() {
             0 // Off
         } else {
             match pattern.redirect_mode {
-                crate::config::RedirectMode::RedirectOnly => 1,
-                crate::config::RedirectMode::RedirectCopy => 2,
+                crate::config::RedirectMode::RedirectCopy => 1,
+                crate::config::RedirectMode::RedirectOnly => 2,
             }
         };
+
+        form.stream = pattern.stream.clone();
+        form.window = pattern.window.clone();
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -582,8 +594,8 @@ impl HighlightFormWidget {
             redirect_to,
             redirect_mode,
             replace,
-            stream: None,         // TODO: Add UI for stream filtering
-            window: None,         // TODO: Add UI for window filtering
+            stream: self.stream.clone(), // No UI yet; preserved from the edited pattern
+            window: self.window.clone(), // No UI yet; preserved from the edited pattern
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -1468,7 +1480,7 @@ impl HighlightFormWidget {
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
-        // Get current value from dropdown index (0=Off, 1=Only, 2=Copy)
+        // Get current value from dropdown index (0=Off, 1=Copy, 2=Redirect-only)
         let current_value = match self.redirect_mode_index {
             0 => "Off",
             1 => "Copy",
@@ -1789,5 +1801,63 @@ impl Cyclable for HighlightFormWidget {
             self.sound_file_index -= 1;
             self.update_sound_from_index();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{HighlightPattern, RedirectMode};
+
+    fn pattern_with_filters() -> HighlightPattern {
+        HighlightPattern {
+            pattern: "You swing".to_string(),
+            fg: None,
+            bg: None,
+            bold: false,
+            color_entire_line: false,
+            fast_parse: false,
+            sound: None,
+            sound_volume: None,
+            category: None,
+            squelch: false,
+            silent_prompt: false,
+            redirect_to: Some("alerts".to_string()),
+            redirect_mode: RedirectMode::RedirectOnly,
+            replace: None,
+            stream: Some("combat".to_string()),
+            window: Some("combat_win".to_string()),
+            compiled_regex: None,
+        }
+    }
+
+    #[test]
+    fn edit_round_trip_preserves_stream_and_window_filters() {
+        let form = HighlightFormWidget::new_edit("test".to_string(), &pattern_with_filters());
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.stream.as_deref(), Some("combat"));
+        assert_eq!(pattern.window.as_deref(), Some("combat_win"));
+    }
+
+    #[test]
+    fn edit_round_trip_preserves_redirect_mode() {
+        // RedirectOnly in, RedirectOnly out (the old index mapping was
+        // reversed between new_edit and save, flipping Copy <-> Only)
+        let form = HighlightFormWidget::new_edit("test".to_string(), &pattern_with_filters());
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.redirect_mode, RedirectMode::RedirectOnly);
+        assert_eq!(pattern.redirect_to.as_deref(), Some("alerts"));
+
+        let mut copy_pattern = pattern_with_filters();
+        copy_pattern.redirect_mode = RedirectMode::RedirectCopy;
+        let form = HighlightFormWidget::new_edit("test".to_string(), &copy_pattern);
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.redirect_mode, RedirectMode::RedirectCopy);
     }
 }

@@ -1,0 +1,119 @@
+name: iOS Check
+
+# Cross-compiles the iOS core for device + simulator (the port's TLS
+# compile/link gate: native-tls -> Security.framework on Apple targets)
+# and guards the vellum-ios crate on every Rust-touching PR/push.
+# Mirrors android-check.yml; Apple targets require a macOS runner.
+
+# The web assets are embedded into the binary via include_str!, so JS/CSS/
+# HTML changes rebuild the core too — they must trigger this workflow.
+on:
+  push:
+    branches: ["main", "feat/ios-port"]
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "ios/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
+      - ".github/workflows/ios-check.yml"
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "ios/**"
+      - "src/frontend/web/assets/**"
+      - "defaults/**"
+      - ".github/workflows/ios-check.yml"
+  workflow_dispatch:
+
+jobs:
+  ios-core:
+    name: Cross-compile iOS core (device + simulator)
+    runs-on: macos-latest # arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build iOS core (device slice)
+        run: cargo build --release -p vellum-ios --target aarch64-apple-ios
+
+      - name: Build iOS core (simulator slice)
+        run: cargo build --release -p vellum-ios --target aarch64-apple-ios-sim
+
+      - name: Show produced libraries
+        run: ls -lah target/aarch64-apple-ios/release/libvellum_ios.a target/aarch64-apple-ios-sim/release/libvellum_ios.a
+
+  simulator-app:
+    name: Build simulator app (unsigned)
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust with simulator target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build iOS core (simulator slice)
+        run: cargo build --release -p vellum-ios --target aarch64-apple-ios-sim
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build app for simulator
+        run: |
+          xcodebuild -project ios/VellumFE.xcodeproj -scheme VellumFE \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Upload simulator app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vellum-fe-ios-simulator-app
+          path: ios/build/Build/Products/Release-iphonesimulator/VellumFE.app
+          if-no-files-found: error
+
+  ios-crate-host:
+    name: iOS crate tests (host check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libspeechd-dev libclang-dev
+
+      - name: Check iOS crate on host
+        run: cargo check -p vellum-ios
+
+      - name: Test the C ABI round-trip on host
+        run: cargo test -p vellum-ios

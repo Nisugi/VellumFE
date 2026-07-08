@@ -379,7 +379,7 @@ impl VellumGuiApp {
         // keys must not reach widgets or the command-line forwarding below.
         Self::forward_detached_input(&ctx, app_core, suppress_macro_dispatch, out);
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.push_id(&tab.id.key, |ui| {
                 if let Some(click) =
                     Self::render_window_content(app_core, ui, tab, render_settings)

@@ -688,32 +688,129 @@ pub fn save_layout(layout: &GuiLayoutFileV1, profile: &str, character: &str) -> 
         std::fs::copy(&path, &backup).context("Failed to create backup")?;
     }
 
-    // Serialize layout
-    let content = serde_json::to_string_pretty(layout).context("Failed to serialize layout")?;
-
-    // Write to temp file then rename (atomic on most filesystems)
-    let temp_path = dir.join("layout_v1.tmp.json");
-    std::fs::write(&temp_path, &content).context("Failed to write temp layout file")?;
-    if let Err(rename_err) = std::fs::rename(&temp_path, &path) {
-        // Windows does not allow renaming over an existing file.
-        // If replacement is needed, remove existing destination and retry.
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .context("Failed to remove existing layout file before rename")?;
-            std::fs::rename(&temp_path, &path)
-                .context("Failed to rename temp to final after replacing existing file")?;
-        } else {
-            return Err(rename_err).context("Failed to rename temp to final");
-        }
-    }
+    write_layout_atomically(layout, &dir, "layout_v1.tmp.json", &path)?;
 
     tracing::debug!("Saved layout to {:?}", path);
     Ok(())
 }
 
+/// Serialize and write via temp file + rename (atomic on most filesystems).
+fn write_layout_atomically(
+    layout: &GuiLayoutFileV1,
+    dir: &std::path::Path,
+    temp_name: &str,
+    path: &PathBuf,
+) -> Result<()> {
+    let content = serde_json::to_string_pretty(layout).context("Failed to serialize layout")?;
+    let temp_path = dir.join(temp_name);
+    std::fs::write(&temp_path, &content).context("Failed to write temp layout file")?;
+    if let Err(rename_err) = std::fs::rename(&temp_path, path) {
+        // Windows does not allow renaming over an existing file.
+        // If replacement is needed, remove existing destination and retry.
+        if path.exists() {
+            std::fs::remove_file(path)
+                .context("Failed to remove existing layout file before rename")?;
+            std::fs::rename(&temp_path, path)
+                .context("Failed to rename temp to final after replacing existing file")?;
+        } else {
+            return Err(rename_err).context("Failed to rename temp to final");
+        }
+    }
+    Ok(())
+}
+
+// ---- Named layout checkpoints ----------------------------------------------
+//
+// `.savelayout <name>` / `.loadlayout <name>` in the GUI. These are explicit
+// checkpoints, deliberately separate from the auto-saved live slot
+// (`layout_v1.json`): loading one replaces the live arrangement, and the
+// autosave keeps writing the live slot afterward — fiddling never rewrites
+// a checkpoint.
+
+/// Directory holding a character's named layout checkpoints.
+pub fn named_layouts_dir(profile: &str, character: &str) -> Result<PathBuf> {
+    Ok(layout_dir(profile, character)?.join("layouts"))
+}
+
+/// True when a checkpoint name is safe to use as a file stem (also blocks
+/// path traversal, since names become `<name>.json`).
+pub fn is_valid_layout_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Save a snapshot as a named checkpoint.
+pub fn save_named_layout(
+    layout: &GuiLayoutFileV1,
+    profile: &str,
+    character: &str,
+    name: &str,
+) -> Result<()> {
+    if !is_valid_layout_name(name) {
+        anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
+    }
+    let dir = named_layouts_dir(profile, character)?;
+    std::fs::create_dir_all(&dir).context("Failed to create named layouts directory")?;
+    let path = dir.join(format!("{name}.json"));
+    write_layout_atomically(layout, &dir, &format!("{name}.tmp.json"), &path)?;
+    tracing::info!("Saved named GUI layout to {:?}", path);
+    Ok(())
+}
+
+/// Load a named checkpoint (with schema migration).
+///
+/// Unlike the live slot, the profile/character stamp is not validated:
+/// a checkpoint copied from another character loads fine — tabs that don't
+/// exist in this session are dropped during reconciliation.
+pub fn load_named_layout(profile: &str, character: &str, name: &str) -> Result<GuiLayoutFileV1> {
+    if !is_valid_layout_name(name) {
+        anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
+    }
+    let path = named_layouts_dir(profile, character)?.join(format!("{name}.json"));
+    if !path.exists() {
+        anyhow::bail!("No saved layout named '{name}'");
+    }
+    load_from_path(&path)
+}
+
+/// List a character's named checkpoints, sorted.
+pub fn list_named_layouts(profile: &str, character: &str) -> Vec<String> {
+    let Ok(dir) = named_layouts_dir(profile, character) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if path.extension()? != "json" {
+                return None;
+            }
+            let stem = path.file_stem()?.to_str()?;
+            is_valid_layout_name(stem).then(|| stem.to_string())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_layout_name_validation() {
+        assert!(is_valid_layout_name("combat"));
+        assert!(is_valid_layout_name("town-square_2"));
+        assert!(!is_valid_layout_name(""));
+        assert!(!is_valid_layout_name("my layout"));
+        assert!(!is_valid_layout_name("../escape"));
+        assert!(!is_valid_layout_name("a".repeat(65).as_str()));
+    }
 
     #[test]
     fn test_font_ref_serialization() {

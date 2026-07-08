@@ -53,6 +53,10 @@ html, body {
   /* Pinned to the visual viewport (set from JS) so the soft keyboard
      never covers the input bar; falls back to full height. */
   height: var(--vvh, 100%);
+  /* iOS scrolls the page to reveal a focused input rather than resizing;
+     follow the visual viewport's offset so the app can't be pushed off
+     the top of the screen (0 where the viewport resizes instead). */
+  transform: translateY(var(--vvt, 0px));
   /* Keep chrome clear of notches / home indicators when installed as PWA */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -418,10 +422,18 @@ html, body {
 .option-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
+/* Two lines per option: label + command + remove, then tap behavior +
+   confirm — a single row can't fit the per-option "On tap" picker. */
 .option-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.option-row-main {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -430,6 +442,25 @@ html, body {
 .option-row input[type="text"] {
   flex: 1;
   min-width: 0;
+}
+
+.option-row-extras {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.option-row-extras select {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.sheet-form .option-row-extras label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
 }
 
 .option-remove {
@@ -980,13 +1011,60 @@ html, body {
   font-size: 16px;
 }
 
-#login-save-row {
+#login-save-row,
+#lich-save-row {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--fg-dim);
   font-size: 13px;
 }
+
+#login-mode {
+  display: flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 14px;
+}
+
+.mode-btn.mode-active {
+  border-color: var(--st);
+  color: var(--st);
+}
+
+/* Field groups inherit the form's vertical rhythm. */
+#direct-fields,
+#lich-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#direct-fields[hidden],
+#lich-fields[hidden] { display: none; }
+
+#lich-warning {
+  color: var(--hp, #e0655f);
+  font-size: 13px;
+  margin: 0;
+}
+
+#lich-note {
+  color: var(--fg-dim);
+  font-size: 12px;
+  margin: 0;
+}
+
+#lich-note code { font-size: 11px; }
 
 #session-form button[type="submit"] {
   padding: 10px;
@@ -1577,7 +1655,10 @@ body.hide-macrorail #macro-rail { display: none !important; }
 
 #compass {
   position: absolute;
-  top: 6px;
+  /* Default: bottom-right of the pane, just above the RT line. Hold-to-
+     drag moves it (left/top override these); position persists per
+     device in localStorage. */
+  bottom: 6px;
   right: 6px;
   z-index: 6;
   display: grid;
@@ -1587,6 +1668,14 @@ body.hide-macrorail #macro-rail { display: none !important; }
   background: rgba(var(--panel-rgb), var(--float-alpha, 0.82));
   border: 1px solid var(--border);
   border-radius: 8px;
+  touch-action: none; /* we handle drag ourselves */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#compass.dragging {
+  border-color: var(--st);
+  opacity: 0.85;
 }
 
 #compass[hidden] { display: none; }
@@ -1611,6 +1700,9 @@ body.hide-compass #compass { display: none !important; }
 
 .compass-cell.compass-lit:active { background: var(--border); }
 .compass-blank { visibility: hidden; }
+/* Disabled cells must not swallow pointerdown — holds anywhere on the
+   compass (lit cell, dark cell, or frame) should start a drag. */
+.compass-cell:disabled { pointer-events: none; }
 
 /* ---- Colors editor ---------------------------------------------------------- */
 

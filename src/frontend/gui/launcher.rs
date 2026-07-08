@@ -747,7 +747,7 @@ impl eframe::App for LauncherApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
-        egui::CentralPanel::default().show_inside(root, |ui| {
+        egui::CentralPanel::default().show(root, |ui| {
             if self.edit.is_some() {
                 self.show_edit_form(ui);
             } else {

@@ -459,8 +459,12 @@ impl VellumGuiApp {
         }
     }
 
-    fn zone_drag_pointer_for_rect(ctx: &egui::Context, window_rect: Rect) -> Option<Pos2> {
-        ctx.input(|i| {
+    fn zone_drag_pointer_for_rect(
+        ctx: &egui::Context,
+        window_rect: Rect,
+        window_layer: egui::LayerId,
+    ) -> Option<Pos2> {
+        let pointer_pos = ctx.input(|i| {
             if !i.modifiers.alt || !i.pointer.button_down(egui::PointerButton::Primary) {
                 return None;
             }
@@ -469,7 +473,12 @@ impl VellumGuiApp {
                 return None;
             }
             Some(pointer_pos)
-        })
+        })?;
+        // Overlapping windows both contain the pointer; without this check
+        // whichever renders first in iteration order steals the drag from
+        // the window visually on top. Only the top-most layer under the
+        // pointer (egui's own click-routing rule) may start the drag.
+        (ctx.layer_id_at(pointer_pos) == Some(window_layer)).then_some(pointer_pos)
     }
 
     fn zone_drop_insert_before(
@@ -914,9 +923,11 @@ impl VellumGuiApp {
                         }
                     }
                     if self.zone_drag_state.is_none() {
-                        if let Some(pointer_pos) =
-                            Self::zone_drag_pointer_for_rect(ctx, inner.response.rect)
-                        {
+                        if let Some(pointer_pos) = Self::zone_drag_pointer_for_rect(
+                            ctx,
+                            inner.response.rect,
+                            inner.response.layer_id,
+                        ) {
                             self.zone_drag_state = Some(GuiZoneDragState {
                                 tab_key: tab.id.key.clone(),
                                 from_zone: zone,
@@ -1180,9 +1191,11 @@ impl VellumGuiApp {
                 }
                 occupied_rects.push(inner.response.rect);
                 if self.zone_drag_state.is_none() {
-                    if let Some(pointer_pos) =
-                        Self::zone_drag_pointer_for_rect(ctx, inner.response.rect)
-                    {
+                    if let Some(pointer_pos) = Self::zone_drag_pointer_for_rect(
+                        ctx,
+                        inner.response.rect,
+                        inner.response.layer_id,
+                    ) {
                         self.zone_drag_state = Some(GuiZoneDragState {
                             tab_key: tab.id.key.clone(),
                             from_zone: zone,
