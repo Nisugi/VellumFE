@@ -42,6 +42,7 @@ fn styled(text: &str, stream: &str) -> Arc<StyledLine> {
     Arc::new(StyledLine {
         segments: vec![TextSegment::plain(text)],
         stream: stream.to_string(),
+        timestamp: None,
     })
 }
 
