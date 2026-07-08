@@ -726,6 +726,15 @@ function handleMessage(msg) {
 }
 
 function connect() {
+  // A connection is already up or in flight (the visibility handler and a
+  // pending retry timer can race) — let it finish.
+  if (
+    state.ws &&
+    (state.ws.readyState === WebSocket.CONNECTING ||
+      state.ws.readyState === WebSocket.OPEN)
+  ) {
+    return;
+  }
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
   state.ws = ws;
@@ -751,6 +760,14 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+// Coming back from the background, the socket is dead and the retry timer
+// may be maxed out (10s) — reconnect immediately instead of waiting it out.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || authDenied) return;
+  state.reconnectDelay = 1000;
+  connect();
+});
 
 // ---- Session screen (headless runtimes only) ------------------------------
 // Servers with session_control (the headless/Android runtime) mirror the

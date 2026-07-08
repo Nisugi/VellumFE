@@ -7,6 +7,7 @@
 //! then live deltas from the broadcast channel. A client that lags behind
 //! the broadcast capacity is re-synced with a fresh snapshot.
 
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -240,6 +241,14 @@ pub mod registry {
 
 /// Serve on an already-bound listener with a fixed token (integration
 /// tests bind port 0 and pass a known token).
+///
+/// Serving runs in a supervised loop: iOS marks every open socket defunct
+/// when the app is suspended past its background grace window, so the
+/// listener silently stops accepting and never recovers while the web
+/// client retries against a dead port forever (the only way out used to
+/// be force-closing the app). There is no reliable accept-side error to
+/// react to, so a watchdog dials our own port and rebinds the listener
+/// when it stops answering.
 pub async fn serve_listener_with_token(
     listener: tokio::net::TcpListener,
     handles: RemoteServerHandles,
@@ -264,10 +273,76 @@ pub async fn serve_listener_with_token(
         .route("/sounds/{name}", get(sound_file))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
-    axum::serve(listener, router)
-        .await
-        .context("web server exited")?;
-    Ok(())
+    let addr = listener
+        .local_addr()
+        .context("web listener has no local address")?;
+    let mut listener = Some(listener);
+    loop {
+        let current = match listener.take() {
+            Some(l) => l,
+            None => rebind(addr).await,
+        };
+        let serve_task = tokio::spawn(axum::serve(current, router.clone()).into_future());
+        probe_until_unreachable(addr).await;
+        // Abort only the accept loop; per-connection tasks are spawned
+        // independently (and are dead anyway if the listener went defunct).
+        serve_task.abort();
+        let _ = serve_task.await;
+        tracing::warn!("web listener on {addr} stopped answering; rebinding");
+    }
+}
+
+/// Returns once the listener stops accepting connections. A single failed
+/// dial could be transient, so a failure only counts when a confirming
+/// dial fails too.
+async fn probe_until_unreachable(addr: std::net::SocketAddr) {
+    const PROBE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+    const CONFIRM_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+    loop {
+        tokio::time::sleep(PROBE_EVERY).await;
+        if probe(addr).await {
+            continue;
+        }
+        tokio::time::sleep(CONFIRM_GAP).await;
+        if !probe(addr).await {
+            return;
+        }
+    }
+}
+
+/// One self-dial: can anything connect to the listener right now?
+async fn probe(mut addr: std::net::SocketAddr) -> bool {
+    if addr.ip().is_unspecified() {
+        addr.set_ip(match addr.ip() {
+            std::net::IpAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+            std::net::IpAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+        });
+    }
+    matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::net::TcpStream::connect(addr),
+        )
+        .await,
+        Ok(Ok(_))
+    )
+}
+
+/// Re-bind the same address, retrying until it works (right after resume
+/// the defunct socket may not have released the port yet).
+async fn rebind(addr: std::net::SocketAddr) -> tokio::net::TcpListener {
+    loop {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                tracing::info!("web listener rebound on {addr}");
+                return l;
+            }
+            Err(e) => {
+                tracing::warn!("rebinding web listener on {addr} failed: {e}; retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+    }
 }
 
 // no-cache: assets are embedded in the binary and change with every
