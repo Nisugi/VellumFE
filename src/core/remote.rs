@@ -331,6 +331,9 @@ pub enum RemoteEvent {
         game: Option<String>,
         save_password: bool,
         profile_name: Option<String>,
+        /// Set (both) for a Lich attach instead of a direct eAccess login.
+        lich_host: Option<String>,
+        lich_port: Option<u16>,
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,

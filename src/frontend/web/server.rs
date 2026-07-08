@@ -640,6 +640,8 @@ async fn handle_client_message(
             game,
             save_password,
             profile_name,
+            lich_host,
+            lich_port,
         } => state
             .handles
             .event_tx
@@ -651,6 +653,8 @@ async fn handle_client_message(
                 game,
                 save_password,
                 profile_name,
+                lich_host,
+                lich_port,
             })
             .is_ok(),
         ClientMessage::Disconnect => state
@@ -757,21 +761,36 @@ async fn handle_client_message(
     }
 }
 
-/// Direct-mode saved profiles serialized for the session screen. Lich
-/// profiles are desktop-launcher concerns and are filtered out.
+/// Saved profiles serialized for the session screen: direct-mode logins
+/// and Lich attach targets (mode-tagged so the client renders each kind).
 fn profiles_reply(state: &WebState) -> String {
+    use crate::config::profiles::LaunchMode;
     let list: Vec<protocol::ProfileEntry> = crate::config::profiles::LauncherStore::load()
         .map(|store| {
             store
                 .profiles
                 .iter()
-                .filter(|p| p.mode == crate::config::profiles::LaunchMode::Direct)
-                .map(|p| protocol::ProfileEntry {
-                    name: p.name.clone(),
-                    account_masked: protocol::mask_account(&p.account),
-                    character: p.character.clone(),
-                    game: p.game.clone(),
-                    has_password: p.password_saved,
+                .map(|p| match p.mode {
+                    LaunchMode::Direct => protocol::ProfileEntry {
+                        name: p.name.clone(),
+                        mode: "direct".to_string(),
+                        account_masked: protocol::mask_account(&p.account),
+                        character: p.character.clone(),
+                        game: p.game.clone(),
+                        has_password: p.password_saved,
+                        host: None,
+                        port: None,
+                    },
+                    LaunchMode::Lich => protocol::ProfileEntry {
+                        name: p.name.clone(),
+                        mode: "lich".to_string(),
+                        account_masked: String::new(),
+                        character: p.character.clone(),
+                        game: String::new(),
+                        has_password: false,
+                        host: Some(p.host.clone()),
+                        port: Some(p.port),
+                    },
                 })
                 .collect()
         })

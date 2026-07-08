@@ -315,10 +315,17 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
 #[derive(Serialize)]
 pub struct ProfileEntry {
     pub name: String,
+    /// "direct" or "lich".
+    pub mode: String,
     pub account_masked: String,
     pub character: String,
     pub game: String,
     pub has_password: bool,
+    /// Lich target; absent on direct profiles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 /// Saved-profile list; direct reply to a `get_profiles` request.
@@ -391,6 +398,9 @@ pub enum ClientMessage {
         game: Option<String>,
         save_password: bool,
         profile_name: Option<String>,
+        /// Set (both) for a Lich attach instead of a direct eAccess login.
+        lich_host: Option<String>,
+        lich_port: Option<u16>,
     },
     /// End the session and suppress reconnection (headless runtime only).
     Disconnect,
@@ -549,8 +559,23 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
             let profile = opt_str(msg.d.get("profile"));
             let account = opt_str(msg.d.get("account"));
             let character = opt_str(msg.d.get("character"));
-            // A connect needs either a saved profile or inline credentials.
-            if profile.is_none() && (account.is_none() || character.is_none()) {
+            let lich = msg.d.get("mode").and_then(|v| v.as_str()) == Some("lich");
+            let lich_host = lich.then(|| opt_str(msg.d.get("host"))).flatten();
+            // Port may arrive as a number or as raw input-field text.
+            let lich_port = lich
+                .then(|| match msg.d.get("port") {
+                    Some(v) if v.is_u64() => v.as_u64().and_then(|p| u16::try_from(p).ok()),
+                    Some(v) => v.as_str().and_then(|s| s.trim().parse::<u16>().ok()),
+                    None => None,
+                })
+                .flatten();
+            // A connect needs a saved profile, direct credentials, or a
+            // complete Lich target.
+            if lich {
+                if profile.is_none() && (lich_host.is_none() || lich_port.is_none()) {
+                    return None;
+                }
+            } else if profile.is_none() && (account.is_none() || character.is_none()) {
                 return None;
             }
             Some(ClientMessage::Connect {
@@ -572,6 +597,8 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
                 profile_name: opt_str(msg.d.get("profile_name")),
+                lich_host,
+                lich_port,
             })
         }
         "disconnect" => Some(ClientMessage::Disconnect),
@@ -701,6 +728,8 @@ mod tests {
                 game: None,
                 save_password: false,
                 profile_name: None,
+                lich_host: None,
+                lich_port: None,
             })
         );
         // Inline credentials with save.
@@ -716,6 +745,8 @@ mod tests {
                 game: Some("prime".to_string()),
                 save_password: true,
                 profile_name: Some("Testy".to_string()),
+                lich_host: None,
+                lich_port: None,
             })
         );
         // Neither a profile nor complete inline credentials → rejected.
@@ -723,6 +754,36 @@ mod tests {
             parse_client_message(r#"{"t":"connect","d":{"account":"ACCT"}}"#),
             None
         );
+        // Lich attach: host + port, no credentials. Port accepted as a
+        // number or as raw input-field text.
+        for port_json in [r#""port":8000"#, r#""port":"8000""#] {
+            assert_eq!(
+                parse_client_message(&format!(
+                    r#"{{"t":"connect","d":{{"mode":"lich","host":"100.64.0.7","name":"Testy","character":"Testy",{port_json}}}}}"#
+                )),
+                Some(ClientMessage::Connect {
+                    profile: None,
+                    account: None,
+                    password: None,
+                    character: Some("Testy".to_string()),
+                    game: None,
+                    save_password: false,
+                    profile_name: None,
+                    lich_host: Some("100.64.0.7".to_string()),
+                    lich_port: Some(8000),
+                })
+            );
+        }
+        // Lich mode without a complete target or profile → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"connect","d":{"mode":"lich","host":"pc.local"}}"#),
+            None
+        );
+        // Lich mode by saved profile name alone is fine.
+        assert!(matches!(
+            parse_client_message(r#"{"t":"connect","d":{"mode":"lich","profile":"Home"}}"#),
+            Some(ClientMessage::Connect { profile: Some(_), .. })
+        ));
         assert_eq!(
             parse_client_message(r#"{"t":"disconnect","d":{}}"#),
             Some(ClientMessage::Disconnect)
