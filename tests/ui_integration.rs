@@ -2273,12 +2273,12 @@ fn ui_stores_room_components_when_room_window_present() {
 
     let desc = room_components
         .get("room desc")
-        .and_then(|lines| lines.get(0))
+        .and_then(|lines| lines.first())
         .map(|segments| segments_to_string(segments))
         .unwrap_or_default();
     let exits = room_components
         .get("room exits")
-        .and_then(|lines| lines.get(0))
+        .and_then(|lines| lines.first())
         .map(|segments| segments_to_string(segments))
         .unwrap_or_default();
 
