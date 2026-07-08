@@ -181,11 +181,35 @@ impl super::TuiFrontend {
             };
             let key_event = crate::data::input::KeyEvent { code: normalized_code, modifiers };
             if let Some(action) = app_core.keybind_map.get(&key_event).cloned() {
+                // Repeat-from-history actions submit directly; they can't go
+                // through command_input_key, which re-reads the raw key and
+                // would drop it (these actions never worked via that path)
+                if let crate::config::KeyBindAction::Action(s) = &action {
+                    if s == "send_last_command" || s == "send_second_last_command" {
+                        let cmd = self
+                            .widget_manager
+                            .command_inputs
+                            .get("command_input")
+                            .and_then(|input| {
+                                if s == "send_last_command" {
+                                    input.get_last_command()
+                                } else {
+                                    input.get_second_last_command()
+                                }
+                            });
+                        app_core.needs_render = true;
+                        if let Some(cmd) = cmd {
+                            return self.handle_command_submission(cmd, app_core);
+                        }
+                        return Ok(None);
+                    }
+                }
+
                 let is_command_input_action = matches!(&action,
                     crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
                         "cursor_left" | "cursor_right" | "cursor_word_left" | "cursor_word_right" |
                         "cursor_home" | "cursor_end" | "cursor_backspace" | "cursor_delete" |
-                        "previous_command" | "next_command" | "send_last_command" | "send_second_last_command"
+                        "previous_command" | "next_command"
                     )
                 );
 
