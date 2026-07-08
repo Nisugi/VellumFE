@@ -6,7 +6,6 @@ mod active_effects;
 mod betrayer;
 pub mod color_form;
 pub mod color_palette_browser;
-mod color_picker;
 mod colors;
 mod command_input;
 mod command_line;
