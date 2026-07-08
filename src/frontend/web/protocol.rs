@@ -876,17 +876,38 @@ mod tests {
         assert_eq!(mask_account("MYACCOUNT"), "MY*******");
         assert_eq!(mask_account("ab"), "ab");
         assert_eq!(mask_account("a"), "a");
-        let list = vec![ProfileEntry {
-            name: "Main".to_string(),
-            account_masked: mask_account("MYACCOUNT"),
-            character: "Testy".to_string(),
-            game: "prime".to_string(),
-            has_password: true,
-        }];
+        let list = vec![
+            ProfileEntry {
+                name: "Main".to_string(),
+                mode: "direct".to_string(),
+                account_masked: mask_account("MYACCOUNT"),
+                character: "Testy".to_string(),
+                game: "prime".to_string(),
+                has_password: true,
+                host: None,
+                port: None,
+            },
+            ProfileEntry {
+                name: "Home Lich".to_string(),
+                mode: "lich".to_string(),
+                account_masked: String::new(),
+                character: "Testy".to_string(),
+                game: String::new(),
+                has_password: false,
+                host: Some("100.64.0.7".to_string()),
+                port: Some(8000),
+            },
+        ];
         let json: serde_json::Value = serde_json::from_str(&profiles(&list, 9)).unwrap();
         assert_eq!(json["t"], "profiles");
         assert_eq!(json["d"]["list"][0]["account_masked"], "MY*******");
         assert_eq!(json["d"]["list"][0]["has_password"], true);
+        assert_eq!(json["d"]["list"][0]["mode"], "direct");
+        // Direct entries omit the Lich target fields entirely.
+        assert!(json["d"]["list"][0].get("host").is_none());
+        assert_eq!(json["d"]["list"][1]["mode"], "lich");
+        assert_eq!(json["d"]["list"][1]["host"], "100.64.0.7");
+        assert_eq!(json["d"]["list"][1]["port"], 8000);
     }
 
     #[test]
