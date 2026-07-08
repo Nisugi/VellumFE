@@ -133,6 +133,7 @@ enum FieldRef {
     ActiveEffectsCategory,
     EditTabs,
     EditIndicators,
+    EditMetrics,
     DashboardLayout,
     DashboardSpacing,
     DashboardHideInactive,
@@ -233,6 +234,7 @@ impl FieldRef {
             FieldRef::ActiveEffectsCategory => 54,
             FieldRef::EditTabs => 55,
             FieldRef::EditIndicators => 56,
+            FieldRef::EditMetrics => 117,
             FieldRef::DashboardLayout => 57,
             FieldRef::DashboardSpacing => 58,
             FieldRef::DashboardHideInactive => 59,
@@ -1756,7 +1758,10 @@ impl WindowEditor {
             WindowDef::Container { .. } => {
                 // Could add container_id field in the future
             }
-            WindowDef::Spacer { .. } | WindowDef::Spells { .. } | WindowDef::Performance { .. } => {}
+            WindowDef::Performance { .. } => {
+                fields.push(FieldRef::EditMetrics);
+            }
+            WindowDef::Spacer { .. } | WindowDef::Spells { .. } => {}
             WindowDef::Perception { .. } => {
                 // Only sort_direction is configurable (stream="percWindow", buffer_size=100 are hardcoded)
                 fields.push(FieldRef::PerceptionSortDirection);
@@ -2833,7 +2838,7 @@ impl WindowEditor {
         }
         if let Some(editor) = self.indicator_editor.as_ref() {
             if matches!(editor.mode, IndicatorEditorMode::List) {
-                return "[T: Toggle]─[Del: Delete]─[Shift+↑/↓: Re-order]─[Esc: Back]";
+                return "[A: Add]─[E: Edit]─[T: Toggle]─[Del: Delete]─[Shift+↑/↓: Re-order]─[Esc: Back]";
             }
         }
         if let Some(editor) = self.tab_editor.as_ref() {
@@ -3233,6 +3238,11 @@ impl WindowEditor {
     /// Check if the current field is the Edit Indicators button
     pub fn is_on_edit_indicators(&self) -> bool {
         matches!(self.current_field_ref(), Some(FieldRef::EditIndicators))
+    }
+
+    /// Check if the current field is the Edit Metrics button
+    pub fn is_on_edit_metrics(&self) -> bool {
+        matches!(self.current_field_ref(), Some(FieldRef::EditMetrics))
     }
 
     /// Check if the current field is the Edit Bar Order button
@@ -3735,6 +3745,9 @@ impl WindowEditor {
                         FieldRef::EditIndicators => {
                             self.open_indicator_editor();
                         }
+                        FieldRef::EditMetrics => {
+                            self.open_performance_metrics_editor();
+                        }
                         FieldRef::PerceptionTextReplacements => {
                             self.open_perception_replacements_editor();
                         }
@@ -4115,7 +4128,7 @@ impl WindowEditor {
             match editor.mode {
                 IndicatorEditorMode::List => match key_event.code {
                     KeyCode::Char('a') | KeyCode::Char('A') => {
-                        editor.toggle_selected();
+                        editor.start_add();
                         return true;
                     }
                     KeyCode::Char('t') | KeyCode::Char('T') => {
@@ -4123,7 +4136,7 @@ impl WindowEditor {
                         return true;
                     }
                     KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
-                        editor.toggle_selected();
+                        editor.start_edit();
                         return true;
                     }
                     KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
@@ -6924,7 +6937,16 @@ impl WindowEditor {
                 self.field_click_areas.push((special_row, left_x, FieldRef::ActiveEffectsCategory));
             }
             WindowDef::Performance { .. } => {
-                // Performance widget uses overlay-only system, no fields to render here
+                self.render_button(
+                    FieldRef::EditMetrics.legacy_field_id(),
+                    "[ Edit Metrics ]",
+                    left_x,
+                    special_row,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::EditMetrics, self.focused_field),
+                );
+                self.field_click_areas.push((special_row, left_x, FieldRef::EditMetrics));
             }
             WindowDef::Perception { .. } => {
                 // Only sort_direction is configurable (stream="percWindow", buffer_size=100 hardcoded)

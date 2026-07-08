@@ -4453,6 +4453,7 @@ impl TuiFrontend {
                         app_core.needs_render = true;
                     } else if editor.is_on_edit_tabs()
                         || editor.is_on_edit_indicators()
+                        || editor.is_on_edit_metrics()
                         || editor.is_on_perception_replacements()
                     {
                         editor.toggle_field();
@@ -4493,6 +4494,7 @@ impl TuiFrontend {
                             || editor.is_on_border_style()
                             || editor.is_on_edit_tabs()
                             || editor.is_on_edit_indicators()
+                            || editor.is_on_edit_metrics()
                             || editor.is_on_perception_sort_direction()
                             || editor.is_on_perception_short_spell_names()
                             || editor.is_on_perception_replacements()
@@ -4513,6 +4515,7 @@ impl TuiFrontend {
                                 editor.cycle_border_style(false);
                             } else if editor.is_on_edit_tabs()
                                 || editor.is_on_edit_indicators()
+                                || editor.is_on_edit_metrics()
                                 || editor.is_on_perception_replacements()
                             {
                                 editor.toggle_field();
