@@ -16,7 +16,7 @@ use tui_textarea::TextArea;
 
 // Keep popup geometry in one place so dragging + rendering stay in sync
 const POPUP_WIDTH: u16 = 70;
-const POPUP_HEIGHT: u16 = 21;
+const POPUP_HEIGHT: u16 = 23;
 
 /// Actions that can result from mouse interaction with the highlight form
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,10 +84,9 @@ pub struct HighlightFormWidget {
     // Redirect dropdown (Off=0, Copy=1, Redirect-only=2)
     redirect_mode_index: usize,
 
-    // Filters carried through from the edited pattern; the form has no UI
-    // for them yet, but a round-trip must not strip them
-    stream: Option<String>,
-    window: Option<String>,
+    // Filter fields: restrict the highlight to one stream and/or window
+    stream_filter: TextArea<'static>,
+    window_filter: TextArea<'static>,
 
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
@@ -170,6 +169,14 @@ impl HighlightFormWidget {
         replace.set_cursor_line_style(Style::default());
         replace.set_placeholder_text("replacement text");
 
+        let mut stream_filter = TextArea::default();
+        stream_filter.set_cursor_line_style(Style::default());
+        stream_filter.set_placeholder_text("only this stream (optional)");
+
+        let mut window_filter = TextArea::default();
+        window_filter.set_cursor_line_style(Style::default());
+        window_filter.set_placeholder_text("only this window (optional)");
+
         Self {
             name,
             pattern,
@@ -192,8 +199,8 @@ impl HighlightFormWidget {
             sound_files: Self::load_sound_files(),
             sound_file_index: 0,    // Default to "none"
             redirect_mode_index: 0, // Default to "Off"
-            stream: None,
-            window: None,
+            stream_filter,
+            window_filter,
             is_global: true,        // Default to global scope
             popup_x: 0,
             popup_y: 0,
@@ -274,8 +281,14 @@ impl HighlightFormWidget {
             }
         };
 
-        form.stream = pattern.stream.clone();
-        form.window = pattern.window.clone();
+        if let Some(ref stream) = pattern.stream {
+            form.stream_filter = TextArea::from([stream.clone()]);
+            form.stream_filter.set_cursor_line_style(Style::default());
+        }
+        if let Some(ref window) = pattern.window {
+            form.window_filter = TextArea::from([window.clone()]);
+            form.window_filter.set_cursor_line_style(Style::default());
+        }
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -298,13 +311,13 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 17; // 0-16 (added scope fields 15-16)
+        self.focused_field = (self.focused_field + 1) % 19; // 0-18 (17/18 = stream/window filters)
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            16
+            18
         } else {
             self.focused_field - 1
         };
@@ -594,8 +607,14 @@ impl HighlightFormWidget {
             redirect_to,
             redirect_mode,
             replace,
-            stream: self.stream.clone(), // No UI yet; preserved from the edited pattern
-            window: self.window.clone(), // No UI yet; preserved from the edited pattern
+            stream: {
+                let text = self.stream_filter.lines()[0].as_str().trim();
+                (!text.is_empty()).then(|| text.to_string())
+            },
+            window: {
+                let text = self.window_filter.lines()[0].as_str().trim();
+                (!text.is_empty()).then(|| text.to_string())
+            },
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -1296,6 +1315,39 @@ impl HighlightFormWidget {
                 ))
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
+        current_y += 1;
+
+        // Fields 17-18: optional stream/window filters
+        Self::render_text_row(
+            focused_field,
+            17,
+            "Stream:",
+            &mut self.stream_filter,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            18,
+            "Window:",
+            &mut self.window_filter,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
     }
 
     fn render_text_row(
@@ -1611,6 +1663,8 @@ impl HighlightFormWidget {
         // y+16: Squelch(13)
         // y+17: Silent Prompt(14)
         // y+18: Scope (fields 15/16)
+        // y+19: Stream filter (field 17)
+        // y+20: Window filter (field 18)
 
         let field_y = self.popup_y + 2; // Fields start at y+2 in render_fields
 
@@ -1682,6 +1736,12 @@ impl HighlightFormWidget {
                 self.is_global = false;
             }
             return HighlightFormMouseAction::None;
+        } else if row == field_y + 17 {
+            self.focused_field = 17; // Stream filter
+            return HighlightFormMouseAction::None;
+        } else if row == field_y + 18 {
+            self.focused_field = 18; // Window filter
+            return HighlightFormMouseAction::None;
         }
 
         // Check footer for Save/Back buttons (last row of popup)
@@ -1717,6 +1777,8 @@ impl TextEditable for HighlightFormWidget {
             6 => Some(&self.sound_volume),
             7 => Some(&self.replace),
             8 => Some(&self.redirect_to),
+            17 => Some(&self.stream_filter),
+            18 => Some(&self.window_filter),
             _ => None,
         }
     }
@@ -1732,6 +1794,8 @@ impl TextEditable for HighlightFormWidget {
             6 => Some(&mut self.sound_volume),
             7 => Some(&mut self.replace),
             8 => Some(&mut self.redirect_to),
+            17 => Some(&mut self.stream_filter),
+            18 => Some(&mut self.window_filter),
             _ => None,
         }
     }
@@ -1834,6 +1898,20 @@ mod tests {
     #[test]
     fn edit_round_trip_preserves_stream_and_window_filters() {
         let form = HighlightFormWidget::new_edit("test".to_string(), &pattern_with_filters());
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.stream.as_deref(), Some("combat"));
+        assert_eq!(pattern.window.as_deref(), Some("combat_win"));
+    }
+
+    #[test]
+    fn new_highlight_saves_typed_filters() {
+        let mut form = HighlightFormWidget::new();
+        form.name = TextArea::from(["combat_hl"]);
+        form.pattern = TextArea::from(["You swing"]);
+        form.stream_filter = TextArea::from(["combat"]);
+        form.window_filter = TextArea::from(["combat_win"]);
         let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
             panic!("expected Save result");
         };
