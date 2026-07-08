@@ -505,10 +505,9 @@ impl RemoteStateSnapshot {
                     ));
                 }
                 if !exp.next_level_text.is_empty() {
-                    info.experience.push(format!(
-                        "Next level: {}% ({})",
-                        exp.next_level_value, exp.next_level_text
-                    ));
+                    // nextLvlPB's value is raw experience, not a percent, and
+                    // the text already carries it ("63667 until next level").
+                    info.experience.push(format!("Next level: {}", exp.next_level_text));
                 }
                 let enc = &game_state.encumbrance;
                 if !enc.text.is_empty() {
