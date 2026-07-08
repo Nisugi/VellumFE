@@ -370,6 +370,7 @@ impl DirectConnection {
             account, character
         );
 
+        let requested_character = character.clone();
         let ticket = tokio::task::spawn_blocking(move || {
             eaccess::authenticate(&account, &password, &character, &game_code, &data_dir)
         })
@@ -380,6 +381,18 @@ impl DirectConnection {
             "Authentication successful (world: {}, host: {}:{})",
             ticket.game, ticket.game_host, ticket.game_port
         );
+        // The launch response names the character the ticket is actually
+        // for; a mismatch means eAccess resolved the request to a
+        // different character than the one asked for
+        if !ticket.character.eq_ignore_ascii_case(&requested_character)
+            && ticket.character != "unknown"
+        {
+            tracing::warn!(
+                "eAccess launch ticket is for '{}' but '{}' was requested",
+                ticket.character,
+                requested_character
+            );
+        }
 
         let (host, port) = fix_game_host_port(&ticket.game_host, ticket.game_port);
         info!("Connecting directly to {}:{}...", host, port);
