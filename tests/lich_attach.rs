@@ -102,3 +102,66 @@ async fn detachable_attach_handshakes_streams_and_ends_on_close() {
         .expect("task panicked")
         .expect("task returned error");
 }
+
+/// Aborting the network task (disconnect button, stall watchdog) must
+/// actually close the socket. The reader runs as its own spawned task
+/// holding half of the split stream; if the abort merely detaches it, the
+/// connection stays open, Lich's single detachable-client slot stays
+/// occupied, and no re-attach succeeds until the process dies (the
+/// force-close-to-reconnect bug from device testing).
+#[tokio::test(flavor = "multi_thread")]
+async fn aborting_the_task_closes_the_socket_so_reattach_works() {
+    let fake = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake lich");
+    let addr = fake.local_addr().unwrap();
+
+    // Like Lich: one client at a time; signal when a client's socket
+    // closes (read loop ends) before accepting the next.
+    let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<u32>();
+    tokio::spawn(async move {
+        let mut client = 0u32;
+        loop {
+            let (stream, _) = fake.accept().await.expect("accept");
+            client += 1;
+            let (read, mut write) = stream.into_split();
+            write.write_all(b"attached\n").await.expect("greet");
+            let mut lines = BufReader::new(read).lines();
+            while let Ok(Some(_)) = lines.next_line().await {}
+            let _ = closed_tx.send(client);
+        }
+    });
+
+    // First attach; hold the command channel open so the write loop can't
+    // end on its own — teardown must come from the abort alone.
+    let (server_tx, mut server_rx) = mpsc::channel::<ServerMessage>(64);
+    let (_command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+    let task = tokio::spawn(async move {
+        LichConnection::start("127.0.0.1", addr.port(), None, server_tx, command_rx, None).await
+    });
+    assert!(matches!(recv(&mut server_rx).await, ServerMessage::Connected));
+
+    // Supervisor-style teardown.
+    task.abort();
+    let _ = task.await;
+
+    // The fake must observe the close; a detached reader leaks the socket
+    // and this times out.
+    let closed = tokio::time::timeout(WAIT, closed_rx.recv())
+        .await
+        .expect("socket never closed after aborting the network task")
+        .expect("fake exited");
+    assert_eq!(closed, 1);
+
+    // With the slot free, a second attach from the same process works.
+    let (server_tx2, mut server_rx2) = mpsc::channel::<ServerMessage>(64);
+    let (_command_tx2, command_rx2) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        LichConnection::start("127.0.0.1", addr.port(), None, server_tx2, command_rx2, None).await
+    });
+    assert!(matches!(recv(&mut server_rx2).await, ServerMessage::Connected));
+    match recv(&mut server_rx2).await {
+        ServerMessage::Text(line) => assert_eq!(line, "attached"),
+        other => panic!("expected text, got {other:?}"),
+    }
+}

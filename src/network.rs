@@ -399,6 +399,21 @@ impl DirectConnection {
     }
 }
 
+/// Aborts the wrapped task when dropped. The session supervisor aborts the
+/// outer network future at any await point (disconnect button, stall
+/// watchdog, quit teardown); a plain JoinHandle drop would *detach* the
+/// spawned reader, leaving it running with its half of the split socket —
+/// and `tokio::io::split` keeps the TCP connection open until both halves
+/// drop. A leaked reader kept Lich's single detachable-client slot occupied
+/// after a disconnect, so re-attaching hung until the app was force-closed.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn run_stream(
     stream: TcpStream,
     server_tx: mpsc::Sender<ServerMessage>,
@@ -449,7 +464,7 @@ async fn run_stream(
     // later command's write failed; the headless supervisor keys logout/
     // reconnect off this task completing, so a `quit` didn't return to the
     // login screen until the user happened to send another command.
-    let mut read_handle = read_handle;
+    let mut read_handle = AbortOnDrop(read_handle);
     let write_loop = async {
         while let Some(cmd) = command_rx.recv().await {
             // Build the complete message: command prefix + command + newline.
@@ -472,15 +487,15 @@ async fn run_stream(
         }
     };
     tokio::select! {
-        _ = &mut read_handle => {
+        _ = &mut read_handle.0 => {
             // Server closed the connection (or read error): session over.
             // Queued-but-unsent commands are moot on a dead socket.
         }
         _ = write_loop => {
             // Command channel closed (session being torn down) or a write
             // failed: stop the reader too so this future completes.
-            read_handle.abort();
-            let _ = read_handle.await;
+            read_handle.0.abort();
+            let _ = (&mut read_handle.0).await;
         }
     }
 
