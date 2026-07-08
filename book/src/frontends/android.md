@@ -23,8 +23,9 @@ file is unreadable off the device.
 
 > **Lich never runs on the phone**, but scripted characters still work:
 > the login screen's **Lich** tab attaches to a Lich session running on
-> your PC (launch Lich with `--detachable-client`), and Lich's
-> connect-a-device QR code prefills it. See
+> your PC (launch Lich with `--detachable-client`), entered by host and
+> port. A `vellum://` QR code also prefills it (Lich 6's
+> connect-a-device panel will display one — not yet available). See
 > [Connecting Through Lich](./web.md#connecting-through-lich).
 > Alternatively, run the whole session on the PC and join it from the
 > phone via the [mobile web frontend](./web.md).

@@ -25,8 +25,9 @@ Check **Remember this login** and the password is sealed with a key held
 in the iOS Keychain (device-bound, never in backups) — the saved file is
 unreadable off the device.
 
-Scanning a `vellum://` QR code from Lich's connect-a-device panel opens
-the app with the Lich tab prefilled.
+Scanning a `vellum://` QR code opens the app with the Lich tab
+prefilled. Lich 6's connect-a-device panel will display one (not yet
+available); until then, enter the host and port manually.
 
 ## Playing
 

@@ -134,9 +134,12 @@ character:
 - Launch Lich with `--detachable-client` on your PC, then enter its
   host and port (an optional label names the saved entry). Saved Lich
   connections reattach with one tap, no password.
-- Lich's connect-a-device panel shows a `vellum://` **QR code / link**;
+- **Coming in Lich 6** (not yet available): Lich's WebUI adds a
+  connect-a-device panel showing a `vellum://` **QR code / link**;
   scanning or tapping it opens the login screen with the Lich tab
-  prefilled. It never auto-connects — you always press Connect.
+  prefilled. It never auto-connects — you always press Connect. The
+  app understands `vellum://` links today; Lich 6 adds the panel that
+  displays them.
 - The detachable port is unauthenticated, so the form warns when the
   host doesn't look private. Keep it to home Wi-Fi, Tailscale, or a
   VPN — never the open internet.
