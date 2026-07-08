@@ -42,7 +42,6 @@ pub struct KeybindBrowser {
     entries: Vec<KeybindEntry>,
     selected_index: usize,
     scroll_offset: usize,
-    num_sections: usize, // Number of section headers (for scroll calculation)
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -132,21 +131,10 @@ impl KeybindBrowser {
                 .then_with(|| a.key_combo.cmp(&b.key_combo))
         });
 
-        // Count sections (how many unique action types)
-        let mut num_sections = 0;
-        let mut last_type: Option<&str> = None;
-        for entry in &entries {
-            if last_type != Some(entry.action_type.as_str()) {
-                num_sections += 1;
-                last_type = Some(&entry.action_type);
-            }
-        }
-
         Self {
             entries,
             selected_index: 0,
             scroll_offset: 0,
-            num_sections,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,

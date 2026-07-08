@@ -57,10 +57,6 @@ impl CommandInput {
         }
     }
 
-    pub fn set_min_command_length(&mut self, min_length: usize) {
-        self.model.set_min_command_length(min_length);
-    }
-
     pub fn set_border_config(
         &mut self,
         show_border: bool,
@@ -592,15 +588,6 @@ impl CommandInput {
     /// Get the currently selected text (if any)
     pub fn get_selected_text(&self) -> Option<String> {
         self.model.get_selected_text()
-    }
-
-    /// Clear the current selection
-    pub fn clear_selection(&mut self) {
-        self.model.clear_selection();
-    }
-
-    pub fn has_selection(&self) -> bool {
-        self.model.has_selection()
     }
 
     pub fn delete_selection(&mut self) -> bool {

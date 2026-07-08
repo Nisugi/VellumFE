@@ -319,17 +319,6 @@ impl Targets {
         true
     }
 
-    /// Clear all targets
-    pub fn clear(&mut self) {
-        self.widget.clear();
-        self.count = 0;
-        self.body_part_count = 0;
-        self.current_target.clear();
-        self.creature_ids_cache.clear();
-        self.generation += 1;
-        self.update_title();
-    }
-
     fn update_title(&mut self) {
         if self.base_title.is_empty() {
             self.widget.set_title(String::new());
@@ -342,10 +331,6 @@ impl Targets {
     pub fn set_title(&mut self, title: &str) {
         self.base_title = title.to_string();
         self.update_title();
-    }
-
-    pub fn get_generation(&self) -> u64 {
-        self.generation
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -362,10 +347,6 @@ impl Targets {
 
     pub fn set_border_sides(&mut self, sides: crate::config::BorderSides) {
         self.widget.set_border_sides(sides);
-    }
-
-    pub fn set_bar_color(&mut self, _color: String) {
-        // No-op: ListWidget doesn't have progress bars
     }
 
     pub fn set_background_color(&mut self, color: Option<String>) {
@@ -392,11 +373,6 @@ impl Targets {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.widget.render(area, buf);
-        self.render_body_part_count(area, buf);
-    }
-
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.widget.render_with_focus(area, buf, focused);
         self.render_body_part_count(area, buf);
     }
 
@@ -529,7 +505,7 @@ mod tests {
     #[test]
     fn test_get_generation() {
         let dt = Targets::new("Targets");
-        assert_eq!(dt.get_generation(), 0);
+        assert_eq!(dt.generation, 0);
     }
 
     #[test]
@@ -545,7 +521,7 @@ mod tests {
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
         dt.update_from_state(&creatures, "123", &target_ids, &config, 30, None);
-        assert_eq!(dt.get_generation(), 1);
+        assert_eq!(dt.generation, 1);
     }
 
     // ===========================================
@@ -604,12 +580,12 @@ mod tests {
         let target_ids: Vec<String> = vec![];
 
         dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
-        let initial_gen = dt.get_generation();
+        let initial_gen = dt.generation;
 
         // Same state again
         let changed = dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
         assert!(!changed);
-        assert_eq!(dt.get_generation(), initial_gen); // Generation unchanged
+        assert_eq!(dt.generation, initial_gen); // Generation unchanged
     }
 
     #[test]
@@ -644,26 +620,6 @@ mod tests {
     // ===========================================
     // Clear tests
     // ===========================================
-
-    #[test]
-    fn test_clear() {
-        let mut dt = Targets::new("Targets");
-        let creatures = vec![Creature {
-            id: "1".to_string(),
-            name: "a kobold".to_string(),
-            noun: Some("kobold".to_string()),
-            status: None,
-        }];
-        let config = crate::config::TargetListConfig::default();
-        let target_ids: Vec<String> = vec![];
-
-        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
-        assert_eq!(dt.count, 1);
-
-        dt.clear();
-        assert_eq!(dt.count, 0);
-        assert!(dt.current_target.is_empty());
-    }
 
     // ===========================================
     // Scroll tests

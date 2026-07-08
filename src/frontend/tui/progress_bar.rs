@@ -27,8 +27,6 @@ pub struct ProgressBar {
     transparent_background: bool,
     text_color: Option<Color>,
     text_align_left: bool,
-    /// When true, skip contrast checking and preserve the exact text color specified
-    preserve_text_color: bool,
 }
 
 impl ProgressBar {
@@ -48,7 +46,6 @@ impl ProgressBar {
             transparent_background: true,
             text_color: Some(Color::White),
             text_align_left: false,
-            preserve_text_color: false,
         }
     }
 
@@ -319,10 +316,6 @@ impl ProgressBar {
                 }
             }
         }
-    }
-
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        self.render(area, buf);
     }
 
     pub fn render_themed(&self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {

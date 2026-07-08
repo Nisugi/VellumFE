@@ -48,25 +48,6 @@ fn display_label(button: &crate::data::DialogButton) -> String {
     }
 }
 
-fn field_label(dialog: &DialogState, index: usize) -> String {
-    // First try to get explicit label from dialog
-    if let Some(label) = dialog.labels.get(index) {
-        let trimmed = label.value.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-    // Fallback: clean up field ID (depositSB → Deposit)
-    let field_id = &dialog.fields[index].id;
-    let base = strip_field_suffix(&field_id.to_lowercase());
-    // Capitalize first letter
-    let mut chars = base.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => field_id.clone(),
-    }
-}
-
 /// Format a number with commas for display (e.g., 1000 → 1,000)
 fn format_number_with_commas(value: &str) -> String {
     // Only format if it's a pure number (digits only)
@@ -220,7 +201,7 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
         let mut max_len = 0;
         let mut used_buttons: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-        for (idx, field) in dialog.fields.iter().enumerate() {
+        for (_idx, field) in dialog.fields.iter().enumerate() {
             // Try explicit enter_button first
             let mut paired_button: Option<&crate::data::DialogButton> = None;
             if let Some(ref enter_id) = field.enter_button {
@@ -462,7 +443,7 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
             let button_text = display_label(&dialog.buttons[button_idx]);
 
             let box_len = input_box.len() as u16;
-            let padded_button_len = max_field_button_width_layout as u16;
+            let _padded_button_len = max_field_button_width_layout as u16;
 
             // Fixed padding of 2 on left side
             let field_start_x = inner_x + 2;

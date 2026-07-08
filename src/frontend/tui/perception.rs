@@ -114,28 +114,6 @@ impl PerceptionWindow {
         self.background_color = color.and_then(|c| super::colors::parse_color_to_ratatui(&c));
     }
 
-    /// Get the current scroll offset
-    pub fn scroll_offset(&self) -> usize {
-        self.scroll_offset
-    }
-
-    /// Set the scroll offset
-    pub fn set_scroll_offset(&mut self, offset: usize) {
-        self.scroll_offset = offset;
-    }
-
-    /// Scroll up by one line
-    pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-    }
-
-    /// Scroll down by one line
-    pub fn scroll_down(&mut self) {
-        if self.scroll_offset < self.entries.len().saturating_sub(1) {
-            self.scroll_offset += 1;
-        }
-    }
-
     /// Render the perception window to the given area
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // Clear area
@@ -275,55 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn test_scroll_functions() {
-        let mut window = PerceptionWindow::new("Test".to_string());
-        let entries = vec![
-            PerceptionEntry {
-                name: "Entry1".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry1".to_string(),
-                weight: 100,
-                link_data: None,
-            },
-            PerceptionEntry {
-                name: "Entry2".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry2".to_string(),
-                weight: 90,
-                link_data: None,
-            },
-            PerceptionEntry {
-                name: "Entry3".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry3".to_string(),
-                weight: 80,
-                link_data: None,
-            },
-        ];
-
-        window.set_entries(entries);
-
-        // Test scrolling
-        assert_eq!(window.scroll_offset(), 0);
-
-        window.scroll_down();
-        assert_eq!(window.scroll_offset(), 1);
-
-        window.scroll_down();
-        assert_eq!(window.scroll_offset(), 2);
-
-        window.scroll_up();
-        assert_eq!(window.scroll_offset(), 1);
-
-        window.scroll_up();
-        assert_eq!(window.scroll_offset(), 0);
-
-        // Test saturating at 0
-        window.scroll_up();
-        assert_eq!(window.scroll_offset(), 0);
-    }
-
-    #[test]
     fn test_set_colors() {
         let mut window = PerceptionWindow::new("Test".to_string());
 
@@ -379,46 +308,6 @@ mod tests {
 
         assert!(line0.contains("Entry1"));
         assert!(line1.contains("Entry2"));
-    }
-
-    #[test]
-    fn test_render_scrolls_entries() {
-        let mut window = PerceptionWindow::new("Test".to_string());
-        window.set_show_border(false);
-        window.set_entries(vec![
-            PerceptionEntry {
-                name: "Entry1".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry1".to_string(),
-                weight: 100,
-                link_data: None,
-            },
-            PerceptionEntry {
-                name: "Entry2".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry2".to_string(),
-                weight: 90,
-                link_data: None,
-            },
-            PerceptionEntry {
-                name: "Entry3".to_string(),
-                format: PerceptionFormat::Other(String::new()),
-                raw_text: "Entry3".to_string(),
-                weight: 80,
-                link_data: None,
-            },
-        ]);
-        window.set_scroll_offset(1);
-
-        let area = Rect::new(0, 0, 10, 2);
-        let mut buf = Buffer::empty(area);
-        window.render(area, &mut buf);
-
-        let line0: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
-        let line1: String = (0..area.width).map(|x| buf[(x, 1)].symbol()).collect();
-
-        assert!(line0.contains("Entry2"));
-        assert!(line1.contains("Entry3"));
     }
 
     #[test]

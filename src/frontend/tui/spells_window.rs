@@ -57,18 +57,6 @@ impl SpellsWindow {
         self.widget.finish_line();
     }
 
-    /// Find a link in the recent cache that matches the given word
-    /// Returns the LinkData if found, otherwise None
-    pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
-        self.widget.find_link_by_word(word)
-    }
-
-    /// Update inner dimensions based on window size
-    /// Note: ListWidget updates dimensions automatically during render
-    pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
-        // No-op: ListWidget handles this internally during render
-    }
-
     /// Scroll up by N lines
     pub fn scroll_up(&mut self, lines: usize) {
         self.widget.scroll_up(lines);
@@ -77,11 +65,6 @@ impl SpellsWindow {
     /// Scroll down by N lines
     pub fn scroll_down(&mut self, lines: usize) {
         self.widget.scroll_down(lines);
-    }
-
-    /// Get all lines (for text selection)
-    pub fn get_lines(&self) -> &[Vec<crate::data::TextSegment>] {
-        self.widget.get_lines()
     }
 
     pub fn set_border_config(
@@ -151,6 +134,13 @@ impl SpellsWindow {
 }
 
 #[cfg(test)]
+impl SpellsWindow {
+    fn get_lines(&self) -> &[Vec<crate::data::TextSegment>] {
+        self.widget.get_lines()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::buffer::Buffer;
@@ -208,26 +198,6 @@ mod tests {
 
         spells.clear();
         assert!(spells.get_lines().is_empty());
-    }
-
-    #[test]
-    fn test_find_link_by_word_matches_noun() {
-        let mut spells = SpellsWindow::new("Spells".to_string());
-        spells.add_text(
-            "Fireball".to_string(),
-            None,
-            None,
-            false,
-            SpanType::Link,
-            Some(link("101", "fireball", "Fireball")),
-        );
-        spells.finish_line();
-
-        let found = spells.find_link_by_word("fireball");
-        assert!(found.is_some());
-        let found = found.unwrap();
-        assert_eq!(found.exist_id, "101");
-        assert_eq!(found.noun, "fireball");
     }
 
     #[test]

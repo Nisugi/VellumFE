@@ -31,23 +31,6 @@ impl Spacer {
         self.transparent = transparent;
     }
 
-    pub fn set_border_config(
-        &mut self,
-        _show_border: bool,
-        _border_style: Option<String>,
-        _border_color: Option<String>,
-    ) {
-        // Intentionally no-op: spacers never render borders
-    }
-
-    pub fn set_border_sides(&mut self, _sides: crate::config::BorderSides) {
-        // Intentionally no-op: spacers never render borders
-    }
-
-    pub fn set_title(&mut self, _title: String) {
-        // No-op: spacers have no title
-    }
-
     /// Parse a hex color string to ratatui Color
     fn parse_color(hex: &str) -> Color {
         let hex = hex.trim_start_matches('#');
@@ -87,7 +70,4 @@ impl Spacer {
         }
     }
 
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        self.render(area, buf);
-    }
 }

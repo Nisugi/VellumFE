@@ -778,10 +778,7 @@ impl TuiFrontend {
                         .cloned()
                         .unwrap_or_default();
 
-                    let mut widget = active_effects::ActiveEffects::new(
-                        &label,
-                        effects_content.category.clone(),
-                    );
+                    let mut widget = active_effects::ActiveEffects::new(&label);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
@@ -1179,7 +1176,7 @@ impl TuiFrontend {
                         container_title,
                         display_title
                     );
-                    let mut widget = container_window::ContainerWindow::new(container_title.clone(), display_title);
+                    let mut widget = container_window::ContainerWindow::new(display_title);
                     // GameState widgets still need highlight patterns for item highlighting
                     let highlights: Vec<_> = app_core.config.highlights.values().cloned().collect();
                     widget.set_highlights(highlights);
@@ -1464,13 +1461,12 @@ impl TuiFrontend {
 
                 // Ensure widget exists - create if needed
                 if !self.widget_manager.tabbed_text_windows.contains_key(name) {
-                    let tabs: Vec<(String, Vec<String>, bool, bool)> = tabbed_content
+                    let tabs: Vec<(String, bool, bool)> = tabbed_content
                         .tabs
                         .iter()
                         .map(|t| {
                             (
                                 t.definition.name.clone(),
-                                t.definition.streams.clone(),
                                 t.definition.show_timestamps,
                                 t.definition.ignore_activity,
                             )

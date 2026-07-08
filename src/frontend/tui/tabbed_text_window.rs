@@ -34,7 +34,6 @@ impl TabBarPosition {
 
 struct TabInfo {
     name: String,
-    streams: Vec<String>,
     window: TextWindow,
     has_unread: bool,
     unread_count: usize,
@@ -88,14 +87,13 @@ impl TabbedTextWindow {
 
     pub fn with_tabs(
         title: &str,
-        tabs: Vec<(String, Vec<String>, bool, bool)>,
+        tabs: Vec<(String, bool, bool)>,
         max_lines_per_tab: usize,
     ) -> Self {
         let mut window = Self::new(title, TabBarPosition::Top);
-        for (name, streams, show_timestamps, ignore_activity) in tabs {
+        for (name, show_timestamps, ignore_activity) in tabs {
             window.add_tab(
                 name,
-                streams,
                 max_lines_per_tab,
                 show_timestamps,
                 ignore_activity,
@@ -104,47 +102,8 @@ impl TabbedTextWindow {
         window
     }
 
-    pub fn with_border_config(
-        mut self,
-        show: bool,
-        style: Option<String>,
-        color: Option<String>,
-    ) -> Self {
-        self.show_border = show;
-        self.border_style = style;
-        self.border_color = color;
-        self
-    }
-
-    pub fn with_tab_bar_position(mut self, position: TabBarPosition) -> Self {
-        self.set_tab_bar_position(position);
-        self
-    }
-
-    pub fn with_title_position(mut self, position: TitlePosition) -> Self {
-        self.title_position = position;
-        self
-    }
-
     pub fn set_tab_bar_position(&mut self, position: TabBarPosition) {
         self.tab_bar_position = position;
-    }
-
-    pub fn with_tab_colors(
-        mut self,
-        active: Option<String>,
-        inactive: Option<String>,
-        unread: Option<String>,
-    ) -> Self {
-        self.tab_active_color = active;
-        self.tab_inactive_color = inactive;
-        self.tab_unread_color = unread;
-        self
-    }
-
-    pub fn with_unread_prefix(mut self, prefix: String) -> Self {
-        self.tab_unread_prefix = prefix;
-        self
     }
 
     pub fn set_tab_colors(
@@ -218,7 +177,6 @@ impl TabbedTextWindow {
     pub fn add_tab(
         &mut self,
         name: String,
-        streams: Vec<String>,
         max_lines: usize,
         show_timestamps: bool,
         ignore_activity: bool,
@@ -233,7 +191,6 @@ impl TabbedTextWindow {
 
         self.tabs.push(TabInfo {
             name,
-            streams,
             window,
             has_unread: false,
             unread_count: 0,
@@ -484,28 +441,6 @@ impl TabbedTextWindow {
         }
     }
 
-    pub fn add_text_to_stream(&mut self, stream: &str, styled: super::text_window::StyledText) {
-        for (idx, tab) in self.tabs.iter_mut().enumerate() {
-            if tab.streams.contains(&stream.to_string()) {
-                tab.window.add_text(styled.clone());
-
-                // Mark as unread if not active tab
-                if idx != self.active_tab_index && !tab.ignore_activity {
-                    tab.has_unread = true;
-                    tab.unread_count += 1;
-                }
-            }
-        }
-    }
-
-    pub fn finish_line_for_stream(&mut self, stream: &str, width: u16) {
-        for tab in &mut self.tabs {
-            if tab.streams.contains(&stream.to_string()) {
-                tab.window.finish_line(width);
-            }
-        }
-    }
-
     pub fn add_text_to_tab(&mut self, tab_name: &str, styled: super::text_window::StyledText) {
         if let Some((idx, tab)) = self
             .tabs
@@ -526,20 +461,6 @@ impl TabbedTextWindow {
     pub fn finish_line_for_tab(&mut self, tab_name: &str, width: u16) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.name == tab_name) {
             tab.window.finish_line(width);
-        }
-    }
-
-    pub fn get_all_streams(&self) -> Vec<String> {
-        self.tabs.iter().flat_map(|t| t.streams.clone()).collect()
-    }
-
-    pub fn clear_stream(&mut self, stream: &str) {
-        for tab in &mut self.tabs {
-            if tab.streams.contains(&stream.to_string()) {
-                tab.window.clear();
-                tab.has_unread = false;
-                tab.unread_count = 0;
-            }
         }
     }
 
@@ -1085,14 +1006,12 @@ mod tests {
         let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
         window.add_tab(
             "Main".to_string(),
-            vec!["main".to_string()],
             100,
             false,
             false,
         );
         window.add_tab(
             "Thoughts".to_string(),
-            vec!["thoughts".to_string()],
             100,
             false,
             false,
@@ -1105,18 +1024,6 @@ mod tests {
         let window = make_window();
         let names = window.get_tab_names();
         assert_eq!(names, vec!["Main".to_string(), "Thoughts".to_string()]);
-    }
-
-    #[test]
-    fn test_add_text_marks_unread_for_inactive_tab() {
-        let mut window = make_window();
-        assert!(!window.has_unread_tabs());
-
-        window.add_text_to_stream("thoughts", styled_text("Hello"));
-        assert!(window.has_unread_tabs());
-
-        window.switch_to_tab(1);
-        assert!(!window.has_unread_tabs());
     }
 
     #[test]
@@ -1135,7 +1042,6 @@ mod tests {
         let mut window = TabbedTextWindow::new("Tabs", TabBarPosition::Top);
         window.add_tab(
             "Main".to_string(),
-            vec!["main".to_string()],
             100,
             false,
             false,
@@ -1144,7 +1050,6 @@ mod tests {
 
         window.add_tab(
             "Other".to_string(),
-            vec!["other".to_string()],
             100,
             false,
             false,
@@ -1159,7 +1064,6 @@ mod tests {
         let mut window = make_window();
         window.add_tab(
             "Other".to_string(),
-            vec!["other".to_string()],
             100,
             false,
             false,

@@ -16,7 +16,6 @@ pub struct ContainerWindow {
     widget: super::list_widget::ListWidget,
 
     /// Container title pattern this window displays (matched case-insensitively)
-    container_title: String,
 
     /// Link color (from theme or default)
     link_color: Option<String>,
@@ -26,21 +25,15 @@ pub struct ContainerWindow {
 }
 
 impl ContainerWindow {
-    pub fn new(container_title: String, title: String) -> Self {
+    pub fn new(title: String) -> Self {
         let mut widget = super::list_widget::ListWidget::new(&title);
         // Container defaults to word wrap disabled (like inventory)
         widget.set_word_wrap(false);
         Self {
             widget,
-            container_title,
             link_color: None,
             last_generation: 0,
         }
-    }
-
-    /// Get the container title pattern this window is tracking
-    pub fn get_container_title(&self) -> &str {
-        &self.container_title
     }
 
     /// Set highlight patterns for this window (only recompiles if changed)
@@ -204,12 +197,6 @@ impl ContainerWindow {
         None
     }
 
-    /// Clear content
-    pub fn clear(&mut self) {
-        self.widget.clear();
-        self.last_generation = 0;
-    }
-
     /// Scroll up by N lines
     pub fn scroll_up(&mut self, lines: usize) {
         self.widget.scroll_up(lines);
@@ -218,11 +205,6 @@ impl ContainerWindow {
     /// Scroll down by N lines
     pub fn scroll_down(&mut self, lines: usize) {
         self.widget.scroll_down(lines);
-    }
-
-    /// Get all lines (for text selection)
-    pub fn get_lines(&self) -> &[Vec<TextSegment>] {
-        self.widget.get_lines()
     }
 
     /// Get wrapped lines for mouse click detection (matches inventory_window API)
@@ -240,12 +222,6 @@ impl ContainerWindow {
     /// Get the start line offset (for click detection)
     pub fn get_start_line(&self) -> usize {
         self.widget.get_start_line()
-    }
-
-    /// Update inner dimensions based on window size
-    /// Note: ListWidget updates dimensions automatically during render
-    pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
-        // No-op: ListWidget handles this internally during render
     }
 
     /// Set title
@@ -306,10 +282,6 @@ impl ContainerWindow {
         self.widget.render(area, buf);
     }
 
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.widget.render_with_focus(area, buf, focused);
-    }
-
     /// Convert mouse position to text coordinates
     pub fn mouse_to_text_coords(
         &self,
@@ -344,15 +316,8 @@ mod tests {
 
     #[test]
     fn test_new_defaults() {
-        let cw = ContainerWindow::new("my_bag".to_string(), "My Bag".to_string());
-        assert_eq!(cw.container_title, "my_bag");
+        let cw = ContainerWindow::new("My Bag".to_string());
         assert_eq!(cw.last_generation, 0);
-    }
-
-    #[test]
-    fn test_get_container_title() {
-        let cw = ContainerWindow::new("backpack".to_string(), "Backpack".to_string());
-        assert_eq!(cw.get_container_title(), "backpack");
     }
 
     // ===========================================
@@ -361,14 +326,14 @@ mod tests {
 
     #[test]
     fn test_set_title() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "".to_string());
+        let mut cw = ContainerWindow::new("".to_string());
         cw.set_title("New Title".to_string());
         // Title should be updated in widget
     }
 
     #[test]
     fn test_set_border_config() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         cw.set_border_config(false, None);
         cw.set_border_config(true, Some("#FF0000".to_string()));
         // Configuration delegated to ListWidget
@@ -376,14 +341,14 @@ mod tests {
 
     #[test]
     fn test_set_text_color() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         cw.set_text_color(Some("#00FF00".to_string()));
         // Configuration delegated to ListWidget
     }
 
     #[test]
     fn test_set_transparent_background() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         cw.set_transparent_background(true);
         // Configuration delegated to ListWidget
     }
@@ -394,14 +359,14 @@ mod tests {
 
     #[test]
     fn test_scroll_up_from_zero() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         cw.scroll_up(5);
         // Delegated to ListWidget
     }
 
     #[test]
     fn test_scroll_down_from_zero() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         cw.scroll_down(3);
         cw.scroll_down(5);
         // Delegated to ListWidget
@@ -411,31 +376,9 @@ mod tests {
     // Clear tests
     // ===========================================
 
-    #[test]
-    fn test_clear() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
-        cw.clear();
-        assert!(cw.get_lines().is_empty());
-        assert_eq!(cw.last_generation, 0);
-    }
-
     // ===========================================
     // Inner size tests
     // ===========================================
-
-    #[test]
-    fn test_update_inner_size_with_border() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
-        cw.update_inner_size(80, 24);
-        // ListWidget handles this internally
-    }
-
-    #[test]
-    fn test_update_inner_size_without_border() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
-        cw.update_inner_size(80, 24);
-        // ListWidget handles this internally
-    }
 
     // ===========================================
     // Extract attribute tests
@@ -475,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_parse_container_item_plain_text() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         let segments = cw.parse_container_item("a simple sword");
 
         assert_eq!(segments.len(), 1);
@@ -485,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_parse_container_item_with_link() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         let segments =
             cw.parse_container_item(r#"a <a exist="123" noun="sword">gleaming sword</a>"#);
 
@@ -502,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_parse_container_item_multiple_links() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         let segments = cw.parse_container_item(
             r#"<a exist="1" noun="sword">sword</a> and <a exist="2" noun="shield">shield</a>"#,
         );
@@ -520,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_parse_container_item_empty_string() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         let segments = cw.parse_container_item("");
         assert!(segments.is_empty());
     }
@@ -531,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_update_from_cache_no_change() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let mut cw = ContainerWindow::new("Bag".to_string());
         let container = ContainerData {
             id: "1".to_string(),
             title: "Bag".to_string(),
@@ -547,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_update_from_cache_with_change() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "".to_string());
+        let mut cw = ContainerWindow::new("".to_string());
         let container = ContainerData {
             id: "2".to_string(),
             title: "My Bag".to_string(),
@@ -563,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_update_from_cache_preserves_custom_title() {
-        let mut cw = ContainerWindow::new("bag".to_string(), "Custom Title".to_string());
+        let mut cw = ContainerWindow::new("Custom Title".to_string());
         let container = ContainerData {
             id: "3".to_string(),
             title: "Container Title".to_string(),
@@ -581,14 +524,8 @@ mod tests {
     // ===========================================
 
     #[test]
-    fn test_get_lines_empty() {
-        let cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
-        assert!(cw.get_lines().is_empty());
-    }
-
-    #[test]
     fn test_get_start_line_empty() {
-        let cw = ContainerWindow::new("bag".to_string(), "Bag".to_string());
+        let cw = ContainerWindow::new("Bag".to_string());
         assert_eq!(cw.get_start_line(), 0);
     }
 }

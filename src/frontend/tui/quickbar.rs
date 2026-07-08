@@ -82,10 +82,6 @@ impl Quickbar {
         }
     }
 
-    pub fn reset_selection(&mut self) {
-        self.selected_index = 0;
-    }
-
     pub fn move_selection(&mut self, delta: i32) {
         let count = self.visible_selectable_count.max(1);
         let mut next = self.selected_index as i32 + delta;

@@ -394,11 +394,6 @@ impl RoomWindow {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
     }
 
-    /// Scroll to bottom
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = 0;
-    }
-
     /// Get all lines combined for wrapping
     /// Layout: desc+objs on one line, players on next line, exits on next line
     fn get_combined_lines(&self) -> Vec<Vec<TextSegment>> {
@@ -568,17 +563,6 @@ impl RoomWindow {
             *entry = visible;
             self.needs_rewrap = true; // Trigger rewrap since content changed
         }
-    }
-
-    /// Get all component visibility states
-    pub fn get_component_visibility(&self) -> HashMap<String, bool> {
-        self.component_visibility.clone()
-    }
-
-    /// Set all component visibility states at once
-    pub fn set_all_component_visibility(&mut self, visibility: HashMap<String, bool>) {
-        self.component_visibility = visibility;
-        self.needs_rewrap = true;
     }
 
     /// Get the wrapped lines for click detection and other operations

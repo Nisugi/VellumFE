@@ -58,12 +58,6 @@ impl InventoryWindow {
         self.widget.finish_line();
     }
 
-    /// Update inner dimensions based on window size
-    /// Note: ListWidget updates dimensions automatically during render
-    pub fn update_inner_size(&mut self, _width: u16, _height: u16) {
-        // No-op: ListWidget handles this internally during render
-    }
-
     /// Scroll up by N lines
     pub fn scroll_up(&mut self, lines: usize) {
         self.widget.scroll_up(lines);
@@ -72,16 +66,6 @@ impl InventoryWindow {
     /// Scroll down by N lines
     pub fn scroll_down(&mut self, lines: usize) {
         self.widget.scroll_down(lines);
-    }
-
-    /// Scroll to bottom
-    pub fn scroll_to_bottom(&mut self) {
-        self.widget.scroll_to_bottom();
-    }
-
-    /// Get all lines (for text selection)
-    pub fn get_lines(&self) -> &[Vec<TextSegment>] {
-        self.widget.get_lines()
     }
 
     /// Get wrapped lines for mouse click detection
@@ -152,6 +136,13 @@ impl InventoryWindow {
     ) -> String {
         self.widget
             .extract_selection_text(start_line, start_col, end_line, end_col)
+    }
+}
+
+#[cfg(test)]
+impl InventoryWindow {
+    fn get_lines(&self) -> &[Vec<TextSegment>] {
+        self.widget.get_lines()
     }
 }
 

@@ -110,17 +110,6 @@ impl Betrayer {
         true
     }
 
-    /// Calculate ideal content rows (excluding borders)
-    pub fn ideal_content_rows(&self) -> u16 {
-        let bar_row = 1;
-        let item_rows = if self.show_items {
-            self.items.len().max(1) // At least 1 row for items section
-        } else {
-            0
-        };
-        (bar_row + item_rows) as u16
-    }
-
     /// Render a progress bar within a single line
     fn render_bar(&self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
@@ -322,26 +311,6 @@ mod tests {
         assert_eq!(betrayer.value, 75);
         assert_eq!(betrayer.text, "Blood Points: 75");
         assert_eq!(betrayer.items.len(), 1);
-    }
-
-    #[test]
-    fn test_ideal_content_rows() {
-        let mut betrayer = Betrayer::new("Blood Pool", true);
-
-        // No items, show_items=true -> 1 bar + 1 placeholder = 2
-        assert_eq!(betrayer.ideal_content_rows(), 2);
-
-        // Add 3 items -> 1 bar + 3 items = 4
-        betrayer.items = vec![
-            "item1".to_string(),
-            "item2".to_string(),
-            "item3".to_string(),
-        ];
-        assert_eq!(betrayer.ideal_content_rows(), 4);
-
-        // show_items=false -> just 1 bar row
-        betrayer.set_show_items(false);
-        assert_eq!(betrayer.ideal_content_rows(), 1);
     }
 
     #[test]

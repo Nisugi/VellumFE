@@ -274,11 +274,6 @@ impl ListWidget {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
-    /// Scroll to bottom (most recent content visible)
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = 0;
-    }
-
     /// Get the start line offset (which line is shown at the top of the visible area)
     /// This is needed for click detection to map visual rows to actual line indices
     pub fn get_start_line(&self) -> usize {
@@ -654,48 +649,6 @@ impl ListWidget {
         }
 
         style
-    }
-
-    /// Find a link in the recent cache that matches the given word
-    /// Returns the LinkData if found, otherwise None
-    /// Uses SpellsWindow's multi-pass matching algorithm
-    pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
-        // Search from most recent to oldest
-        // First pass: word appears in multi-word link text (HIGHEST priority - prefer complete phrases)
-        for link in self.recent_links.iter().rev() {
-            let link_text_lower = link.text.to_lowercase();
-            let word_lower = word.to_lowercase();
-
-            // Only check multi-word links (2+ words)
-            if link_text_lower.split_whitespace().count() > 1 {
-                // Check if word appears in the text
-                if link_text_lower.split_whitespace().any(|w| w == word_lower) {
-                    return Some(link.clone());
-                }
-            }
-        }
-
-        // Second pass: exact noun match for single-word links
-        for link in self.recent_links.iter().rev() {
-            if link.noun.eq_ignore_ascii_case(word) {
-                return Some(link.clone());
-            }
-        }
-
-        // Third pass: word appears in single-word link text
-        for link in self.recent_links.iter().rev() {
-            let link_text_lower = link.text.to_lowercase();
-            let word_lower = word.to_lowercase();
-
-            if link_text_lower.split_whitespace().count() == 1
-                && link_text_lower.split_whitespace().any(|w| w == word_lower)
-            {
-                return Some(link.clone());
-            }
-        }
-
-        // No match found
-        None
     }
 
     /// Handle a click at the given coordinates (for targets style usage)

@@ -63,8 +63,6 @@ struct MatchInfo {
     bold: bool,
     color_entire_line: bool,
     replace: Option<String>,
-    sound: Option<String>,
-    sound_volume: Option<f32>,
     /// Window name for window-specific replacements (None = apply everywhere)
     target_window: Option<String>,
     /// If true, this match contributes to silent prompt detection
@@ -305,8 +303,6 @@ impl CoreHighlightEngine {
                                 bold: highlight.bold,
                                 color_entire_line: highlight.color_entire_line,
                                 replace: highlight.replace.clone(),
-                                sound: highlight.sound.clone(),
-                                sound_volume: highlight.sound_volume,
                                 target_window: highlight.window.clone(),
                                 silent_prompt: highlight.silent_prompt,
                             });
@@ -355,8 +351,6 @@ impl CoreHighlightEngine {
                                     bold: highlight.bold,
                                     color_entire_line: highlight.color_entire_line,
                                     replace: Some(expanded),
-                                    sound: highlight.sound.clone(),
-                                    sound_volume: highlight.sound_volume,
                                     target_window: highlight.window.clone(),
                                     silent_prompt: highlight.silent_prompt,
                                 });
@@ -381,8 +375,6 @@ impl CoreHighlightEngine {
                             bold: highlight.bold,
                             color_entire_line: highlight.color_entire_line,
                             replace: None,
-                            sound: highlight.sound.clone(),
-                            sound_volume: highlight.sound_volume,
                             target_window: highlight.window.clone(),
                             silent_prompt: highlight.silent_prompt,
                         });

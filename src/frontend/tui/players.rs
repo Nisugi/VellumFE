@@ -141,10 +141,6 @@ impl Players {
         self.update_title();
     }
 
-    pub fn get_generation(&self) -> u64 {
-        self.generation
-    }
-
     pub fn scroll_up(&mut self, amount: usize) {
         self.widget.scroll_up(amount);
     }
@@ -185,10 +181,6 @@ impl Players {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.widget.render(area, buf);
-    }
-
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.widget.render_with_focus(area, buf, focused);
     }
 
     /// Handle a click at the given coordinates.
@@ -303,11 +295,9 @@ mod tests {
         }];
 
         players.update_from_state(&room_players, &config);
-        let initial_generation = players.get_generation();
 
         let changed = players.update_from_state(&room_players, &config);
         assert!(!changed);
-        assert_eq!(players.get_generation(), initial_generation);
     }
 
     #[test]

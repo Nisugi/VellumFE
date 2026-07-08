@@ -112,9 +112,15 @@ const AVAILABLE_ACTIONS: &[&str] = &[
     "scroll_current_window_end",
     "previous_command",
     "next_command",
+    "send_last_command",
+    "send_second_last_command",
+    "next_tab",
+    "prev_tab",
+    "next_unread_tab",
     "start_search",
     "prev_search_match",
     "next_search_match",
+    "clear_search",
     "toggle_performance_stats",
 ];
 
@@ -923,6 +929,33 @@ impl KeybindFormWidget {
         KeybindFormMouseAction::None
     }
 
+    /// Jump the action dropdown to the first action of a section
+    /// (Ctrl+1..8 in the form). Sections are display groupings over the
+    /// flat AVAILABLE_ACTIONS list.
+    pub fn go_to_section(&mut self, section: ActionSection) {
+        let (target, label) = match section {
+            ActionSection::CommandInput => (Some("send_command"), "command input"),
+            ActionSection::CommandHistory => (Some("previous_command"), "command history"),
+            ActionSection::WindowScrolling => {
+                (Some("scroll_current_window_up_one"), "window scrolling")
+            }
+            ActionSection::TabNavigation => (Some("next_tab"), "tab navigation"),
+            ActionSection::Search => (Some("start_search"), "search"),
+            ActionSection::SystemToggles => (Some("toggle_performance_stats"), "system toggles"),
+            ActionSection::Clipboard | ActionSection::TTS | ActionSection::Meta => (None, ""),
+        };
+        let Some(target) = target else {
+            self.status_message = "No bindable actions in that section yet".to_string();
+            return;
+        };
+        if let Some(idx) = AVAILABLE_ACTIONS.iter().position(|&a| a == target) {
+            self.action_type = KeybindActionType::Action;
+            self.action_dropdown_index = idx;
+            self.focused_field = 3; // action dropdown field
+            self.status_message = format!("Jumped to {} actions", label);
+        }
+    }
+
     /// Cycle action dropdown forward
     fn cycle_action_dropdown(&mut self, backward: bool) {
         if backward {
@@ -942,27 +975,6 @@ impl KeybindFormWidget {
         super::colors::parse_color_to_ratatui(hex)
     }
 
-    /// Navigate to a specific action section (for keybind browser integration)
-    /// This is a placeholder - actual section navigation would need to be implemented
-    /// based on how the keybind browser groups actions
-    pub fn go_to_section(&mut self, _section: ActionSection) {
-        // Placeholder: In a full implementation, this would:
-        // 1. Filter the action dropdown to only show actions in this section
-        // 2. Update focused_field to the action dropdown
-        // 3. Set action_dropdown_index to the first action in the section
-
-        // For now, just focus on the action dropdown
-        self.focused_field = 3;
-        self.action_type = KeybindActionType::Action;
-    }
-
-    /// Get the current action section
-    /// This is a placeholder that returns a default section
-    pub fn get_current_section(&self) -> ActionSection {
-        // Placeholder: In a full implementation, this would determine which section
-        // the currently selected action belongs to
-        ActionSection::CommandInput
-    }
 }
 
 // Trait implementations for KeybindFormWidget
