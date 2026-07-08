@@ -32,6 +32,12 @@ targets:
       path: app/Info.plist
       properties:
         CFBundleDisplayName: VellumFE
+        # Without these, XcodeGen bakes literal values into Info.plist and
+        # CI's CURRENT_PROJECT_VERSION/MARKETING_VERSION overrides never
+        # reach the uploaded build (App Store Connect then rejects the next
+        # upload as a duplicate bundle version).
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
         # Storyboard-free launch screen: solid app-background color.
         UILaunchScreen:
           UIColorName: LaunchBackground
