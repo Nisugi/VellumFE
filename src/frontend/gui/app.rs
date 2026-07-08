@@ -1,5 +1,6 @@
 use super::persistence::{
-    load_layout, save_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
+    is_valid_layout_name, list_named_layouts, load_layout, load_named_layout, save_layout,
+    save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
     TabSettings, TabSettingsEntry, ViewportState,
 };
 use super::skin;
@@ -1348,6 +1349,123 @@ impl VellumGuiApp {
         }
     }
 
+    /// Apply a saved layout snapshot to the live app — the runtime half of
+    /// `.loadlayout`. Reuses the constructor's reconciliation, so tabs the
+    /// file doesn't know keep working and saved tabs missing this session
+    /// are dropped. The main OS window geometry is deliberately left alone:
+    /// only the arrangement inside it (and detached windows) changes.
+    fn apply_layout_snapshot(&mut self, layout: &GuiLayoutFileV1) {
+        let content_width = self
+            .main_viewport_state
+            .as_ref()
+            .map(|state| state.inner_size[0])
+            .unwrap_or(1280.0);
+        let restored =
+            Self::restore_layout_state(Some(layout), &self.available_tabs, content_width);
+        self.hidden_tabs = restored.hidden_tabs;
+        self.main_window_rects = restored.main_window_rects;
+        self.last_center_window_rects.clear();
+        self.tab_zones = restored.tab_zones;
+        self.no_title_tabs = restored.no_title_tabs;
+        self.shell_layout = restored.shell_layout;
+        self.tab_groups = restored.tab_groups;
+        self.detached_tabs = restored.detached_tabs;
+        self.ui_font = restored.ui_font;
+        self.ui_settings = restored.ui_settings;
+        self.tab_settings = restored.tab_settings;
+        // Lazy appliers pick up the new font/zoom/density next frame.
+        self.fonts_applied = false;
+        self.zoom_applied = false;
+        self.applied_title_font_size = None;
+        self.applied_density = None;
+        // The live autosave slot now reflects the loaded arrangement; the
+        // checkpoint itself is only written by an explicit .savelayout.
+        self.layout_dirty = true;
+    }
+
+    /// Intercept the layout dot-commands with GUI-native named checkpoints,
+    /// mirroring how the TUI intercepts them before AppCore's fallbacks.
+    /// Returns true when the command was one of ours.
+    fn handle_layout_command(&mut self, command: &str) -> bool {
+        let Some(rest) = command.strip_prefix('.') else {
+            return false;
+        };
+        let mut parts = rest.split_whitespace();
+        let Some(cmd) = parts.next() else {
+            return false;
+        };
+        let arg = parts.next();
+        match cmd.to_lowercase().as_str() {
+            "savelayout" => {
+                let name = arg.unwrap_or("default");
+                if !is_valid_layout_name(name) {
+                    self.app_core.add_system_message(
+                        "Layout names use letters, digits, '-' and '_' only.",
+                    );
+                    return true;
+                }
+                let Some(layout) = self.build_layout_snapshot() else {
+                    self.app_core
+                        .add_system_message("Could not snapshot the current layout.");
+                    return true;
+                };
+                match save_named_layout(
+                    &layout,
+                    &self.layout_profile,
+                    &self.layout_character,
+                    name,
+                ) {
+                    Ok(()) => self.app_core.add_system_message(&format!(
+                        "Saved GUI layout '{}'. Load it with .loadlayout {}",
+                        name, name
+                    )),
+                    Err(err) => self
+                        .app_core
+                        .add_system_message(&format!("Failed to save layout: {}", err)),
+                }
+                true
+            }
+            "loadlayout" => {
+                let Some(name) = arg else {
+                    self.app_core
+                        .add_system_message("Usage: .loadlayout <name>");
+                    self.list_layout_checkpoints();
+                    return true;
+                };
+                match load_named_layout(&self.layout_profile, &self.layout_character, name) {
+                    Ok(layout) => {
+                        self.apply_layout_snapshot(&layout);
+                        self.app_core
+                            .add_system_message(&format!("Loaded GUI layout '{}'.", name));
+                    }
+                    Err(err) => {
+                        self.app_core
+                            .add_system_message(&format!("Failed to load layout: {}", err));
+                        self.list_layout_checkpoints();
+                    }
+                }
+                true
+            }
+            "layouts" => {
+                self.list_layout_checkpoints();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn list_layout_checkpoints(&mut self) {
+        let names = list_named_layouts(&self.layout_profile, &self.layout_character);
+        if names.is_empty() {
+            self.app_core.add_system_message(
+                "No saved GUI layouts. Save the current arrangement with .savelayout <name>",
+            );
+        } else {
+            self.app_core
+                .add_system_message(&format!("Saved GUI layouts: {}", names.join(", ")));
+        }
+    }
+
     fn pump_server_messages(&mut self) {
         // Commands from remote web clients run the same dispatch path as
         // the local input bar.
@@ -2489,6 +2607,12 @@ impl VellumGuiApp {
             return;
         }
 
+        // Layout commands are GUI-native named checkpoints here; intercept
+        // before AppCore's TUI-oriented fallbacks see them.
+        if self.handle_layout_command(&command) {
+            return;
+        }
+
         match self.app_core.send_command(command) {
             Ok(outbound) => {
                 if outbound.starts_with("action:") {
@@ -2991,8 +3115,11 @@ impl VellumGuiApp {
             return true;
         }
         if action.strip_prefix("action:loadlayout:").is_some() {
+            // This action comes from the Layouts menu, which lists TUI TOML
+            // layouts — those don't apply here. GUI checkpoints are the
+            // .savelayout/.loadlayout commands (see handle_layout_command).
             self.app_core.add_system_message(
-                "TOML layouts are a TUI feature. The GUI manages its own window layout and saves it automatically.",
+                "TOML layouts are a TUI feature. In the GUI, use .savelayout <name> and .loadlayout <name> for named layouts.",
             );
             return true;
         }
