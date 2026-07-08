@@ -708,10 +708,6 @@ impl RoomWindow {
         style
     }
 
-    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
-        self.render(area, buf);
-    }
-
     fn parse_color_setting(color: Option<String>) -> Option<Color> {
         color.and_then(|value| {
             let trimmed = value.trim();

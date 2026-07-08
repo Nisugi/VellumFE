@@ -104,11 +104,6 @@ impl SpellsWindow {
         self.widget.render(area, buf);
     }
 
-    pub fn render_themed(&mut self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
-        // For now, just call regular render - theme colors will be applied in future update
-        self.render(area, buf);
-    }
-
     /// Convert mouse position to text coordinates
     pub fn mouse_to_text_coords(
         &self,

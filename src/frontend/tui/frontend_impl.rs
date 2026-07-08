@@ -285,7 +285,7 @@ impl Frontend for TuiFrontend {
                     WindowContent::Progress(_) => {
                         // Use the ProgressBar widget for proper rendering
                         if let Some(progress_bar) = progress_bars.get_mut(name) {
-                            progress_bar.render_themed(area, f.buffer_mut(), &theme);
+                            progress_bar.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Countdown(_) => {
@@ -320,19 +320,19 @@ impl Frontend for TuiFrontend {
                     WindowContent::Room(_) => {
                         // Use the RoomWindow widget for proper component-based rendering
                         if let Some(room_window) = room_windows.get_mut(name) {
-                            room_window.render_themed(area, f.buffer_mut(), &theme);
+                            room_window.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Inventory(_) => {
                         // Use the InventoryWindow widget for proper link rendering
                         if let Some(inventory_window) = inventory_windows.get_mut(name) {
-                            inventory_window.render_themed(area, f.buffer_mut(), &theme);
+                            inventory_window.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Spells(_) => {
                         // Use the SpellsWindow widget for proper link rendering
                         if let Some(spells_window) = spells_windows.get_mut(name) {
-                            spells_window.render_themed(area, f.buffer_mut(), &theme);
+                            spells_window.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Targets => {

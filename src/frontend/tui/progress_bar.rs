@@ -318,9 +318,6 @@ impl ProgressBar {
         }
     }
 
-    pub fn render_themed(&self, area: Rect, buf: &mut Buffer, _theme: &crate::theme::AppTheme) {
-        self.render(area, buf);
-    }
 }
 
 #[cfg(test)]
