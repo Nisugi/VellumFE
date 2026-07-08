@@ -21,10 +21,13 @@ Check **Remember this login** and the password is saved on the device,
 encrypted with a hardware-backed key in the Android Keystore — the saved
 file is unreadable off the device.
 
-> **No Lich on the phone.** The app connects via direct eAccess only.
-> If your setup depends on Lich scripts, run the session on your PC
-> instead and join it from the phone via the
-> [mobile web frontend](./web.md).
+> **Lich never runs on the phone**, but scripted characters still work:
+> the login screen's **Lich** tab attaches to a Lich session running on
+> your PC (launch Lich with `--detachable-client`), and Lich's
+> connect-a-device QR code prefills it. See
+> [Connecting Through Lich](./web.md#connecting-through-lich).
+> Alternatively, run the whole session on the PC and join it from the
+> phone via the [mobile web frontend](./web.md).
 
 ## Playing
 

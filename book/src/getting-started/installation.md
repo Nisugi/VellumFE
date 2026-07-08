@@ -10,6 +10,7 @@ Download the latest release from [GitHub Releases](https://github.com/Nisugi/Vel
 | macOS | `vellum-fe-macos.tar.gz` |
 | Linux | `vellum-fe-linux.tar.gz` |
 | Android | `vellum-fe-android-arm64.apk` |
+| iOS | TestFlight (beta) — not a release download; see [iOS App](../frontends/ios.md) |
 
 Extract the archive and place `vellum-fe` (or `vellum-fe.exe`) somewhere in your PATH.
 
@@ -61,7 +62,7 @@ only requires Perl, which virtually every distro ships by default.
 vellum-fe --version
 ```
 
-Should display the version number (e.g., `vellum-fe 0.3.0-beta.1`).
+Should display the version number (e.g., `vellum-fe 0.3.0-beta.4`).
 
 ## Configuration Directory
 
