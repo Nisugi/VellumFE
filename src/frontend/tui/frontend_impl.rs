@@ -13,8 +13,14 @@ impl Frontend for TuiFrontend {
     fn poll_events(&mut self) -> Result<Vec<FrontendEvent>> {
         let mut events = Vec::new();
 
-        // Poll for events (non-blocking)
-        if event::poll(std::time::Duration::from_millis(16))? {
+        // Wait briefly for the first event, then drain everything already
+        // queued (zero-timeout polls) so a paste or mouse drag doesn't pay a
+        // full sync/render pass per event. Capped so a pathological flood
+        // still lets the main loop breathe.
+        const MAX_EVENTS_PER_POLL: usize = 128;
+        let mut wait = std::time::Duration::from_millis(16);
+        while events.len() < MAX_EVENTS_PER_POLL && event::poll(wait)? {
+            wait = std::time::Duration::ZERO;
             match event::read()? {
                 Event::Key(key) => {
                     // Only process key press events, not release events
