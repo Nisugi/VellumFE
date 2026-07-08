@@ -46,9 +46,29 @@ then build in Xcode as usual.
 - Core file logs live under the app container:
   `Application Support/vellum/` (Xcode → Devices → download container).
 
-## One-time distribution chores (Phase I3)
+## TestFlight releases
 
-Documented in the paperwork guide; summary of repo secrets consumed by CI:
-`APPLE_TEAM_ID` (set), `APPLE_DISTRIBUTION_P12_BASE64`,
-`APPLE_DISTRIBUTION_P12_PASSWORD`, `APPSTORE_ISSUER_ID`,
-`APPSTORE_API_KEY_ID`, `APPSTORE_API_PRIVATE_KEY`.
+Pushing a `v*.*.*-beta*` tag runs the `ios` job in
+`.github/workflows/beta-release.yml`: device staticlib → `xcodegen` →
+`xcodebuild archive` (cloud-managed provisioning via the App Store Connect
+API key, so there are no profile secrets to renew) → `-exportArchive` with
+`ios/ExportOptions.plist` (`destination = upload`), which sends the build
+straight to App Store Connect. After Apple's processing (usually minutes,
+plus a one-time review wait on the very first build), it appears in the
+TestFlight app.
+
+Versioning: `CFBundleShortVersionString` is derived from the tag
+(`v0.3.0-beta.3` → `0.3.0`); `CFBundleVersion` is the workflow run number,
+so it strictly increases and never collides.
+
+Repo secrets consumed (all set): `APPLE_TEAM_ID`,
+`APPLE_DISTRIBUTION_P12_BASE64`, `APPLE_DISTRIBUTION_P12_PASSWORD`,
+`APPSTORE_ISSUER_ID`, `APPSTORE_API_KEY_ID`, `APPSTORE_API_PRIVATE_KEY`.
+
+Remaining one-time prerequisite: the app record `dev.vellumfe` must exist
+in App Store Connect (`-allowProvisioningUpdates` auto-registers the App ID
+and provisioning, but not the app record). If the upload fails with
+"no suitable application records were found", create the app there first.
+
+Privacy note: the first upload may trigger an ITMS-91053 email listing
+required-reason API categories; amend `app/PrivacyInfo.xcprivacy` from it.

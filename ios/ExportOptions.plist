@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Consumed by `xcodebuild -exportArchive` in beta-release.yml.
+     destination=upload sends the build straight to App Store Connect
+     (altool is retired; this is its replacement). Build numbering is
+     owned by CI (CURRENT_PROJECT_VERSION = run number), so Xcode's
+     manageAppVersionAndBuildNumber stays off. -->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string>37YA6ZBNY2</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
