@@ -13,6 +13,12 @@ final class BootModel: ObservableObject {
 
     @Published var phase: Phase = .starting
 
+    private var port: Int?
+    private var token: String?
+    /// Fragment tail from a vellum:// deep link; rides the boot URL so the
+    /// web client prefills the Lich login tab.
+    private var lichFragment: String?
+
     func boot() async {
         if case .ready = phase { return }
         phase = .starting
@@ -37,7 +43,49 @@ final class BootModel: ObservableObject {
             phase = .failed("The embedded server did not come up on port \(port).")
             return
         }
-        phase = .ready(URL(string: "http://127.0.0.1:\(port)/play#token=\(token)")!)
+        self.port = port
+        self.token = token
+        phase = .ready(bootURL(port: port, token: token))
+    }
+
+    private func bootURL(port: Int, token: String) -> URL {
+        var url = "http://127.0.0.1:\(port)/play#token=\(token)"
+        if let lich = lichFragment {
+            url += "&\(lich)"
+        }
+        return URL(string: url)!
+    }
+
+    /// vellum://lich?host=…&port=…[&name=…] → stash the target and, when
+    /// the server is already up, republish the boot URL (the container
+    /// reloads on change). Arriving mid-boot just rides along.
+    func applyDeepLink(_ url: URL) {
+        guard let fragment = Self.lichFragment(from: url) else { return }
+        lichFragment = fragment
+        if let port, let token {
+            phase = .ready(bootURL(port: port, token: token))
+        }
+    }
+
+    private static func lichFragment(from url: URL) -> String? {
+        guard url.scheme == "vellum", url.host == "lich",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = comps.queryItems
+        else { return nil }
+        func value(_ name: String) -> String? {
+            items.first { $0.name == name }?.value?.trimmingCharacters(in: .whitespaces)
+        }
+        guard let host = value("host"), !host.isEmpty,
+              let portText = value("port"), UInt16(portText).map({ $0 > 0 }) == true
+        else { return nil }
+        func encode(_ s: String) -> String {
+            s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        }
+        var fragment = "lich=\(encode("\(host):\(portText)"))"
+        if let name = value("name"), !name.isEmpty {
+            fragment += "&name=\(encode(name))"
+        }
+        return fragment
     }
 
     private func waitForServer(port: Int) async -> Bool {
@@ -87,5 +135,6 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .task { await model.boot() }
+        .onOpenURL { model.applyDeepLink($0) }
     }
 }

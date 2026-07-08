@@ -41,15 +41,25 @@ struct WebViewContainer: UIViewRepresentable {
                 webView.isInspectable = true
             }
         #endif
+        context.coordinator.bootURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        // The boot URL is fixed for the app's lifetime; nothing to update.
+        // The boot URL only changes when a vellum:// deep link rebuilds its
+        // fragment — reload so the web client picks the target up. SwiftUI
+        // calls this on every update; the coordinator's copy (not
+        // webView.url, which the client scrubs) keeps it idempotent.
+        if context.coordinator.bootURL != url {
+            context.coordinator.bootURL = url
+            webView.load(URLRequest(url: url))
+        }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
+        var bootURL: URL?
+
         /// The page never scrolls (it sizes itself to --vvh; panes scroll
         /// their own divs), so any offset here is WebKit's keyboard
         /// avoidance — undo it before it lands on screen.

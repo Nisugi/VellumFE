@@ -45,6 +45,12 @@ targets:
         # Loopback is lenient in practice; this is the documented switch.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # vellum://lich?host=…&port=… deep links (QR code / tapped link on
+        # Lich's connect-a-device panel) prefill the Lich login tab.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.vellumfe.deeplink
+            CFBundleURLSchemes:
+              - vellum
         # TLS + standard algorithms (ChaCha20-Poly1305) are exempt; skips
         # the per-build export-compliance question in App Store Connect.
         ITSAppUsesNonExemptEncryption: false

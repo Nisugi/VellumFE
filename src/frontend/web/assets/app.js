@@ -103,6 +103,26 @@ function setConnected(up) {
 
 const TOKEN_KEY = "vellum-token";
 
+// A vellum://lich?host=…&port=… deep link (QR scan / tapped link) arrives
+// from the native shells as #lich=host:port&name=… alongside the boot
+// token. Captured here, before loadToken scrubs the fragment; applied to
+// the login form once it exists (prefill only — never auto-connect, so a
+// malicious QR can't point the app at an attacker's socket unseen).
+const bootLich = (() => {
+  const m = location.hash.match(/lich=([^&]+)/);
+  if (!m) return null;
+  // Split on the last colon so bracketed/bare IPv6 hosts survive.
+  const target = decodeURIComponent(m[1]);
+  const split = target.match(/^(.+):(\d+)$/);
+  if (!split) return null;
+  const name = location.hash.match(/name=([^&]+)/);
+  return {
+    host: split[1],
+    port: split[2],
+    name: name ? decodeURIComponent(name[1]) : "",
+  };
+})();
+
 function loadToken() {
   const match = location.hash.match(/token=([0-9a-f]+)/i);
   if (match) {
@@ -939,6 +959,16 @@ function setLoginMode(mode) {
 }
 modeDirectBtn.addEventListener("click", () => setLoginMode("direct"));
 modeLichBtn.addEventListener("click", () => setLoginMode("lich"));
+
+// Deep-linked Lich target: open the Lich tab prefilled and let the user
+// press Connect.
+if (bootLich) {
+  lichHostInput.value = bootLich.host;
+  lichPortInput.value = bootLich.port;
+  lichNameInput.value = bootLich.name;
+  lichHostInput.dispatchEvent(new Event("input"));
+  setLoginMode("lich");
+}
 
 // The Lich port is unauthenticated: nudge (don't block) when the target
 // doesn't look like loopback / RFC1918 / Tailscale CGNAT / mDNS / tailnet.

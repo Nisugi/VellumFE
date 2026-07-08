@@ -29,8 +29,17 @@ class MainActivity : Activity() {
 
     private lateinit var webView: WebView
 
+    /** Set once the server is up; lets a deep link rebuild the boot URL. */
+    private var bootPort = -1
+    private var bootToken: String? = null
+
+    /** Fragment tail from a vellum:// deep link; rides the boot URL so the
+     * web client prefills the Lich login tab. */
+    private var lichFragment: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lichFragment = lichFragmentFrom(intent)
 
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
@@ -91,9 +100,47 @@ class MainActivity : Activity() {
                 return@Thread
             }
             runOnUiThread {
-                webView.loadUrl("http://127.0.0.1:$port/play#token=$token")
+                bootPort = port
+                bootToken = token
+                webView.loadUrl(bootUrl(port, token))
             }
         }, "core-boot").start()
+    }
+
+    private fun bootUrl(port: Int, token: String): String {
+        var url = "http://127.0.0.1:$port/play#token=$token"
+        lichFragment?.let { url += "&$it" }
+        return url
+    }
+
+    /** vellum://lich?host=…&port=…[&name=…] → the #lich= fragment the web
+     * client prefills its Lich tab from; null for anything else. */
+    private fun lichFragmentFrom(intent: Intent?): String? {
+        val uri = intent?.data ?: return null
+        if (uri.scheme != "vellum" || uri.host != "lich") return null
+        val host = uri.getQueryParameter("host")?.trim().orEmpty()
+        val port = uri.getQueryParameter("port")?.trim()?.toIntOrNull()
+        if (host.isEmpty() || port == null || port !in 1..65535) return null
+        var fragment = "lich=" + Uri.encode("$host:$port")
+        uri.getQueryParameter("name")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            fragment += "&name=" + Uri.encode(it)
+        }
+        return fragment
+    }
+
+    /** singleTask: a deep link while running lands here instead of a fresh
+     * activity. Reload with the new fragment; the client's resume flow
+     * restores scrollback if a session is live. */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val fragment = lichFragmentFrom(intent) ?: return
+        lichFragment = fragment
+        val port = bootPort
+        val token = bootToken
+        if (port > 0 && token != null) {
+            webView.loadUrl(bootUrl(port, token))
+        } // else: boot is still in flight and picks the fragment up.
     }
 
     private fun waitForServer(port: Int): Boolean {
