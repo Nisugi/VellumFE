@@ -73,8 +73,9 @@ impl Frontend for TuiFrontend {
             .downcast_mut::<AppCore>()
             .ok_or_else(|| anyhow::anyhow!("Invalid app type"))?;
 
-        // Clone theme once so all sync tasks share the same palette
-        let theme = self.theme_cache.get_theme().clone();
+        // Arc handle so all sync tasks share the same palette without
+        // deep-cloning the theme every frame
+        let theme = self.theme_cache.get_theme_arc();
 
         // Def/theme-derived widget config (borders, colors, titles) only
         // needs re-applying when its inputs change; content sync below stays
