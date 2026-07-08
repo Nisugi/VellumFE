@@ -422,10 +422,18 @@ html, body {
 .option-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
+/* Two lines per option: label + command + remove, then tap behavior +
+   confirm — a single row can't fit the per-option "On tap" picker. */
 .option-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.option-row-main {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -434,6 +442,25 @@ html, body {
 .option-row input[type="text"] {
   flex: 1;
   min-width: 0;
+}
+
+.option-row-extras {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.option-row-extras select {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.sheet-form .option-row-extras label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
 }
 
 .option-remove {

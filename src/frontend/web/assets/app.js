@@ -1752,6 +1752,11 @@ function handleMenu(d) {
 // tap; a menu button opens the bottom sheet; `confirm` inserts a
 // two-step confirm sheet. Floating buttons overlay the text pane — tap
 // to fire, hold to drag; positions persist per device.
+//
+// Type-in (`insert`) buttons never round-trip: their text arrives with
+// the definition and a tap types it into the command input, so word
+// buttons compose phrases ("go" + "second" + "door"). A trailing \r in
+// the text means "then press Send" — the whole composed line goes.
 
 const macroRail = document.getElementById("macro-rail");
 const macroGroupBtn = document.getElementById("macro-group-btn");
@@ -1770,6 +1775,28 @@ function sendMacro(id) {
   state.ws.send(JSON.stringify({ t: "macro", d: { id } }));
 }
 
+// Type a macro's text into the command input. Words join with a space
+// (authored text is trimmed everywhere, so "go" + "second" must not
+// become "gosecond"). Deliberately no focus() — popping the soft
+// keyboard would defeat the button workflow.
+function insertMacroText(text) {
+  if (!text) return;
+  const send = text.endsWith("\r");
+  if (send) text = text.slice(0, -1);
+  if (text && cmdInput.value && !/\s$/.test(cmdInput.value)) {
+    cmdInput.value += " ";
+  }
+  cmdInput.value += text;
+  if (send) submitInput();
+}
+
+// A button or menu option, post-confirm: type-in entries stay local,
+// everything else round-trips by id.
+function fireMacro(entry) {
+  if (entry.insert) insertMacroText(entry.command || "");
+  else sendMacro(entry.id);
+}
+
 function confirmSheet(label, onConfirm) {
   openSheet(label);
   sheetButton(`Confirm: ${label}`, onConfirm);
@@ -1781,14 +1808,14 @@ function activateMacro(btn) {
     openSheet(btn.label);
     for (const opt of btn.options) {
       sheetButton(opt.label, () => {
-        if (opt.confirm) confirmSheet(opt.label, () => sendMacro(opt.id));
-        else sendMacro(opt.id);
+        if (opt.confirm) confirmSheet(opt.label, () => fireMacro(opt));
+        else fireMacro(opt);
       });
     }
     return;
   }
-  if (btn.confirm) confirmSheet(btn.label, () => sendMacro(btn.id));
-  else sendMacro(btn.id);
+  if (btn.confirm) confirmSheet(btn.label, () => fireMacro(btn));
+  else fireMacro(btn);
 }
 
 function currentGroup() {
@@ -2034,6 +2061,35 @@ document.getElementById("macro-add").addEventListener("click", () => {
   }
 });
 
+// The editor never exposes the \r storage convention: tap behavior is a
+// three-way picker, and the trailing \r ("type, then send") is appended
+// and stripped here on save/load.
+const TAP_MODES = [
+  ["send", "Send the command"],
+  ["insert", "Type into input"],
+  ["insert-send", "Type, then send"],
+];
+
+function tapModeOf(entry) {
+  if (!entry || !entry.insert) return "send";
+  return (entry.command || "").endsWith("\r") ? "insert-send" : "insert";
+}
+
+function tapSelect(mode) {
+  const select = document.createElement("select");
+  for (const [value, label] of TAP_MODES) select.append(new Option(label, value));
+  select.value = mode;
+  return select;
+}
+
+function encodeTapMode(command, mode) {
+  return mode === "insert-send" && command ? command + "\r" : command;
+}
+
+function stripTapEnter(command) {
+  return (command || "").replace(/\r$/, "");
+}
+
 function openMacroEditor(existing) {
   openSheet(existing ? `Edit: ${existing.btn.label}` : "New macro button");
   const form = document.createElement("form");
@@ -2051,18 +2107,26 @@ function openMacroEditor(existing) {
   cmdInputEl.placeholder = "e.g. ;sellgems";
   cmdInputEl.autocapitalize = "off";
   cmdInputEl.spellcheck = false;
-  cmdInputEl.value = existing ? existing.btn.command || "" : "";
+  cmdInputEl.value = existing ? stripTapEnter(existing.btn.command) : "";
   const cmdWrap = document.createElement("label");
   cmdWrap.append("Command (leave empty for a menu button)", cmdInputEl);
+
+  // Tap behavior: send now, type into the input (composable word
+  // buttons), or type and submit the whole composed line.
+  const tapModeIn = tapSelect(tapModeOf(existing?.btn));
+  const tapWrap = document.createElement("label");
+  tapWrap.append("On tap", tapModeIn);
 
   // Menu options: with any options, tapping the button opens a picker
   // sheet instead of firing a command — "a button that is a category".
   const optionsWrap = document.createElement("div");
   optionsWrap.className = "option-rows";
   const optionRows = [];
-  function addOptionRow(label = "", command = "", confirmed = false) {
+  function addOptionRow(label = "", command = "", confirmed = false, tapMode = "send") {
     const row = document.createElement("div");
     row.className = "option-row";
+    const main = document.createElement("div");
+    main.className = "option-row-main";
     const labelIn = document.createElement("input");
     labelIn.type = "text";
     labelIn.placeholder = "option label";
@@ -2073,10 +2137,6 @@ function openMacroEditor(existing) {
     cmdIn.autocapitalize = "off";
     cmdIn.spellcheck = false;
     cmdIn.value = command;
-    const confirmIn = document.createElement("input");
-    confirmIn.type = "checkbox";
-    confirmIn.checked = confirmed;
-    confirmIn.title = "Ask before sending";
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "option-remove";
@@ -2085,13 +2145,23 @@ function openMacroEditor(existing) {
       row.remove();
       optionRows.splice(optionRows.indexOf(entry), 1);
     });
-    const entry = { labelIn, cmdIn, confirmIn };
+    main.append(labelIn, cmdIn, remove);
+    const extras = document.createElement("div");
+    extras.className = "option-row-extras";
+    const tapIn = tapSelect(tapMode);
+    const confirmIn = document.createElement("input");
+    confirmIn.type = "checkbox";
+    confirmIn.checked = confirmed;
+    const confirmLabel = document.createElement("label");
+    confirmLabel.append(confirmIn, "confirm");
+    extras.append(tapIn, confirmLabel);
+    const entry = { labelIn, cmdIn, confirmIn, tapIn };
     optionRows.push(entry);
-    row.append(labelIn, cmdIn, confirmIn, remove);
+    row.append(main, extras);
     optionsWrap.appendChild(row);
   }
   for (const opt of existing?.btn.options || []) {
-    addOptionRow(opt.label, opt.command || "", opt.confirm);
+    addOptionRow(opt.label, stripTapEnter(opt.command), opt.confirm, tapModeOf(opt));
   }
   const addOptionBtn = document.createElement("button");
   addOptionBtn.type = "button";
@@ -2176,16 +2246,17 @@ function openMacroEditor(existing) {
     actions.appendChild(deleteBtn);
   }
 
-  form.append(labelWrap, cmdWrap, optionsLabel, placeWrap, colorRow, confirmRow, actions);
+  form.append(labelWrap, cmdWrap, tapWrap, optionsLabel, placeWrap, colorRow, confirmRow, actions);
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const label = labelInput.value.trim();
-    const command = cmdInputEl.value.trim();
+    const command = encodeTapMode(cmdInputEl.value.trim(), tapModeIn.value);
     const options = optionRows
       .map((row) => ({
         label: row.labelIn.value.trim(),
-        command: row.cmdIn.value.trim(),
+        command: encodeTapMode(row.cmdIn.value.trim(), row.tapIn.value),
         confirm: row.confirmIn.checked,
+        insert: row.tapIn.value !== "send",
       }))
       .filter((o) => o.label && o.command);
     if (!label || (!command && !options.length)) return;
@@ -2203,6 +2274,7 @@ function openMacroEditor(existing) {
         group,
         label,
         command,
+        insert: tapModeIn.value !== "send",
         options,
         color: chosenColor,
         confirm: confirmToggle.checked,
@@ -2234,14 +2306,20 @@ function recordHistory(text) {
   } catch { /* storage full/blocked — cmdHistory just won't persist */ }
 }
 
-// The echo comes back over the text stream, so nothing renders locally.
-inputForm.addEventListener("submit", (ev) => {
-  ev.preventDefault();
+// Send whatever is in the input: the Send button, hardware enter, and
+// type-in macros ending in \r all land here. The echo comes back over
+// the text stream, so nothing renders locally.
+function submitInput() {
   const text = cmdInput.value.trim();
   if (!text) return;
   sendCommand(text);
   recordHistory(text);
   cmdInput.value = "";
+}
+
+inputForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  submitInput();
 });
 
 // Repeat button: tap = resend last command; hold = cmdHistory sheet.

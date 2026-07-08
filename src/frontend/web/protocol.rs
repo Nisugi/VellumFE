@@ -371,7 +371,9 @@ pub enum ClientMessage {
         coord: Option<String>,
     },
     /// A macro button/option tap; the id is resolved to its command
-    /// server-side (the client never sends macro command text).
+    /// server-side (the client never sends macro command text). Type-in
+    /// (`insert`) buttons never arrive here — the client handles them
+    /// locally.
     Macro { id: String },
     /// Create/edit a phone-authored macro button (macros-local.toml).
     MacroSave {
@@ -380,6 +382,7 @@ pub enum ClientMessage {
         command: String,
         color: Option<String>,
         confirm: bool,
+        insert: bool,
         options: Vec<crate::config::MacroOption>,
         original: Option<(Option<String>, String)>,
     },
@@ -448,6 +451,17 @@ fn opt_str(value: Option<&serde_json::Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Trim a phone-authored macro command, preserving a deliberate trailing
+/// `\r` on type-in (`insert`) macros — it encodes "type, then send" and a
+/// plain trim would eat it.
+fn trim_macro_command(raw: &str, insert: bool) -> String {
+    let mut command = raw.trim().to_string();
+    if insert && !command.is_empty() && raw.trim_end_matches([' ', '\t']).ends_with('\r') {
+        command.push('\r');
+    }
+    command
+}
+
 #[derive(Deserialize)]
 struct RawClientMessage {
     t: String,
@@ -501,13 +515,11 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "macro_save" => {
             let label = msg.d.get("label")?.as_str()?.trim().to_string();
-            let command = msg
-                .d
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let insert = msg.d.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+            let command = trim_macro_command(
+                msg.d.get("command").and_then(|v| v.as_str()).unwrap_or_default(),
+                insert,
+            );
             let options: Vec<crate::config::MacroOption> = msg
                 .d
                 .get("options")
@@ -517,7 +529,9 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                         .iter()
                         .filter_map(|o| {
                             let label = o.get("label")?.as_str()?.trim().to_string();
-                            let command = o.get("command")?.as_str()?.trim().to_string();
+                            let insert =
+                                o.get("insert").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let command = trim_macro_command(o.get("command")?.as_str()?, insert);
                             if label.is_empty() || command.is_empty() {
                                 return None;
                             }
@@ -525,6 +539,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                                 label,
                                 command,
                                 confirm: o.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                                insert,
                             })
                         })
                         .collect()
@@ -544,6 +559,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 command,
                 color: opt_str(msg.d.get("color")),
                 confirm: msg.d.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+                insert,
                 options,
                 original,
             })

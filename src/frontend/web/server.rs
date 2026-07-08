@@ -632,6 +632,7 @@ async fn handle_client_message(
             command,
             color,
             confirm,
+            insert,
             options,
             original,
         } => state
@@ -643,6 +644,7 @@ async fn handle_client_message(
                 command,
                 color,
                 confirm,
+                insert,
                 options,
                 original,
             })

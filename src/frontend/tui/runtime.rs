@@ -498,6 +498,7 @@ async fn async_run(
                         command,
                         color,
                         confirm,
+                        insert,
                         options,
                         original,
                     } => {
@@ -506,6 +507,7 @@ async fn async_run(
                             command: Some(command).filter(|c| !c.is_empty()),
                             color,
                             confirm,
+                            insert,
                             options,
                             ..Default::default()
                         };

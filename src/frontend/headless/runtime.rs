@@ -811,6 +811,7 @@ fn handle_remote_event(
             command,
             color,
             confirm,
+            insert,
             options,
             original,
         } => {
@@ -819,6 +820,7 @@ fn handle_remote_event(
                 command: Some(command).filter(|c| !c.is_empty()),
                 color,
                 confirm,
+                insert,
                 options,
                 ..Default::default()
             };
