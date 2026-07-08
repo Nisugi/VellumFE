@@ -394,100 +394,24 @@ impl VellumGuiApp {
         });
 
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
-        let main_viewport_state = persisted_layout
-            .as_ref()
-            .and_then(|layout| layout.main_viewport.clone());
-        let ui_font = persisted_layout
-            .as_ref()
-            .map(|layout| layout.ui_font.clone())
-            .unwrap_or_default();
-        let ui_settings = persisted_layout
-            .as_ref()
-            .map(|layout| layout.ui_settings.clone())
-            .unwrap_or_default();
-        let tab_settings = persisted_layout
-            .as_ref()
-            .map(|layout| layout.tab_settings_map())
-            .unwrap_or_default();
-
         let available_tabs = Self::collect_available_tabs(&app_core);
-        let mut hidden_tabs: HashSet<TabKey> = persisted_layout
-            .as_ref()
-            .map(|layout| layout.hidden_tabs.iter().cloned().collect())
-            .unwrap_or_default();
-        hidden_tabs.retain(|key| available_tabs.contains_key(key));
-        let snapshot = persisted_layout
-            .as_ref()
-            .and_then(|layout| Self::dock_snapshot_from_layout(layout));
-        let mut main_window_rects = snapshot
-            .as_ref()
-            .map(|snapshot| {
-                snapshot
-                    .main_window_rects
-                    .iter()
-                    .filter(|entry| available_tabs.contains_key(&entry.key))
-                    .map(|entry| (entry.key.clone(), entry.rect))
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
-        main_window_rects.retain(|key, _| available_tabs.contains_key(key));
-        let mut tab_zones = snapshot
-            .as_ref()
-            .map(|snapshot| {
-                snapshot
-                    .tab_zones
-                    .iter()
-                    .filter(|entry| available_tabs.contains_key(&entry.key))
-                    .map(|entry| (entry.key.clone(), entry.zone))
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
-        tab_zones.retain(|key, _| available_tabs.contains_key(key));
-        let mut no_title_tabs: HashSet<TabKey> = snapshot
-            .as_ref()
-            .map(|snapshot| {
-                snapshot
-                    .no_title_tabs
-                    .iter()
-                    .filter(|key| available_tabs.contains_key(*key))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        no_title_tabs.retain(|key| available_tabs.contains_key(key));
-        for key in available_tabs.keys() {
-            tab_zones
-                .entry(key.clone())
-                .or_insert_with(|| Self::default_zone_for_tab_key(key));
-        }
-        let mut shell_layout = snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.shell_layout.clone())
-            .unwrap_or_default();
-        shell_layout.sanitize(initial_width.max(1.0));
-
-        let tab_groups = Self::sanitize_tab_groups(
-            snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.tab_groups.clone())
-                .unwrap_or_default(),
+        let dock::RestoredLayoutState {
+            hidden_tabs,
+            main_window_rects,
+            tab_zones,
+            no_title_tabs,
+            shell_layout,
+            tab_groups,
+            detached_tabs,
+            ui_font,
+            ui_settings,
+            tab_settings,
+            main_viewport: main_viewport_state,
+        } = Self::restore_layout_state(
+            persisted_layout.as_ref(),
             &available_tabs,
+            initial_width,
         );
-
-        let detached_tabs: HashMap<TabKey, DetachedWindowState> = persisted_layout
-            .as_ref()
-            .map(|layout| {
-                Self::detached_viewports_from_layout(layout, &available_tabs, &hidden_tabs)
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .map(|viewport| {
-                let viewport = Self::sanitize_viewport_state(&viewport);
-                let key = viewport.tab.clone();
-                let state = DetachedWindowState::new(&key, viewport);
-                (key, state)
-            })
-            .collect();
 
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
@@ -1470,6 +1394,7 @@ impl VellumGuiApp {
                     command,
                     color,
                     confirm,
+                    insert,
                     options,
                     original,
                 } => {
@@ -1478,6 +1403,7 @@ impl VellumGuiApp {
                         command: Some(command).filter(|c| !c.is_empty()),
                         color,
                         confirm,
+                        insert,
                         options,
                         ..Default::default()
                     };
