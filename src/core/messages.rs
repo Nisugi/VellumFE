@@ -2402,6 +2402,9 @@ impl MessageProcessor {
             tracing::debug!(
                 "Discarding text segment from room stream (room uses components, not text)"
             );
+            // A redirect may have set current_stream; without the restore the
+            // override leaks into every following line of the chunk
+            self.current_stream = original_stream;
             return;
         }
 
@@ -2458,12 +2461,14 @@ impl MessageProcessor {
                 .any(|w| matches!(w.content, WindowContent::Inventory(_)))
             {
                 tracing::trace!("Discarding inv stream content - no inventory window exists");
+                self.current_stream = original_stream;
                 return;
             }
             // Add line to inventory buffer instead of window
             let num_segments = line.segments.len();
             self.inventory_buffer.push(line.segments);
             tracing::trace!("Buffered inventory line ({} segments)", num_segments);
+            self.current_stream = original_stream;
             return;
         }
 
@@ -2478,6 +2483,7 @@ impl MessageProcessor {
                 .any(|w| matches!(w.content, WindowContent::Perception(_)))
             {
                 tracing::debug!("Discarding percWindow stream content - no perception window exists");
+                self.current_stream = original_stream;
                 return;
             }
 
@@ -2510,6 +2516,7 @@ impl MessageProcessor {
                 self.perception_buffer.push(vec![entry_segment]);
                 tracing::debug!("Buffered perception entry: '{}'", entry_text);
             }
+            self.current_stream = original_stream;
             return;
         }
 
@@ -4034,6 +4041,36 @@ mod tests {
 
         // RedirectCopy must deliver to the redirect target AND the original
         assert_eq!(text_line_count(&ui_state, "alerts"), 1);
+        assert_eq!(text_line_count(&ui_state, "main"), 1);
+    }
+
+    #[test]
+    fn test_redirect_to_special_stream_restores_current_stream() {
+        // A redirect whose target hits an early-return path (room/inv/
+        // percWindow) must still restore current_stream, or the override
+        // leaks into every following line of the chunk
+        let mut config = Config::default();
+        config.highlight_settings.redirect_enabled = true;
+        let mut r = make_redirect_pattern("hear");
+        r.redirect_to = Some("room".to_string());
+        r.redirect_mode = crate::config::RedirectMode::RedirectOnly;
+        config.highlights.insert("room_redirect".to_string(), r);
+
+        let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("main".to_string(), make_text_window("main", &["main"]));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        processor.current_stream = "main".to_string();
+        push_test_segment(&mut processor, "You hear a noise.");
+        processor.flush_current_stream(&mut ui_state);
+        assert_eq!(processor.current_stream, "main");
+
+        // The next (non-matching) line must land in main, not the target
+        push_test_segment(&mut processor, "A rat scurries past.");
+        processor.flush_current_stream(&mut ui_state);
         assert_eq!(text_line_count(&ui_state, "main"), 1);
     }
 
