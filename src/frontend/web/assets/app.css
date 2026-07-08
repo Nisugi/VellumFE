@@ -53,6 +53,10 @@ html, body {
   /* Pinned to the visual viewport (set from JS) so the soft keyboard
      never covers the input bar; falls back to full height. */
   height: var(--vvh, 100%);
+  /* iOS scrolls the page to reveal a focused input rather than resizing;
+     follow the visual viewport's offset so the app can't be pushed off
+     the top of the screen (0 where the viewport resizes instead). */
+  transform: translateY(var(--vvt, 0px));
   /* Keep chrome clear of notches / home indicators when installed as PWA */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);

@@ -2232,11 +2232,15 @@ document.getElementById("textsize-btn").addEventListener("click", () => {
 // ---- Soft keyboard / viewport --------------------------------------------
 
 // Pin the app to the *visual* viewport so the soft keyboard never covers
-// the input bar (iOS Safari doesn't resize the layout viewport).
+// the input bar (iOS Safari doesn't resize the layout viewport). iOS also
+// *scrolls* the page to reveal the focused input instead of resizing, so
+// --vvt follows the viewport's offset to keep the app under the visible
+// region (stays 0 on platforms that resize).
 const vv = window.visualViewport;
 function syncViewport() {
   if (!vv) return;
   document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+  document.documentElement.style.setProperty("--vvt", `${vv.offsetTop}px`);
   if (autoScroll) scrollToBottom();
 }
 if (vv) {

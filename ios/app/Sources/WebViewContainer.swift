@@ -30,6 +30,10 @@ struct WebViewContainer: UIViewRepresentable {
         webView.scrollView.backgroundColor = webView.backgroundColor
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.bounces = false
+        // WebKit's keyboard avoidance scrolls this scroll view to reveal
+        // the focused input; the page is exactly viewport-sized, so any
+        // offset just pushes the UI off the top. The coordinator pins it.
+        webView.scrollView.delegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
         #if DEBUG
             // Safari Web Inspector from a paired Mac (Develop menu).
@@ -45,7 +49,16 @@ struct WebViewContainer: UIViewRepresentable {
         // The boot URL is fixed for the app's lifetime; nothing to update.
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
+        /// The page never scrolls (it sizes itself to --vvh; panes scroll
+        /// their own divs), so any offset here is WebKit's keyboard
+        /// avoidance — undo it before it lands on screen.
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            if scrollView.contentOffset != .zero {
+                scrollView.contentOffset = .zero
+            }
+        }
+
         /// Everything except the local server goes to Safari (game
         /// LaunchURL links, play.net pages) — mirrors
         /// `shouldOverrideUrlLoading` in MainActivity.kt.
