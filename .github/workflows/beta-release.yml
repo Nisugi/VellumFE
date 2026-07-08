@@ -193,7 +193,10 @@ jobs:
 
   ios:
     name: Build (iOS, TestFlight upload)
-    runs-on: macos-latest
+    # Pinned: App Store Connect requires the iOS 26 SDK (Xcode 26+), but
+    # macos-latest is mid-migration and can still hand out macOS 15
+    # machines whose default Xcode is 16.4 (iOS 18.5 SDK).
+    runs-on: macos-26
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
