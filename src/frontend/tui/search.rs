@@ -45,6 +45,11 @@ impl TuiFrontend {
             return effects.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
         }
 
+        // Check items windows (room objects)
+        if let Some(items) = self.widget_manager.items_widgets.get(window_name) {
+            return items.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
+        }
+
         // Check targets windows
         if let Some(targets) = self.widget_manager.targets_widgets.get(window_name) {
             return targets.mouse_to_text_coords(mouse_col, mouse_row, window_rect);
@@ -125,6 +130,11 @@ impl TuiFrontend {
         // Check active effects windows
         if let Some(effects) = self.widget_manager.active_effects_windows.get(window_name) {
             return Some(effects.extract_selection_text(start_line, start_col, end_line, end_col));
+        }
+
+        // Check items windows (room objects)
+        if let Some(items) = self.widget_manager.items_widgets.get(window_name) {
+            return Some(items.extract_selection_text(start_line, start_col, end_line, end_col));
         }
 
         // Check targets windows
