@@ -53,6 +53,18 @@ const AUTH_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 /// How long a client gets to present its token.
 const AUTH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Compare a presented token against the expected one without leaking the
+/// mismatch position through timing. Length still leaks; tokens are fixed
+/// length so that reveals nothing.
+fn token_matches(presented: &str, expected: &str) -> bool {
+    let a = presented.as_bytes();
+    let b = expected.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 impl WebState {
     fn auth_locked_out(&self) -> bool {
         let mut failures = self.auth_failures.lock().expect("auth lock poisoned");
@@ -446,10 +458,15 @@ async fn sound_file(
 ) -> impl IntoResponse {
     use axum::http::StatusCode;
 
-    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
         return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     }
-    if name.contains(['/', '\\']) || name.contains("..") || name.is_empty() {
+    // ':' rejected too: on Windows, joining "c:name" replaces the whole
+    // path prefix (drive-relative), escaping the sounds dir
+    if name.contains(['/', '\\', ':']) || name.contains("..") || name.is_empty() {
         return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     }
     let Ok(sounds_dir) = crate::config::Config::sounds_dir() else {
@@ -493,7 +510,10 @@ async fn status_json(
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<Arc<WebState>>,
 ) -> impl IntoResponse {
-    if params.get("token").map(String::as_str) != Some(state.auth_token.as_str()) {
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
         return (
             axum::http::StatusCode::FORBIDDEN,
             [(header::CONTENT_TYPE, "application/json")],
@@ -840,7 +860,7 @@ async fn authenticate(socket: &mut WebSocket, state: &WebState) -> bool {
         Ok(Some(Ok(Message::Text(ref text))))
             if matches!(
                 protocol::parse_client_message(text),
-                Some(ClientMessage::Auth { ref token }) if *token == state.auth_token
+                Some(ClientMessage::Auth { ref token }) if token_matches(token, &state.auth_token)
             )
     );
     if !ok {
