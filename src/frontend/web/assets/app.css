@@ -984,13 +984,60 @@ html, body {
   font-size: 16px;
 }
 
-#login-save-row {
+#login-save-row,
+#lich-save-row {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--fg-dim);
   font-size: 13px;
 }
+
+#login-mode {
+  display: flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 14px;
+}
+
+.mode-btn.mode-active {
+  border-color: var(--st);
+  color: var(--st);
+}
+
+/* Field groups inherit the form's vertical rhythm. */
+#direct-fields,
+#lich-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#direct-fields[hidden],
+#lich-fields[hidden] { display: none; }
+
+#lich-warning {
+  color: var(--hp, #e0655f);
+  font-size: 13px;
+  margin: 0;
+}
+
+#lich-note {
+  color: var(--fg-dim);
+  font-size: 12px;
+  margin: 0;
+}
+
+#lich-note code { font-size: 11px; }
 
 #session-form button[type="submit"] {
   padding: 10px;

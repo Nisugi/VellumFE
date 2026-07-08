@@ -113,23 +113,43 @@
       <div id="session-profiles"></div>
       <form id="session-form" autocomplete="off">
         <h3>New login</h3>
-        <input id="login-account" type="text" placeholder="play.net account"
-               autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <input id="login-password" type="password" placeholder="password"
-               autocomplete="current-password">
-        <input id="login-character" type="text" placeholder="character"
-               autocapitalize="off" autocorrect="off" spellcheck="false">
-        <select id="login-game">
-          <option value="prime" selected>GemStone IV</option>
-          <option value="platinum">GemStone IV Platinum</option>
-          <option value="shattered">GemStone IV Shattered</option>
-          <option value="test">GemStone IV Test</option>
-          <option value="dr">DragonRealms</option>
-          <option value="drplatinum">DragonRealms Platinum</option>
-          <option value="drfallen">DragonRealms Fallen</option>
-          <option value="drtest">DragonRealms Test</option>
-        </select>
-        <label id="login-save-row"><input id="login-save" type="checkbox"> Remember this login</label>
+        <div id="login-mode" role="tablist" aria-label="Connection type">
+          <button type="button" id="mode-direct" class="mode-btn mode-active"
+                  role="tab" aria-selected="true">play.net</button>
+          <button type="button" id="mode-lich" class="mode-btn"
+                  role="tab" aria-selected="false">Lich</button>
+        </div>
+        <div id="direct-fields">
+          <input id="login-account" type="text" placeholder="play.net account"
+                 autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <input id="login-password" type="password" placeholder="password"
+                 autocomplete="current-password">
+          <input id="login-character" type="text" placeholder="character"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <select id="login-game">
+            <option value="prime" selected>GemStone IV</option>
+            <option value="platinum">GemStone IV Platinum</option>
+            <option value="shattered">GemStone IV Shattered</option>
+            <option value="test">GemStone IV Test</option>
+            <option value="dr">DragonRealms</option>
+            <option value="drplatinum">DragonRealms Platinum</option>
+            <option value="drfallen">DragonRealms Fallen</option>
+            <option value="drtest">DragonRealms Test</option>
+          </select>
+          <label id="login-save-row"><input id="login-save" type="checkbox"> Remember this login</label>
+        </div>
+        <div id="lich-fields" hidden>
+          <input id="lich-host" type="text" placeholder="host (e.g. 192.168.1.50)"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <input id="lich-port" type="text" inputmode="numeric" placeholder="port (e.g. 8000)">
+          <input id="lich-name" type="text" placeholder="label (optional)"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <label id="lich-save-row"><input id="lich-save" type="checkbox" checked> Remember this connection</label>
+          <p id="lich-warning" hidden></p>
+          <p id="lich-note">Attaches to a running Lich session — launch Lich with
+            <code>--detachable-client</code>. Your phone needs a private path to that
+            machine: home Wi-Fi, Tailscale, or a VPN.</p>
+        </div>
         <button id="login-submit" type="submit">Connect</button>
       </form>
     </div>

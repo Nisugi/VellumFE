@@ -862,10 +862,13 @@ function renderProfiles(list) {
     label.textContent = p.character || p.name;
     const detail = document.createElement("span");
     detail.className = "profile-detail";
-    detail.textContent = `${p.name} · ${p.account_masked} · ${p.game}`;
+    detail.textContent = p.mode === "lich"
+      ? `${p.name} · Lich @ ${p.host}:${p.port}`
+      : `${p.name} · ${p.account_masked} · ${p.game}`;
     btn.append(label, detail);
     btn.addEventListener("click", () => {
-      if (p.has_password) {
+      if (p.mode === "lich" || p.has_password) {
+        // Lich attaches have no credentials of their own.
         sendJson("connect", { profile: p.name });
       } else {
         // No stored password: reveal a one-off password prompt for it.
@@ -882,7 +885,9 @@ function renderProfiles(list) {
       ev.stopPropagation();
       openSheet(`Delete profile '${p.name}'?`);
       sheetButton("Delete", () => sendJson("delete_profile", { name: p.name }));
-      sheetNote("The saved password is removed too.", true);
+      if (p.mode !== "lich") {
+        sheetNote("The saved password is removed too.", true);
+      }
     });
 
     row.append(btn, del);
@@ -911,8 +916,76 @@ function askProfilePassword(row, profile) {
   input.focus();
 }
 
+// ---- Login mode toggle (play.net direct vs Lich attach) --------------------
+
+const modeDirectBtn = document.getElementById("mode-direct");
+const modeLichBtn = document.getElementById("mode-lich");
+const directFields = document.getElementById("direct-fields");
+const lichFields = document.getElementById("lich-fields");
+const lichHostInput = document.getElementById("lich-host");
+const lichPortInput = document.getElementById("lich-port");
+const lichNameInput = document.getElementById("lich-name");
+const lichWarning = document.getElementById("lich-warning");
+let loginMode = "direct";
+
+function setLoginMode(mode) {
+  loginMode = mode;
+  modeDirectBtn.classList.toggle("mode-active", mode === "direct");
+  modeDirectBtn.setAttribute("aria-selected", String(mode === "direct"));
+  modeLichBtn.classList.toggle("mode-active", mode === "lich");
+  modeLichBtn.setAttribute("aria-selected", String(mode === "lich"));
+  directFields.hidden = mode !== "direct";
+  lichFields.hidden = mode !== "lich";
+}
+modeDirectBtn.addEventListener("click", () => setLoginMode("direct"));
+modeLichBtn.addEventListener("click", () => setLoginMode("lich"));
+
+// The Lich port is unauthenticated: nudge (don't block) when the target
+// doesn't look like loopback / RFC1918 / Tailscale CGNAT / mDNS / tailnet.
+// Non-IP hostnames can't be classified — assume the user knows their DNS.
+function lichHostLooksPrivate(host) {
+  const h = host.toLowerCase();
+  if (h === "localhost" || h === "::1" || h.endsWith(".local") || h.endsWith(".ts.net")) {
+    return true;
+  }
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!v4) return !h.includes(":") || h.startsWith("fd") || h.startsWith("fe80");
+  const a = Number(v4[1]);
+  const b = Number(v4[2]);
+  if (a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // Tailscale (CGNAT)
+  return false;
+}
+
+lichHostInput.addEventListener("input", () => {
+  const host = lichHostInput.value.trim();
+  const risky = host !== "" && !lichHostLooksPrivate(host);
+  lichWarning.textContent = risky
+    ? "This address looks public. The Lich connection has no password — reach your PC over a VPN (Tailscale/WireGuard) instead of the open internet."
+    : "";
+  lichWarning.hidden = !risky;
+});
+
 sessionForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
+  if (loginMode === "lich") {
+    const host = lichHostInput.value.trim();
+    const port = lichPortInput.value.trim();
+    const name = lichNameInput.value.trim();
+    if (!host || !/^\d+$/.test(port)) return;
+    const save = document.getElementById("lich-save").checked;
+    sendJson("connect", {
+      mode: "lich",
+      host,
+      port,
+      character: name || null,
+      profile_name: save ? (name || `${host}:${port}`) : null,
+    });
+    profilesRequested = false;
+    return;
+  }
   const account = document.getElementById("login-account").value.trim();
   const password = document.getElementById("login-password").value;
   const character = document.getElementById("login-character").value.trim();
