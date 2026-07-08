@@ -10,6 +10,11 @@ Design custom window arrangements for different playstyles.
 
 Or via command: `.editwindow <name>` (no name opens a picker)
 
+On a text window's **Streams** field, `Ctrl+P` opens a picker of stream
+ids seen this session — the easy way to wire a window to a Lich script's
+custom stream (see
+[Custom Streams](../widgets/text-windows.md#custom-streams)).
+
 ## Adding Windows
 
 ### Via Menu
@@ -65,6 +70,11 @@ Windows can overlap. Later windows in the file render on top.
 Window positions also auto-save per character. You can switch layouts
 automatically by terminal size with `layout_mappings` in
 [config.toml](../configuration/config-toml.md).
+
+The same three commands work in the [Desktop GUI](../frontends/gui.md)
+on its own layout format: named checkpoints of the GUI arrangement,
+saved per character under `~/.vellum-fe/gui/`, applied live by
+`.loadlayout`. The two formats don't cross-load.
 
 ## Example Layouts
 
