@@ -50,12 +50,20 @@ then build in Xcode as usual.
 
 Pushing a `v*.*.*-beta*` tag runs the `ios` job in
 `.github/workflows/beta-release.yml`: device staticlib → `xcodegen` →
-`xcodebuild archive` (cloud-managed provisioning via the App Store Connect
-API key, so there are no profile secrets to renew) → `-exportArchive` with
-`ios/ExportOptions.plist` (`destination = upload`), which sends the build
-straight to App Store Connect. After Apple's processing (usually minutes,
-plus a one-time review wait on the very first build), it appears in the
-TestFlight app.
+`xcodebuild archive` (manual signing: the distribution cert from the repo
+secrets + the committed `ios/ci/VellumFE_AppStore.mobileprovision`) →
+`-exportArchive` with `ios/ExportOptions.plist` (`destination = upload`),
+which sends the build straight to App Store Connect. After Apple's
+processing (usually minutes, plus a one-time review wait on the very first
+build), it appears in the TestFlight app.
+
+Signing is manual on purpose: automatic signing archives with a
+*development* profile, which requires a registered device (a CI-only team
+has none) and rejects a distribution-identity override as conflicting.
+The provisioning profile expires **2027-07-07** (same day as the
+distribution cert); regenerate both then — new cert → new p12 secrets,
+then recreate the App Store profile via the ASC API or the developer
+portal and commit it to `ios/ci/`.
 
 Versioning: `CFBundleShortVersionString` is derived from the tag
 (`v0.3.0-beta.3` → `0.3.0`); `CFBundleVersion` is the workflow run number,

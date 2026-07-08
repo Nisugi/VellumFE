@@ -12,7 +12,12 @@
 	<key>destination</key>
 	<string>upload</string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>dev.vellumfe</key>
+		<string>VellumFE AppStore</string>
+	</dict>
 	<key>teamID</key>
 	<string>37YA6ZBNY2</string>
 	<key>uploadSymbols</key>
