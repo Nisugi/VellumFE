@@ -3064,6 +3064,12 @@ impl VellumGuiApp {
             );
             return true;
         }
+        if action.strip_prefix("action:loadlayout:").is_some() {
+            self.app_core.add_system_message(
+                "TOML layouts are a TUI feature. The GUI manages its own window layout and saves it automatically.",
+            );
+            return true;
+        }
         if self.handle_webui_action(action) {
             return true;
         }
