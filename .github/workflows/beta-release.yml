@@ -274,6 +274,7 @@ jobs:
             -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             $MARKETING_VERSION_OVERRIDE
 
