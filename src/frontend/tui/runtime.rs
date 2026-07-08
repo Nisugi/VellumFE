@@ -279,13 +279,15 @@ async fn async_run(
         tracing::warn!("Failed to load command history: {}", e);
     }
 
-    // Play startup music if enabled (with optional delay)
-    if app_core.config.sound.startup_music {
-        if let Some(ref player) = app_core.sound_player {
-            let delay_ms = app_core.config.sound.startup_music_delay_ms;
-            if delay_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            }
+    // Startup music: play now, or arm a deadline the main loop fires. The
+    // old thread::sleep here froze the whole startup (no render, no input)
+    // for the configured delay; the player is !Send, so defer instead.
+    let mut startup_music_at: Option<Instant> = None;
+    if app_core.config.sound.startup_music && app_core.sound_player.is_some() {
+        let delay_ms = app_core.config.sound.startup_music_delay_ms;
+        if delay_ms > 0 {
+            startup_music_at = Some(Instant::now() + std::time::Duration::from_millis(delay_ms));
+        } else if let Some(ref player) = app_core.sound_player {
             if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
                 tracing::debug!("Startup music not available: {}", e);
             }
@@ -344,6 +346,16 @@ async fn async_run(
 
     // Main event loop
     while app_core.running {
+        // Fire delayed startup music once its deadline passes
+        if startup_music_at.is_some_and(|t| Instant::now() >= t) {
+            startup_music_at = None;
+            if let Some(ref player) = app_core.sound_player {
+                if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
+                    tracing::debug!("Startup music not available: {}", e);
+                }
+            }
+        }
+
         // Persist window geometry when it changes (checked at a slow tick).
         // This is the primary save path: it survives every way a session
         // can end, including the console X button and crashes.
