@@ -1628,9 +1628,11 @@ body.hide-macrorail #macro-rail { display: none !important; }
 
 #compass {
   position: absolute;
-  /* Bottom-left of the pane, sitting just above the RT line. */
+  /* Default: bottom-right of the pane, just above the RT line. Hold-to-
+     drag moves it (left/top override these); position persists per
+     device in localStorage. */
   bottom: 6px;
-  left: 6px;
+  right: 6px;
   z-index: 6;
   display: grid;
   grid-template-columns: repeat(4, 27px);
@@ -1639,6 +1641,14 @@ body.hide-macrorail #macro-rail { display: none !important; }
   background: rgba(var(--panel-rgb), var(--float-alpha, 0.82));
   border: 1px solid var(--border);
   border-radius: 8px;
+  touch-action: none; /* we handle drag ourselves */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#compass.dragging {
+  border-color: var(--st);
+  opacity: 0.85;
 }
 
 #compass[hidden] { display: none; }
@@ -1663,6 +1673,9 @@ body.hide-compass #compass { display: none !important; }
 
 .compass-cell.compass-lit:active { background: var(--border); }
 .compass-blank { visibility: hidden; }
+/* Disabled cells must not swallow pointerdown — holds anywhere on the
+   compass (lit cell, dark cell, or frame) should start a drag. */
+.compass-cell:disabled { pointer-events: none; }
 
 /* ---- Colors editor ---------------------------------------------------------- */
 

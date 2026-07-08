@@ -2493,6 +2493,9 @@ for (const btn of document.querySelectorAll(".drawer-close")) {
 let swipe = null;
 paneWrap.addEventListener("touchstart", (ev) => {
   if (ev.touches.length !== 1) { swipe = null; return; }
+  // The compass can be parked in an edge zone; touches on it are taps or
+  // compass drags, never drawer swipes.
+  if (ev.target.closest && ev.target.closest("#compass")) { swipe = null; return; }
   const t = ev.touches[0];
   const rect = paneWrap.getBoundingClientRect();
   const x = t.clientX - rect.left;
@@ -2524,6 +2527,87 @@ paneWrap.addEventListener("touchmove", (ev) => {
   }
 }, { passive: true });
 paneWrap.addEventListener("touchend", () => { swipe = null; }, { passive: true });
+
+// ---- Compass position ------------------------------------------------------
+// Same feel as the floating macro buttons: a quick tap on a lit direction
+// still walks; holding ~half a second lifts the whole compass to drag it.
+// The position (compass center, as pane fractions) persists per device.
+
+const COMPASS_POS_KEY = "vellum-compass-pos";
+const compassEl = document.getElementById("compass");
+
+function placeCompass(cx, cy) {
+  compassEl.style.left = `${cx * 100}%`;
+  compassEl.style.top = `${cy * 100}%`;
+  compassEl.style.right = "auto";
+  compassEl.style.bottom = "auto";
+  compassEl.style.transform = "translate(-50%, -50%)";
+}
+
+try {
+  const pos = JSON.parse(localStorage.getItem(COMPASS_POS_KEY) || "null");
+  if (Array.isArray(pos)) placeCompass(pos[0], pos[1]);
+} catch { /* corrupt entry — default corner */ }
+
+(() => {
+  let holdTimer = null;
+  let dragging = false;
+  compassEl.addEventListener("pointerdown", (ev) => {
+    dragging = false;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      dragging = true;
+      compassEl.classList.add("dragging");
+      try {
+        compassEl.setPointerCapture(ev.pointerId);
+      } catch { /* pointer already gone */ }
+    }, 450);
+  });
+  compassEl.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    const rect = paneWrap.getBoundingClientRect();
+    const halfW = compassEl.offsetWidth / 2;
+    const halfH = compassEl.offsetHeight / 2;
+    const px = Math.min(rect.width - halfW - 4, Math.max(halfW + 4, ev.clientX - rect.left));
+    const py = Math.min(rect.height - halfH - 4, Math.max(halfH + 4, ev.clientY - rect.top));
+    const cx = px / rect.width;
+    const cy = py / rect.height;
+    placeCompass(cx, cy);
+    compassEl.dataset.cx = cx;
+    compassEl.dataset.cy = cy;
+  });
+  const endDrag = () => {
+    clearTimeout(holdTimer);
+    if (dragging && compassEl.dataset.cx) {
+      try {
+        localStorage.setItem(
+          COMPASS_POS_KEY,
+          JSON.stringify([parseFloat(compassEl.dataset.cx), parseFloat(compassEl.dataset.cy)]),
+        );
+      } catch { /* storage blocked — position just won't persist */ }
+    }
+    compassEl.classList.remove("dragging");
+    // Cleared on a timeout so the click that follows pointerup still sees
+    // dragging=true and gets swallowed below.
+    setTimeout(() => {
+      dragging = false;
+    }, 0);
+  };
+  compassEl.addEventListener("pointerup", endDrag);
+  compassEl.addEventListener("pointercancel", endDrag);
+  compassEl.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  // Capture phase: the tap that ends a drag must not walk the character.
+  compassEl.addEventListener(
+    "click",
+    (ev) => {
+      if (dragging) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    },
+    true,
+  );
+})();
 
 // Tapping the visible pane while a drawer is open closes it (capture phase
 // so the tap never reaches links beneath).
