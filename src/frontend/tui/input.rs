@@ -2240,8 +2240,17 @@ impl TuiFrontend {
                             app_core.ui_state.input_mode = InputMode::KeybindForm;
                         }
                         crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(key_combo) = browser.get_selected() {
-                                // TODO: Phase 3.4 - delete from correct file based on is_global
+                            if let Some(entry) = browser.get_selected_entry() {
+                                let key_combo = entry.key_combo.clone();
+                                // Remove from the file the entry came from, or the
+                                // reload below immediately resurrects it in the list
+                                if let Err(e) = crate::config::Config::delete_single_keybind(
+                                    &key_combo,
+                                    entry.is_global,
+                                    app_core.config.character.as_deref(),
+                                ) {
+                                    tracing::error!("Failed to delete keybind '{}': {}", key_combo, e);
+                                }
                                 app_core.config.keybinds.remove(&key_combo);
                                 app_core.rebuild_keybind_map();
                                 // Reload with source tracking for proper [G]/[C] display
