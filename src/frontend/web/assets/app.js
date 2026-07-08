@@ -385,8 +385,8 @@ let roomExits = [];
 
 const COMPASS_CELLS = [
   "nw", "n", "ne", "up",
-  "w", "out", "e", "down",
-  "sw", "s", "se", "",
+  "w", "out", "e", "",
+  "sw", "s", "se", "down",
 ];
 
 const EXIT_ALIASES = {

@@ -1581,8 +1581,9 @@ body.hide-macrorail #macro-rail { display: none !important; }
 
 #compass {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  /* Bottom-left of the pane, sitting just above the RT line. */
+  bottom: 6px;
+  left: 6px;
   z-index: 6;
   display: grid;
   grid-template-columns: repeat(4, 27px);
