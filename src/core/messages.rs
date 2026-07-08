@@ -632,7 +632,6 @@ impl MessageProcessor {
                         ParserSpanType::Monsterbold => DataSpanType::Monsterbold,
                         ParserSpanType::Spell => DataSpanType::Spell,
                         ParserSpanType::Speech => DataSpanType::Speech,
-                        ParserSpanType::System => DataSpanType::Normal,
                     };
 
                     // Create the text segment
@@ -704,7 +703,6 @@ impl MessageProcessor {
                     ParserSpanType::Monsterbold => DataSpanType::Monsterbold,
                     ParserSpanType::Spell => DataSpanType::Spell,
                     ParserSpanType::Speech => DataSpanType::Speech,
-                    ParserSpanType::System => DataSpanType::Normal, // system echoes treated as normal for data layer
                 };
 
                 self.current_segments.push(TextSegment {
@@ -1625,7 +1623,6 @@ impl MessageProcessor {
             }
             ParsedElement::TargetList {
                 current_target,
-                targets: _,  // Ignore names - we get richer data from room objs
                 target_ids,  // Store IDs to filter room_creatures
             } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
@@ -2201,8 +2198,7 @@ impl MessageProcessor {
                             ParserSpanType::Monsterbold => DataSpanType::Monsterbold,
                             ParserSpanType::Spell => DataSpanType::Spell,
                             ParserSpanType::Speech => DataSpanType::Speech,
-                            ParserSpanType::System => DataSpanType::Normal,
-                        };
+                            };
 
                         // Link data is already the correct type from parser
                         let link = link_data.clone();
