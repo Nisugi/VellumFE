@@ -54,7 +54,6 @@ pub mod spell_color_browser;
 pub mod spell_color_form;
 mod spells_window;
 mod sync;
-mod sync_macros;
 mod tabbed_text_window;
 mod targets;
 mod terminal_title;
