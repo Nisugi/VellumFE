@@ -1012,7 +1012,8 @@ html, body {
 }
 
 #login-save-row,
-#lich-save-row {
+#lich-save-row,
+#remote-save-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1041,30 +1042,39 @@ html, body {
   color: var(--st);
 }
 
+/* The Remote tab only exists inside the native app shells. */
+.mode-btn[hidden] { display: none; }
+
 /* Field groups inherit the form's vertical rhythm. */
 #direct-fields,
-#lich-fields {
+#lich-fields,
+#remote-fields {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 #direct-fields[hidden],
-#lich-fields[hidden] { display: none; }
+#lich-fields[hidden],
+#remote-fields[hidden],
+#remote-saved[hidden] { display: none; }
 
-#lich-warning {
+#lich-warning,
+#remote-warning {
   color: var(--hp, #e0655f);
   font-size: 13px;
   margin: 0;
 }
 
-#lich-note {
+#lich-note,
+#remote-note {
   color: var(--fg-dim);
   font-size: 12px;
   margin: 0;
 }
 
-#lich-note code { font-size: 11px; }
+#lich-note code,
+#remote-note code { font-size: 11px; }
 
 #session-form button[type="submit"] {
   padding: 10px;

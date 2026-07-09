@@ -123,6 +123,38 @@ const bootLich = (() => {
   };
 })();
 
+// Native-shell markers, also captured before the fragment is scrubbed.
+// #app=1 says an iOS/Android shell is hosting this page: only there does
+// the Remote login tab exist (its vellum:// actions need a shell to catch
+// them), and only there does a non-loopback page offer "back to the app".
+const inShell = /(?:^#|&)app=1(?:&|$)/.test(location.hash);
+
+// #remote=host:port — the shell has a remembered remote server (the
+// pairing token stays in native secure storage; only the address rides
+// the fragment for display).
+const shellRemote = (() => {
+  const m = location.hash.match(/(?:^#|&)remote=([^&]+)/);
+  if (!m) return null;
+  const split = decodeURIComponent(m[1]).match(/^(.+):(\d+)$/);
+  return split ? { host: split[1], port: split[2] } : null;
+})();
+
+// #rhost=…&rport=…[&rkey=…] — a vellum://remote deep link (QR scan on the
+// desktop's .webinfo page) relayed by the shell. Prefill only — never
+// auto-connect, same reasoning as bootLich. ("rkey", not "rtoken": the
+// loadToken regex is unanchored and would swallow any *token= param.)
+const bootRemote = (() => {
+  const host = location.hash.match(/(?:^#|&)rhost=([^&]+)/);
+  const port = location.hash.match(/(?:^#|&)rport=(\d+)/);
+  if (!host || !port) return null;
+  const key = location.hash.match(/(?:^#|&)rkey=([^&]+)/);
+  return {
+    host: decodeURIComponent(host[1]),
+    port: port[1],
+    token: key ? decodeURIComponent(key[1]) : "",
+  };
+})();
+
 function loadToken() {
   const match = location.hash.match(/token=([0-9a-f]+)/i);
   if (match) {
@@ -936,29 +968,42 @@ function askProfilePassword(row, profile) {
   input.focus();
 }
 
-// ---- Login mode toggle (play.net direct vs Lich attach) --------------------
+// ---- Login mode toggle (play.net direct / Lich attach / remote server) -----
 
 const modeDirectBtn = document.getElementById("mode-direct");
 const modeLichBtn = document.getElementById("mode-lich");
+const modeRemoteBtn = document.getElementById("mode-remote");
 const directFields = document.getElementById("direct-fields");
 const lichFields = document.getElementById("lich-fields");
+const remoteFields = document.getElementById("remote-fields");
 const lichHostInput = document.getElementById("lich-host");
 const lichPortInput = document.getElementById("lich-port");
 const lichNameInput = document.getElementById("lich-name");
 const lichWarning = document.getElementById("lich-warning");
+const remoteHostInput = document.getElementById("remote-host");
+const remotePortInput = document.getElementById("remote-port");
+const remoteTokenInput = document.getElementById("remote-token");
+const remoteWarning = document.getElementById("remote-warning");
 let loginMode = "direct";
 
 function setLoginMode(mode) {
   loginMode = mode;
-  modeDirectBtn.classList.toggle("mode-active", mode === "direct");
-  modeDirectBtn.setAttribute("aria-selected", String(mode === "direct"));
-  modeLichBtn.classList.toggle("mode-active", mode === "lich");
-  modeLichBtn.setAttribute("aria-selected", String(mode === "lich"));
+  for (const [btn, name] of [
+    [modeDirectBtn, "direct"],
+    [modeLichBtn, "lich"],
+    [modeRemoteBtn, "remote"],
+  ]) {
+    btn.classList.toggle("mode-active", mode === name);
+    btn.setAttribute("aria-selected", String(mode === name));
+  }
   directFields.hidden = mode !== "direct";
   lichFields.hidden = mode !== "lich";
+  remoteFields.hidden = mode !== "remote";
 }
 modeDirectBtn.addEventListener("click", () => setLoginMode("direct"));
 modeLichBtn.addEventListener("click", () => setLoginMode("lich"));
+modeRemoteBtn.addEventListener("click", () => setLoginMode("remote"));
+modeRemoteBtn.hidden = !inShell;
 
 // Deep-linked Lich target: open the Lich tab prefilled and let the user
 // press Connect.
@@ -968,6 +1013,36 @@ if (bootLich) {
   lichNameInput.value = bootLich.name;
   lichHostInput.dispatchEvent(new Event("input"));
   setLoginMode("lich");
+}
+
+// Remembered remote server: one-tap row above the manual fields. Connect
+// and Forget are shell actions — the token never reaches this page.
+if (shellRemote && inShell) {
+  const row = document.getElementById("remote-saved");
+  document.getElementById("remote-saved-name").textContent = "Saved server";
+  document.getElementById("remote-saved-detail").textContent =
+    `${shellRemote.host}:${shellRemote.port}`;
+  document.getElementById("remote-saved-connect").addEventListener("click", () => {
+    location.href = "vellum://remote/connect";
+  });
+  document.getElementById("remote-saved-forget").addEventListener("click", () => {
+    openSheet(`Forget server ${shellRemote.host}:${shellRemote.port}?`);
+    sheetButton("Forget", () => {
+      location.href = "vellum://remote/forget";
+    });
+    sheetNote("The stored pairing token is removed too.", true);
+  });
+  row.hidden = false;
+}
+
+// Deep-linked remote server (.webinfo app QR): open the Remote tab
+// prefilled and let the user press Connect.
+if (bootRemote && inShell) {
+  remoteHostInput.value = bootRemote.host;
+  remotePortInput.value = bootRemote.port;
+  remoteTokenInput.value = bootRemote.token;
+  remoteHostInput.dispatchEvent(new Event("input"));
+  setLoginMode("remote");
 }
 
 // The Lich port is unauthenticated: nudge (don't block) when the target
@@ -998,8 +1073,32 @@ lichHostInput.addEventListener("input", () => {
   lichWarning.hidden = !risky;
 });
 
+remoteHostInput.addEventListener("input", () => {
+  const host = remoteHostInput.value.trim();
+  const risky = host !== "" && !lichHostLooksPrivate(host);
+  remoteWarning.textContent = risky
+    ? "This address looks public. Reach your PC over a VPN (Tailscale/WireGuard) instead of exposing the web port to the open internet."
+    : "";
+  remoteWarning.hidden = !risky;
+});
+
 sessionForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
+  if (loginMode === "remote") {
+    // Hand the target to the native shell: it stores the pairing (Keychain/
+    // Keystore), admits the host in its WebView allowlist, and points the
+    // WebView at that server's dashboard. The embedded core stays idle.
+    const host = remoteHostInput.value.trim();
+    const port = remotePortInput.value.trim();
+    const token = remoteTokenInput.value.trim();
+    if (!host || !/^\d+$/.test(port)) return;
+    const save = document.getElementById("remote-save").checked;
+    let target = `vellum://remote?host=${encodeURIComponent(host)}&port=${port}`;
+    if (token) target += `&token=${encodeURIComponent(token)}`;
+    if (!save) target += "&save=0";
+    location.href = target;
+    return;
+  }
   if (loginMode === "lich") {
     const host = lichHostInput.value.trim();
     const port = lichPortInput.value.trim();
@@ -1249,6 +1348,13 @@ function openSettingsSheet() {
   sheetButton("Colors (global)", () => openColorsEditor("global"));
   for (const file of EDITOR_FILES) {
     sheetButton(file.label, () => openConfigEditor(file));
+  }
+  // Viewing a desktop server from inside the app shell: the way home.
+  // (The shell swaps the WebView back to its embedded login page.)
+  if (inShell && location.hostname !== "127.0.0.1") {
+    sheetButton("Leave this server (app login)", () => {
+      location.href = "vellum://local";
+    });
   }
 }
 

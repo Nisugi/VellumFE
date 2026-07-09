@@ -37,9 +37,24 @@ class MainActivity : Activity() {
      * web client prefills the Lich login tab. */
     private var lichFragment: String? = null
 
+    /** Prefill tail from a vellum://remote deep link (rhost/rport/rkey);
+     * rides the boot URL so the web client opens the Remote tab. Never
+     * auto-connects — the user presses Connect on the login page. */
+    private var remoteFragment: String? = null
+
+    /** The remembered remote server (Keystore-sealed). Its address (never
+     * the token) rides the boot URL so the login page can offer one-tap
+     * connect; Connect/Forget come back as vellum://remote/… actions. */
+    private var savedRemote: RemoteStore.Target? = null
+
+    /** Remote host the WebView may browse in-app (Remote mode); null while
+     * on the embedded core. Everything else non-loopback goes external. */
+    private var allowedRemoteHost: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         lichFragment = lichFragmentFrom(intent)
+        remoteFragment = remoteFragmentFrom(intent)
 
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
@@ -69,13 +84,22 @@ class MainActivity : Activity() {
                     view: WebView,
                     request: WebResourceRequest,
                 ): Boolean {
-                    // Everything except the local server goes to the system
-                    // browser (game LaunchURL links, play.net pages).
-                    return if (request.url.host != "127.0.0.1") {
-                        startActivity(Intent(Intent.ACTION_VIEW, request.url))
-                        true
-                    } else {
+                    val url = request.url
+                    // vellum:// navigations are shell actions from the page
+                    // (Remote tab: pair/connect/forget/back-to-local).
+                    if (url.scheme == "vellum") {
+                        handleShellUrl(url)
+                        return true
+                    }
+                    // The local server and the paired remote host browse
+                    // in-app; everything else goes to the system browser
+                    // (game LaunchURL links, play.net pages).
+                    val host = url.host?.lowercase()
+                    return if (host == "127.0.0.1" || (allowedRemoteHost != null && host == allowedRemoteHost)) {
                         false
+                    } else {
+                        startActivity(Intent(Intent.ACTION_VIEW, url))
+                        true
                     }
                 }
             }
@@ -88,6 +112,7 @@ class MainActivity : Activity() {
     private fun bootAndLoad() {
         Thread({
             CryptoKeys.installPasswordKey(this)
+            savedRemote = RemoteStore.load(this)
             val info = JSONObject(VellumCore.startCore(filesDir.absolutePath))
             if (info.has("error")) {
                 showError("Core failed to start:\n${info.optString("error")}")
@@ -108,9 +133,74 @@ class MainActivity : Activity() {
     }
 
     private fun bootUrl(port: Int, token: String): String {
-        var url = "http://127.0.0.1:$port/play#token=$token"
+        // app=1 marks the shell for the web client: it reveals the Remote
+        // login tab (whose actions only a shell can catch).
+        var url = "http://127.0.0.1:$port/play#token=$token&app=1"
+        savedRemote?.let { url += "&remote=" + Uri.encode("${it.host}:${it.port}") }
+        remoteFragment?.let { url += "&$it" }
         lichFragment?.let { url += "&$it" }
         return url
+    }
+
+    /** Reload the local boot URL (embedded login page); no-op while boot
+     * is still in flight — it picks the fragments up. */
+    private fun showLocal() {
+        allowedRemoteHost = null
+        val port = bootPort
+        val token = bootToken
+        if (port > 0 && token != null) {
+            runOnUiThread { webView.loadUrl(bootUrl(port, token)) }
+        }
+    }
+
+    /** Point the WebView at a desktop VellumFE's dashboard. The embedded
+     * core keeps running but sits idle — there is no in-app game socket in
+     * this mode; the web client's own reconnect handles resume. */
+    private fun showRemote(target: RemoteStore.Target) {
+        allowedRemoteHost = target.host.lowercase()
+        // Bracket bare IPv6 literals so the URL parses.
+        val host = if (target.host.contains(":") && !target.host.startsWith("[")) {
+            "[${target.host}]"
+        } else {
+            target.host
+        }
+        val fragment = if (target.token.isEmpty()) "app=1" else "token=${target.token}&app=1"
+        runOnUiThread { webView.loadUrl("http://$host:${target.port}/#$fragment") }
+    }
+
+    /** vellum:// navigations from the page itself (Remote tab actions). */
+    private fun handleShellUrl(uri: Uri) {
+        when (uri.host) {
+            "local" -> showLocal()
+            "remote" -> when (uri.path.orEmpty()) {
+                "", "/" -> {
+                    // Pair: vellum://remote?host&port[&token][&save=0]
+                    val target = remoteTargetFrom(uri) ?: return
+                    if (uri.getQueryParameter("save") != "0") {
+                        RemoteStore.save(this, target)
+                        savedRemote = target
+                    }
+                    showRemote(target)
+                }
+                "/connect" -> savedRemote?.let { showRemote(it) }
+                "/forget" -> {
+                    RemoteStore.forget(this)
+                    savedRemote = null
+                    showLocal()
+                }
+            }
+        }
+    }
+
+    private fun remoteTargetFrom(uri: Uri): RemoteStore.Target? {
+        val host = uri.getQueryParameter("host")?.trim().orEmpty()
+        val port = uri.getQueryParameter("port")?.trim()?.toIntOrNull()
+        if (host.isEmpty() || port == null || port !in 1..65535) return null
+        return RemoteStore.Target(
+            host = host,
+            port = port,
+            token = uri.getQueryParameter("token")?.trim().orEmpty(),
+        )
     }
 
     /** vellum://lich?host=…&port=…[&name=…] → the #lich= fragment the web
@@ -128,19 +218,35 @@ class MainActivity : Activity() {
         return fragment
     }
 
+    /** vellum://remote?host=…&port=…[&token=…] → the #rhost=…&rport=…
+     * [&rkey=…] prefill tail for the web client's Remote tab. ("rkey": the
+     * client's token regex is unanchored, so any *token= param in the
+     * local fragment would be eaten by it.) Prefill only — a malicious QR
+     * can't point the app at an attacker's server unseen. */
+    private fun remoteFragmentFrom(intent: Intent?): String? {
+        val uri = intent?.data ?: return null
+        if (uri.scheme != "vellum" || uri.host != "remote") return null
+        if (uri.path.orEmpty() !in listOf("", "/")) return null
+        val target = remoteTargetFrom(uri) ?: return null
+        var fragment = "rhost=" + Uri.encode(target.host) + "&rport=${target.port}"
+        if (target.token.isNotEmpty()) {
+            fragment += "&rkey=" + Uri.encode(target.token)
+        }
+        return fragment
+    }
+
     /** singleTask: a deep link while running lands here instead of a fresh
      * activity. Reload with the new fragment; the client's resume flow
      * restores scrollback if a session is live. */
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val fragment = lichFragmentFrom(intent) ?: return
-        lichFragment = fragment
-        val port = bootPort
-        val token = bootToken
-        if (port > 0 && token != null) {
-            webView.loadUrl(bootUrl(port, token))
-        } // else: boot is still in flight and picks the fragment up.
+        val lich = lichFragmentFrom(intent)?.also { lichFragment = it }
+        val remote = remoteFragmentFrom(intent)?.also { remoteFragment = it }
+        if (lich == null && remote == null) return
+        // Back to the embedded login page with the target prefilled (even
+        // if the WebView was on a remote server).
+        showLocal()
     }
 
     private fun waitForServer(port: Int): Boolean {

@@ -146,6 +146,32 @@ character:
 - If the link drops, the session reattaches to the same Lich target
   automatically.
 
+### Remote: a desktop session on your phone (apps only)
+
+Inside the [Android](./android.md) and [iOS](./ios.md) apps the login
+screen has a third tab, **Remote**. Instead of running a session on the
+phone, it points the app at a **desktop VellumFE**'s web server — the
+same sidecar the browser gets, with the app's install-once, QR-pairing,
+secure-storage experience. Your PC session keeps its TUI/GUI screen; the
+phone becomes a live second screen for it. Lich's one-frontend limit
+doesn't apply — the web sidecar mirrors the session rather than
+replacing its client.
+
+- On the PC, run `.webinfo`: the pairing page now shows two QR codes.
+  Scan the **VellumFE app** one with the phone camera — it opens the
+  app's Remote tab prefilled (host, port, and pairing token). It never
+  auto-connects; you always press Connect. Or type the address and token
+  by hand.
+- **Remember this server** keeps the pairing in the phone's Keychain
+  (iOS) / Keystore-sealed storage (Android); reconnecting is one tap
+  from then on.
+- While on a remote server, the app's embedded core sits idle — there is
+  no game connection on the phone to go stale in the background; the web
+  client's usual reconnect picks the mirror back up when you return.
+- The way back: **⚙ Settings → Leave this server (app login)**.
+- Same network rule as everything else on this page: home Wi-Fi,
+  Tailscale, or a VPN — never the open internet.
+
 Headless sessions manage themselves:
 
 - Drops reconnect automatically with backoff; typing again resets it.
