@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-e3fd3d8e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -208,16 +208,16 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tbody>
 <tr><td><code>.windows</code></td><td></td><td>List all windows</td></tr>
 <tr><td><code>.addwindow [name type x y w [h]]</code></td><td></td><td>Add a window (no args opens a picker)</td></tr>
-<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Delete a window</td></tr>
+<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, the window editor’s Delete Window button removes it for real)</td></tr>
 <tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window (no name opens a picker)</td></tr>
 <tr><td><code>.hidewindow [name]</code></td><td><code>.hidewin</code></td><td>Hide a window</td></tr>
 <tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
 <tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
 <tr><td><code>.lockwindows</code></td><td><code>.lockall</code>, <code>.unlockwindows</code>, <code>.unlockall</code></td><td>Toggle move/resize lock on all windows</td></tr>
-<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout</td></tr>
-<tr><td><code>.loadlayout [name]</code></td><td></td><td>Load a saved layout</td></tr>
-<tr><td><code>.layouts</code></td><td></td><td>List saved layouts</td></tr>
-<tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size</td></tr>
+<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout under a name (each frontend keeps its own: TUI <code>.toml</code> grids, GUI checkpoints)</td></tr>
+<tr><td><code>.loadlayout &lt;name&gt;</code></td><td></td><td>Load a saved layout; in the GUI it applies live to the running session</td></tr>
+<tr><td><code>.layouts</code></td><td></td><td>List saved layouts for this frontend</td></tr>
+<tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size (TUI)</td></tr>
 <tr><td><code>.nexttab</code> / <code>.prevtab</code></td><td></td><td>Switch tabs in a tabbed window</td></tr>
 <tr><td><code>.gonew</code></td><td><code>.nextunread</code></td><td>Jump to the next tab with unread messages</td></tr>
 </tbody>
@@ -290,7 +290,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.containers</code></td><td></td><td>Toggle container discovery (LOOK IN a container spawns a window for it)</td></tr>
 <tr><td><code>.hidecontainers [title]</code></td><td></td><td>Close container windows (all, or one by title)</td></tr>
 <tr><td><code>.reloadmacros</code></td><td></td><td>Reload macros.toml and push to connected phones</td></tr>
-<tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL and open its QR code</td></tr>
+<tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL / app link and open their QR codes</td></tr>
+<tr><td><code>.webui [page|off]</code></td><td></td><td>Lich WebUI panels (GUI, Lich 5.18+): no args picks from Lich’s registered pages, a name opens that page, <code>off</code> disconnects</td></tr>
 </tbody>
 </table>
 </div>

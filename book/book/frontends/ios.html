@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Android App - VellumFE User Guide</title>
+        <title>iOS App - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,73 +177,56 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="android-app"><a class="header" href="#android-app">Android App</a></h1>
-<p>A native Android app that runs the <strong>entire VellumFE client on your
-phone — no PC required</strong>. The same Rust core as the desktop app runs as a
-background service on the device, and the touch-first web client is the
-screen. You log in with your play.net account directly from the phone.</p>
+                        <h1 id="ios-app-beta"><a class="header" href="#ios-app-beta">iOS App (Beta)</a></h1>
+<p>A native iOS app that runs the <strong>entire VellumFE client on your
+iPhone — no PC required</strong>. Like the <a href="./android.html">Android app</a>, the same
+Rust core as the desktop app runs inside the app, and the touch-first web
+client is the screen.</p>
 <h2 id="getting-it"><a class="header" href="#getting-it">Getting It</a></h2>
-<p>Download <code>vellum-fe-android-arm64.apk</code> from
-<a href="https://github.com/Nisugi/VellumFE/releases">GitHub releases</a> and
-sideload it — install steps, requirements (Android 8.0+, 64-bit), and
-update options are in <a href="../getting-started/installation.html#android">Installation</a>.</p>
+<p>iOS builds ship through Apple’s <strong>TestFlight</strong> while in beta — they are
+not downloadable files on the GitHub releases page. Requires iOS 16 or
+newer. See the release notes on
+<a href="https://github.com/Nisugi/VellumFE/releases">GitHub releases</a> for how to
+join the beta.</p>
 <h2 id="logging-in"><a class="header" href="#logging-in">Logging In</a></h2>
-<p>The app opens on a login screen: enter account, password, character, and
-game (all GemStone IV and DragonRealms worlds), or tap a saved profile.</p>
-<p>Check <strong>Remember this login</strong> and the password is saved on the device,
-encrypted with a hardware-backed key in the Android Keystore — the saved
-file is unreadable off the device.</p>
-<blockquote>
-<p><strong>Lich never runs on the phone</strong>, but scripted characters still work:
-the login screen’s <strong>Lich</strong> tab attaches to a Lich session running on
-your PC (launch Lich with <code>--detachable-client</code>), entered by host and
-port. A <code>vellum://</code> QR code also prefills it (Lich 6’s
-connect-a-device panel will display one — not yet available). See
-<a href="./web.html#connecting-through-lich">Connecting Through Lich</a>.
-Alternatively, run the whole session on the PC and join it from the
-phone: the login screen’s <strong>Remote</strong> tab mirrors a desktop VellumFE
-session in-app (run <code>.webinfo</code> on the PC and scan the app QR; the
-pairing is Keystore-sealed like saved logins) — see
-<a href="./web.html#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone</a> —
-or use the <a href="./web.html">mobile web frontend</a> in the phone’s browser.</p>
-</blockquote>
+<p>The login screen is the same as the other mobile frontends: enter
+account, password, character, and game (all GemStone IV and DragonRealms
+worlds), tap a saved profile, or switch to the <strong>Lich</strong> tab to attach to
+a Lich session running on your PC (see
+<a href="./web.html#connecting-through-lich">Connecting Through Lich</a>).</p>
+<p>Check <strong>Remember this login</strong> and the password is sealed with a key held
+in the iOS Keychain (device-bound, never in backups) — the saved file is
+unreadable off the device.</p>
+<p>Scanning a <code>vellum://</code> QR code opens the app with the Lich tab
+prefilled. Lich 6’s connect-a-device panel will display one (not yet
+available); until then, enter the host and port manually.</p>
+<p>The third tab, <strong>Remote</strong>, turns the phone into a second screen for a
+VellumFE session running on your PC — run <code>.webinfo</code> there and scan the
+app QR. The pairing token is kept in the Keychain like saved logins. See
+<a href="./web.html#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone</a>.</p>
 <h2 id="playing"><a class="header" href="#playing">Playing</a></h2>
 <p>The interface is the <a href="./web.html">mobile web client</a> — story pane, stream
 chips, tappable exits and nouns, macro rail, side drawers with the injury
 doll and character sheet, sounds, highlight and color editors. Everything
 on that page applies here.</p>
-<h2 id="battery--lifecycle"><a class="header" href="#battery--lifecycle">Battery &amp; Lifecycle</a></h2>
-<p>The session lives in a foreground service with a quiet status
-notification (“Playing — session live”, “Reconnecting…”, …) that has a
-<strong>Stop</strong> button.</p>
-<ul>
-<li>The app holds a wakelock <strong>only while a session is active</strong> — sitting
-at the login screen doesn’t drain the battery.</li>
-<li>Swiping the app away mid-session <strong>keeps playing</strong>; swiping it away at
-the login screen stops the service.</li>
-<li>If the connection drops repeatedly with no input from you, it stops
-reconnecting rather than relogging all night — a forgotten phone winds
-down on its own.</li>
-<li>On first launch it asks once for a battery-optimization exemption so
-Android doesn’t throttle the connection mid-hunt. If you decline, you
-can grant it later in system battery settings.</li>
-</ul>
-<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
-<ul>
-<li>The UI runs in the system WebView. If the client is blank or stuck on
-“connecting…”, update <strong>Android System WebView</strong> from the Play Store —
-on Android 8–9, update <strong>Chrome</strong>, which provides the engine there.</li>
-</ul>
+<h2 id="backgrounding"><a class="header" href="#backgrounding">Backgrounding</a></h2>
+<p>iOS has no equivalent of Android’s foreground service: when the app goes
+to the background, iOS suspends it and the game connection goes stale.
+When you come back, the session <strong>reconnects automatically</strong> and resumes
+where you left off — expect reconnect-on-return rather than Android’s
+keep-alive. As on the other mobile frontends, if the connection drops
+repeatedly with no input from you, the app stops reconnecting rather than
+relogging all night.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../frontends/web.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../frontends/android.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../frontends/ios.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../configuration/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -253,11 +236,11 @@ on Android 8–9, update <strong>Chrome</strong>, which provides the engine ther
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../frontends/web.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../frontends/android.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../frontends/ios.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../configuration/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

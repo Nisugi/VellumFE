@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-e3fd3d8e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,6 +186,10 @@
 <li>Save changes (applied immediately)</li>
 </ol>
 <p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
+<p>On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code> opens a picker of stream
+ids seen this session — the easy way to wire a window to a Lich script’s
+custom stream (see
+<a href="../widgets/text-windows.html#custom-streams">Custom Streams</a>).</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>
 <p><code>.menu</code> → Windows → Add Window → [Category] → [Widget]</p>
@@ -222,6 +226,10 @@ cols = 60     # Width
 <p>Window positions also auto-save per character. You can switch layouts
 automatically by terminal size with <code>layout_mappings</code> in
 <a href="../configuration/config-toml.html">config.toml</a>.</p>
+<p>The same three commands work in the <a href="../frontends/gui.html">Desktop GUI</a>
+on its own layout format: named checkpoints of the GUI arrangement,
+saved per character under <code>~/.vellum-fe/gui/</code>, applied live by
+<code>.loadlayout</code>. The two formats don’t cross-load.</p>
 <h2 id="example-layouts"><a class="header" href="#example-layouts">Example Layouts</a></h2>
 <h3 id="hunting-layout"><a class="header" href="#hunting-layout">Hunting Layout</a></h3>
 <pre><code class="language-toml">terminal_width = 160

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-e3fd3d8e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,6 +181,9 @@
 <p>Macro buttons for the <a href="../frontends/web.html">mobile web frontend</a>. These are
 the buttons shown on your phone — the desktop client doesn’t use this file
 (desktop macros live in <a href="./keybinds-toml.html">keybinds.toml</a>).</p>
+<p>You never <em>need</em> to edit this file: everything here can be created and
+edited from the phone itself (the ＋ button on the macro rail). This page
+documents the format for hand-authoring, bulk edits, and version control.</p>
 <p>After editing, apply with <code>.reloadmacros</code> — connected phones update live.</p>
 <h2 id="two-button-shapes"><a class="header" href="#two-button-shapes">Two Button Shapes</a></h2>
 <p><strong>Action button</strong> — has a <code>command</code>, fires immediately on tap:</p>
@@ -205,6 +208,37 @@ name = "Basics"
     command = ";go2 gate"
 </code></pre>
 <p><code>command</code> can be anything you could type — including Lich <code>;scripts</code>.</p>
+<h2 id="type-in-buttons-composing-commands"><a class="header" href="#type-in-buttons-composing-commands">Type-in Buttons (Composing Commands)</a></h2>
+<p>Either shape can set <code>insert = true</code>: instead of sending, the tap <strong>types
+the text into the command input</strong>, so a tray of word buttons composes
+phrases tap by tap. Spacing is automatic (<code>go</code> + <code>second</code> → <code>go second</code>).
+A trailing <code>\r</code> means “then press Send” — it submits the whole composed
+line, which makes a good finisher button:</p>
+<pre><code class="language-toml">[[group]]
+name = "Words"
+
+  [[group.button]]
+  label = "go"
+  command = "go"
+  insert = true
+
+  [[group.button]]
+  label = "second"
+  command = "second"
+  insert = true
+
+  # tapping this sends e.g. "go second door" in one go
+  [[group.button]]
+  label = "door"
+  command = "door\r"
+  insert = true
+</code></pre>
+<p>In TOML basic strings <code>"door\r"</code> is a real carriage return — write it
+exactly like that. In the phone editor you never type <code>\r</code>: the <strong>On
+tap</strong> picker offers <em>Send the command</em>, <em>Type into input</em>, and <em>Type,
+then send</em>.</p>
+<p>Type-in taps are handled entirely on the phone (the text never rounds
+through the server as a command), so composing is instant.</p>
 <h2 id="floating-buttons"><a class="header" href="#floating-buttons">Floating Buttons</a></h2>
 <p>Always-visible overlay buttons on the text pane. Tap to fire; hold and drag
 to reposition (positions are remembered per device, not in this file):</p>
@@ -224,6 +258,7 @@ y = 0.6
 <tbody>
 <tr><td><code>color</code></td><td>button, option</td><td>Button face color, <code>"#rrggbb"</code></td></tr>
 <tr><td><code>confirm</code></td><td>button, option</td><td>Ask before sending (for dangerous commands)</td></tr>
+<tr><td><code>insert</code></td><td>button, option</td><td>Type into the command input instead of sending; trailing <code>\r</code> submits</td></tr>
 </tbody>
 </table>
 </div>
