@@ -19,6 +19,10 @@ doculated/
 *.log
 dist/
 # Environment variables and deployment secrets
+/TESTFLIGHT_SUBMISSION.md
+/apple_dev.md
+# Local protocol reference notes (copied wiki page)
+/WraythProtocol-Wiki.txt
 *.backup/
 build/
 coverage.json
