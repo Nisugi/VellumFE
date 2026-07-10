@@ -22,6 +22,7 @@ mod gs4_experience;
 mod hand;
 pub mod highlight_browser;
 pub mod highlight_form;
+mod hotkey_bar;
 mod indicator;
 pub mod indicator_template_editor;
 mod injury_doll;

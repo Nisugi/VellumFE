@@ -1403,6 +1403,40 @@ impl TuiFrontend {
                     }
                 }
 
+                let is_hotkeybar = app_core
+                    .ui_state
+                    .get_window(&topmost_window)
+                    .map(|window| window.widget_type == WidgetType::Hotkeybar)
+                    .unwrap_or(false);
+                if is_hotkeybar {
+                    if let Some(bar_widget) = self
+                        .widget_manager
+                        .hotkey_bar_widgets
+                        .get_mut(&topmost_window)
+                    {
+                        let window_pos = app_core
+                            .ui_state
+                            .get_window(&topmost_window)
+                            .map(|w| w.position.clone())
+                            .unwrap_or(crate::data::WindowPosition {
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            });
+                        let rect = Rect {
+                            x: window_pos.x,
+                            y: window_pos.y,
+                            width: window_pos.width,
+                            height: window_pos.height,
+                        };
+                        if let Some(command) = bar_widget.handle_click(*x, *y, rect) {
+                            app_core.needs_render = true;
+                            return Ok((true, Some(format!("{}\n", command))));
+                        }
+                    }
+                }
+
                 let mut found_window = None;
                 let mut drag_op = None;
                 let mut handled_tab_click: Option<(String, usize)> = None;
