@@ -180,7 +180,10 @@ pub fn build_scene(
             EdgeAction::Hide => {
                 hidden.insert(pair);
             }
-            EdgeAction::Connector => {
+            // Dash joins the demoted-drawing set: same dashed rendering, but
+            // (unlike Connector) it never touched the DirectionMap, so the
+            // rooms stay where the solver put them.
+            EdgeAction::Connector | EdgeAction::Dash => {
                 demoted.insert(pair);
             }
             EdgeAction::Direction(_) => {}
@@ -443,6 +446,58 @@ fn push_edge(scene: &mut MapScene, sheet: Sheet, edge: SceneEdge) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Dash override restyles the drawn edge as a dashed connector but
+    /// leaves every room exactly where the solver put it — the whole point,
+    /// after `Connector` proved too blunt (it re-lays-out the zone).
+    #[test]
+    fn dash_override_restyles_without_moving_rooms() {
+        let mk = |id: u32, uid: i64, wayto: &[(u32, &str)]| super::super::mapdb::Room {
+            id,
+            uid: vec![uid],
+            location: Some("Test".into()),
+            title: vec![format!("[Room {id}]")],
+            wayto: wayto
+                .iter()
+                .map(|&(t, c)| (t, c.to_string()))
+                .collect(),
+            dirto: Default::default(),
+            paths: "Obvious paths: north, south".into(),
+            climate: None,
+            terrain: None,
+            image: None,
+            image_coords: None,
+        };
+        let mut rooms = vec![
+            mk(1, 9_000_001, &[(2, "north")]),
+            mk(2, 9_000_002, &[(1, "south")]),
+        ];
+        let layout = super::super::generate_layout(&mut rooms);
+        let lookup = RoomTable::new(&rooms);
+
+        let plain = build_scene("Test", &layout, &lookup, &[]);
+        let dashed = build_scene(
+            "Test",
+            &layout,
+            &lookup,
+            &[EdgeOverride {
+                a: 9_000_001,
+                b: 9_000_002,
+                action: EdgeAction::Dash,
+            }],
+        );
+
+        assert_eq!(plain.outdoor.edges.len(), 1);
+        assert_eq!(plain.outdoor.edges[0].kind, SceneEdgeKind::Directional);
+        assert_eq!(dashed.outdoor.edges.len(), 1);
+        assert_eq!(dashed.outdoor.edges[0].kind, SceneEdgeKind::Connector);
+        // Identical geometry: same cells for the edge and every room.
+        assert_eq!(plain.outdoor.edges[0].a, dashed.outdoor.edges[0].a);
+        assert_eq!(plain.outdoor.edges[0].b, dashed.outdoor.edges[0].b);
+        for (p, d) in plain.outdoor.rooms.iter().zip(&dashed.outdoor.rooms) {
+            assert_eq!((p.id, p.cell), (d.id, d.cell));
+        }
+    }
 
     #[test]
     fn connector_labels() {

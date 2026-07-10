@@ -480,6 +480,7 @@ impl VellumGuiApp {
                                 let text = match current_action {
                                     None => "auto".to_string(),
                                     Some(EdgeAction::Hide) => "hidden".to_string(),
+                                    Some(EdgeAction::Dash) => "dashed".to_string(),
                                     Some(EdgeAction::Connector) => "passage".to_string(),
                                     Some(EdgeAction::Direction(d)) => d.name().to_string(),
                                 };
@@ -490,13 +491,18 @@ impl VellumGuiApp {
                                         let mut pick =
                                             |ui: &mut egui::Ui,
                                              label: &str,
+                                             hint: &str,
                                              action: Option<EdgeAction>| {
-                                                if ui
-                                                    .selectable_label(
-                                                        current_action == action,
-                                                        label,
-                                                    )
-                                                    .clicked()
+                                                let resp = ui.selectable_label(
+                                                    current_action == action,
+                                                    label,
+                                                );
+                                                let resp = if hint.is_empty() {
+                                                    resp
+                                                } else {
+                                                    resp.on_hover_text(hint)
+                                                };
+                                                if resp.clicked()
                                                     && current_action != action
                                                 {
                                                     out.override_edit =
@@ -511,9 +517,25 @@ impl VellumGuiApp {
                                                         });
                                                 }
                                             };
-                                        pick(ui, "auto", None);
-                                        pick(ui, "hidden", Some(EdgeAction::Hide));
-                                        pick(ui, "passage", Some(EdgeAction::Connector));
+                                        pick(ui, "auto", "", None);
+                                        pick(
+                                            ui,
+                                            "hidden",
+                                            "Don't draw this edge (looks only)",
+                                            Some(EdgeAction::Hide),
+                                        );
+                                        pick(
+                                            ui,
+                                            "dashed",
+                                            "Draw dashed, keep the layout (looks only)",
+                                            Some(EdgeAction::Dash),
+                                        );
+                                        pick(
+                                            ui,
+                                            "passage",
+                                            "No direction: un-weld the rooms and re-layout",
+                                            Some(EdgeAction::Connector),
+                                        );
                                         ui.separator();
                                         for dir in [
                                             crate::core::layout_engine::direction::Dir::North,
@@ -530,6 +552,7 @@ impl VellumGuiApp {
                                             pick(
                                                 ui,
                                                 dir.name(),
+                                                "Force this direction and re-layout",
                                                 Some(EdgeAction::Direction(dir)),
                                             );
                                         }

@@ -21,6 +21,11 @@ use super::Layout;
 pub enum EdgeAction {
     /// Don't draw the edge at all (presentation only).
     Hide,
+    /// Draw the edge dashed but leave geometry alone (presentation only) —
+    /// for "go well"-style passages the solver placed correctly where a
+    /// solid line would overstate the connection. Unlike `Connector`, the
+    /// edge keeps anchoring positioning, so the layout does not change.
+    Dash,
     /// Treat as a directionless passage: no geometry constraint, drawn
     /// dashed. Un-welds rooms the solver placed adjacent on bad data.
     Connector,
@@ -85,10 +90,18 @@ impl LocationOverrides {
     /// The subset that changes GENERATION (not just presentation): edge and
     /// classification overrides feed positioning and packing, so the cache
     /// entry records a hash of them and regenerates when it moves. Position
-    /// pins and names stay out — they apply after loading.
+    /// pins and names stay out — they apply after loading. `Dash` edges are
+    /// pure styling and stay out too, so dashing a line is a cache hit, not
+    /// a re-layout. (`Hide` is also presentation-only but stays in: dropping
+    /// it would shift every existing user's curated hashes for no gain.)
     pub fn generation_subset(&self) -> LocationOverrides {
         LocationOverrides {
-            edges: self.edges.clone(),
+            edges: self
+                .edges
+                .iter()
+                .filter(|e| e.action != EdgeAction::Dash)
+                .cloned()
+                .collect(),
             sheets: self.sheets.clone(),
             ..Default::default()
         }
@@ -218,5 +231,39 @@ mod tests {
     fn empty_overrides_are_a_noop_shape() {
         let ov = LocationOverrides::default();
         assert!(ov.is_empty());
+    }
+
+    /// Dash is styling, not a generation input: adding one must not move the
+    /// curated hash (else dashing a line needlessly re-lays-out the zone).
+    #[test]
+    fn dash_edges_stay_out_of_the_generation_hash() {
+        let mut ov = LocationOverrides::default();
+        ov.edges.push(EdgeOverride {
+            a: 100,
+            b: 200,
+            action: EdgeAction::Connector,
+        });
+        let baseline = ov.generation_subset().curated_hash();
+
+        ov.edges.push(EdgeOverride {
+            a: 300,
+            b: 400,
+            action: EdgeAction::Dash,
+        });
+        let subset = ov.generation_subset();
+        assert_eq!(subset.edges.len(), 1, "Dash filtered out of the subset");
+        assert_eq!(subset.curated_hash(), baseline, "hash unmoved by Dash");
+
+        // A location curated ONLY with dashes hashes as uncurated.
+        let only_dash = LocationOverrides {
+            edges: vec![EdgeOverride {
+                a: 1,
+                b: 2,
+                action: EdgeAction::Dash,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(only_dash.generation_subset().curated_hash(), 0);
+        assert!(!only_dash.is_empty(), "but it still persists to disk");
     }
 }

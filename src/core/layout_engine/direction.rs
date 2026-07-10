@@ -237,8 +237,8 @@ impl DirectionMap {
 
     /// Apply curation edge overrides (spec §8) before positioning:
     /// `Direction` forces a heading on whichever wayto edges exist between
-    /// the pair, `Connector` strips any inferred heading, `Hide` is a
-    /// presentation matter and changes nothing here. Unresolvable keys are
+    /// the pair, `Connector` strips any inferred heading, `Hide`/`Dash` are
+    /// presentation matters and change nothing here. Unresolvable keys are
     /// skipped silently.
     pub fn apply_edge_overrides(
         &mut self,
@@ -255,7 +255,7 @@ impl DirectionMap {
                 continue;
             };
             match edge.action {
-                EdgeAction::Hide => {}
+                EdgeAction::Hide | EdgeAction::Dash => {}
                 EdgeAction::Connector => {
                     self.map.remove(&(a, b));
                     self.map.remove(&(b, a));
