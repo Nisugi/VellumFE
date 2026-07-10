@@ -46,6 +46,7 @@ pub enum WidgetType {
     GS4Experience,
     Encumbrance,
     Quickbar,
+    Hotkeybar,
     MiniVitals,
     Betrayer,
     /// Lich WebUI page rendered natively from its JSON component tree
@@ -90,6 +91,7 @@ impl WidgetType {
             "gs4_experience" => Some(WidgetType::GS4Experience),
             "encum" => Some(WidgetType::Encumbrance),
             "quickbar" => Some(WidgetType::Quickbar),
+            "hotkeybar" => Some(WidgetType::Hotkeybar),
             "minivitals" => Some(WidgetType::MiniVitals),
             "betrayer" => Some(WidgetType::Betrayer),
             "webui" | "lichui" => Some(WidgetType::WebUi),
@@ -123,6 +125,7 @@ impl WidgetType {
         "gs4_experience",
         "encum",
         "quickbar",
+        "hotkeybar",
         "minivitals",
         "betrayer",
         "webui",
@@ -181,6 +184,11 @@ pub enum WindowContent {
     /// Reads from GameState.encumbrance (no data stored here)
     Encumbrance,
     Quickbar,
+    /// Hotkey bar - buttons resolved each frame from config.hotbars +
+    /// GameState by core::hotbar::resolve_bar; carries only its bar binding
+    Hotkeybar {
+        bar: String, // Name of the bar in hotbars.toml
+    },
     /// MiniVitals window - displays health, mana, stamina, spirit as horizontal bars
     /// Reads from GameState.vitals (no data stored here)
     MiniVitals,

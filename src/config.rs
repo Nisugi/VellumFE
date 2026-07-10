@@ -50,7 +50,7 @@ pub use widgets::{
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
     DashboardIndicatorDef, DashboardWidgetData, EncumbranceWidgetData, ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandWidgetData, IndicatorWidgetData, InjuryDollWidgetData,
+    GS4ExperienceWidgetData, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData, InjuryDollWidgetData,
     InventoryWidgetData, ItemsWidgetData, MiniVitalsWidgetData, PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
@@ -273,6 +273,7 @@ fn default_focus_exclude() -> Vec<String> {
     // Exclude all non-text widget types from focus by default
     vec![
         "quickbar".to_string(),
+        "hotkeybar".to_string(),
         "targets".to_string(),
         "players".to_string(),
         "items".to_string(),

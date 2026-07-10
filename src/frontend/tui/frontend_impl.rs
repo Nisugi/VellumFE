@@ -282,6 +282,8 @@ impl Frontend for TuiFrontend {
                             quickbar_widget.render(area, f.buffer_mut(), focused);
                         }
                     }
+                    // Renderer lands with the TUI hotkeybar phase
+                    WindowContent::Hotkeybar { .. } => {}
                     WindowContent::Progress(_) => {
                         // Use the ProgressBar widget for proper rendering
                         if let Some(progress_bar) = progress_bars.get_mut(name) {

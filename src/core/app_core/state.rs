@@ -716,6 +716,7 @@ impl AppCore {
             crate::data::WidgetType::GS4Experience => "gs4_experience",
             crate::data::WidgetType::Encumbrance => "encum",
             crate::data::WidgetType::Quickbar => "quickbar",
+            crate::data::WidgetType::Hotkeybar => "hotkeybar",
             crate::data::WidgetType::MiniVitals => "minivitals",
             crate::data::WidgetType::Betrayer => "betrayer",
             crate::data::WidgetType::Items => "items",
@@ -1185,6 +1186,14 @@ impl AppCore {
                 WidgetType::GS4Experience => WindowContent::GS4Experience,
                 WidgetType::Encumbrance => WindowContent::Encumbrance,
                 WidgetType::Quickbar => WindowContent::Quickbar,
+                WidgetType::Hotkeybar => {
+                    let bar = if let crate::config::WindowDef::Hotkeybar { data, .. } = window_def {
+                        data.bar.clone()
+                    } else {
+                        String::new()
+                    };
+                    WindowContent::Hotkeybar { bar }
+                }
                 WidgetType::MiniVitals => WindowContent::MiniVitals,
                 WidgetType::Betrayer => WindowContent::Betrayer,
                 WidgetType::WebUi => {
@@ -1516,6 +1525,14 @@ impl AppCore {
             WidgetType::GS4Experience => WindowContent::GS4Experience,
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::Quickbar => WindowContent::Quickbar,
+            WidgetType::Hotkeybar => {
+                let bar = if let crate::config::WindowDef::Hotkeybar { data, .. } = window_def {
+                    data.bar.clone()
+                } else {
+                    String::new()
+                };
+                WindowContent::Hotkeybar { bar }
+            }
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
             WidgetType::WebUi => {
@@ -2683,6 +2700,11 @@ impl AppCore {
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            // A dot-command-created hotkeybar binds to the bar with the
+            // same name as the window
+            WidgetType::Hotkeybar => WindowContent::Hotkeybar {
+                bar: name.to_string(),
+            },
             WidgetType::WebUi => WindowContent::WebUi(
                 crate::data::webui::WebUiPanelContent::new(name, name),
             ),

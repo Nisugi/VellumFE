@@ -171,6 +171,16 @@ pub enum WindowDef {
         data: QuickbarWidgetData,
     },
 
+    /// Hotkey bar (buttons bound to game commands with condition-driven
+    /// states; definitions live in hotbars.toml, referenced by name)
+    #[serde(rename = "hotkeybar")]
+    Hotkeybar {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: HotkeybarWidgetData,
+    },
+
     #[serde(rename = "spells")]
     Spells {
         #[serde(flatten)]
@@ -266,6 +276,7 @@ impl WindowDef {
             WindowDef::Container { base, .. } => &base.name,
             WindowDef::Spacer { base, .. } => &base.name,
             WindowDef::Quickbar { base, .. } => &base.name,
+            WindowDef::Hotkeybar { base, .. } => &base.name,
             WindowDef::Spells { base, .. } => &base.name,
             WindowDef::Perception { base, .. } => &base.name,
             WindowDef::Experience { base, .. } => &base.name,
@@ -300,6 +311,7 @@ impl WindowDef {
             WindowDef::Container { .. } => "container",
             WindowDef::Spacer { .. } => "spacer",
             WindowDef::Quickbar { .. } => "quickbar",
+            WindowDef::Hotkeybar { .. } => "hotkeybar",
             WindowDef::Spells { .. } => "spells",
             WindowDef::Perception { .. } => "perception",
             WindowDef::Experience { .. } => "experience",
@@ -334,6 +346,7 @@ impl WindowDef {
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Quickbar { base, .. } => base,
+            WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,
@@ -368,6 +381,7 @@ impl WindowDef {
             WindowDef::Container { base, .. } => base,
             WindowDef::Spacer { base, .. } => base,
             WindowDef::Quickbar { base, .. } => base,
+            WindowDef::Hotkeybar { base, .. } => base,
             WindowDef::Spells { base, .. } => base,
             WindowDef::Perception { base, .. } => base,
             WindowDef::Experience { base, .. } => base,

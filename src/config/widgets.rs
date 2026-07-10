@@ -611,6 +611,25 @@ pub struct QuickbarWidgetData {
     // No extra fields currently
 }
 
+/// Hotkeybar widget specific data
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HotkeybarWidgetData {
+    /// Name of the bar in hotbars.toml this window displays
+    #[serde(default = "default_hotkeybar_bar")]
+    pub bar: String,
+    /// "horizontal" (buttons flow on one row) or "vertical" (one per row)
+    #[serde(default = "default_hotkeybar_orientation")]
+    pub orientation: String,
+}
+
+pub(crate) fn default_hotkeybar_bar() -> String {
+    "default".to_string()
+}
+
+pub(crate) fn default_hotkeybar_orientation() -> String {
+    "horizontal".to_string()
+}
+
 /// Quickbar entry definition for custom quickbars
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]

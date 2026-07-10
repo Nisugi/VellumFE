@@ -2861,6 +2861,8 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
+            // Renderer lands with the GUI hotkeybar phase
+            WindowContent::Hotkeybar { .. } => None,
             WindowContent::Performance => {
                 Self::render_performance_content(app_core, ui);
                 None

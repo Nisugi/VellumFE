@@ -211,6 +211,24 @@ impl Config {
                 data: QuickbarWidgetData {},
             }),
 
+            "hotkeybar" => Some(WindowDef::Hotkeybar {
+                base: WindowBase {
+                    name: "hotkeybar".to_string(),
+                    title: Some("Actions".to_string()),
+                    rows: 3,
+                    cols: 60,
+                    min_rows: Some(3),
+                    max_rows: Some(3),
+                    show_border: true,
+                    show_title: false,
+                    ..base_defaults.clone()
+                },
+                data: HotkeybarWidgetData {
+                    bar: "default".to_string(),
+                    orientation: "horizontal".to_string(),
+                },
+            }),
+
             "health" => Some(WindowDef::Progress {
                 base: WindowBase {
                     name: "health".to_string(),
@@ -1435,6 +1453,7 @@ impl Config {
             "compass".to_string(),
             "injuries".to_string(),
             "quickbar".to_string(),
+            "hotkeybar".to_string(),
             "spacer".to_string(),
             // "performance" removed - now overlay-only via F12
             "perception".to_string(),
