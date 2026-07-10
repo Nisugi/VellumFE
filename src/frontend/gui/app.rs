@@ -216,6 +216,7 @@ pub struct VellumGuiApp {
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
+    hotbar_editor: Option<editors::HotbarEditorState>,
     colors_editor: Option<editors::ColorsEditorState>,
     theme_browser: Option<editors::ThemeBrowserState>,
     theme_editor: Option<editors::ThemeEditorState>,
@@ -481,6 +482,7 @@ impl VellumGuiApp {
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
+            hotbar_editor: None,
             colors_editor: None,
             theme_browser: None,
             theme_editor: None,
@@ -3059,6 +3061,10 @@ impl VellumGuiApp {
             self.open_keybind_editor();
             return true;
         }
+        if action == "action:hotbars" {
+            self.open_hotbar_editor();
+            return true;
+        }
         if action == "action:addkeybind" {
             self.open_keybind_editor();
             self.open_keybind_form_new();
@@ -3903,7 +3909,7 @@ impl eframe::App for VellumGuiApp {
         // exempt so the captured key doesn't also type into the input.
         if let Some(input_id) = self.command_input_id {
             let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
-            if nothing_focused && !self.keybind_capture_armed() {
+            if nothing_focused && !self.keybind_capture_armed() && !self.hotbar_capture_armed() {
                 ctx.memory_mut(|memory| memory.request_focus(input_id));
             }
         }

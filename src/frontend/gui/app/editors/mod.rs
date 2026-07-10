@@ -5,6 +5,7 @@
 mod colors;
 mod custom_windows;
 mod highlights;
+mod hotbars;
 mod indicators;
 mod keybinds;
 mod settings;
@@ -14,6 +15,7 @@ mod windows;
 pub(super) use colors::ColorsEditorState;
 pub(super) use custom_windows::CustomWindowsEditorState;
 pub(super) use highlights::HighlightEditorState;
+pub(super) use hotbars::HotbarEditorState;
 pub(super) use indicators::IndicatorTemplatesEditorState;
 pub(super) use keybinds::KeybindEditorState;
 pub(super) use settings::SettingsEditorState;
@@ -29,6 +31,7 @@ impl VellumGuiApp {
         self.render_settings_editor(ctx);
         self.render_highlight_editor(ctx);
         self.render_keybind_editor(ctx);
+        self.render_hotbar_editor(ctx);
         self.render_colors_editor(ctx);
         self.render_theme_browser(ctx);
         self.render_theme_editor(ctx);

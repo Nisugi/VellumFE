@@ -443,6 +443,10 @@ impl AppCore {
             "keybinds" | "kb" => {
                 return Ok("action:keybinds".to_string());
             }
+            // Hotbars (hotkey bar definitions)
+            "hotbars" | "hotbar" => {
+                return Ok("action:hotbars".to_string());
+            }
             "addkeybind" | "addkey" => {
                 return Ok("action:addkeybind".to_string());
             }
@@ -978,6 +982,7 @@ mod tests {
                 }
             }
             "keybinds" | "kb" => Some("action:keybinds".to_string()),
+            "hotbars" | "hotbar" => Some("action:hotbars".to_string()),
             "addkeybind" | "addkey" => Some("action:addkeybind".to_string()),
             "colors" | "colorpalette" => Some("action:colors".to_string()),
             "addcolor" | "createcolor" => Some("action:addcolor".to_string()),
