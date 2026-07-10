@@ -942,18 +942,23 @@ pub fn pack_groups(
     }
 }
 
-/// Interiors sheet: wrapped shelf rows in an independent coordinate space,
-/// sorted by name so related buildings sit together (spec §7).
-pub fn pack_interior_shelf(groups: &mut Vec<Group>, interior: &[usize]) {
+/// Interiors sheet: wrapped shelf rows in an independent coordinate space.
+/// Groups of one interior cluster (one walkable building) are seated
+/// consecutively so their connecting passages ("go arch") stay short;
+/// clusters are name-sorted so related buildings sit together (spec §7).
+pub fn pack_interior_shelf(
+    groups: &mut Vec<Group>,
+    interior: &[usize],
+    clusters: &HashMap<usize, usize>,
+) {
     if interior.is_empty() {
         return;
     }
+    // Names are not assigned yet at this point in the pipeline (they land
+    // after packing), so the order is cluster-first: one building's groups
+    // sit consecutively, clusters follow component order.
     let mut sorted: Vec<usize> = interior.to_vec();
-    sorted.sort_by(|&a, &b| {
-        let na = groups[a].name.as_deref().unwrap_or("");
-        let nb = groups[b].name.as_deref().unwrap_or("");
-        na.cmp(nb)
-    });
+    sorted.sort_by_key(|&idx| (clusters.get(&idx).copied().unwrap_or(idx), idx));
 
     // Padded area, so the sheet comes out roughly square even when padding
     // dwarfs the mostly tiny groups.

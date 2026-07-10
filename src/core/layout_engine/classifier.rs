@@ -176,6 +176,70 @@ fn is_interior_component(
     weatherless > 0 && weatherless == group.room_ids.len()
 }
 
+/// Interior clusters: interior groups connected by ANY wayto edge between
+/// interior rooms form one walkable interior space (one building) — "go
+/// arch" joins as surely as "north". Only edges that lead outdoors separate.
+/// Returns interior group index → cluster id (the smallest group index in
+/// the cluster), so ids are stable for a given mapdb build.
+pub fn interior_clusters(
+    groups: &[Group],
+    interior: &HashSet<usize>,
+    lookup: &RoomTable,
+) -> HashMap<usize, usize> {
+    let mut group_of: HashMap<u32, usize> = HashMap::new();
+    for group in groups {
+        if interior.contains(&group.index) {
+            for &id in &group.room_ids {
+                group_of.insert(id, group.index);
+            }
+        }
+    }
+
+    // Union-find over interior group indices.
+    let mut parent: HashMap<usize, usize> = interior.iter().map(|&g| (g, g)).collect();
+    fn find(parent: &mut HashMap<usize, usize>, mut g: usize) -> usize {
+        while parent[&g] != g {
+            let up = parent[&parent[&g]];
+            parent.insert(g, up);
+            g = up;
+        }
+        g
+    }
+    for group in groups {
+        if !interior.contains(&group.index) {
+            continue;
+        }
+        for &room_id in &group.room_ids {
+            let Some(room) = lookup.get(room_id) else {
+                continue;
+            };
+            for &target_id in room.wayto.keys() {
+                let Some(&other) = group_of.get(&target_id) else {
+                    continue; // outdoors or outside the selection: a boundary
+                };
+                if other == group.index {
+                    continue;
+                }
+                let a = find(&mut parent, group.index);
+                let b = find(&mut parent, other);
+                if a != b {
+                    // Root at the smaller index so cluster ids are canonical.
+                    let (lo, hi) = (a.min(b), a.max(b));
+                    parent.insert(hi, lo);
+                }
+            }
+        }
+    }
+
+    let keys: Vec<usize> = parent.keys().copied().collect();
+    keys.into_iter()
+        .map(|g| {
+            let root = find(&mut parent, g);
+            (g, root)
+        })
+        .collect()
+}
+
 /// "[Hamehela's Magic Shoppe]" / "[Manor House, Foyer]" → building name: the
 /// most common bracketed prefix among the group's room titles.
 pub fn building_name(group: &Group, lookup: &RoomTable) -> Option<String> {
@@ -207,4 +271,85 @@ pub fn building_name(group: &Group, lookup: &RoomTable) -> Option<String> {
         }
     }
     best.map(|(name, _)| name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn room(id: u32, wayto: &[(u32, &str)]) -> Room {
+        Room {
+            id,
+            uid: vec![7_000_000 + id as i64],
+            location: Some("Test".into()),
+            title: vec![],
+            wayto: wayto
+                .iter()
+                .map(|&(t, cmd)| (t, cmd.to_string()))
+                .collect::<BTreeMap<_, _>>(),
+            dirto: BTreeMap::new(),
+            paths: String::new(),
+            climate: None,
+            terrain: None,
+            image: None,
+            image_coords: None,
+        }
+    }
+
+    fn group(index: usize, room_ids: &[u32]) -> Group {
+        Group {
+            index,
+            room_ids: room_ids.to_vec(),
+            positions: room_ids
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| {
+                    (
+                        id,
+                        crate::core::layout_engine::Cell {
+                            x: i as i32,
+                            y: 0,
+                        },
+                    )
+                })
+                .collect(),
+            violations: vec![],
+            base_offset: None,
+            packing: None,
+            name: None,
+        }
+    }
+
+    /// The bank: 3850+3672 are one directional component, 3670 hangs off
+    /// 3672 via "go arch" (directionless, so its own component), and 3672
+    /// leads outside via "out" to 3669. All three interior rooms are ONE
+    /// cluster; the outdoor room never joins.
+    #[test]
+    fn go_arch_joins_a_building_but_out_does_not() {
+        let rooms = vec![
+            room(3669, &[(3672, "go bank")]),               // outdoors
+            room(3670, &[(3672, "go arch")]),               // teller cage
+            room(3672, &[(3850, "north"), (3670, "go arch"), (3669, "out")]),
+            room(3850, &[(3672, "south")]),
+        ];
+        let lookup = RoomTable::new(&rooms);
+        let groups = vec![
+            group(0, &[3672, 3850]), // directional pair
+            group(1, &[3670]),       // reached only via "go arch"
+            group(2, &[3669]),       // the street outside
+        ];
+        let interior: HashSet<usize> = [0usize, 1].into_iter().collect();
+
+        let clusters = interior_clusters(&groups, &interior, &lookup);
+        assert_eq!(clusters.len(), 2, "both interior groups get a cluster id");
+        assert_eq!(
+            clusters[&0], clusters[&1],
+            "'go arch' must join the bank's sub-groups into one building"
+        );
+        assert!(
+            !clusters.contains_key(&2),
+            "the outdoor group is not part of any interior cluster"
+        );
+    }
 }

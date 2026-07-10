@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::classifier::interior_clusters;
 use super::direction::DirectionMap;
 use super::mapdb::RoomTable;
 use super::overrides::group_anchor_key;
@@ -70,6 +71,7 @@ pub struct GroupLabel {
     pub text: String,
     /// Top-left cell of the group's bounds; render above it.
     pub cell: Cell,
+    pub group: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -94,6 +96,8 @@ pub struct MapScene {
     /// Group index → stable anchor key (lowest uid, fallback lowest id) —
     /// the key group overrides are stored under.
     pub group_anchors: HashMap<usize, i64>,
+    /// Interior group index → cluster id: groups of one walkable building.
+    pub group_cluster: HashMap<usize, usize>,
 }
 
 impl MapScene {
@@ -107,6 +111,20 @@ impl MapScene {
     pub fn room(&self, id: u32) -> Option<(Sheet, &SceneRoom)> {
         let &(sheet, idx) = self.room_index.get(&id)?;
         Some((sheet, &self.sheet(sheet).rooms[idx]))
+    }
+
+    /// Every group sharing a building with `group` (including itself) — the
+    /// set the mini map draws when the character is indoors.
+    pub fn cluster_groups(&self, group: usize) -> HashSet<usize> {
+        match self.group_cluster.get(&group) {
+            Some(&cluster) => self
+                .group_cluster
+                .iter()
+                .filter(|&(_, &c)| c == cluster)
+                .map(|(&g, _)| g)
+                .collect(),
+            None => std::iter::once(group).collect(),
+        }
     }
 }
 
@@ -143,6 +161,7 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
 
     // Which sheet each group is on.
     let interiors: HashSet<usize> = layout.interiors.iter().copied().collect();
+    scene.group_cluster = interior_clusters(&layout.groups, &interiors, lookup);
     let sheet_of = |group: usize| {
         if interiors.contains(&group) {
             Sheet::Interiors
@@ -232,11 +251,19 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                     },
                 );
             } else {
-                // Connector — outdoor sheet only. The interiors shelf packs
-                // unrelated buildings side by side; drawing "go door" edges
-                // between them would imply physical adjacency that isn't
-                // there (doorways show as door markers outdoors instead).
-                if a_sheet != Sheet::Outdoor || sheet_of(target_group) != Sheet::Outdoor {
+                // Connector. Outdoors: any same-sheet pair (geographic
+                // adjacency). Indoors: only within one cluster — passages
+                // like "go arch" inside a building. Between unrelated
+                // buildings on the shelf, nothing draws (doorways show as
+                // door markers outdoors instead).
+                let b_sheet = sheet_of(target_group);
+                if a_sheet != b_sheet {
+                    continue;
+                }
+                if a_sheet == Sheet::Interiors
+                    && scene.group_cluster.get(&room_group)
+                        != scene.group_cluster.get(&target_group)
+                {
                     continue;
                 }
                 if !seen.insert(key) {
@@ -279,6 +306,7 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                 x: bounds.min_x + off.x,
                 y: bounds.min_y + off.y,
             },
+            group: idx,
         });
     }
 

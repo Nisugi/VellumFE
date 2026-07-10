@@ -71,7 +71,9 @@ pub fn generate_layout(rooms: &mut Vec<Room>) -> Layout {
     }
 
     let pack_info = packer::pack_groups(&mut groups, &outdoor, &lookup, &dirs);
-    packer::pack_interior_shelf(&mut groups, &interiors);
+    let clusters =
+        classifier::interior_clusters(&groups, &classification.interior_groups, &lookup);
+    packer::pack_interior_shelf(&mut groups, &interiors, &clusters);
 
     // Building names for interior groups (assigned after shelf packing so the
     // shelf order matches the reference, which sorts unnamed groups).
