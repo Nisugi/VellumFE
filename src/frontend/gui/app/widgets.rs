@@ -1107,6 +1107,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         map_data: &crate::data::MapData,
+        zoom_override: Option<f32>,
     ) -> Option<GuiLinkClick> {
         use crate::core::map_service::DbState;
         use crate::frontend::gui::map_view::{self, MapCamera, MapStyle};
@@ -1174,7 +1175,11 @@ impl VellumGuiApp {
         if rect.width() < 8.0 || rect.height() < 8.0 {
             return None;
         }
-        let camera = MapCamera::centered_on_cell(center.x, center.y, map_data.zoom);
+        let camera = MapCamera::centered_on_cell(
+            center.x,
+            center.y,
+            zoom_override.unwrap_or(map_data.zoom),
+        );
         let style = MapStyle::from_visuals(ui.visuals());
         let result = map_view::paint_sheet(
             ui,
@@ -2838,7 +2843,9 @@ impl VellumGuiApp {
             WindowContent::Compass(compass) => {
                 Self::render_compass_content(app_core, ui, compass, settings.skin_art.as_deref())
             }
-            WindowContent::Map(map_data) => Self::render_map_content(app_core, ui, map_data),
+            WindowContent::Map(map_data) => {
+                Self::render_map_content(app_core, ui, map_data, settings.map_zoom)
+            }
             WindowContent::Hand { item, link } => {
                 let hand_prefix = if window.name.to_ascii_lowercase().contains("left") {
                     "L"

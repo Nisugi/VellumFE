@@ -61,6 +61,9 @@ enum GuiWindowMenuCommand {
     Ungroup,
     /// Open the Map Explorer native window (map widgets only).
     OpenMapExplorer,
+    /// Mini map zoom in px per cell; None reverts to the widget default.
+    /// Keeps the menu open like SetTextSize.
+    SetMapZoom(Option<f32>),
     /// Group layout: true = side by side, false = stacked.
     SetGroupOrientation(bool),
 }
@@ -77,6 +80,8 @@ struct WindowMenuView<'a> {
     supports_wrap: bool,
     /// Map widget: offer "Open Map Explorer".
     is_map: bool,
+    /// Mini map zoom override (px per cell), when is_map.
+    map_zoom: Option<f32>,
     wrap_text: bool,
     current_font: Option<&'a str>,
     accent_color: Option<Color32>,
@@ -208,6 +213,13 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::OpenMapExplorer => {
                 self.map_explorer.open = true;
             }
+            GuiWindowMenuCommand::SetMapZoom(zoom) => {
+                self.tab_settings
+                    .entry(request.tab_key.clone())
+                    .or_default()
+                    .map_zoom = zoom;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetGroupOrientation(horizontal) => {
                 if let Some(group) = self
                     .tab_groups
@@ -285,6 +297,10 @@ impl VellumGuiApp {
             supports_wrap,
             wrap_text,
             is_map,
+            map_zoom: self
+                .tab_settings
+                .get(&request.tab_key)
+                .and_then(|settings| settings.map_zoom),
             current_font: current_font.as_deref(),
             accent_color: self.accent_color_for_tab(&request.tab_key),
             group_horizontal: self
@@ -311,6 +327,7 @@ impl VellumGuiApp {
             let keep_open = matches!(
                 command,
                 GuiWindowMenuCommand::SetTextSize(_)
+                    | GuiWindowMenuCommand::SetMapZoom(_)
                     | GuiWindowMenuCommand::SetWrapText(_)
                     | GuiWindowMenuCommand::SetAccent(_)
                     | GuiWindowMenuCommand::SetGroupOrientation(_)
@@ -728,8 +745,25 @@ impl VellumGuiApp {
                 settings_command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
             }
         }
-        if view.is_map && ui.button("Open Map Explorer").clicked() {
-            return Some(GuiWindowMenuCommand::OpenMapExplorer);
+        if view.is_map {
+            if ui.button("Open Map Explorer").clicked() {
+                return Some(GuiWindowMenuCommand::OpenMapExplorer);
+            }
+            let mut has_override = view.map_zoom.is_some();
+            if ui.checkbox(&mut has_override, "Custom map zoom").changed() {
+                settings_command = Some(GuiWindowMenuCommand::SetMapZoom(
+                    has_override.then_some(view.map_zoom.unwrap_or(16.0)),
+                ));
+            }
+            if let Some(zoom) = view.map_zoom {
+                let mut value = zoom;
+                if ui
+                    .add(egui::Slider::new(&mut value, 6.0..=48.0).suffix(" px/cell"))
+                    .changed()
+                {
+                    settings_command = Some(GuiWindowMenuCommand::SetMapZoom(Some(value)));
+                }
+            }
         }
         if view.supports_wrap {
             let mut wrap = view.wrap_text;

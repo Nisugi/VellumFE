@@ -63,6 +63,8 @@ struct GuiTab {
 pub(super) struct WidgetRenderSettings {
     /// Effective text size for this window (per-tab override or global).
     text_size: f32,
+    /// Mini map zoom override (px per cell).
+    map_zoom: Option<f32>,
     /// Effective font family for this window's proportional text.
     font_family: egui::FontFamily,
     /// Height of one active-effect bar row.
@@ -939,6 +941,7 @@ impl VellumGuiApp {
     fn widget_render_settings(&self, key: &TabKey) -> WidgetRenderSettings {
         WidgetRenderSettings {
             text_size: self.effective_text_size(key),
+            map_zoom: self.tab_settings.get(key).and_then(|s| s.map_zoom),
             font_family: self.effective_font_family(key),
             effects_bar_height: self.ui_settings.effects_bar_height.clamp(10.0, 60.0),
             bar_corner_radius: self.ui_settings.bar_corner_radius.clamp(0.0, 12.0),
