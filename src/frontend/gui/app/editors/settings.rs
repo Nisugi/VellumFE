@@ -24,6 +24,8 @@ pub(in super::super) struct SettingsEditorState {
     border_style: String,
     countdown_icon: String,
     min_command_length: usize,
+    lich_dir: String,
+    mapdb_path: String,
     sound_enabled: bool,
     sound_volume: f32,
     sound_cooldown_ms: u64,
@@ -55,6 +57,8 @@ impl SettingsEditorState {
             host: config.connection.host.clone(),
             port: config.connection.port,
             character: config.connection.character.clone().unwrap_or_default(),
+            lich_dir: config.map.lich_dir.clone().unwrap_or_default(),
+            mapdb_path: config.map.mapdb_path.clone().unwrap_or_default(),
             buffer_size: config.ui.buffer_size,
             border_style: config.ui.border_style.clone(),
             countdown_icon: config.ui.countdown_icon.clone(),
@@ -82,6 +86,14 @@ impl SettingsEditorState {
             None
         } else {
             Some(self.character.trim().to_string())
+        };
+        config.map.lich_dir = match self.lich_dir.trim() {
+            "" => None,
+            dir => Some(dir.to_string()),
+        };
+        config.map.mapdb_path = match self.mapdb_path.trim() {
+            "" => None,
+            path => Some(path.to_string()),
         };
         config.ui.buffer_size = self.buffer_size;
         config.ui.border_style = self.border_style.clone();
@@ -147,6 +159,27 @@ impl VellumGuiApp {
                                     ui.text_edit_singleline(&mut state.character);
                                     ui.end_row();
                                 });
+                        });
+
+                        ui.collapsing("Map", |ui| {
+                            ui.label(
+                                "Point at your Lich install so the map can read its room                                  database (data/<game>/map-<timestamp>.json).",
+                            );
+                            egui::Grid::new("settings_map_grid").num_columns(2).show(
+                                ui,
+                                |ui| {
+                                    ui.label("Lich folder");
+                                    ui.text_edit_singleline(&mut state.lich_dir)
+                                        .on_hover_text("e.g. C:/Gemstone/Lich5");
+                                    ui.end_row();
+                                    ui.label("mapdb file (override)");
+                                    ui.text_edit_singleline(&mut state.mapdb_path)
+                                        .on_hover_text(
+                                            "Optional explicit map-*.json; overrides the Lich folder",
+                                        );
+                                    ui.end_row();
+                                },
+                            );
                         });
 
                         ui.collapsing("UI", |ui| {
@@ -474,6 +507,7 @@ impl VellumGuiApp {
 
         if saved {
             state.apply_to_config(&mut self.app_core.config);
+            self.app_core.refresh_map_source();
             match self.app_core.save_config() {
                 Ok(()) => self.app_core.add_system_message("Settings saved."),
                 Err(err) => self

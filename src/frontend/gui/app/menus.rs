@@ -59,6 +59,8 @@ enum GuiWindowMenuCommand {
     GroupWith(TabKey),
     /// Remove this window from its group.
     Ungroup,
+    /// Open the Map Explorer native window (map widgets only).
+    OpenMapExplorer,
     /// Group layout: true = side by side, false = stacked.
     SetGroupOrientation(bool),
 }
@@ -73,6 +75,8 @@ struct WindowMenuView<'a> {
     global_text_size: f32,
     /// Wrap toggle: shown only for text-list widgets; current value.
     supports_wrap: bool,
+    /// Map widget: offer "Open Map Explorer".
+    is_map: bool,
     wrap_text: bool,
     current_font: Option<&'a str>,
     accent_color: Option<Color32>,
@@ -201,6 +205,9 @@ impl VellumGuiApp {
                 self.group_tabs(&request.tab_key.clone(), other);
             }
             GuiWindowMenuCommand::Ungroup => self.ungroup_tab(&request.tab_key.clone()),
+            GuiWindowMenuCommand::OpenMapExplorer => {
+                self.map_explorer.open = true;
+            }
             GuiWindowMenuCommand::SetGroupOrientation(horizontal) => {
                 if let Some(group) = self
                     .tab_groups
@@ -263,6 +270,12 @@ impl VellumGuiApp {
             .get(&request.tab_key)
             .map(|settings| settings.wrap_text)
             .unwrap_or(true);
+        let is_map = self
+            .available_tabs
+            .get(&request.tab_key)
+            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+            .map(|window| window.widget_type == WidgetType::Map)
+            .unwrap_or(false);
         let view = WindowMenuView {
             zone: request.zone,
             allow_reorder: request.allow_reorder,
@@ -271,6 +284,7 @@ impl VellumGuiApp {
             global_text_size: self.ui_settings.text_size,
             supports_wrap,
             wrap_text,
+            is_map,
             current_font: current_font.as_deref(),
             accent_color: self.accent_color_for_tab(&request.tab_key),
             group_horizontal: self
@@ -713,6 +727,9 @@ impl VellumGuiApp {
             {
                 settings_command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
             }
+        }
+        if view.is_map && ui.button("Open Map Explorer").clicked() {
+            return Some(GuiWindowMenuCommand::OpenMapExplorer);
         }
         if view.supports_wrap {
             let mut wrap = view.wrap_text;

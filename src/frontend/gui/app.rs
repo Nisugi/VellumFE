@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 mod detached;
+mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
@@ -163,6 +164,8 @@ pub struct VellumGuiApp {
     history_draft: String,
     close_requested: bool,
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
+    /// Map Explorer native window (separate OS viewport).
+    map_explorer: map_explorer::MapExplorerState,
     detached_context_menu: Option<DetachedMenuState>,
     /// Which detached tab's viewport hosts the game popup menus. The menu
     /// stack renders inside that OS window (at its local click coords);
@@ -450,6 +453,7 @@ impl VellumGuiApp {
             history_draft: String::new(),
             close_requested: false,
             detached_tabs,
+            map_explorer: Default::default(),
             detached_context_menu: None,
             popup_menu_host: None,
             available_tabs,
@@ -3788,6 +3792,7 @@ impl eframe::App for VellumGuiApp {
         });
 
         let detached_link_clicks = self.render_detached_viewports(&ctx);
+        self.render_map_explorer(&ctx);
 
         let zone_drop_result =
             self.render_zone_drop_overlay(&ctx, &visible_zone_rects, &zone_window_rects);

@@ -30,6 +30,7 @@ impl MapCamera {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MapViewResult {
     pub clicked_room: Option<u32>,
+    pub double_clicked_room: Option<u32>,
     pub hovered_room: Option<u32>,
 }
 
@@ -210,7 +211,9 @@ pub fn paint_sheet(
                 ui.id().with(("map_room", room.id)),
                 Sense::click(),
             );
-            if response.clicked() && result.clicked_room.is_none() {
+            if response.double_clicked() && result.double_clicked_room.is_none() {
+                result.double_clicked_room = Some(room.id);
+            } else if response.clicked() && result.clicked_room.is_none() {
                 result.clicked_room = Some(room.id);
             }
             if response.hovered() {
