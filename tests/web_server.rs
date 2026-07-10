@@ -590,6 +590,7 @@ async fn effects_flow_in_snapshot_and_deltas() {
                 text: "Strength of the Bull".to_string(),
                 value: 92,
                 time: "0:24:10".to_string(),
+                expires_at: None,
                 bar_color: None,
                 text_color: None,
             }],
