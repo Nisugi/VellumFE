@@ -799,6 +799,54 @@ impl TuiFrontend {
             }
         }
 
+        // Spell color popups are modal: title-bar drag plus wheel scroll in
+        // the browser; every other mouse event is consumed while open so
+        // clicks don't fall through to the windows underneath.
+        if self.spell_color_form.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
+            if let Some(ref mut form) = self.spell_color_form {
+                match kind {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
+                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, true, area)
+                    }
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                        form.handle_mouse(*x, *y, false, area)
+                    }
+                    _ => {}
+                }
+            }
+            app_core.needs_render = true;
+            return Ok((true, None));
+        }
+
+        if self.spell_color_browser.is_some() {
+            let (width, height) = self.size();
+            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
+            if let Some(ref mut browser) = self.spell_color_browser {
+                let scroll: i8 = match kind {
+                    MouseEventKind::ScrollUp => -1,
+                    MouseEventKind::ScrollDown => 1,
+                    _ => 0,
+                };
+                match kind {
+                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
+                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                        browser.handle_mouse(*x, *y, true, scroll, area)
+                    }
+                    MouseEventKind::Up(crate::data::input::MouseButton::Left)
+                    | MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown => {
+                        browser.handle_mouse(*x, *y, false, scroll, area)
+                    }
+                    _ => {}
+                }
+            }
+            app_core.needs_render = true;
+            return Ok((true, None));
+        }
+
         if app_core.ui_state.input_mode == InputMode::Dialog {
             let (term_width, term_height) = self.size();
             let screen_area = Rect {

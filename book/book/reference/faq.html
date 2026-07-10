@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-b2b40ef9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,8 @@
 <h2 id="general"><a class="header" href="#general">General</a></h2>
 <p><strong>What is VellumFE?</strong>
 A modern, multi-frontend client for GemStone IV built in Rust — terminal
-(TUI), desktop GUI, and a mobile web sidecar, all driving the same core.
+(TUI), desktop GUI, mobile web, and Android/iOS apps, all driving the
+same core.
 DragonRealms is supported by the parser and connection layer but less
 battle-tested.</p>
 <p><strong>Do I need Lich?</strong>
@@ -189,9 +190,12 @@ No. VellumFE can connect through Lich (recommended, for scripting) or
 directly via eAccess with <code>--direct</code>. VellumFE itself doesn’t run scripts —
 use Lich for that.</p>
 <p><strong>Can I play without a PC at all?</strong>
-Yes — the <a href="../frontends/android.html">Android app</a> runs the whole client on
-your phone, or run <code>--frontend headless</code> on any machine and play from a
-browser. Both connect via direct eAccess (no Lich on the phone).</p>
+Yes — the <a href="../frontends/android.html">Android</a> or <a href="../frontends/ios.html">iOS</a>
+app runs the whole client on your phone, or run <code>--frontend headless</code> on
+any machine and play from a browser. They connect via direct eAccess, or
+— for scripted characters — the login screen’s <strong>Lich</strong> tab attaches to a
+Lich session running on another machine (Lich itself never runs on the
+phone). See <a href="../frontends/web.html#connecting-through-lich">Mobile Web</a>.</p>
 <p><strong>Is it free?</strong>
 Yes, open source: <a href="https://github.com/Nisugi/VellumFE">github.com/Nisugi/VellumFE</a>.</p>
 <h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
@@ -214,7 +218,8 @@ See <a href="../configuration/README.html">Configuration</a> for the directory l
 Yes — files in <code>profiles/&lt;name&gt;/</code> override the global ones when you launch
 with <code>--character</code> (or <code>--profile</code>).</p>
 <p><strong>Can I have multiple layouts?</strong>
-Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code>. You can also switch
+Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code> — in both the TUI
+and the GUI (each keeps its own set). In the TUI you can also switch
 automatically by terminal size with <code>layout_mappings</code> in config.toml.</p>
 <p><strong>How do I reset to defaults?</strong>
 Delete the file (or the whole <code>~/.vellum-fe/</code> directory); defaults are

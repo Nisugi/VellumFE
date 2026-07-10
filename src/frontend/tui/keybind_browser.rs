@@ -37,12 +37,22 @@ pub struct KeybindEntry {
     pub is_global: bool, // true = from global/, false = from character profile
 }
 
+/// Scope filter cycled by ToggleFilter: all -> global-only -> character-only
+#[derive(Clone, Copy, PartialEq)]
+enum ScopeFilter {
+    All,
+    Global,
+    Character,
+}
+
 /// Scrollable inventory of current keybinding entries with optional drag handle.
 pub struct KeybindBrowser {
+    /// Unfiltered master list; `entries` is the filtered view rendered
+    all_entries: Vec<KeybindEntry>,
     entries: Vec<KeybindEntry>,
+    scope_filter: ScopeFilter,
     selected_index: usize,
     scroll_offset: usize,
-    num_sections: usize, // Number of section headers (for scroll calculation)
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -132,21 +142,12 @@ impl KeybindBrowser {
                 .then_with(|| a.key_combo.cmp(&b.key_combo))
         });
 
-        // Count sections (how many unique action types)
-        let mut num_sections = 0;
-        let mut last_type: Option<&str> = None;
-        for entry in &entries {
-            if last_type != Some(entry.action_type.as_str()) {
-                num_sections += 1;
-                last_type = Some(&entry.action_type);
-            }
-        }
-
         Self {
+            all_entries: entries.clone(),
             entries,
+            scope_filter: ScopeFilter::All,
             selected_index: 0,
             scroll_offset: 0,
-            num_sections,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -418,7 +419,7 @@ impl KeybindBrowser {
         self.draw_border(x, y, width, height, buf, theme);
 
         // Title (left-aligned on top border)
-        let title = format!(" Keybinds ({}) ", self.entries.len());
+        let title = format!(" Keybinds ({}){} ", self.entries.len(), self.filter_label());
         for (i, ch) in title.chars().enumerate() {
             if (x + 1 + i as u16) < (x + width) {
                 buf[(x + 1 + i as u16, y)]
@@ -688,10 +689,39 @@ impl KeybindBrowser {
         self.page_up();
     }
 
-    /// Toggle the filter state
+    /// Cycle the scope filter: all -> global-only -> character-only
     pub fn toggle_filter(&mut self) {
-        // Placeholder for filter toggle functionality
-        // Would need to be implemented based on browser's filter requirements
+        self.scope_filter = match self.scope_filter {
+            ScopeFilter::All => ScopeFilter::Global,
+            ScopeFilter::Global => ScopeFilter::Character,
+            ScopeFilter::Character => ScopeFilter::All,
+        };
+        self.apply_filter();
+    }
+
+    /// Rebuild the visible list from the master list and current filter
+    fn apply_filter(&mut self) {
+        self.entries = self
+            .all_entries
+            .iter()
+            .filter(|e| match self.scope_filter {
+                ScopeFilter::All => true,
+                ScopeFilter::Global => e.is_global,
+                ScopeFilter::Character => !e.is_global,
+            })
+            .cloned()
+            .collect();
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+
+    /// Suffix for the title bar showing the active filter
+    fn filter_label(&self) -> &'static str {
+        match self.scope_filter {
+            ScopeFilter::All => "",
+            ScopeFilter::Global => " [G] only",
+            ScopeFilter::Character => " [C] only",
+        }
     }
 
     /// Update the list of keybind entries with source tracking
@@ -704,7 +734,7 @@ impl KeybindBrowser {
         global_keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
         character_keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
     ) {
-        self.entries.clear();
+        self.all_entries.clear();
 
         // Add global keybinds first (will be shown as [G])
         for (key, action) in global_keybinds {
@@ -712,7 +742,7 @@ impl KeybindBrowser {
             if character_keybinds.contains_key(key) {
                 continue;
             }
-            self.entries.push(KeybindEntry {
+            self.all_entries.push(KeybindEntry {
                 key_combo: key.clone(),
                 action_type: action.type_name().to_string(),
                 action_value: action.display_value(),
@@ -722,7 +752,7 @@ impl KeybindBrowser {
 
         // Add character keybinds (will be shown as [C])
         for (key, action) in character_keybinds {
-            self.entries.push(KeybindEntry {
+            self.all_entries.push(KeybindEntry {
                 key_combo: key.clone(),
                 action_type: action.type_name().to_string(),
                 action_value: action.display_value(),
@@ -731,11 +761,13 @@ impl KeybindBrowser {
         }
 
         // Sort by key combo
-        self.entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
+        self.all_entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
 
-        // Reset selection if out of bounds
-        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
-            self.selected_index = self.entries.len() - 1;
+        let selected = self.selected_index;
+        self.apply_filter();
+        // Keep the previous selection when it still fits the filtered list
+        if selected < self.entries.len() {
+            self.selected_index = selected;
         }
     }
 
@@ -747,9 +779,9 @@ impl KeybindBrowser {
         &mut self,
         keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
     ) {
-        self.entries.clear();
+        self.all_entries.clear();
         for (key, action) in keybinds {
-            self.entries.push(KeybindEntry {
+            self.all_entries.push(KeybindEntry {
                 key_combo: key.clone(),
                 action_type: action.type_name().to_string(),
                 action_value: action.display_value(),
@@ -757,12 +789,8 @@ impl KeybindBrowser {
             });
         }
         // Sort by key combo
-        self.entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
-
-        // Reset selection if out of bounds
-        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
-            self.selected_index = self.entries.len() - 1;
-        }
+        self.all_entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
+        self.apply_filter();
     }
 }
 

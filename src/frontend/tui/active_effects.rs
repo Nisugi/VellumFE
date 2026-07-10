@@ -9,19 +9,15 @@ use ratatui::{buffer::Buffer, layout::Rect};
 /// Widget that lists buffs/debuffs for a particular category.
 pub struct ActiveEffects {
     container: ScrollableContainer,
-    effect_category: String, // "spell", "disease", etc.
 }
 
 impl ActiveEffects {
-    pub fn new(label: &str, effect_category: String) -> Self {
+    pub fn new(label: &str) -> Self {
         let mut container = ScrollableContainer::new(label);
         // ActiveEffects hides values and percentages by default
         container.set_display_options(false, false);
 
-        Self {
-            container,
-            effect_category,
-        }
+        Self { container }
     }
 
     /// Format time from "HH:MM:SS" to "[HH:MM]" or "[MM:SS]"
@@ -64,24 +60,11 @@ impl ActiveEffects {
             Some(duration_str),
             bar_color,
             text_color,
-            None, // no link data
         );
-    }
-
-    pub fn remove_effect(&mut self, id: &str) {
-        self.container.remove_item(id);
     }
 
     pub fn clear(&mut self) {
         self.container.clear();
-    }
-
-    pub fn toggle_display(&mut self) {
-        self.container.toggle_alternate_text();
-    }
-
-    pub fn get_category(&self) -> &str {
-        &self.effect_category
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -106,10 +89,6 @@ impl ActiveEffects {
 
     pub fn set_border_sides(&mut self, sides: crate::config::BorderSides) {
         self.container.set_border_sides(sides);
-    }
-
-    pub fn set_bar_color(&mut self, color: String) {
-        self.container.set_bar_color(color);
     }
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
@@ -140,10 +119,6 @@ impl ActiveEffects {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.container.render(area, buf);
-    }
-
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.container.render_with_focus(area, buf, focused);
     }
 
     /// Convert mouse position to text coordinates
@@ -195,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_render_includes_duration_suffix() {
-        let mut effects = ActiveEffects::new("Effects", "spell".to_string());
+        let mut effects = ActiveEffects::new("Effects");
         effects.set_border_config(false, None, None);
         effects.add_or_update_effect(
             "id1".to_string(),
@@ -214,31 +189,4 @@ mod tests {
         assert!(line.contains("[03:21]"));
     }
 
-    #[test]
-    fn test_toggle_display_switches_to_id() {
-        let mut effects = ActiveEffects::new("Effects", "spell".to_string());
-        effects.set_border_config(false, None, None);
-        effects.add_or_update_effect(
-            "abc123".to_string(),
-            "Bless".to_string(),
-            50,
-            "00:03:21".to_string(),
-            None,
-            None,
-        );
-
-        let area = Rect::new(0, 0, 30, 1);
-        let mut buf = Buffer::empty(area);
-        effects.render(area, &mut buf);
-
-        let line = buffer_line(&buf, 0, area.width);
-        assert!(line.contains("Bless"));
-
-        effects.toggle_display();
-        let mut buf = Buffer::empty(area);
-        effects.render(area, &mut buf);
-
-        let line = buffer_line(&buf, 0, area.width);
-        assert!(line.contains("abc123"));
-    }
 }

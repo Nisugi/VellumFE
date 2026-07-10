@@ -1323,17 +1323,6 @@ impl BarOrderEditor {
         }
     }
 
-    /// Change selection - saves color if in color mode, then syncs new bar's color
-    fn change_selection(&mut self, new_selected: usize) {
-        if new_selected != self.selected && new_selected < self.bars.len() {
-            // Save current color if editing
-            if self.is_editing_color() {
-                self.save_color_to_bar();
-            }
-            self.selected = new_selected;
-            self.sync_color_input_from_bar();
-        }
-    }
 }
 
 /// Window editor widget - 70x20 popup with single-page layout
@@ -2783,10 +2772,6 @@ impl WindowEditor {
         editor.window_def.base_mut().name = auto_name;
 
         editor
-    }
-
-    fn is_command_input(&self) -> bool {
-        matches!(self.window_def, WindowDef::CommandInput { .. })
     }
 
     fn current_field_ref(&self) -> Option<FieldRef> {
@@ -7412,65 +7397,6 @@ impl WindowEditor {
         buf.set_string(input_x, y, &padded, Style::default().fg(crossterm_bridge::to_ratatui_color(theme.text_color)));
     }
 
-    fn render_textarea(
-        &self,
-        field_id: usize,
-        label: &str,
-        textarea: &TextArea,
-        x: u16,
-        y: u16,
-        _width: usize,
-        spacing: u16,
-        buf: &mut Buffer,
-        theme: &EditorTheme,
-    ) {
-        let is_focused = self.focused_field == field_id;
-        let label_color = crossterm_bridge::to_ratatui_color(if is_focused  {
-            theme.focused_label_color
-        } else {
-            theme.label_color
-        });
-
-        buf.set_string(x, y, label, Style::default().fg(label_color));
-        let input_x = x + label.len() as u16 + spacing;
-
-        // Render textarea content inline
-        let value = if textarea.lines().is_empty() {
-            ""
-        } else {
-            &textarea.lines()[0]
-        };
-        let text_color = crossterm_bridge::to_ratatui_color(if is_focused  {
-            theme.cursor_color
-        } else {
-            theme.text_color
-        });
-        buf.set_string(input_x, y, value, Style::default().fg(text_color));
-    }
-
-    fn render_textarea_with_preview(
-        &self,
-        field_id: usize,
-        label: &str,
-        textarea: &TextArea,
-        x: u16,
-        y: u16,
-        width: usize,
-        spacing: u16,
-        buf: &mut Buffer,
-        theme: &EditorTheme,
-    ) {
-        self.render_textarea(field_id, label, textarea, x, y, width, spacing, buf, theme);
-        let input_x = x + label.len() as u16 + spacing;
-        let preview_x = input_x + width as u16 + 2;
-        let value = if textarea.lines().is_empty() {
-            ""
-        } else {
-            &textarea.lines()[0]
-        };
-        self.render_color_preview(value, preview_x, y, buf, theme);
-    }
-
     fn render_color_preview(
         &self,
         color_str: &str,
@@ -7492,51 +7418,6 @@ impl WindowEditor {
             buf[(x + 2, y)].set_char(' ').reset();
         }
         buf.set_string(x + 3, y, "]", Style::default().fg(crossterm_bridge::to_ratatui_color(theme.label_color)));
-    }
-
-    fn render_checkbox(
-        &self,
-        field_id: usize,
-        label: &str,
-        checked: bool,
-        x: u16,
-        y: u16,
-        buf: &mut Buffer,
-        theme: &EditorTheme,
-    ) {
-        let is_focused = self.focused_field == field_id;
-        let label_color = crossterm_bridge::to_ratatui_color(if is_focused  {
-            theme.focused_label_color
-        } else {
-            theme.label_color
-        });
-
-        buf.set_string(x, y, label, Style::default().fg(label_color));
-        let checkbox = if checked { "[✓]" } else { "[ ]" };
-        let checkbox_x = x + 15;
-        buf.set_string(checkbox_x, y, checkbox, Style::default().fg(label_color));
-    }
-
-    fn render_checkbox_row(
-        &self,
-        x: u16,
-        y: u16,
-        label: &str,
-        checked: bool,
-        buf: &mut Buffer,
-        theme: &EditorTheme,
-        is_current: bool,
-    ) {
-        let label_color = crossterm_bridge::to_ratatui_color(if is_current {
-            theme.focused_label_color
-        } else {
-            theme.label_color
-        });
-
-        buf.set_string(x, y, label, Style::default().fg(label_color));
-        let checkbox = if checked { "[û]" } else { "[ ]" };
-        let checkbox_x = x + label.len() as u16 + 2;
-        buf.set_string(checkbox_x, y, checkbox, Style::default().fg(label_color));
     }
 
     fn parse_icon_char(value: &str) -> Option<char> {
@@ -7589,28 +7470,6 @@ impl WindowEditor {
         buf.set_string(x, y, label, Style::default().fg(label_color).add_modifier(if is_focused { Modifier::BOLD } else { Modifier::empty() }));
     }
 
-    fn render_dropdown(
-        &self,
-        field_id: usize,
-        label: &str,
-        value: &str,
-        x: u16,
-        y: u16,
-        buf: &mut Buffer,
-        theme: &EditorTheme,
-    ) {
-        let is_focused = self.focused_field == field_id;
-        let label_color = crossterm_bridge::to_ratatui_color(if is_focused  {
-            theme.focused_label_color
-        } else {
-            theme.label_color
-        });
-
-        buf.set_string(x, y, label, Style::default().fg(label_color));
-        let input_x = x + label.len() as u16 + 1;
-        let display = format!("{} ▼", value);
-        buf.set_string(input_x, y, &display, Style::default().fg(crossterm_bridge::to_ratatui_color(theme.text_color)));
-    }
 }
 
 #[cfg(test)]

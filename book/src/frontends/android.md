@@ -28,7 +28,11 @@ file is unreadable off the device.
 > connect-a-device panel will display one — not yet available). See
 > [Connecting Through Lich](./web.md#connecting-through-lich).
 > Alternatively, run the whole session on the PC and join it from the
-> phone via the [mobile web frontend](./web.md).
+> phone: the login screen's **Remote** tab mirrors a desktop VellumFE
+> session in-app (run `.webinfo` on the PC and scan the app QR; the
+> pairing is Keystore-sealed like saved logins) — see
+> [Remote: a desktop session on your phone](./web.md#remote-a-desktop-session-on-your-phone-apps-only) —
+> or use the [mobile web frontend](./web.md) in the phone's browser.
 
 ## Playing
 

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-b2b40ef9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -185,8 +185,8 @@ server. It works two ways:</p>
 on your PC and the phone joins the <em>same</em> character (a sidecar).</li>
 <li><strong>The whole interface</strong> — <a href="#headless-mode">headless mode</a> runs just the
 core plus the web server; you log in and play entirely from the
-browser. (The <a href="./android.html">Android app</a> packages exactly this into a
-phone app.)</li>
+browser. (The <a href="./android.html">Android</a> and <a href="./ios.html">iOS</a> apps package
+exactly this into a phone app.)</li>
 </ul>
 <h2 id="enabling-desktop-sidecar"><a class="header" href="#enabling-desktop-sidecar">Enabling (Desktop Sidecar)</a></h2>
 <p>In <code>config.toml</code>:</p>
@@ -237,7 +237,8 @@ button resends the last command, and long-pressing it opens a history
 sheet.</li>
 <li><strong>Tap links, nouns, and exits</strong> — context menus open in a bottom
 sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
-tap to move).</li>
+tap to move). It starts bottom-right; hold it about half a second to
+lift and drag it anywhere — the spot is remembered per device.</li>
 <li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
 the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
 panel</strong> with the injury doll, injuries list, hands, character sheet
@@ -247,7 +248,10 @@ attack/look/target menu.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
 <li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable
 floating buttons from <a href="../configuration/macros-toml.html">macros.toml</a>;
-create and edit them from the phone with the rail’s <strong>+</strong> button.</li>
+create and edit them from the phone with the rail’s <strong>+</strong> button. A
+button’s <strong>On tap</strong> behavior can also <em>type into the input</em> instead of
+sending, so word buttons (“go”, “second”, “door”) compose phrases —
+<em>Type, then send</em> submits the composed line in one tap.</li>
 <li><strong>Sound alerts</strong> — highlight sounds play in the browser (toggle in
 Settings; the first sound may need one tap due to autoplay rules).</li>
 <li><strong>Reconnect gracefully</strong> — resumes where you left off, with a “missed
@@ -281,6 +285,52 @@ auto-connect, or give it nothing and it waits at the <strong>browser login
 screen</strong>: enter account/password/character/game, or tap a saved profile
 (shared with the <a href="../getting-started/launcher.html">desktop Launcher</a>’s
 <code>launcher.toml</code>). “Remember this login” saves the password securely.</p>
+<h3 id="connecting-through-lich"><a class="header" href="#connecting-through-lich">Connecting Through Lich</a></h3>
+<p>The login screen has a <strong>play.net / Lich</strong> toggle. The Lich tab attaches
+to a Lich session already running on another machine — so a headless
+host, the Android app, or the iOS app can still play a fully scripted
+character:</p>
+<ul>
+<li>Launch Lich with <code>--detachable-client</code> on your PC, then enter its
+host and port (an optional label names the saved entry). Saved Lich
+connections reattach with one tap, no password.</li>
+<li><strong>Coming in Lich 6</strong> (not yet available): Lich’s WebUI adds a
+connect-a-device panel showing a <code>vellum://</code> <strong>QR code / link</strong>;
+scanning or tapping it opens the login screen with the Lich tab
+prefilled. It never auto-connects — you always press Connect. The
+app understands <code>vellum://</code> links today; Lich 6 adds the panel that
+displays them.</li>
+<li>The detachable port is unauthenticated, so the form warns when the
+host doesn’t look private. Keep it to home Wi-Fi, Tailscale, or a
+VPN — never the open internet.</li>
+<li>If the link drops, the session reattaches to the same Lich target
+automatically.</li>
+</ul>
+<h3 id="remote-a-desktop-session-on-your-phone-apps-only"><a class="header" href="#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone (apps only)</a></h3>
+<p>Inside the <a href="./android.html">Android</a> and <a href="./ios.html">iOS</a> apps the login
+screen has a third tab, <strong>Remote</strong>. Instead of running a session on the
+phone, it points the app at a <strong>desktop VellumFE</strong>’s web server — the
+same sidecar the browser gets, with the app’s install-once, QR-pairing,
+secure-storage experience. Your PC session keeps its TUI/GUI screen; the
+phone becomes a live second screen for it. Lich’s one-frontend limit
+doesn’t apply — the web sidecar mirrors the session rather than
+replacing its client.</p>
+<ul>
+<li>On the PC, run <code>.webinfo</code>: the pairing page now shows two QR codes.
+Scan the <strong>VellumFE app</strong> one with the phone camera — it opens the
+app’s Remote tab prefilled (host, port, and pairing token). It never
+auto-connects; you always press Connect. Or type the address and token
+by hand.</li>
+<li><strong>Remember this server</strong> keeps the pairing in the phone’s Keychain
+(iOS) / Keystore-sealed storage (Android); reconnecting is one tap
+from then on.</li>
+<li>While on a remote server, the app’s embedded core sits idle — there is
+no game connection on the phone to go stale in the background; the web
+client’s usual reconnect picks the mirror back up when you return.</li>
+<li>The way back: <strong>⚙ Settings → Leave this server (app login)</strong>.</li>
+<li>Same network rule as everything else on this page: home Wi-Fi,
+Tailscale, or a VPN — never the open internet.</li>
+</ul>
 <p>Headless sessions manage themselves:</p>
 <ul>
 <li>Drops reconnect automatically with backoff; typing again resets it.</li>
@@ -290,8 +340,8 @@ relogging all night.</li>
 <li>If login hangs, a watchdog retries it.</li>
 <li><code>quit</code> (or the logout button) returns to the login screen.</li>
 </ul>
-<p>The login screen only appears in headless/Android mode — a desktop
-sidecar session is controlled from the desktop, as before.</p>
+<p>The login screen only appears in headless and app (Android/iOS) mode — a
+desktop sidecar session is controlled from the desktop, as before.</p>
 <h2 id="tips"><a class="header" href="#tips">Tips</a></h2>
 <ul>
 <li>After editing <code>macros.toml</code> on the PC, run <code>.reloadmacros</code> — connected

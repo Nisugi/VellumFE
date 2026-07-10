@@ -29,6 +29,9 @@ pub struct SpellColorBrowser {
     drag_offset: (i16, i16),
 }
 
+const POPUP_WIDTH: u16 = 70;
+const POPUP_HEIGHT: u16 = 20;
+
 impl SpellColorBrowser {
     pub fn new(spell_colors: &[SpellColorRange]) -> Self {
         let entries = spell_colors
@@ -101,6 +104,48 @@ impl SpellColorBrowser {
         }
     }
 
+    /// Title-bar dragging with grab offset, plus wheel scrolling
+    /// (scroll: -1 = up, 1 = down, 0 = none). The popup is modal, so the
+    /// caller consumes every mouse event while it is open.
+    pub fn handle_mouse(
+        &mut self,
+        col: u16,
+        row: u16,
+        pressed: bool,
+        scroll: i8,
+        terminal_area: Rect,
+    ) {
+        if scroll < 0 {
+            self.navigate_up();
+            return;
+        }
+        if scroll > 0 {
+            self.navigate_down();
+            return;
+        }
+        let (px, py) = self.popup_position;
+        let on_title_bar = row == py && col > px && col < px + POPUP_WIDTH - 1;
+        if pressed && on_title_bar && !self.is_dragging {
+            self.is_dragging = true;
+            self.drag_offset = (
+                col.saturating_sub(px) as i16,
+                row.saturating_sub(py) as i16,
+            );
+            return;
+        }
+        if self.is_dragging {
+            if pressed {
+                let new_x = col.saturating_sub(self.drag_offset.0 as u16);
+                let new_y = row.saturating_sub(self.drag_offset.1 as u16);
+                let max_x = terminal_area.width.saturating_sub(POPUP_WIDTH);
+                let max_y = terminal_area.height.saturating_sub(POPUP_HEIGHT);
+                self.popup_position = (new_x.min(max_x), new_y.min(max_y));
+            } else {
+                self.is_dragging = false;
+            }
+        }
+    }
+
     pub fn render(
         &mut self,
         area: Rect,
@@ -108,8 +153,8 @@ impl SpellColorBrowser {
         _config: &crate::config::Config,
         theme: &crate::theme::AppTheme,
     ) {
-        let popup_width = 70;
-        let popup_height = 20;
+        let popup_width = POPUP_WIDTH;
+        let popup_height = POPUP_HEIGHT;
 
         // Center on first render
         if self.popup_position == (0, 0) {

@@ -39,20 +39,11 @@ impl ThemeCache {
         self.version
     }
 
-    /// Get a reference to the currently cached theme
-    pub fn get_theme(&self) -> &AppTheme {
-        &self.cached_theme
-    }
-
     /// Cheap per-frame handle to the cached theme
     pub fn get_theme_arc(&self) -> Arc<AppTheme> {
         Arc::clone(&self.cached_theme)
     }
 
-    /// Get the ID of the currently cached theme
-    pub fn get_theme_id(&self) -> &str {
-        &self.cached_theme_id
-    }
 }
 
 impl Default for ThemeCache {

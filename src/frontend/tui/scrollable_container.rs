@@ -4,7 +4,6 @@
 //! makes it a handy building block for several specialized widgets.
 
 use super::progress_bar::ProgressBar;
-use crate::data::LinkData;
 use crate::frontend::tui::crossterm_bridge;
 use ratatui::{
     buffer::Buffer,
@@ -16,7 +15,6 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct ScrollableItem {
-    pub id: String,
     pub text: String,
     pub alternate_text: Option<String>, // Alternative text to display (e.g., spell ID vs spell name)
     pub value: u32,
@@ -24,7 +22,6 @@ pub struct ScrollableItem {
     pub suffix: Option<String>, // Optional suffix to pin to right edge (e.g., "[XX:XX]")
     pub color: Option<String>,  // Optional color override for this item (hex format)
     pub text_color: Option<String>,
-    pub link_data: Option<LinkData>, // Link metadata for clickable items
 }
 
 pub struct ScrollableContainer {
@@ -85,14 +82,6 @@ impl ScrollableContainer {
         self.highlight_engine.set_replace_enabled(enabled);
     }
 
-    pub fn toggle_alternate_text(&mut self) {
-        self.show_alternate_text = !self.show_alternate_text;
-    }
-
-    pub fn set_visible_count(&mut self, count: Option<usize>) {
-        self.visible_count = count;
-    }
-
     fn max_scroll_offset(&self) -> usize {
         if self.item_order.is_empty() {
             return 0;
@@ -128,21 +117,6 @@ impl ScrollableContainer {
         self.scroll_offset = desired_offset.min(max_scroll);
     }
 
-    pub fn add_or_update_item(&mut self, id: String, text: String, value: u32, max: u32) {
-        self.add_or_update_item_full(id, text, None, value, max, None, None, None, None);
-    }
-
-    pub fn add_or_update_item_with_suffix(
-        &mut self,
-        id: String,
-        text: String,
-        value: u32,
-        max: u32,
-        suffix: Option<String>,
-    ) {
-        self.add_or_update_item_full(id, text, None, value, max, suffix, None, None, None);
-    }
-
     pub fn add_or_update_item_full(
         &mut self,
         id: String,
@@ -153,10 +127,8 @@ impl ScrollableContainer {
         suffix: Option<String>,
         color: Option<String>,
         text_color: Option<String>,
-        link_data: Option<LinkData>,
     ) {
         let item = ScrollableItem {
-            id: id.clone(),
             text,
             alternate_text,
             value,
@@ -164,7 +136,6 @@ impl ScrollableContainer {
             suffix,
             color,
             text_color,
-            link_data,
         };
 
         // Add to order list if new
@@ -173,11 +144,6 @@ impl ScrollableContainer {
         }
 
         self.items.insert(id, item);
-    }
-
-    pub fn remove_item(&mut self, id: &str) {
-        self.items.remove(id);
-        self.item_order.retain(|item_id| item_id != id);
     }
 
     pub fn clear(&mut self) {
@@ -203,10 +169,6 @@ impl ScrollableContainer {
 
     pub fn set_title(&mut self, title: String) {
         self.label = title;
-    }
-
-    pub fn set_bar_color(&mut self, color: String) {
-        self.bar_color = color;
     }
 
     pub fn set_transparent_background(&mut self, transparent: bool) {
@@ -427,45 +389,6 @@ impl ScrollableContainer {
                 pb.render(item_area, buf);
             }
         }
-    }
-
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        // For now, focus doesn't change rendering
-        self.render(area, buf);
-    }
-
-    /// Get the item at a specific y coordinate within the given area.
-    /// Returns None if the y coordinate is outside the content area or no item exists there.
-    pub fn get_item_at_y(&self, y: u16, area: Rect) -> Option<&ScrollableItem> {
-        // Calculate inner area (accounting for borders)
-        let inner_y = if self.show_border {
-            area.y + 1 // Skip top border
-        } else {
-            area.y
-        };
-
-        let inner_height = if self.show_border {
-            area.height.saturating_sub(2) // Subtract top and bottom borders
-        } else {
-            area.height
-        };
-
-        // Check if y is within the content area
-        if y < inner_y || y >= inner_y + inner_height {
-            return None;
-        }
-
-        // Calculate which row was clicked (relative to inner area)
-        let relative_row = (y - inner_y) as usize;
-
-        // Add scroll offset to get the actual item index
-        let item_index = self.scroll_offset + relative_row;
-
-        // Get the item ID at this index
-        let item_id = self.item_order.get(item_index)?;
-
-        // Return the item
-        self.items.get(item_id)
     }
 
     /// Convert mouse position to text coordinates

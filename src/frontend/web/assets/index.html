@@ -110,6 +110,11 @@
       </div>
       <p id="session-status" hidden></p>
       <p id="session-error" hidden></p>
+      <div id="music-bar" hidden>
+        <span id="music-label">&#9834; the classic login theme</span>
+        <button id="music-stop" type="button">Stop</button>
+        <button id="music-never" type="button">Don't play again</button>
+      </div>
       <div id="session-profiles"></div>
       <form id="session-form" autocomplete="off">
         <h3>New login</h3>
@@ -118,6 +123,8 @@
                   role="tab" aria-selected="true">play.net</button>
           <button type="button" id="mode-lich" class="mode-btn"
                   role="tab" aria-selected="false">Lich</button>
+          <button type="button" id="mode-remote" class="mode-btn" hidden
+                  role="tab" aria-selected="false">Remote</button>
         </div>
         <div id="direct-fields">
           <input id="login-account" type="text" placeholder="play.net account"
@@ -149,6 +156,27 @@
           <p id="lich-note">Attaches to a running Lich session — launch Lich with
             <code>--detachable-client</code>. Your phone needs a private path to that
             machine: home Wi-Fi, Tailscale, or a VPN.</p>
+        </div>
+        <div id="remote-fields" hidden>
+          <div id="remote-saved" class="profile-row" hidden>
+            <button type="button" id="remote-saved-connect" class="profile-btn">
+              <span class="profile-name" id="remote-saved-name"></span>
+              <span class="profile-detail" id="remote-saved-detail"></span>
+            </button>
+            <button type="button" id="remote-saved-forget" class="profile-delete"
+                    aria-label="Forget saved server">&#10005;</button>
+          </div>
+          <input id="remote-host" type="text" placeholder="host (e.g. 192.168.1.50)"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <input id="remote-port" type="text" inputmode="numeric" placeholder="port (e.g. 8041)">
+          <input id="remote-token" type="text" placeholder="pairing token (optional)"
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <label id="remote-save-row"><input id="remote-save" type="checkbox" checked> Remember this server</label>
+          <p id="remote-warning" hidden></p>
+          <p id="remote-note">Mirrors a VellumFE session running on your PC — run
+            <code>.webinfo</code> there and scan the app QR, or type the address and
+            pairing token. Your phone needs a private path to that machine: home
+            Wi-Fi, Tailscale, or a VPN.</p>
         </div>
         <button id="login-submit" type="submit">Connect</button>
       </form>

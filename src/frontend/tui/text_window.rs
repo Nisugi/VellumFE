@@ -52,7 +52,6 @@ struct SearchMatch {
 }
 
 struct SearchState {
-    regex: Regex,
     matches: Vec<SearchMatch>,
     current_match_idx: usize, // Which match is currently selected
 }
@@ -858,7 +857,6 @@ impl TextWindow {
 
         if !matches.is_empty() {
             self.search_state = Some(SearchState {
-                regex,
                 matches,
                 current_match_idx: 0,
             });
@@ -1253,49 +1251,6 @@ impl TextWindow {
                     .collect()
             })
             .collect()
-    }
-
-    /// Find a link in the recent cache that matches the given word
-    /// Returns the LinkData if found, otherwise None
-    pub fn find_link_by_word(&self, word: &str) -> Option<LinkData> {
-        // Search from most recent to oldest
-        // First pass: word appears in multi-word link text (HIGHEST priority - prefer complete phrases)
-        for link in self.recent_links.iter().rev() {
-            let link_text_lower = link.text.to_lowercase();
-            let word_lower = word.to_lowercase();
-
-            // Only check multi-word links (2+ words)
-            if link_text_lower.split_whitespace().count() > 1 {
-                // Check if word appears in the text
-                if link_text_lower.split_whitespace().any(|w| w == word_lower) {
-                    tracing::debug!(
-                        "Found multi-word text match: '{}' in text='{}' -> noun='{}' exist_id='{}'",
-                        word,
-                        link.text,
-                        link.noun,
-                        link.exist_id
-                    );
-                    return Some(link.clone());
-                }
-            }
-        }
-
-        // Second pass: exact noun match for single-word links
-        for link in self.recent_links.iter().rev() {
-            if link.noun.eq_ignore_ascii_case(word) {
-                tracing::debug!(
-                    "Found exact noun match: '{}' -> noun='{}' exist_id='{}' text='{}'",
-                    word,
-                    link.noun,
-                    link.exist_id,
-                    link.text
-                );
-                return Some(link.clone());
-            }
-        }
-
-        tracing::debug!("No link found for word '{}'", word);
-        None
     }
 
     /// Convert mouse position to text coordinates (line index, column index)

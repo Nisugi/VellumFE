@@ -8,6 +8,12 @@ import WebKit
 /// view extends edge to edge and never applies its own insets.
 struct WebViewContainer: UIViewRepresentable {
     let url: URL
+    /// Extra host the WebView may browse in-app (Remote mode's desktop
+    /// server); everything else non-loopback still goes to Safari.
+    let allowedHost: String?
+    /// Receives intercepted vellum:// navigations (Remote tab actions —
+    /// pair/connect/forget/back-to-local). Runs on the main actor.
+    let onShellURL: @MainActor (URL) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -42,15 +48,20 @@ struct WebViewContainer: UIViewRepresentable {
             }
         #endif
         context.coordinator.bootURL = url
+        context.coordinator.allowedHost = allowedHost
+        context.coordinator.onShellURL = onShellURL
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.allowedHost = allowedHost
+        context.coordinator.onShellURL = onShellURL
         // The boot URL only changes when a vellum:// deep link rebuilds its
-        // fragment — reload so the web client picks the target up. SwiftUI
-        // calls this on every update; the coordinator's copy (not
-        // webView.url, which the client scrubs) keeps it idempotent.
+        // fragment or Remote mode swaps servers — reload so the web client
+        // picks the target up. SwiftUI calls this on every update; the
+        // coordinator's copy (not webView.url, which the client scrubs)
+        // keeps it idempotent.
         if context.coordinator.bootURL != url {
             context.coordinator.bootURL = url
             webView.load(URLRequest(url: url))
@@ -59,6 +70,8 @@ struct WebViewContainer: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
         var bootURL: URL?
+        var allowedHost: String?
+        var onShellURL: (@MainActor (URL) -> Void)?
 
         /// The page never scrolls (it sizes itself to --vvh; panes scroll
         /// their own divs), so any offset here is WebKit's keyboard
@@ -69,9 +82,11 @@ struct WebViewContainer: UIViewRepresentable {
             }
         }
 
-        /// Everything except the local server goes to Safari (game
-        /// LaunchURL links, play.net pages) — mirrors
-        /// `shouldOverrideUrlLoading` in MainActivity.kt.
+        /// vellum:// navigations are shell actions from the page (Remote
+        /// tab); the local server and the paired remote host browse
+        /// in-app; everything else goes to Safari (game LaunchURL links,
+        /// play.net pages) — mirrors `shouldOverrideUrlLoading` in
+        /// MainActivity.kt.
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
@@ -81,7 +96,17 @@ struct WebViewContainer: UIViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
-            if url.host == "127.0.0.1" || !["http", "https"].contains(url.scheme ?? "") {
+            if url.scheme == "vellum" {
+                let handler = onShellURL
+                Task { @MainActor in handler?(url) }
+                decisionHandler(.cancel)
+                return
+            }
+            let host = url.host?.lowercased()
+            if host == "127.0.0.1"
+                || (allowedHost != nil && host == allowedHost)
+                || !["http", "https"].contains(url.scheme ?? "")
+            {
                 decisionHandler(.allow)
             } else {
                 UIApplication.shared.open(url)

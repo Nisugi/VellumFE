@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-b2b40ef9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -225,6 +225,13 @@ buffer_size = 10000
 </tbody>
 </table>
 </div>
+<h3 id="custom-streams"><a class="header" href="#custom-streams">Custom Streams</a></h3>
+<p><code>streams</code> isn’t limited to this list — any stream id a Lich script
+pushes can feed a text window, which is how you make a “custom window”
+for a script’s output. You don’t have to guess ids: in the TUI window
+editor, focus the Streams field and press <code>Ctrl+P</code> to pick from the
+streams actually seen this session; the GUI has a dedicated
+<strong>Custom Windows</strong> panel (Windows menu → Add → Custom Window…).</p>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <h3 id="main-window"><a class="header" href="#main-window">Main Window</a></h3>
 <pre><code class="language-toml">[[windows]]

@@ -45,8 +45,15 @@ targets:
         # Loopback is lenient in practice; this is the documented switch.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-        # vellum://lich?host=…&port=… deep links (QR code / tapped link on
-        # Lich's connect-a-device panel) prefill the Lich login tab.
+          # Remote mode points the WebView at a user-configured desktop
+          # VellumFE over plain http on a private network/VPN. IP-literal
+          # hosts are ATS-exempt anyway; this admits named hosts (e.g.
+          # Tailscale MagicDNS) in *web content* only — the app's own
+          # networking stays ATS-strict.
+          NSAllowsArbitraryLoadsInWebContent: true
+        # vellum:// deep links: lich?host=…&port=… (Lich's connect-a-device
+        # panel) prefills the Lich login tab; remote?host=…&port=…&token=…
+        # (.webinfo's app QR on a desktop VellumFE) prefills the Remote tab.
         CFBundleURLTypes:
           - CFBundleURLName: dev.vellumfe.deeplink
             CFBundleURLSchemes:

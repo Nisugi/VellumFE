@@ -320,6 +320,7 @@ impl VellumGuiApp {
                 }
 
                 Self::flush_text_job(ui, &mut job);
+                Self::line_tail_selection_filler(ui, font_id);
             };
             if wrap {
                 ui.horizontal_wrapped(row);
@@ -329,6 +330,45 @@ impl VellumGuiApp {
         });
 
         clicked_link
+    }
+
+    /// Fill the blank remainder of a text row with an invisible selectable
+    /// region. Pressing there anchors a text selection on that line (the
+    /// empty galley contributes nothing to copied text) instead of falling
+    /// through to the window body, which would drag the window around. On
+    /// touch screens it stays drag-transparent so drag-to-scroll works.
+    fn line_tail_selection_filler(ui: &mut egui::Ui, font_id: &egui::FontId) {
+        // The -1.0 keeps float rounding from pushing the filler onto the
+        // next wrapped row.
+        let width = ui.available_size_before_wrap().x - 1.0;
+        if !width.is_finite() || width < 2.0 {
+            return;
+        }
+        let height = ui.ctx().fonts_mut(|fonts| fonts.row_height(font_id));
+        let sense = if ui.input(|i| i.has_touch_screen()) {
+            egui::Sense::click()
+        } else {
+            egui::Sense::click_and_drag()
+        };
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), sense);
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let galley = ui.ctx().fonts_mut(|fonts| {
+            fonts.layout_job(egui::text::LayoutJob::simple_singleline(
+                String::new(),
+                font_id.clone(),
+                Color32::TRANSPARENT,
+            ))
+        });
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            &response,
+            rect.left_top(),
+            galley,
+            Color32::TRANSPARENT,
+            egui::Stroke::NONE,
+        );
     }
 
     /// WCAG relative luminance (0 = black, 1 = white).
@@ -2475,6 +2515,18 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show_viewport(ui, |ui, viewport| {
+                // Blank space between and below lines must not start a
+                // window-body drag; claim drags across the viewport before
+                // any labels so the labels (and per-line fillers) still win
+                // where they overlap. Touch screens skip this so
+                // drag-to-scroll keeps working.
+                if !ui.input(|i| i.has_touch_screen()) {
+                    ui.interact(
+                        ui.clip_rect(),
+                        ui.id().with("text_blank_drag"),
+                        egui::Sense::drag(),
+                    );
+                }
                 if rendered_count == 0 {
                     return;
                 }
@@ -2548,16 +2600,29 @@ impl VellumGuiApp {
                     .enumerate()
                 {
                     let before = ui.cursor().min.y;
-                    if let Some(link) =
-                        Self::render_styled_line(
-                            ui,
-                            line,
-                            &visuals,
-                            search_query,
-                            font_id,
-                            wrap,
-                            content.show_timestamps.then_some(content.timestamp_position),
-                        )
+                    // Selections are anchored to widget ids, so give each
+                    // line an id derived from its position in the full
+                    // stream (generation counts every append, trims
+                    // included). The anchor then follows the text when the
+                    // visible slice shifts instead of sticking to whatever
+                    // line lands in the same screen row.
+                    let line_uid = content
+                        .generation
+                        .wrapping_sub(content.lines.len() as u64)
+                        .wrapping_add((start + first_visible + offset) as u64);
+                    if let Some(link) = ui
+                        .push_id(line_uid, |ui| {
+                            Self::render_styled_line(
+                                ui,
+                                line,
+                                &visuals,
+                                search_query,
+                                font_id,
+                                wrap,
+                                content.show_timestamps.then_some(content.timestamp_position),
+                            )
+                        })
+                        .inner
                     {
                         clicked_link = Some(link);
                     }

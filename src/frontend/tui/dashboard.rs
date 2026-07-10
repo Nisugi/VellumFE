@@ -49,7 +49,6 @@ impl DashboardLayout {
 
 #[derive(Debug, Clone)]
 pub struct DashboardIndicator {
-    pub id: String,
     pub icon: String,
     pub colors: Vec<String>, // [off_color, on_color] or multi-level
     pub value: u8,           // 0 = off, 1+ = on (or multi-level)
@@ -92,7 +91,6 @@ impl Dashboard {
 
     pub fn add_indicator(&mut self, id: String, icon: String, colors: Vec<String>) {
         let indicator = DashboardIndicator {
-            id: id.clone(),
             icon,
             colors,
             value: 0, // Default to off

@@ -71,21 +71,31 @@ object CryptoKeys {
         val key = keystoreKey()
         val file = File(context.filesDir, KEY_FILE)
         if (file.exists()) {
-            val blob = file.readBytes()
-            require(blob.size > 12) { "master key file too short" }
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                key,
-                GCMParameterSpec(128, blob.copyOfRange(0, 12)),
-            )
-            return cipher.doFinal(blob.copyOfRange(12, blob.size))
+            return openBlob(file.readBytes())
         }
         val master = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key)
-        require(cipher.iv.size == 12) { "unexpected GCM IV size" }
-        file.writeBytes(cipher.iv + cipher.doFinal(master))
+        file.writeBytes(sealBlob(master))
         return master
+    }
+
+    /** iv ++ AES-256-GCM(plain) under the Keystore wrap key — the same
+     * at-rest format as the master key file; RemoteStore reuses it for
+     * the Remote tab's saved server. */
+    fun sealBlob(plain: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, keystoreKey())
+        require(cipher.iv.size == 12) { "unexpected GCM IV size" }
+        return cipher.iv + cipher.doFinal(plain)
+    }
+
+    fun openBlob(blob: ByteArray): ByteArray {
+        require(blob.size > 12) { "sealed blob too short" }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            keystoreKey(),
+            GCMParameterSpec(128, blob.copyOfRange(0, 12)),
+        )
+        return cipher.doFinal(blob.copyOfRange(12, blob.size))
     }
 }

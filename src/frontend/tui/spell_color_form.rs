@@ -28,6 +28,9 @@ pub enum SpellColorFormResult {
     Cancel,
 }
 
+const POPUP_WIDTH: u16 = 52;
+const POPUP_HEIGHT: u16 = 9;
+
 pub struct SpellColorFormWidget {
     mode: FormMode,
     focused_field: usize,
@@ -230,6 +233,33 @@ impl SpellColorFormWidget {
         Some(SpellColorFormResult::Save(spell_color))
     }
 
+    /// Title-bar dragging with grab offset. The popup is modal, so the
+    /// caller consumes every mouse event while it is open; this only has
+    /// to maintain drag state and reposition.
+    pub fn handle_mouse(&mut self, col: u16, row: u16, pressed: bool, terminal_area: Rect) {
+        let (px, py) = self.popup_position;
+        let on_title_bar = row == py && col > px && col < px + POPUP_WIDTH - 1;
+        if pressed && on_title_bar && !self.is_dragging {
+            self.is_dragging = true;
+            self.drag_offset = (
+                col.saturating_sub(px) as i16,
+                row.saturating_sub(py) as i16,
+            );
+            return;
+        }
+        if self.is_dragging {
+            if pressed {
+                let new_x = col.saturating_sub(self.drag_offset.0 as u16);
+                let new_y = row.saturating_sub(self.drag_offset.1 as u16);
+                let max_x = terminal_area.width.saturating_sub(POPUP_WIDTH);
+                let max_y = terminal_area.height.saturating_sub(POPUP_HEIGHT);
+                self.popup_position = (new_x.min(max_x), new_y.min(max_y));
+            } else {
+                self.is_dragging = false;
+            }
+        }
+    }
+
     pub fn render(
         &mut self,
         area: Rect,
@@ -237,8 +267,8 @@ impl SpellColorFormWidget {
         config: &crate::config::Config,
         theme: &crate::theme::AppTheme,
     ) {
-        let popup_width = 52;
-        let popup_height = 9;
+        let popup_width = POPUP_WIDTH;
+        let popup_height = POPUP_HEIGHT;
 
         // Center on first render
         if self.popup_position == (0, 0) {

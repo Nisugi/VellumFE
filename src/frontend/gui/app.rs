@@ -44,7 +44,6 @@ use zones::{
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
 const INITIAL_LAYOUT_HEIGHT: u16 = 50;
 const MAX_RENDERED_LINES: usize = 2000;
-const MIN_VISIBLE_VIEWPORT_PX: f32 = 48.0;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
 const MIN_DOCKED_WINDOW_HEIGHT: f32 = 24.0;
@@ -204,6 +203,11 @@ pub struct VellumGuiApp {
     /// Zoom factor pushed to egui at startup; afterwards egui owns it
     /// (Ctrl+= / Ctrl+- / Ctrl+0) and we persist changes back.
     zoom_applied: bool,
+    /// Deadline for delayed startup music ([sound] startup_music_delay_ms);
+    /// None once played, or when startup music is off. The player is !Send,
+    /// so the frame loop fires this instead of a timer thread — same
+    /// reasoning as the TUI runtime's deferred deadline.
+    startup_music_at: Option<std::time::Instant>,
     /// Title font size currently applied to the egui style; None forces
     /// a re-apply on the next frame.
     applied_title_font_size: Option<f32>,
@@ -416,6 +420,23 @@ impl VellumGuiApp {
 
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
+
+        // Startup music, exactly like the TUI runtime: play now, or arm a
+        // deadline the frame loop fires.
+        let mut startup_music_at = None;
+        if app_core.config.sound.startup_music && app_core.sound_player.is_some() {
+            let delay_ms = app_core.config.sound.startup_music_delay_ms;
+            if delay_ms > 0 {
+                startup_music_at = Some(
+                    std::time::Instant::now() + std::time::Duration::from_millis(delay_ms),
+                );
+            } else if let Some(ref player) = app_core.sound_player {
+                if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
+                    tracing::debug!("Startup music not available: {e}");
+                }
+            }
+        }
+
         Ok(Self {
             app_core,
             _runtime: runtime,
@@ -454,6 +475,7 @@ impl VellumGuiApp {
             tab_settings,
             tab_groups,
             zoom_applied: false,
+            startup_music_at,
             applied_title_font_size: None,
             applied_density: None,
             settings_editor: None,
@@ -3275,6 +3297,22 @@ impl eframe::App for VellumGuiApp {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
         self.capture_main_viewport(&ctx);
+        // Fire delayed startup music once its deadline passes; ask egui for
+        // a frame at the deadline so a slow idle repaint can't stretch the
+        // configured delay.
+        if let Some(at) = self.startup_music_at {
+            let now = std::time::Instant::now();
+            if now >= at {
+                self.startup_music_at = None;
+                if let Some(ref player) = self.app_core.sound_player {
+                    if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
+                        tracing::debug!("Startup music not available: {e}");
+                    }
+                }
+            } else {
+                ctx.request_repaint_after(at - now);
+            }
+        }
         // Publish the configured item-drag modifier for link renderers.
         ctx.data_mut(|data| {
             data.insert_temp(

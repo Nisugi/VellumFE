@@ -68,11 +68,6 @@ impl Indicator {
         self.active = active;
     }
 
-    /// Set the status string (converts to boolean - any non-empty string is "on")
-    pub fn set_status(&mut self, status: &str) {
-        self.active = !status.is_empty();
-    }
-
     /// Set custom colors for off and on states
     pub fn set_colors(&mut self, off_color: String, on_color: String) {
         self.off_color = off_color;
@@ -205,9 +200,6 @@ impl Indicator {
         }
     }
 
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        self.render(area, buf);
-    }
 }
 
 #[cfg(test)]
@@ -245,24 +237,6 @@ mod tests {
         let mut buf = Buffer::empty(area);
         indicator.render(area, &mut buf);
 
-        let line = buffer_line(&buf, 0, area.width);
-        assert!(line.contains("On"));
-    }
-
-    #[test]
-    fn test_set_status_controls_active_state() {
-        let mut indicator = Indicator::new("On");
-
-        indicator.set_status("");
-        let area = Rect::new(0, 0, 5, 1);
-        let mut buf = Buffer::empty(area);
-        indicator.render(area, &mut buf);
-        let line = buffer_line(&buf, 0, area.width);
-        assert!(line.trim().is_empty());
-
-        indicator.set_status("standing");
-        let mut buf = Buffer::empty(area);
-        indicator.render(area, &mut buf);
         let line = buffer_line(&buf, 0, area.width);
         assert!(line.contains("On"));
     }

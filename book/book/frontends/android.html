@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "../searchindex-b2b40ef9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-c3d5192d.js"></script>
+        <script src="../toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,10 +194,18 @@ game (all GemStone IV and DragonRealms worlds), or tap a saved profile.</p>
 encrypted with a hardware-backed key in the Android Keystore — the saved
 file is unreadable off the device.</p>
 <blockquote>
-<p><strong>No Lich on the phone.</strong> The app connects via direct eAccess only.
-If your setup depends on Lich scripts, run the session on your PC
-instead and join it from the phone via the
-<a href="./web.html">mobile web frontend</a>.</p>
+<p><strong>Lich never runs on the phone</strong>, but scripted characters still work:
+the login screen’s <strong>Lich</strong> tab attaches to a Lich session running on
+your PC (launch Lich with <code>--detachable-client</code>), entered by host and
+port. A <code>vellum://</code> QR code also prefills it (Lich 6’s
+connect-a-device panel will display one — not yet available). See
+<a href="./web.html#connecting-through-lich">Connecting Through Lich</a>.
+Alternatively, run the whole session on the PC and join it from the
+phone: the login screen’s <strong>Remote</strong> tab mirrors a desktop VellumFE
+session in-app (run <code>.webinfo</code> on the PC and scan the app QR; the
+pairing is Keystore-sealed like saved logins) — see
+<a href="./web.html#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone</a> —
+or use the <a href="./web.html">mobile web frontend</a> in the phone’s browser.</p>
 </blockquote>
 <h2 id="playing"><a class="header" href="#playing">Playing</a></h2>
 <p>The interface is the <a href="./web.html">mobile web client</a> — story pane, stream
@@ -235,7 +243,7 @@ on Android 8–9, update <strong>Chrome</strong>, which provides the engine ther
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../configuration/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../frontends/ios.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -249,7 +257,7 @@ on Android 8–9, update <strong>Chrome</strong>, which provides the engine ther
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../configuration/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../frontends/ios.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

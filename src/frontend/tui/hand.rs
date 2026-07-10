@@ -17,7 +17,6 @@ use super::crossterm_bridge;
 /// Shows icon + text for a single hand (e.g., "L: item name")
 pub struct Hand {
     label: String,
-    hand_type: HandType,
     content: String,
     icon: String, // Configurable icon (e.g., "L:", "R:", "S:")
     icon_color: Option<Color>,
@@ -49,7 +48,6 @@ impl Hand {
 
         Self {
             label: label.to_string(),
-            hand_type,
             content: String::new(),
             icon: default_icon.to_string(),
             icon_color: None,
@@ -282,10 +280,6 @@ impl Hand {
                 }
             }
         }
-    }
-
-    pub fn render_with_focus(&self, area: Rect, buf: &mut Buffer, _focused: bool) {
-        self.render(area, buf);
     }
 
     /// Convert mouse position to text coordinates

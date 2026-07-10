@@ -61,3 +61,4 @@
 - [CLI Reference](./reference/cli.md)
 - [FAQ](./reference/faq.md)
 - [Troubleshooting](./reference/troubleshooting.md)
+- [Privacy Policy](./reference/privacy.md)

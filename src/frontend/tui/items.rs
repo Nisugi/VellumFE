@@ -88,15 +88,6 @@ impl Items {
         true
     }
 
-    /// Clear all items
-    pub fn clear(&mut self) {
-        self.widget.clear();
-        self.count = 0;
-        self.object_ids_cache.clear();
-        self.generation += 1;
-        self.update_title();
-    }
-
     fn update_title(&mut self) {
         if self.base_title.is_empty() {
             self.widget.set_title(String::new());
@@ -109,18 +100,6 @@ impl Items {
     pub fn set_title(&mut self, title: &str) {
         self.base_title = title.to_string();
         self.update_title();
-    }
-
-    pub fn get_generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn scroll_up(&mut self, amount: usize) {
-        self.widget.scroll_up(amount);
-    }
-
-    pub fn scroll_down(&mut self, amount: usize) {
-        self.widget.scroll_down(amount);
     }
 
     pub fn set_border_config(&mut self, show: bool, style: Option<String>, color: Option<String>) {
@@ -155,17 +134,6 @@ impl Items {
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.widget.render(area, buf);
-    }
-
-    pub fn render_with_focus(&mut self, area: Rect, buf: &mut Buffer, focused: bool) {
-        self.widget.render_with_focus(area, buf, focused);
-    }
-
-    /// Handle a click at the given coordinates.
-    /// Returns the link data if an item was clicked (for popup menu).
-    pub fn handle_click(&self, y: u16, area: Rect) -> Option<LinkData> {
-        // Delegate to ListWidget's click handling
-        self.widget.handle_click(0, y, area)
     }
 
     /// Convert mouse position to text coordinates
@@ -263,28 +231,10 @@ mod tests {
         }];
 
         items.update_from_state(&objects);
-        let initial_gen = items.get_generation();
 
         // Same state again
         let changed = items.update_from_state(&objects);
         assert!(!changed);
-        assert_eq!(items.get_generation(), initial_gen);
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut items = Items::new("Items");
-        let objects = vec![RoomObject {
-            id: "123".to_string(),
-            name: "a silver ring".to_string(),
-            noun: Some("ring".to_string()),
-        }];
-
-        items.update_from_state(&objects);
-        assert_eq!(items.count, 1);
-
-        items.clear();
-        assert_eq!(items.count, 0);
     }
 
     #[test]

@@ -155,7 +155,12 @@ impl AppCore {
             Self::local_lan_ip().unwrap_or_else(|| self.config.web.bind.clone())
         };
         let url = format!("http://{host}:{port}/#token={token}");
-        self.add_system_message(&format!("Web session URL: {url}"));
+        // Deep link for the iOS/Android apps' Remote login tab: same
+        // server, but paired through the app shell (token lands in the
+        // phone's Keychain/Keystore instead of a browser).
+        let app_url = format!("vellum://remote?host={host}&port={port}&token={token}");
+        self.add_system_message(&format!("Web session URL (browser): {url}"));
+        self.add_system_message(&format!("VellumFE app link: {app_url}"));
         if self.config.web.bind == "127.0.0.1" {
             self.add_system_message(
                 "Note: bind = \"127.0.0.1\" is this PC only. Set [web] bind = \"0.0.0.0\" so phones on your LAN can connect.",
@@ -167,7 +172,7 @@ impl AppCore {
         // A QR drawn with unicode blocks depends on font glyph coverage
         // (the GUI font renders them all as tofu boxes), so render a real
         // SVG QR into a local page and pop the default browser instead.
-        match Self::write_pairing_page(&url) {
+        match Self::write_pairing_page(&url, &app_url) {
             Ok(path) => {
                 if crate::platform::open_url(&path.to_string_lossy()).is_ok() {
                     self.add_system_message("Opened the pairing QR in your browser.");
@@ -185,27 +190,39 @@ impl AppCore {
         }
     }
 
-    /// Write ~/.vellum-fe/pair.html: a dark page with a scannable SVG QR
-    /// and the URL. Lives next to web-token — same trust domain.
-    fn write_pairing_page(url: &str) -> Result<std::path::PathBuf> {
+    /// Write ~/.vellum-fe/pair.html: a dark page with two scannable SVG
+    /// QRs — the browser URL and the app deep link — plus the URLs. Lives
+    /// next to web-token — same trust domain.
+    fn write_pairing_page(url: &str, app_url: &str) -> Result<std::path::PathBuf> {
         use anyhow::Context as _;
-        let code = qrcode::QrCode::new(url.as_bytes()).context("QR encode failed")?;
-        let svg = code
-            .render::<qrcode::render::svg::Color>()
-            .min_dimensions(320, 320)
-            .dark_color(qrcode::render::svg::Color("#000000"))
-            .light_color(qrcode::render::svg::Color("#ffffff"))
-            .build();
+        fn qr_svg(data: &str) -> Result<String> {
+            use anyhow::Context as _;
+            let code = qrcode::QrCode::new(data.as_bytes()).context("QR encode failed")?;
+            Ok(code
+                .render::<qrcode::render::svg::Color>()
+                .min_dimensions(320, 320)
+                .dark_color(qrcode::render::svg::Color("#000000"))
+                .light_color(qrcode::render::svg::Color("#ffffff"))
+                .build())
+        }
+        let browser_svg = qr_svg(url)?;
+        let app_svg = qr_svg(app_url)?;
         let html = format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">\
              <title>VellumFE pairing</title>\
              <style>body{{background:#111318;color:#d6d6d6;font-family:ui-monospace,Consolas,monospace;\
-             display:flex;flex-direction:column;align-items:center;gap:18px;padding-top:6vh}}\
+             display:flex;flex-wrap:wrap;justify-content:center;align-items:flex-start;gap:32px;padding-top:6vh}}\
+             .card{{display:flex;flex-direction:column;align-items:center;gap:18px;max-width:420px}}\
              .qr{{background:#fff;padding:16px;border-radius:12px}}\
-             a{{color:#d9b44f;word-break:break-all;max-width:80vw}}</style></head>\
-             <body><h2>Scan with your phone</h2><div class=\"qr\">{svg}</div>\
-             <a href=\"{url}\">{url}</a>\
-             <p>This pairs the phone with every VellumFE session on this PC.</p>\
+             a{{color:#d9b44f;word-break:break-all;max-width:80vw}}\
+             .foot{{flex-basis:100%;text-align:center}}</style></head>\
+             <body>\
+             <div class=\"card\"><h2>VellumFE app</h2><div class=\"qr\">{app_svg}</div>\
+             <a href=\"{app_url}\">{app_url}</a>\
+             <p>Scan with the phone camera — opens the app's Remote tab.</p></div>\
+             <div class=\"card\"><h2>Phone browser</h2><div class=\"qr\">{browser_svg}</div>\
+             <a href=\"{url}\">{url}</a></div>\
+             <p class=\"foot\">Either pairs the phone with every VellumFE session on this PC.</p>\
              </body></html>"
         );
         let path = crate::config::Config::base_dir()?.join("pair.html");

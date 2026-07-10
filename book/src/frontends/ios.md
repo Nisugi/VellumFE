@@ -29,6 +29,11 @@ Scanning a `vellum://` QR code opens the app with the Lich tab
 prefilled. Lich 6's connect-a-device panel will display one (not yet
 available); until then, enter the host and port manually.
 
+The third tab, **Remote**, turns the phone into a second screen for a
+VellumFE session running on your PC — run `.webinfo` there and scan the
+app QR. The pairing token is kept in the Keychain like saved logins. See
+[Remote: a desktop session on your phone](./web.md#remote-a-desktop-session-on-your-phone-apps-only).
+
 ## Playing
 
 The interface is the [mobile web client](./web.md) — story pane, stream

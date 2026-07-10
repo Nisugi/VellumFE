@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-2fd63cd2.js";
+            window.path_to_searchindex_js = "searchindex-b2b40ef9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c3d5192d.js"></script>
+        <script src="toc-f5efc91a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,12 +180,13 @@
                     <main>
                         <h1 id="vellumfe"><a class="header" href="#vellumfe">VellumFE</a></h1>
 <p>A modern client for GemStone IV (and DragonRealms), built in Rust.</p>
-<p>One core, four ways to play:</p>
+<p>One core, five ways to play:</p>
 <ul>
 <li><strong>Terminal (TUI)</strong> — the default. Runs in any modern terminal.</li>
 <li><strong>Desktop GUI</strong> — native windowed client with graphics and skins (<code>--frontend gui</code>).</li>
 <li><strong>Mobile Web</strong> — your phone’s browser joins a desktop session as a second screen, or runs the whole show against a headless host.</li>
 <li><strong>Android App</strong> — the entire client on your phone, no PC required.</li>
+<li><strong>iOS App</strong> — the same, for iPhone (beta, via TestFlight).</li>
 </ul>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
@@ -261,6 +262,7 @@ vellum-fe --direct --account ACCOUNT --character YourName --game prime
 <tr><td>macOS</td><td><code>vellum-fe-macos.tar.gz</code></td></tr>
 <tr><td>Linux</td><td><code>vellum-fe-linux.tar.gz</code></td></tr>
 <tr><td>Android</td><td><code>vellum-fe-android-arm64.apk</code></td></tr>
+<tr><td>iOS</td><td>TestFlight (beta) — not a release download; see <a href="#ios-app-beta">iOS App</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -300,7 +302,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.1</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.4</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -475,6 +477,7 @@ configuration, highlights, keybinds, themes, and dot-commands.</p>
 <tr><td><a href="#mobile-web">Mobile Web</a></td><td><code>[web]</code> config or <code>--web-port</code></td><td>Your phone joins a <em>desktop session</em> as a second screen</td></tr>
 <tr><td><a href="#headless-mode">Headless</a></td><td><code>--frontend headless</code></td><td>No local UI — a browser is the whole interface</td></tr>
 <tr><td><a href="#android-app">Android App</a></td><td>sideloaded APK</td><td>The whole client on your phone, no PC at all</td></tr>
+<tr><td><a href="#ios-app-beta">iOS App</a></td><td>TestFlight (beta)</td><td>Same as Android, for iPhone</td></tr>
 </tbody>
 </table>
 </div>
@@ -484,7 +487,7 @@ configuration, highlights, keybinds, themes, and dot-commands.</p>
 <li><strong>PC hosts, phone joins</strong>: run TUI/GUI with the web server enabled —
 the phone is a second controller for the same session.</li>
 <li><strong>No PC</strong>: headless mode on any machine with a browser pointed at it,
-or the Android app, which bundles the core and the web UI into one
+or the Android/iOS apps, which bundle the core and the web UI into one
 phone app.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -527,6 +530,14 @@ config files, so changes carry over if you switch frontends.</p>
 (window positions, zoom, fonts) in <code>~/.vellum-fe/gui/</code>, separate from the
 TUI’s layout.toml. Window size, position, and zoom are restored between
 sessions automatically.</p>
+<p><code>.savelayout &lt;name&gt;</code> / <code>.loadlayout &lt;name&gt;</code> / <code>.layouts</code> work here too,
+on GUI-native layouts: save the current arrangement as a named
+checkpoint (say, <code>combat</code> vs <code>town</code>), then swap with one command.
+Loading applies instantly — windows, zones, tab groups, detached
+windows, fonts, zoom — and later rearranging never rewrites a
+checkpoint; only an explicit <code>.savelayout</code> does. TUI <code>.toml</code> layouts
+are a separate format and can’t be loaded here (<code>.resize</code> is also
+TUI-only).</p>
 <h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
 <p>The GUI arranges windows in five zones: header, footer, left sidebar,
 center, and right sidebar. Toggle zones from the top toolbar.</p>
@@ -536,11 +547,47 @@ center, and right sidebar. Toggle zones from the top toolbar.</p>
 <li><strong>Resize</strong>: drag any window edge or corner.</li>
 <li><strong>Add/hide windows</strong>: the <strong>Windows</strong> menu in the toolbar — add from
 categorized templates, toggle visibility, or reassign a window’s zone.</li>
-<li><strong>Right-click</strong> a window body for its context menu; title bars can be
-hidden per-window.</li>
+<li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
+Window…</strong>, which opens the window editor; title bars can be hidden
+per-window.</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit.</li>
 </ul>
+<h2 id="the-window-editor"><a class="header" href="#the-window-editor">The Window Editor</a></h2>
+<p>Right-click a window → <strong>Edit Window…</strong> (or <code>.editwindow</code>) to configure
+it in place. Beyond title, streams, and buffer size, the editor exposes:</p>
+<ul>
+<li><strong>Text windows</strong>: per-line <strong>timestamps</strong> (with an at-line-start
+toggle) and <strong>compact</strong> mode (drop blank lines).</li>
+<li><strong>Tabbed windows</strong>: add, remove, rename, and reorder tabs; edit each
+tab’s stream subscriptions; a <strong>Quiet</strong> toggle stops a tab from
+marking unread; per-tab timestamps.</li>
+<li><strong>Progress bars</strong>: bar color (hex or palette picker) and display
+modes (<code>value/max</code> or bare <code>value</code> instead of a filled bar).</li>
+<li><strong>Countdowns</strong>: a <strong>fill color</strong> override (defaults: roundtime red,
+casttime blue).</li>
+<li><strong>Active effects</strong>: category (spells/buffs/debuffs/cooldowns).</li>
+<li><strong>Delete Window</strong> — actually removes the window from the layout
+(unlike hiding, or the <code>.deletewindow</code> command, which only hides).</li>
+</ul>
+<h2 id="custom-windows"><a class="header" href="#custom-windows">Custom Windows</a></h2>
+<p><strong>Windows menu → Add → Custom Window…</strong> opens an authoring panel for
+custom text windows fed by any Lich stream id. Name the window, type
+comma-separated stream ids — or click one from the <strong>streams seen this
+session</strong> list — and it starts collecting that output. The panel also
+edits or deletes existing custom windows. (The TUI can do the same from
+its window editor’s Streams field; <code>Ctrl+P</code> there opens the same
+seen-streams picker.)</p>
+<h2 id="lich-webui-panels"><a class="header" href="#lich-webui-panels">Lich WebUI Panels</a></h2>
+<p>Lich 5.18+ scripts can register live UI pages (<code>;ui</code>). The GUI renders
+those pages as <strong>native docked panels</strong> — real widgets, not an embedded
+browser:</p>
+<pre><code>.webui            # connect to Lich's WebUI and pick from its pages
+.webui &lt;page&gt;     # open a specific script's page as a panel
+.webui off        # disconnect the bridge
+</code></pre>
+<p>Open panels are saved with your layout and reconnect automatically at
+login. Requires a Lich proxy connection (not <code>--direct</code>).</p>
 <h2 id="appearance"><a class="header" href="#appearance">Appearance</a></h2>
 <p>Open <code>.settings</code> → GUI panel:</p>
 <ul>
@@ -584,8 +631,8 @@ server. It works two ways:</p>
 on your PC and the phone joins the <em>same</em> character (a sidecar).</li>
 <li><strong>The whole interface</strong> — <a href="#headless-mode">headless mode</a> runs just the
 core plus the web server; you log in and play entirely from the
-browser. (The <a href="#android-app">Android app</a> packages exactly this into a
-phone app.)</li>
+browser. (The <a href="#android-app">Android</a> and <a href="#ios-app-beta">iOS</a> apps package
+exactly this into a phone app.)</li>
 </ul>
 <h2 id="enabling-desktop-sidecar"><a class="header" href="#enabling-desktop-sidecar">Enabling (Desktop Sidecar)</a></h2>
 <p>In <code>config.toml</code>:</p>
@@ -636,7 +683,8 @@ button resends the last command, and long-pressing it opens a history
 sheet.</li>
 <li><strong>Tap links, nouns, and exits</strong> — context menus open in a bottom
 sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
-tap to move).</li>
+tap to move). It starts bottom-right; hold it about half a second to
+lift and drag it anywhere — the spot is remembered per device.</li>
 <li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
 the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
 panel</strong> with the injury doll, injuries list, hands, character sheet
@@ -646,7 +694,10 @@ attack/look/target menu.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
 <li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable
 floating buttons from <a href="#macrostoml">macros.toml</a>;
-create and edit them from the phone with the rail’s <strong>+</strong> button.</li>
+create and edit them from the phone with the rail’s <strong>+</strong> button. A
+button’s <strong>On tap</strong> behavior can also <em>type into the input</em> instead of
+sending, so word buttons (“go”, “second”, “door”) compose phrases —
+<em>Type, then send</em> submits the composed line in one tap.</li>
 <li><strong>Sound alerts</strong> — highlight sounds play in the browser (toggle in
 Settings; the first sound may need one tap due to autoplay rules).</li>
 <li><strong>Reconnect gracefully</strong> — resumes where you left off, with a “missed
@@ -680,6 +731,52 @@ auto-connect, or give it nothing and it waits at the <strong>browser login
 screen</strong>: enter account/password/character/game, or tap a saved profile
 (shared with the <a href="#the-launcher">desktop Launcher</a>’s
 <code>launcher.toml</code>). “Remember this login” saves the password securely.</p>
+<h3 id="connecting-through-lich"><a class="header" href="#connecting-through-lich">Connecting Through Lich</a></h3>
+<p>The login screen has a <strong>play.net / Lich</strong> toggle. The Lich tab attaches
+to a Lich session already running on another machine — so a headless
+host, the Android app, or the iOS app can still play a fully scripted
+character:</p>
+<ul>
+<li>Launch Lich with <code>--detachable-client</code> on your PC, then enter its
+host and port (an optional label names the saved entry). Saved Lich
+connections reattach with one tap, no password.</li>
+<li><strong>Coming in Lich 6</strong> (not yet available): Lich’s WebUI adds a
+connect-a-device panel showing a <code>vellum://</code> <strong>QR code / link</strong>;
+scanning or tapping it opens the login screen with the Lich tab
+prefilled. It never auto-connects — you always press Connect. The
+app understands <code>vellum://</code> links today; Lich 6 adds the panel that
+displays them.</li>
+<li>The detachable port is unauthenticated, so the form warns when the
+host doesn’t look private. Keep it to home Wi-Fi, Tailscale, or a
+VPN — never the open internet.</li>
+<li>If the link drops, the session reattaches to the same Lich target
+automatically.</li>
+</ul>
+<h3 id="remote-a-desktop-session-on-your-phone-apps-only"><a class="header" href="#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone (apps only)</a></h3>
+<p>Inside the <a href="#android-app">Android</a> and <a href="#ios-app-beta">iOS</a> apps the login
+screen has a third tab, <strong>Remote</strong>. Instead of running a session on the
+phone, it points the app at a <strong>desktop VellumFE</strong>’s web server — the
+same sidecar the browser gets, with the app’s install-once, QR-pairing,
+secure-storage experience. Your PC session keeps its TUI/GUI screen; the
+phone becomes a live second screen for it. Lich’s one-frontend limit
+doesn’t apply — the web sidecar mirrors the session rather than
+replacing its client.</p>
+<ul>
+<li>On the PC, run <code>.webinfo</code>: the pairing page now shows two QR codes.
+Scan the <strong>VellumFE app</strong> one with the phone camera — it opens the
+app’s Remote tab prefilled (host, port, and pairing token). It never
+auto-connects; you always press Connect. Or type the address and token
+by hand.</li>
+<li><strong>Remember this server</strong> keeps the pairing in the phone’s Keychain
+(iOS) / Keystore-sealed storage (Android); reconnecting is one tap
+from then on.</li>
+<li>While on a remote server, the app’s embedded core sits idle — there is
+no game connection on the phone to go stale in the background; the web
+client’s usual reconnect picks the mirror back up when you return.</li>
+<li>The way back: <strong>⚙ Settings → Leave this server (app login)</strong>.</li>
+<li>Same network rule as everything else on this page: home Wi-Fi,
+Tailscale, or a VPN — never the open internet.</li>
+</ul>
 <p>Headless sessions manage themselves:</p>
 <ul>
 <li>Drops reconnect automatically with backoff; typing again resets it.</li>
@@ -689,8 +786,8 @@ relogging all night.</li>
 <li>If login hangs, a watchdog retries it.</li>
 <li><code>quit</code> (or the logout button) returns to the login screen.</li>
 </ul>
-<p>The login screen only appears in headless/Android mode — a desktop
-sidecar session is controlled from the desktop, as before.</p>
+<p>The login screen only appears in headless and app (Android/iOS) mode — a
+desktop sidecar session is controlled from the desktop, as before.</p>
 <h2 id="tips"><a class="header" href="#tips">Tips</a></h2>
 <ul>
 <li>After editing <code>macros.toml</code> on the PC, run <code>.reloadmacros</code> — connected
@@ -716,10 +813,18 @@ game (all GemStone IV and DragonRealms worlds), or tap a saved profile.</p>
 encrypted with a hardware-backed key in the Android Keystore — the saved
 file is unreadable off the device.</p>
 <blockquote>
-<p><strong>No Lich on the phone.</strong> The app connects via direct eAccess only.
-If your setup depends on Lich scripts, run the session on your PC
-instead and join it from the phone via the
-<a href="#mobile-web">mobile web frontend</a>.</p>
+<p><strong>Lich never runs on the phone</strong>, but scripted characters still work:
+the login screen’s <strong>Lich</strong> tab attaches to a Lich session running on
+your PC (launch Lich with <code>--detachable-client</code>), entered by host and
+port. A <code>vellum://</code> QR code also prefills it (Lich 6’s
+connect-a-device panel will display one — not yet available). See
+<a href="#connecting-through-lich">Connecting Through Lich</a>.
+Alternatively, run the whole session on the PC and join it from the
+phone: the login screen’s <strong>Remote</strong> tab mirrors a desktop VellumFE
+session in-app (run <code>.webinfo</code> on the PC and scan the app QR; the
+pairing is Keystore-sealed like saved logins) — see
+<a href="#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone</a> —
+or use the <a href="#mobile-web">mobile web frontend</a> in the phone’s browser.</p>
 </blockquote>
 <h2 id="playing"><a class="header" href="#playing">Playing</a></h2>
 <p>The interface is the <a href="#mobile-web">mobile web client</a> — story pane, stream
@@ -748,6 +853,47 @@ can grant it later in system battery settings.</li>
 “connecting…”, update <strong>Android System WebView</strong> from the Play Store —
 on Android 8–9, update <strong>Chrome</strong>, which provides the engine there.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ios-app-beta"><a class="header" href="#ios-app-beta">iOS App (Beta)</a></h1>
+<p>A native iOS app that runs the <strong>entire VellumFE client on your
+iPhone — no PC required</strong>. Like the <a href="#android-app">Android app</a>, the same
+Rust core as the desktop app runs inside the app, and the touch-first web
+client is the screen.</p>
+<h2 id="getting-it-1"><a class="header" href="#getting-it-1">Getting It</a></h2>
+<p>iOS builds ship through Apple’s <strong>TestFlight</strong> while in beta — they are
+not downloadable files on the GitHub releases page. Requires iOS 16 or
+newer. See the release notes on
+<a href="https://github.com/Nisugi/VellumFE/releases">GitHub releases</a> for how to
+join the beta.</p>
+<h2 id="logging-in-1"><a class="header" href="#logging-in-1">Logging In</a></h2>
+<p>The login screen is the same as the other mobile frontends: enter
+account, password, character, and game (all GemStone IV and DragonRealms
+worlds), tap a saved profile, or switch to the <strong>Lich</strong> tab to attach to
+a Lich session running on your PC (see
+<a href="#connecting-through-lich">Connecting Through Lich</a>).</p>
+<p>Check <strong>Remember this login</strong> and the password is sealed with a key held
+in the iOS Keychain (device-bound, never in backups) — the saved file is
+unreadable off the device.</p>
+<p>Scanning a <code>vellum://</code> QR code opens the app with the Lich tab
+prefilled. Lich 6’s connect-a-device panel will display one (not yet
+available); until then, enter the host and port manually.</p>
+<p>The third tab, <strong>Remote</strong>, turns the phone into a second screen for a
+VellumFE session running on your PC — run <code>.webinfo</code> there and scan the
+app QR. The pairing token is kept in the Keychain like saved logins. See
+<a href="#remote-a-desktop-session-on-your-phone-apps-only">Remote: a desktop session on your phone</a>.</p>
+<h2 id="playing-1"><a class="header" href="#playing-1">Playing</a></h2>
+<p>The interface is the <a href="#mobile-web">mobile web client</a> — story pane, stream
+chips, tappable exits and nouns, macro rail, side drawers with the injury
+doll and character sheet, sounds, highlight and color editors. Everything
+on that page applies here.</p>
+<h2 id="backgrounding"><a class="header" href="#backgrounding">Backgrounding</a></h2>
+<p>iOS has no equivalent of Android’s foreground service: when the app goes
+to the background, iOS suspends it and the game connection goes stale.
+When you come back, the session <strong>reconnects automatically</strong> and resumes
+where you left off — expect reconnect-on-return rather than Android’s
+keep-alive. As on the other mobile frontends, if the connection drops
+repeatedly with no input from you, the app stops reconnecting rather than
+relogging all night.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h1>
 <p>VellumFE uses TOML files for configuration, stored in <code>~/.vellum-fe/</code>
@@ -1437,6 +1583,9 @@ color3 = "Link Blue"    # palette color name from [[color_palette]]
 <p>Macro buttons for the <a href="#mobile-web">mobile web frontend</a>. These are
 the buttons shown on your phone — the desktop client doesn’t use this file
 (desktop macros live in <a href="#keybindstoml">keybinds.toml</a>).</p>
+<p>You never <em>need</em> to edit this file: everything here can be created and
+edited from the phone itself (the ＋ button on the macro rail). This page
+documents the format for hand-authoring, bulk edits, and version control.</p>
 <p>After editing, apply with <code>.reloadmacros</code> — connected phones update live.</p>
 <h2 id="two-button-shapes"><a class="header" href="#two-button-shapes">Two Button Shapes</a></h2>
 <p><strong>Action button</strong> — has a <code>command</code>, fires immediately on tap:</p>
@@ -1461,6 +1610,37 @@ name = "Basics"
     command = ";go2 gate"
 </code></pre>
 <p><code>command</code> can be anything you could type — including Lich <code>;scripts</code>.</p>
+<h2 id="type-in-buttons-composing-commands"><a class="header" href="#type-in-buttons-composing-commands">Type-in Buttons (Composing Commands)</a></h2>
+<p>Either shape can set <code>insert = true</code>: instead of sending, the tap <strong>types
+the text into the command input</strong>, so a tray of word buttons composes
+phrases tap by tap. Spacing is automatic (<code>go</code> + <code>second</code> → <code>go second</code>).
+A trailing <code>\r</code> means “then press Send” — it submits the whole composed
+line, which makes a good finisher button:</p>
+<pre><code class="language-toml">[[group]]
+name = "Words"
+
+  [[group.button]]
+  label = "go"
+  command = "go"
+  insert = true
+
+  [[group.button]]
+  label = "second"
+  command = "second"
+  insert = true
+
+  # tapping this sends e.g. "go second door" in one go
+  [[group.button]]
+  label = "door"
+  command = "door\r"
+  insert = true
+</code></pre>
+<p>In TOML basic strings <code>"door\r"</code> is a real carriage return — write it
+exactly like that. In the phone editor you never type <code>\r</code>: the <strong>On
+tap</strong> picker offers <em>Send the command</em>, <em>Type into input</em>, and <em>Type,
+then send</em>.</p>
+<p>Type-in taps are handled entirely on the phone (the text never rounds
+through the server as a command), so composing is instant.</p>
 <h2 id="floating-buttons"><a class="header" href="#floating-buttons">Floating Buttons</a></h2>
 <p>Always-visible overlay buttons on the text pane. Tap to fire; hold and drag
 to reposition (positions are remembered per device, not in this file):</p>
@@ -1480,6 +1660,7 @@ y = 0.6
 <tbody>
 <tr><td><code>color</code></td><td>button, option</td><td>Button face color, <code>"#rrggbb"</code></td></tr>
 <tr><td><code>confirm</code></td><td>button, option</td><td>Ask before sending (for dangerous commands)</td></tr>
+<tr><td><code>insert</code></td><td>button, option</td><td>Type into the command input instead of sending; trailing <code>\r</code> submits</td></tr>
 </tbody>
 </table>
 </div>
@@ -1615,6 +1796,13 @@ buffer_size = 10000
 </tbody>
 </table>
 </div>
+<h3 id="custom-streams"><a class="header" href="#custom-streams">Custom Streams</a></h3>
+<p><code>streams</code> isn’t limited to this list — any stream id a Lich script
+pushes can feed a text window, which is how you make a “custom window”
+for a script’s output. You don’t have to guess ids: in the TUI window
+editor, focus the Streams field and press <code>Ctrl+P</code> to pick from the
+streams actually seen this session; the GUI has a dedicated
+<strong>Custom Windows</strong> panel (Windows menu → Add → Custom Window…).</p>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <h3 id="main-window"><a class="header" href="#main-window">Main Window</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -2690,6 +2878,10 @@ f3 = { macro_text = "stance defensive\r" }
 <li>Save changes (applied immediately)</li>
 </ol>
 <p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
+<p>On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code> opens a picker of stream
+ids seen this session — the easy way to wire a window to a Lich script’s
+custom stream (see
+<a href="#custom-streams">Custom Streams</a>).</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>
 <p><code>.menu</code> → Windows → Add Window → [Category] → [Widget]</p>
@@ -2726,6 +2918,10 @@ cols = 60     # Width
 <p>Window positions also auto-save per character. You can switch layouts
 automatically by terminal size with <code>layout_mappings</code> in
 <a href="#configtoml">config.toml</a>.</p>
+<p>The same three commands work in the <a href="#desktop-gui">Desktop GUI</a>
+on its own layout format: named checkpoints of the GUI arrangement,
+saved per character under <code>~/.vellum-fe/gui/</code>, applied live by
+<code>.loadlayout</code>. The two formats don’t cross-load.</p>
 <h2 id="example-layouts"><a class="header" href="#example-layouts">Example Layouts</a></h2>
 <h3 id="hunting-layout"><a class="header" href="#hunting-layout">Hunting Layout</a></h3>
 <pre><code class="language-toml">terminal_width = 160
@@ -2972,6 +3168,10 @@ volume = 0.7              # Master volume
 cooldown_ms = 500         # Min time between sounds
 startup_music = true      # Play music on launch
 </code></pre>
+<p><code>startup_music</code> plays the classic login theme when a TUI or GUI session
+starts. The mobile apps play it too, the first time the login screen
+appears — a <strong>Stop / Don’t play again</strong> bar sits right on the login card,
+and it can be turned back on under <strong>⚙ Settings → Login music</strong>.</p>
 <h2 id="disabling-sounds"><a class="header" href="#disabling-sounds">Disabling Sounds</a></h2>
 <h3 id="all-sounds"><a class="header" href="#all-sounds">All Sounds</a></h3>
 <pre><code class="language-toml">[sound]
@@ -3212,16 +3412,16 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tbody>
 <tr><td><code>.windows</code></td><td></td><td>List all windows</td></tr>
 <tr><td><code>.addwindow [name type x y w [h]]</code></td><td></td><td>Add a window (no args opens a picker)</td></tr>
-<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Delete a window</td></tr>
+<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, the window editor’s Delete Window button removes it for real)</td></tr>
 <tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window (no name opens a picker)</td></tr>
 <tr><td><code>.hidewindow [name]</code></td><td><code>.hidewin</code></td><td>Hide a window</td></tr>
 <tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
 <tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
 <tr><td><code>.lockwindows</code></td><td><code>.lockall</code>, <code>.unlockwindows</code>, <code>.unlockall</code></td><td>Toggle move/resize lock on all windows</td></tr>
-<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout</td></tr>
-<tr><td><code>.loadlayout [name]</code></td><td></td><td>Load a saved layout</td></tr>
-<tr><td><code>.layouts</code></td><td></td><td>List saved layouts</td></tr>
-<tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size</td></tr>
+<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout under a name (each frontend keeps its own: TUI <code>.toml</code> grids, GUI checkpoints)</td></tr>
+<tr><td><code>.loadlayout &lt;name&gt;</code></td><td></td><td>Load a saved layout; in the GUI it applies live to the running session</td></tr>
+<tr><td><code>.layouts</code></td><td></td><td>List saved layouts for this frontend</td></tr>
+<tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size (TUI)</td></tr>
 <tr><td><code>.nexttab</code> / <code>.prevtab</code></td><td></td><td>Switch tabs in a tabbed window</td></tr>
 <tr><td><code>.gonew</code></td><td><code>.nextunread</code></td><td>Jump to the next tab with unread messages</td></tr>
 </tbody>
@@ -3294,7 +3494,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.containers</code></td><td></td><td>Toggle container discovery (LOOK IN a container spawns a window for it)</td></tr>
 <tr><td><code>.hidecontainers [title]</code></td><td></td><td>Close container windows (all, or one by title)</td></tr>
 <tr><td><code>.reloadmacros</code></td><td></td><td>Reload macros.toml and push to connected phones</td></tr>
-<tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL and open its QR code</td></tr>
+<tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL / app link and open their QR codes</td></tr>
+<tr><td><code>.webui [page|off]</code></td><td></td><td>Lich WebUI panels (GUI, Lich 5.18+): no args picks from Lich’s registered pages, a name opens that page, <code>off</code> disconnects</td></tr>
 </tbody>
 </table>
 </div>
@@ -3372,7 +3573,8 @@ RUST_LOG=debug vellum-fe --port 8000
 <h2 id="general-1"><a class="header" href="#general-1">General</a></h2>
 <p><strong>What is VellumFE?</strong>
 A modern, multi-frontend client for GemStone IV built in Rust — terminal
-(TUI), desktop GUI, and a mobile web sidecar, all driving the same core.
+(TUI), desktop GUI, mobile web, and Android/iOS apps, all driving the
+same core.
 DragonRealms is supported by the parser and connection layer but less
 battle-tested.</p>
 <p><strong>Do I need Lich?</strong>
@@ -3380,9 +3582,12 @@ No. VellumFE can connect through Lich (recommended, for scripting) or
 directly via eAccess with <code>--direct</code>. VellumFE itself doesn’t run scripts —
 use Lich for that.</p>
 <p><strong>Can I play without a PC at all?</strong>
-Yes — the <a href="#android-app">Android app</a> runs the whole client on
-your phone, or run <code>--frontend headless</code> on any machine and play from a
-browser. Both connect via direct eAccess (no Lich on the phone).</p>
+Yes — the <a href="#android-app">Android</a> or <a href="#ios-app-beta">iOS</a>
+app runs the whole client on your phone, or run <code>--frontend headless</code> on
+any machine and play from a browser. They connect via direct eAccess, or
+— for scripted characters — the login screen’s <strong>Lich</strong> tab attaches to a
+Lich session running on another machine (Lich itself never runs on the
+phone). See <a href="#connecting-through-lich">Mobile Web</a>.</p>
 <p><strong>Is it free?</strong>
 Yes, open source: <a href="https://github.com/Nisugi/VellumFE">github.com/Nisugi/VellumFE</a>.</p>
 <h2 id="connection-1"><a class="header" href="#connection-1">Connection</a></h2>
@@ -3405,7 +3610,8 @@ See <a href="configuration/README.html">Configuration</a> for the directory layo
 Yes — files in <code>profiles/&lt;name&gt;/</code> override the global ones when you launch
 with <code>--character</code> (or <code>--profile</code>).</p>
 <p><strong>Can I have multiple layouts?</strong>
-Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code>. You can also switch
+Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code> — in both the TUI
+and the GUI (each keeps its own set). In the TUI you can also switch
 automatically by terminal size with <code>layout_mappings</code> in config.toml.</p>
 <p><strong>How do I reset to defaults?</strong>
 Delete the file (or the whole <code>~/.vellum-fe/</code> directory); defaults are
@@ -3503,6 +3709,46 @@ config.toml</li>
 <a href="https://github.com/Nisugi/VellumFE/issues">github.com/Nisugi/VellumFE/issues</a>
 with your version (<code>vellum-fe --version</code>), OS/terminal, and the relevant
 log lines from <code>~/.vellum-fe/vellum-fe.log</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="privacy-policy"><a class="header" href="#privacy-policy">Privacy Policy</a></h1>
+<p><em>Effective date: July 8, 2026</em></p>
+<p>VellumFE is an open-source client for GemStone IV. This policy covers the
+VellumFE applications (desktop, terminal, Android, and iOS) published by the
+VellumFE project.</p>
+<h2 id="what-we-collect"><a class="header" href="#what-we-collect">What we collect</a></h2>
+<p><strong>Nothing.</strong> VellumFE contains no analytics, telemetry, advertising, or
+tracking of any kind. The app makes no network connections other than the
+ones you explicitly initiate to play the game.</p>
+<h2 id="your-login-credentials"><a class="header" href="#your-login-credentials">Your login credentials</a></h2>
+<ul>
+<li>Your play.net account name and password are used solely to authenticate
+with Simutronics’ servers (<code>eaccess.play.net</code>) over an encrypted TLS
+connection, or with a Lich proxy you configure yourself.</li>
+<li>If you enable <strong>Remember this login</strong>, credentials are stored locally on
+your device only. They are never transmitted anywhere except to the game
+servers during login.</li>
+<li>Credentials are removed when you delete the saved login or uninstall the
+app.</li>
+</ul>
+<h2 id="game-traffic"><a class="header" href="#game-traffic">Game traffic</a></h2>
+<p>Everything you type and everything the game sends is exchanged directly
+between your device and Simutronics’ servers (or your own Lich proxy).
+The VellumFE project operates no servers and cannot see your gameplay.
+Your interaction with the game itself is governed by
+<a href="https://www.play.net/">Simutronics’ policies</a>.</p>
+<h2 id="local-data"><a class="header" href="#local-data">Local data</a></h2>
+<p>Settings, window layouts, highlights, and optional session logs are stored
+on your device and never leave it. You can delete them at any time from the
+app or by removing its data.</p>
+<h2 id="third-parties"><a class="header" href="#third-parties">Third parties</a></h2>
+<p>VellumFE embeds no third-party SDKs and shares no data with third parties.</p>
+<h2 id="changes"><a class="header" href="#changes">Changes</a></h2>
+<p>If this policy changes, the updated version will be published at this page
+with a new effective date.</p>
+<h2 id="contact"><a class="header" href="#contact">Contact</a></h2>
+<p>Questions or concerns: open an issue at
+<a href="https://github.com/Nisugi/VellumFE/issues">github.com/Nisugi/VellumFE</a>
+or email <a href="mailto:nisugi.gs4@gmail.com">nisugi.gs4@gmail.com</a>.</p>
 
                     </main>
 
