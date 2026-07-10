@@ -31,6 +31,15 @@ pub struct Room {
 }
 
 impl Room {
+    /// Virtual mapdb rooms that model the urchin-guide teleport network
+    /// (one per town, titled "[Town - Urchin Hideout]", waytos to half the
+    /// district). They are routing data, not places — never mapped.
+    pub fn is_urchin_hideout(&self) -> bool {
+        self.title
+            .iter()
+            .any(|t| t.to_lowercase().contains("urchin hideout"))
+    }
+
     pub fn from_json(value: &Value) -> Option<Room> {
         let obj = value.as_object()?;
         let id = obj.get("id")?.as_u64()? as u32;
@@ -165,6 +174,9 @@ impl MapDb {
             let Some(room) = Room::from_json(value) else {
                 continue;
             };
+            if room.is_urchin_hideout() {
+                continue; // teleport routing node, not a mappable place
+            }
             let Some(location) = room.location.clone() else {
                 continue;
             };
@@ -256,5 +268,30 @@ impl<'a> RoomTable<'a> {
 
     pub fn rooms(&self) -> &'a [Room] {
         self.rooms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urchin_hideouts_are_recognized() {
+        let hideout: Value = serde_json::json!({
+            "id": 30708,
+            "title": ["[Wehnimer's Landing - Urchin Hideout]"],
+            "location": "Wehnimer's Landing",
+            "wayto": {"222": "urchin guide premiumhall nonpremium"},
+            "paths": ["Obvious exits: bwahaha"]
+        });
+        assert!(Room::from_json(&hideout).unwrap().is_urchin_hideout());
+
+        let shop: Value = serde_json::json!({
+            "id": 3672,
+            "title": ["[First Elanith Bank, Teller]"],
+            "location": "Wehnimer's Landing",
+            "wayto": {"3669": "out"}
+        });
+        assert!(!Room::from_json(&shop).unwrap().is_urchin_hideout());
     }
 }
