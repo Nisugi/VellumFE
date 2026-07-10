@@ -13,7 +13,8 @@ use super::mapdb::Room;
 use super::{generate_layout, Layout};
 
 /// Bump when the algorithms change so stale cached layouts regenerate.
-pub const ENGINE_VERSION: u32 = 1;
+/// v2: interiors shelf seats cluster members consecutively.
+pub const ENGINE_VERSION: u32 = 2;
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
