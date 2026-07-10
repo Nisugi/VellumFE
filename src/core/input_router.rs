@@ -23,8 +23,11 @@ pub fn route_input(key: &KeyEvent, mode: &InputMode, config: &Config) -> MenuAct
 fn get_action_context(mode: &InputMode) -> ActionContext {
     match mode {
         // Browser widgets
+        // (HotbarEditor handles raw keys itself; grouped here only so the
+        // context mapping stays total)
         InputMode::HighlightBrowser
         | InputMode::KeybindBrowser
+        | InputMode::HotbarEditor
         | InputMode::ColorPaletteBrowser
         | InputMode::SpellColorsBrowser
         | InputMode::UIColorsBrowser

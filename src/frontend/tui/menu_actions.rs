@@ -192,6 +192,14 @@ pub fn handle_menu_action(
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::KeybindBrowser;
             }
+            "action:hotbars" => {
+                // Open the hotbar editor (bars -> buttons -> button form)
+                frontend.hotbar_editor = Some(
+                    crate::frontend::tui::hotbar_editor::HotbarEditor::new(&app_core.config),
+                );
+                close_all_menus(&mut app_core.ui_state);
+                app_core.ui_state.input_mode = InputMode::HotbarEditor;
+            }
             "action:addkeybind" => {
                 // Open keybind form for creating new keybind
                 frontend.keybind_form =

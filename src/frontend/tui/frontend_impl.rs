@@ -554,6 +554,9 @@ impl Frontend for TuiFrontend {
             if let Some(ref mut keybind_form) = self.keybind_form {
                 keybind_form.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
             }
+            if let Some(ref mut hotbar_editor) = self.hotbar_editor {
+                hotbar_editor.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
+            }
             if let Some(ref mut color_palette_browser) = self.color_palette_browser {
                 color_palette_browser.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
             }

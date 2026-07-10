@@ -2355,6 +2355,80 @@ impl TuiFrontend {
                 }
                 return Ok(None);
             }
+            InputMode::HotbarEditor => {
+                if let Some(mut editor) = self.hotbar_editor.take() {
+                    let ct_event = crossterm::event::KeyEvent::new(
+                        super::crossterm_bridge::to_crossterm_keycode(code),
+                        super::crossterm_bridge::to_crossterm_modifiers(modifiers),
+                    );
+                    match editor.handle_key(ct_event, &app_core.config) {
+                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::None => {
+                            self.hotbar_editor = Some(editor);
+                        }
+                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::Close => {
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                        }
+                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::SaveBar(
+                            bar,
+                            is_global,
+                        ) => {
+                            match crate::config::Config::save_hotbar(
+                                &bar,
+                                is_global,
+                                app_core.config.character.as_deref(),
+                            ) {
+                                Ok(()) => app_core.reload_hotbars(),
+                                Err(e) => app_core.add_system_message(&format!(
+                                    "Failed to save hotbar: {}",
+                                    e
+                                )),
+                            }
+                            editor.refresh_bars(&app_core.config);
+                            self.hotbar_editor = Some(editor);
+                        }
+                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::DeleteBar(
+                            name,
+                        ) => {
+                            let character = app_core.config.character.clone();
+                            let (in_global, in_character) =
+                                crate::config::Config::hotbar_scope(&name, character.as_deref());
+                            let mut failed = false;
+                            if in_character {
+                                if let Err(e) = crate::config::Config::delete_hotbar(
+                                    &name,
+                                    false,
+                                    character.as_deref(),
+                                ) {
+                                    app_core.add_system_message(&format!(
+                                        "Failed to delete hotbar: {}",
+                                        e
+                                    ));
+                                    failed = true;
+                                }
+                            }
+                            if in_global && !failed {
+                                if let Err(e) = crate::config::Config::delete_hotbar(
+                                    &name,
+                                    true,
+                                    character.as_deref(),
+                                ) {
+                                    app_core.add_system_message(&format!(
+                                        "Failed to delete hotbar: {}",
+                                        e
+                                    ));
+                                }
+                            }
+                            app_core.reload_hotbars();
+                            editor.refresh_bars(&app_core.config);
+                            self.hotbar_editor = Some(editor);
+                        }
+                    }
+                    app_core.needs_render = true;
+                } else {
+                    app_core.ui_state.input_mode = InputMode::Normal;
+                }
+                return Ok(None);
+            }
             InputMode::ColorPaletteBrowser => {
                 if let Some(ref mut browser) = self.color_palette_browser {
                     let key_event = crate::data::input::KeyEvent { code, modifiers };

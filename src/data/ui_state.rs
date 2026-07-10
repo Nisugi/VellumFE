@@ -175,6 +175,8 @@ pub enum InputMode {
     KeybindBrowser,
     /// Keybind form is open (create/edit keybind)
     KeybindForm,
+    /// Hotbar editor is open (bars -> buttons -> button form)
+    HotbarEditor,
     /// Color palette browser is open
     ColorPaletteBrowser,
     /// Color form is open (create/edit palette color)
