@@ -100,6 +100,7 @@ Widgets are defined in layout.toml and rendered based on type:
 | `indicator` | indicator.rs | Status indicators (kneeling, hidden) |
 | `dashboard` | dashboard.rs | Character stats grid |
 | `spacer` | spacer.rs | Layout spacing (1x1 minimum) |
+| `hotkeybar` | hotkey_bar.rs | Command buttons with condition-driven styling + countdowns (hotbars.toml, `.hotbars` editor) |
 
 ### Adding New Widget Types
 
@@ -115,6 +116,7 @@ Config files stored in `~/.vellum-fe/` (or `VELLUM_FE_DIR` env var):
 - `config.toml` - Main settings (connection, UI options)
 - `layout.toml` - Window positions and sizes
 - `keybinds.toml` - Key bindings
+- `hotbars.toml` - Hotkey bar definitions (bars of command buttons)
 - `highlights.toml` - Text highlighting rules
 - `colors.toml` - Color palette
 

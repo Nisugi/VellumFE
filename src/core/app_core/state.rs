@@ -2054,7 +2054,7 @@ impl AppCore {
         self.add_system_message("  .version / .ver         - Show version info");
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
-        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|settings|colors)");
+        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("");
 
         // Layout commands
@@ -2104,6 +2104,12 @@ impl AppCore {
         self.add_system_message("  .savekeybinds [name]    - Save keybinds as profile (default: 'default')");
         self.add_system_message("  .loadkeybinds <name>    - Load keybinds from profile");
         self.add_system_message("  .keybindprofiles        - List saved keybind profiles");
+        self.add_system_message("");
+
+        // Hotbars
+        self.add_system_message("HOTBARS:");
+        self.add_system_message("  .hotbars / .hotbar      - Open hotbar editor (bars of command buttons)");
+        self.add_system_message("    Add a bar to a layout with a 'hotkeybar' window (.addwindow)");
         self.add_system_message("");
 
         // Colors
