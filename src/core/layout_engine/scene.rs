@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::direction::DirectionMap;
 use super::mapdb::RoomTable;
+use super::overrides::group_anchor_key;
 use super::positioner::Cell;
 use super::Layout;
 
@@ -84,6 +85,12 @@ pub struct MapScene {
     pub interiors: SheetScene,
     /// room id → (sheet, index into that sheet's `rooms`).
     pub room_index: HashMap<u32, (Sheet, usize)>,
+    /// Group index → its sheet frame offset (base_offset), for translating
+    /// final cells back into group-relative coordinates when editing.
+    pub group_offsets: HashMap<usize, Cell>,
+    /// Group index → stable anchor key (lowest uid, fallback lowest id) —
+    /// the key group overrides are stored under.
+    pub group_anchors: HashMap<usize, i64>,
 }
 
 impl MapScene {
@@ -144,6 +151,12 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
     // Rooms.
     for group in &layout.groups {
         let sheet = sheet_of(group.index);
+        scene
+            .group_offsets
+            .insert(group.index, group.base_offset.unwrap_or_default());
+        scene
+            .group_anchors
+            .insert(group.index, group_anchor_key(group, lookup));
         for &id in &group.room_ids {
             let room = lookup.get(id);
             let scene_room = SceneRoom {

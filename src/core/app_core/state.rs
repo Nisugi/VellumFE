@@ -216,13 +216,13 @@ impl AppCore {
         let keybind_map = Self::build_keybind_map(&config);
 
         let layout_theme = layout.theme.clone();
-        let map_cache_dir = Config::base_dir()
-            .map(|d| d.join("cache").join("layouts"))
-            .unwrap_or_else(|_| std::path::PathBuf::from("cache/layouts"));
+        let map_base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let map_cache_dir = map_base.join("cache").join("layouts");
+        let map_overrides_path = map_base.join("map_overrides.json");
 
         let mut app = Self {
             config,
-            map: crate::core::map_service::MapService::new(map_cache_dir),
+            map: crate::core::map_service::MapService::new(map_cache_dir, map_overrides_path),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),

@@ -207,3 +207,73 @@ fn real_lich_mapdb_end_to_end() {
         );
     }
 }
+
+#[test]
+fn overrides_shift_groups_pin_rooms_and_skip_orphans() {
+    use vellum_fe::core::layout_engine::{overrides, LocationOverrides, RoomTable};
+
+    let rooms = load_rooms("moonsedge");
+    let mut owned = rooms.clone();
+    let layout = generate_layout(&mut owned);
+    let lookup = RoomTable::new(&owned);
+
+    let group = &layout.groups[0];
+    let anchor = overrides::group_anchor_key(group, &lookup);
+    let room_id = group.room_ids[0];
+    let room_key = overrides::room_key(room_id, &lookup);
+    let before = group.final_cell(room_id);
+
+    let mut ov = LocationOverrides::default();
+    ov.group_offsets.insert(
+        anchor,
+        vellum_fe::core::layout_engine::Cell { x: 5, y: -3 },
+    );
+    ov.names.insert(anchor, "Curated Name".into());
+    // Orphaned entries: anchors that resolve to nothing must be skipped.
+    ov.group_offsets.insert(
+        999_999_999_999,
+        vellum_fe::core::layout_engine::Cell { x: 1, y: 1 },
+    );
+    ov.room_pins.insert(
+        999_999_999_998,
+        vellum_fe::core::layout_engine::Cell { x: 0, y: 0 },
+    );
+
+    let mut curated = layout.clone();
+    overrides::apply(&mut curated, &lookup, &ov);
+
+    let after = curated.groups[0].final_cell(room_id);
+    assert_eq!((after.x - before.x, after.y - before.y), (5, -3));
+    assert_eq!(curated.groups[0].name.as_deref(), Some("Curated Name"));
+
+    // Room pin: place the room at a fixed group-relative cell.
+    let mut ov2 = LocationOverrides::default();
+    ov2.room_pins.insert(
+        room_key,
+        vellum_fe::core::layout_engine::Cell { x: 40, y: 40 },
+    );
+    let mut pinned = layout.clone();
+    overrides::apply(&mut pinned, &lookup, &ov2);
+    assert_eq!(
+        pinned.groups[0].positions[&room_id],
+        vellum_fe::core::layout_engine::Cell { x: 40, y: 40 }
+    );
+
+    // The pristine layout is untouched (overrides never mutate the cache).
+    assert_eq!(layout.groups[0].final_cell(room_id), before);
+
+    // Roundtrip the store.
+    let path = std::env::temp_dir().join(format!(
+        "vellum-map-overrides-test-{}.json",
+        std::process::id()
+    ));
+    let mut store = vellum_fe::core::layout_engine::MapOverrides::default();
+    store.locations.insert("Moonsedge".into(), ov);
+    overrides::save(&path, &store).expect("save overrides");
+    let loaded = overrides::load(&path);
+    assert_eq!(
+        loaded.locations["Moonsedge"].group_offsets[&anchor],
+        vellum_fe::core::layout_engine::Cell { x: 5, y: -3 }
+    );
+    let _ = std::fs::remove_file(&path);
+}

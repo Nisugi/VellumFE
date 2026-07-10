@@ -1,0 +1,140 @@
+//! Human curation overrides (spec §8): a sparse, uid-keyed diff applied
+//! AFTER generation. Cached layouts stay pristine; overrides survive mapdb
+//! renumbering because keys are game uids (Lich ids only as a fallback for
+//! uid-less rooms — uids are ≥ 7 digits, so the key spaces never collide).
+//! Orphaned overrides (anchor no longer resolves) are skipped silently: the
+//! solver's placement shows.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use super::mapdb::RoomTable;
+use super::positioner::{Cell, Group};
+use super::Layout;
+
+/// All override state, one section per location.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapOverrides {
+    #[serde(default)]
+    pub locations: HashMap<String, LocationOverrides>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LocationOverrides {
+    /// Group offset delta (cells), keyed by the group's anchor
+    /// (lowest room uid in the group; fallback lowest room id).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub group_offsets: HashMap<i64, Cell>,
+    /// Room position pin, relative to its group's frame (the group's
+    /// internal coordinates), keyed by room uid (fallback id).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub room_pins: HashMap<i64, Cell>,
+    /// Display names, keyed by group anchor.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub names: HashMap<i64, String>,
+}
+
+impl LocationOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.group_offsets.is_empty() && self.room_pins.is_empty() && self.names.is_empty()
+    }
+}
+
+/// The stable identity of a group across mapdb builds: its lowest room uid,
+/// or (for uid-less groups) its lowest room id.
+pub fn group_anchor_key(group: &Group, lookup: &RoomTable) -> i64 {
+    group
+        .room_ids
+        .iter()
+        .filter_map(|&id| lookup.get(id).and_then(|r| r.uid.first().copied()))
+        .min()
+        .unwrap_or_else(|| group.room_ids.iter().copied().min().unwrap_or(0) as i64)
+}
+
+/// A room's override key: its uid, or its id when it has none.
+pub fn room_key(id: u32, lookup: &RoomTable) -> i64 {
+    lookup
+        .get(id)
+        .and_then(|r| r.uid.first().copied())
+        .unwrap_or(id as i64)
+}
+
+/// Apply a location's overrides to a freshly generated (or cache-loaded)
+/// layout. Group offsets shift the whole group's frame; room pins replace a
+/// room's internal position; names replace group names.
+pub fn apply(layout: &mut Layout, lookup: &RoomTable, ov: &LocationOverrides) {
+    if ov.is_empty() {
+        return;
+    }
+    // Anchor → group index, resolved against this build's groups.
+    let mut by_anchor: HashMap<i64, usize> = HashMap::new();
+    for group in &layout.groups {
+        by_anchor.insert(group_anchor_key(group, lookup), group.index);
+    }
+
+    for (&anchor, &delta) in &ov.group_offsets {
+        let Some(&idx) = by_anchor.get(&anchor) else {
+            continue; // orphaned: mapdb no longer has this group
+        };
+        if let Some(off) = &mut layout.groups[idx].base_offset {
+            off.x += delta.x;
+            off.y += delta.y;
+        }
+    }
+
+    for (&anchor, name) in &ov.names {
+        if let Some(&idx) = by_anchor.get(&anchor) {
+            layout.groups[idx].name = Some(name.clone());
+        }
+    }
+
+    if !ov.room_pins.is_empty() {
+        // room key → (group, room id) for every placed room.
+        let mut keys: HashMap<i64, (usize, u32)> = HashMap::new();
+        for group in &layout.groups {
+            for &id in &group.room_ids {
+                keys.insert(room_key(id, lookup), (group.index, id));
+            }
+        }
+        for (&key, &pin) in &ov.room_pins {
+            let Some(&(idx, id)) = keys.get(&key) else {
+                continue;
+            };
+            layout.groups[idx].positions.insert(id, pin);
+        }
+    }
+}
+
+pub fn load(path: &Path) -> MapOverrides {
+    match std::fs::read_to_string(path) {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_else(|e| {
+            tracing::warn!("map overrides unreadable ({e}); starting fresh");
+            MapOverrides::default()
+        }),
+        Err(_) => MapOverrides::default(),
+    }
+}
+
+pub fn save(path: &Path, overrides: &MapOverrides) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(overrides)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_overrides_are_a_noop_shape() {
+        let ov = LocationOverrides::default();
+        assert!(ov.is_empty());
+    }
+}

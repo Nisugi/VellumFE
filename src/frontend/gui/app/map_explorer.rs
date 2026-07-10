@@ -6,7 +6,8 @@
 use eframe::egui::{self, Pos2, Rect, Sense, Vec2, ViewportBuilder, ViewportId};
 
 use crate::core::layout_engine::scene::Sheet;
-use crate::core::map_service::DbState;
+use crate::core::layout_engine::Cell;
+use crate::core::map_service::{DbState, OverrideEdit};
 use crate::frontend::gui::map_view::{self, MapCamera, MapStyle};
 
 use super::VellumGuiApp;
@@ -26,6 +27,20 @@ pub(super) struct MapExplorerState {
     last_revision: u64,
     /// The camera was pointed at something meaningful for this location.
     centered: bool,
+    /// Override editing: drags move groups (Alt: single room) and write the
+    /// uid-keyed override diff.
+    edit_mode: bool,
+    drag: Option<DragState>,
+    rename_buffer: String,
+}
+
+/// An in-flight edit drag; committed as one override edit on release.
+struct DragState {
+    group: usize,
+    /// Set when Alt was held at drag start: move just this room.
+    room: Option<u32>,
+    /// Accumulated pointer travel in pixels.
+    accum: Vec2,
 }
 
 impl Default for MapExplorerState {
@@ -41,6 +56,9 @@ impl Default for MapExplorerState {
             filter: String::new(),
             last_revision: 0,
             centered: false,
+            edit_mode: false,
+            drag: None,
+            rename_buffer: String::new(),
         }
     }
 }
@@ -50,6 +68,7 @@ struct ExplorerOutput {
     close: bool,
     walk_to: Option<u32>,
     request_location: Option<String>,
+    override_edit: Option<OverrideEdit>,
 }
 
 impl VellumGuiApp {
@@ -118,6 +137,9 @@ impl VellumGuiApp {
         }
         if let Some(id) = out.walk_to {
             self.dispatch_raw_command(format!(";go2 {id}"));
+        }
+        if let Some(edit) = out.override_edit {
+            self.app_core.map.apply_override_edit(edit);
         }
     }
 
@@ -225,6 +247,32 @@ impl VellumGuiApp {
                 }
                 ui.label(format!("{:.0} px/cell", ex.px_per_cell));
 
+                ui.separator();
+                ui.toggle_value(&mut ex.edit_mode, "Edit")
+                    .on_hover_text("Drag a group to move it (Alt: single room); edits save as overrides");
+                if ex.edit_mode {
+                    let count = ex
+                        .location
+                        .as_deref()
+                        .and_then(|loc| map.overrides_for(loc))
+                        .map(|ov| {
+                            ov.group_offsets.len() + ov.room_pins.len() + ov.names.len()
+                        })
+                        .unwrap_or(0);
+                    if count > 0 {
+                        if ui
+                            .button(format!("Reset overrides ({count})"))
+                            .on_hover_text("Drop every override for this location")
+                            .clicked()
+                        {
+                            if let Some(loc) = ex.location.clone() {
+                                out.override_edit =
+                                    Some(OverrideEdit::ResetLocation { location: loc });
+                            }
+                        }
+                    }
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     match map.db_state() {
                         DbState::NotLoaded => {
@@ -312,6 +360,52 @@ impl VellumGuiApp {
                     ex.center =
                         Pos2::new(scene_room.cell.x as f32, scene_room.cell.y as f32);
                 }
+                if ex.edit_mode {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Group").strong());
+                    let scene = ex.location.as_deref().and_then(|loc| map.scene_for(loc));
+                    if let Some((anchor, group)) = scene.and_then(|s| {
+                        s.room(selected)
+                            .and_then(|(_, r)| Some((*s.group_anchors.get(&r.group)?, r.group)))
+                    }) {
+                        let _ = group;
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut ex.rename_buffer);
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("Set name").clicked()
+                                && !ex.rename_buffer.trim().is_empty()
+                            {
+                                out.override_edit = Some(OverrideEdit::GroupName {
+                                    location: ex.location.clone().unwrap_or_default(),
+                                    anchor,
+                                    name: Some(ex.rename_buffer.trim().to_string()),
+                                });
+                            }
+                            if ui.button("Clear name").clicked() {
+                                out.override_edit = Some(OverrideEdit::GroupName {
+                                    location: ex.location.clone().unwrap_or_default(),
+                                    anchor,
+                                    name: None,
+                                });
+                            }
+                        });
+                    }
+                    let key = scene_room.uid.unwrap_or(selected as i64);
+                    let pinned = ex
+                        .location
+                        .as_deref()
+                        .and_then(|loc| map.overrides_for(loc))
+                        .map(|ov| ov.room_pins.contains_key(&key))
+                        .unwrap_or(false);
+                    if pinned && ui.button("Unpin room").clicked() {
+                        out.override_edit = Some(OverrideEdit::RoomPin {
+                            location: ex.location.clone().unwrap_or_default(),
+                            key,
+                            pin: None,
+                        });
+                    }
+                }
                 if let Some(room) = room {
                     ui.separator();
                     ui.label(egui::RichText::new("Exits").strong());
@@ -362,10 +456,131 @@ impl VellumGuiApp {
             let (rect, response) =
                 ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
 
-            // Drag to pan (and stop following — otherwise it snaps back).
+            // A room hit at this screen position (edit-mode drag targets).
+            let room_at = |pos: Pos2| -> Option<&crate::core::layout_engine::scene::SceneRoom> {
+                let half = ((ex.px_per_cell * 0.55).clamp(3.0, 26.0)) / 2.0;
+                sheet.rooms.iter().find(|room| {
+                    let center = rect.center()
+                        + Vec2::new(
+                            (room.cell.x as f32 - ex.center.x) * ex.px_per_cell,
+                            (room.cell.y as f32 - ex.center.y) * ex.px_per_cell,
+                        );
+                    (pos - center).abs().max_elem() <= half
+                })
+            };
+
+            if ex.edit_mode && response.drag_started() {
+                if let Some(room) = response.interact_pointer_pos().and_then(room_at) {
+                    let alt = ui.input(|i| i.modifiers.alt);
+                    ex.drag = Some(DragState {
+                        group: room.group,
+                        room: alt.then_some(room.id),
+                        accum: Vec2::ZERO,
+                    });
+                }
+            }
+
+            // Drag: move an edit target, else pan (and stop following —
+            // otherwise the camera snaps back).
             if response.dragged() && response.drag_delta() != Vec2::ZERO {
-                ex.center -= response.drag_delta() / ex.px_per_cell;
-                ex.follow = false;
+                if let Some(drag) = &mut ex.drag {
+                    drag.accum += response.drag_delta();
+                } else {
+                    ex.center -= response.drag_delta() / ex.px_per_cell;
+                    ex.follow = false;
+                }
+            }
+
+            // Ghost preview of the dragged group/room at the snapped offset.
+            if let Some(drag) = &ex.drag {
+                let delta = Cell {
+                    x: (drag.accum.x / ex.px_per_cell).round() as i32,
+                    y: (drag.accum.y / ex.px_per_cell).round() as i32,
+                };
+                let mut min = Cell { x: i32::MAX, y: i32::MAX };
+                let mut max = Cell { x: i32::MIN, y: i32::MIN };
+                for room in &sheet.rooms {
+                    if room.group != drag.group {
+                        continue;
+                    }
+                    if let Some(only) = drag.room {
+                        if room.id != only {
+                            continue;
+                        }
+                    }
+                    min.x = min.x.min(room.cell.x);
+                    min.y = min.y.min(room.cell.y);
+                    max.x = max.x.max(room.cell.x);
+                    max.y = max.y.max(room.cell.y);
+                }
+                if min.x <= max.x {
+                    let to_screen = |cx: f32, cy: f32| {
+                        rect.center()
+                            + Vec2::new(
+                                (cx - ex.center.x) * ex.px_per_cell,
+                                (cy - ex.center.y) * ex.px_per_cell,
+                            )
+                    };
+                    let pad = ex.px_per_cell * 0.4;
+                    let ghost = Rect::from_min_max(
+                        to_screen((min.x + delta.x) as f32, (min.y + delta.y) as f32),
+                        to_screen((max.x + delta.x) as f32, (max.y + delta.y) as f32),
+                    )
+                    .expand(pad);
+                    ui.painter().with_clip_rect(rect).rect_stroke(
+                        ghost,
+                        4.0,
+                        egui::Stroke::new(2.0, ui.visuals().warn_fg_color),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+
+            // Release: commit the snapped delta as one override edit.
+            if response.drag_stopped() {
+                if let Some(drag) = ex.drag.take() {
+                    let delta = Cell {
+                        x: (drag.accum.x / ex.px_per_cell).round() as i32,
+                        y: (drag.accum.y / ex.px_per_cell).round() as i32,
+                    };
+                    if (delta.x != 0 || delta.y != 0) && ex.location.is_some() {
+                        let location = ex.location.clone().unwrap_or_default();
+                        out.override_edit = Some(match drag.room {
+                            Some(id) => {
+                                let key = scene
+                                    .room(id)
+                                    .and_then(|(_, r)| r.uid)
+                                    .unwrap_or(id as i64);
+                                let group_off = scene
+                                    .group_offsets
+                                    .get(&drag.group)
+                                    .copied()
+                                    .unwrap_or_default();
+                                let final_cell = scene
+                                    .room(id)
+                                    .map(|(_, r)| r.cell)
+                                    .unwrap_or_default();
+                                OverrideEdit::RoomPin {
+                                    location,
+                                    key,
+                                    pin: Some(Cell {
+                                        x: final_cell.x - group_off.x + delta.x,
+                                        y: final_cell.y - group_off.y + delta.y,
+                                    }),
+                                }
+                            }
+                            None => OverrideEdit::GroupOffset {
+                                location,
+                                anchor: scene
+                                    .group_anchors
+                                    .get(&drag.group)
+                                    .copied()
+                                    .unwrap_or_default(),
+                                delta,
+                            },
+                        });
+                    }
+                }
             }
             // Scroll / pinch to zoom, anchored at the pointer.
             if response.hovered() {

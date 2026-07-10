@@ -12,8 +12,10 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
-    build_scene, find_latest_mapdb, Layout, LayoutCache, MapDb, MapScene, RoomTable,
+    build_scene, find_latest_mapdb, overrides, Layout, LayoutCache, LocationOverrides, MapDb,
+    MapOverrides, MapScene, RoomTable,
 };
 
 /// Lich's per-game data subdirectory for a VellumFE game code
@@ -33,7 +35,11 @@ pub fn lich_game_dir_name(game: Option<&str>) -> &'static str {
 
 enum MapJob {
     LoadDb(PathBuf),
-    Generate { location: String, db: Arc<MapDb> },
+    Generate {
+        location: String,
+        db: Arc<MapDb>,
+        overrides: LocationOverrides,
+    },
 }
 
 enum MapEvent {
@@ -55,6 +61,31 @@ pub enum MapDbSource {
     File(PathBuf),
     /// A Lich per-game data dir (`<lich>/data/GSIV`); newest build wins.
     GameDataDir(PathBuf),
+}
+
+/// One editor action against the override store.
+#[derive(Debug, Clone)]
+pub enum OverrideEdit {
+    /// Accumulate a group frame shift (cells); a net zero removes the entry.
+    GroupOffset {
+        location: String,
+        anchor: i64,
+        delta: Cell,
+    },
+    /// Pin (or unpin with `None`) a room, group-relative.
+    RoomPin {
+        location: String,
+        key: i64,
+        pin: Option<Cell>,
+    },
+    /// Rename (or reset with `None`) a group.
+    GroupName {
+        location: String,
+        anchor: i64,
+        name: Option<String>,
+    },
+    /// Drop every override for the location.
+    ResetLocation { location: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +119,9 @@ pub struct MapService {
     last_uid: Option<i64>,
     last_lich_id: Option<u32>,
 
+    overrides: MapOverrides,
+    overrides_path: PathBuf,
+
     pub current_location: Option<String>,
     /// Lich room id of the current room (layouts and `;go2` speak room ids).
     pub current_room_id: Option<u32>,
@@ -97,7 +131,8 @@ pub struct MapService {
 }
 
 impl MapService {
-    pub fn new(cache_dir: PathBuf) -> MapService {
+    pub fn new(cache_dir: PathBuf, overrides_path: PathBuf) -> MapService {
+        let loaded_overrides = overrides::load(&overrides_path);
         let (job_tx, job_rx) = mpsc::channel::<MapJob>();
         let (event_tx, event_rx) = mpsc::channel::<MapEvent>();
         let worker = std::thread::Builder::new()
@@ -112,13 +147,18 @@ impl MapService {
                                 Err(e) => Err(format!("{}: {e}", path.display())),
                             })
                         }
-                        MapJob::Generate { location, db } => {
+                        MapJob::Generate {
+                            location,
+                            db,
+                            overrides: location_overrides,
+                        } => {
                             let Some(rooms) = db.rooms(&location) else {
                                 continue;
                             };
-                            let (layout, _) = cache.get_or_generate(&location, rooms);
-                            let scene =
-                                build_scene(&location, &layout, &RoomTable::new(rooms));
+                            let (mut layout, _) = cache.get_or_generate(&location, rooms);
+                            let lookup = RoomTable::new(rooms);
+                            overrides::apply(&mut layout, &lookup, &location_overrides);
+                            let scene = build_scene(&location, &layout, &lookup);
                             MapEvent::LayoutReady {
                                 location,
                                 layout: Arc::new(layout),
@@ -144,6 +184,8 @@ impl MapService {
             layouts: HashMap::new(),
             scenes: HashMap::new(),
             pending: Default::default(),
+            overrides: loaded_overrides,
+            overrides_path,
             last_uid: None,
             last_lich_id: None,
             current_location: None,
@@ -244,9 +286,16 @@ impl MapService {
             return;
         }
         self.pending.insert(location.to_owned());
+        let location_overrides = self
+            .overrides
+            .locations
+            .get(location)
+            .cloned()
+            .unwrap_or_default();
         let _ = self.job_tx.send(MapJob::Generate {
             location: location.to_owned(),
             db,
+            overrides: location_overrides,
         });
     }
 
@@ -270,6 +319,69 @@ impl MapService {
 
     pub fn is_pending(&self, location: &str) -> bool {
         self.pending.contains(location)
+    }
+
+    pub fn overrides_for(&self, location: &str) -> Option<&LocationOverrides> {
+        self.overrides.locations.get(location)
+    }
+
+    /// Apply one editor action to the override store, persist it, and
+    /// regenerate the affected location (cache makes this cheap: the clean
+    /// layout reloads and the new diff re-applies).
+    pub fn apply_override_edit(&mut self, edit: OverrideEdit) {
+        let location = match &edit {
+            OverrideEdit::GroupOffset { location, .. }
+            | OverrideEdit::RoomPin { location, .. }
+            | OverrideEdit::GroupName { location, .. }
+            | OverrideEdit::ResetLocation { location } => location.clone(),
+        };
+        {
+            let entry = self
+                .overrides
+                .locations
+                .entry(location.clone())
+                .or_default();
+            match edit {
+                OverrideEdit::GroupOffset { anchor, delta, .. } => {
+                    let cur = entry.group_offsets.entry(anchor).or_default();
+                    cur.x += delta.x;
+                    cur.y += delta.y;
+                    if cur.x == 0 && cur.y == 0 {
+                        entry.group_offsets.remove(&anchor);
+                    }
+                }
+                OverrideEdit::RoomPin { key, pin, .. } => match pin {
+                    Some(pin) => {
+                        entry.room_pins.insert(key, pin);
+                    }
+                    None => {
+                        entry.room_pins.remove(&key);
+                    }
+                },
+                OverrideEdit::GroupName { anchor, name, .. } => match name {
+                    Some(name) => {
+                        entry.names.insert(anchor, name);
+                    }
+                    None => {
+                        entry.names.remove(&anchor);
+                    }
+                },
+                OverrideEdit::ResetLocation { .. } => {
+                    *entry = LocationOverrides::default();
+                }
+            }
+            if entry.is_empty() {
+                self.overrides.locations.remove(&location);
+            }
+        }
+        if let Err(e) = overrides::save(&self.overrides_path, &self.overrides) {
+            tracing::warn!("map overrides save failed: {e}");
+        }
+        // Regenerate with the new diff.
+        self.layouts.remove(&location);
+        self.scenes.remove(&location);
+        self.revision += 1;
+        self.request_location(&location);
     }
 
     /// Work is in flight (db load or generation); callers should keep
@@ -325,7 +437,11 @@ mod tests {
 
     #[test]
     fn service_is_inert_without_a_db() {
-        let mut svc = MapService::new(std::env::temp_dir().join("vellum-map-svc-test"));
+        let tmp = std::env::temp_dir();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-test"),
+            tmp.join("vellum-map-svc-test-overrides.json"),
+        );
         // Room reports before the db loads are remembered, not resolved.
         svc.note_room(Some(4577251), None);
         svc.poll();
