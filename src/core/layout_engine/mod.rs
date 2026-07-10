@@ -43,8 +43,9 @@ pub struct Layout {
 pub fn generate_layout(rooms: &mut Vec<Room>) -> Layout {
     rooms.sort_by_key(|r| r.id);
     let lookup = RoomTable::new(rooms);
+    let dirs = direction::DirectionMap::build(&lookup);
 
-    let mut groups = positioner::position_rooms(&lookup);
+    let mut groups = positioner::position_rooms(&lookup, &dirs);
     let classification = classifier::classify(&groups, &lookup);
 
     let mut outdoor: Vec<usize> = groups
@@ -63,7 +64,7 @@ pub fn generate_layout(rooms: &mut Vec<Room>) -> Layout {
         interiors.clear();
     }
 
-    let pack_info = packer::pack_groups(&mut groups, &outdoor, &lookup);
+    let pack_info = packer::pack_groups(&mut groups, &outdoor, &lookup, &dirs);
     packer::pack_interior_shelf(&mut groups, &interiors);
 
     // Building names for interior groups (assigned after shelf packing so the

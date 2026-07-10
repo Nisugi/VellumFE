@@ -203,6 +203,36 @@ fn infer_direction_from_reverse(room: &Room, target_id: u32, lookup: &RoomTable)
     Dir::from_exact(&lower_trim(back_wayto)).map(Dir::opposite)
 }
 
+/// Every edge's resolved direction, computed once up front. Direction
+/// analysis is a pure function of the mapdb, and every pipeline stage queries
+/// it along `wayto` edges whose target is inside the selection, so one pass
+/// covers all later lookups (this is purely a performance cache — semantics
+/// are identical to calling `direction_for_connection` each time).
+pub struct DirectionMap {
+    map: std::collections::HashMap<(u32, u32), Dir>,
+}
+
+impl DirectionMap {
+    pub fn build(lookup: &RoomTable) -> DirectionMap {
+        let mut map = std::collections::HashMap::new();
+        for room in lookup.rooms() {
+            for &target_id in room.wayto.keys() {
+                if !lookup.contains(target_id) {
+                    continue;
+                }
+                if let Some(dir) = direction_for_connection(room, target_id, lookup) {
+                    map.insert((room.id, target_id), dir);
+                }
+            }
+        }
+        DirectionMap { map }
+    }
+
+    pub fn get(&self, from: u32, to: u32) -> Option<Dir> {
+        self.map.get(&(from, to)).copied()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

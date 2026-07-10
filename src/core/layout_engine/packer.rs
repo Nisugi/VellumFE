@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use super::direction::direction_for_connection;
+use super::direction::DirectionMap;
 use super::mapdb::{Room, RoomTable};
 use super::positioner::{Cell, Group, PackMethod};
 
@@ -188,6 +188,7 @@ fn commit_segments(
     packed_set: &HashSet<usize>,
     placed: &HashSet<usize>,
     lookup: &RoomTable,
+    dirs: &DirectionMap,
     placed_segments: &mut Vec<Segment>,
     placed_boxes: &mut Vec<BBox>,
 ) {
@@ -224,7 +225,7 @@ fn commit_segments(
             if seen.contains(&key) {
                 continue;
             }
-            if direction_for_connection(room, target_id, lookup).is_none() {
+            if dirs.get(room_id, target_id).is_none() {
                 continue;
             }
             seen.insert(key);
@@ -605,7 +606,12 @@ fn find_best_connector_offset(
 /// Port of `ClusterPacker.packGroups`: place the packed subset (typically the
 /// outdoor components) onto one shared sheet. `packed` lists indices into
 /// `groups`; all of `groups` is consulted for bridged virtual edges.
-pub fn pack_groups(groups: &mut Vec<Group>, packed: &[usize], lookup: &RoomTable) -> PackInfo {
+pub fn pack_groups(
+    groups: &mut Vec<Group>,
+    packed: &[usize],
+    lookup: &RoomTable,
+    dirs: &DirectionMap,
+) -> PackInfo {
     if packed.is_empty() {
         return PackInfo::default();
     }
@@ -703,6 +709,7 @@ pub fn pack_groups(groups: &mut Vec<Group>, packed: &[usize], lookup: &RoomTable
                     &packed_set,
                     &placed,
                     lookup,
+                    dirs,
                     &mut placed_segments,
                     &mut placed_boxes,
                 );
@@ -818,6 +825,7 @@ pub fn pack_groups(groups: &mut Vec<Group>, packed: &[usize], lookup: &RoomTable
                 &packed_set,
                 &placed,
                 lookup,
+                dirs,
                 &mut placed_segments,
                 &mut placed_boxes,
             );
@@ -871,6 +879,7 @@ pub fn pack_groups(groups: &mut Vec<Group>, packed: &[usize], lookup: &RoomTable
                 &packed_set,
                 &placed,
                 lookup,
+                dirs,
                 &mut placed_segments,
                 &mut placed_boxes,
             );

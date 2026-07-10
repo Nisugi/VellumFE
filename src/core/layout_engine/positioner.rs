@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::direction::{direction_for_connection, Dir};
+use super::direction::{Dir, DirectionMap};
 use super::mapdb::RoomTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -113,10 +113,22 @@ impl Bounds {
 
 /// Port of `calculateRoomPositionsWithGroups`: repeat BFS component builds
 /// until every room is placed.
-pub fn position_rooms(lookup: &RoomTable) -> Vec<Group> {
+pub fn position_rooms(lookup: &RoomTable, dirs: &DirectionMap) -> Vec<Group> {
     let rooms = lookup.rooms();
     let mut groups: Vec<Group> = Vec::new();
     let mut unpositioned: HashSet<u32> = rooms.iter().map(|r| r.id).collect();
+
+    // Directional-edge counts are a pure function of the selection, so they
+    // are computed once instead of per component start.
+    let connection_counts: Vec<usize> = rooms
+        .iter()
+        .map(|room| {
+            room.wayto
+                .keys()
+                .filter(|&&t| dirs.get(room.id, t).is_some())
+                .count()
+        })
+        .collect();
 
     while !unpositioned.is_empty() {
         // Start room: the unplaced room with the most directional edges into
@@ -125,17 +137,10 @@ pub fn position_rooms(lookup: &RoomTable) -> Vec<Group> {
         // order.
         let mut next_start: Option<u32> = None;
         let mut best_connections = 0usize;
-        for room in rooms {
+        for (room, &valid) in rooms.iter().zip(&connection_counts) {
             if !unpositioned.contains(&room.id) {
                 continue;
             }
-            let valid = room
-                .wayto
-                .keys()
-                .filter(|&&t| {
-                    lookup.contains(t) && direction_for_connection(room, t, lookup).is_some()
-                })
-                .count();
             if valid > best_connections {
                 best_connections = valid;
                 next_start = Some(room.id);
@@ -171,7 +176,7 @@ pub fn position_rooms(lookup: &RoomTable) -> Vec<Group> {
                 if !lookup.contains(target_id) || !unpositioned.contains(&target_id) {
                     continue;
                 }
-                let Some(direction) = direction_for_connection(room, target_id, lookup) else {
+                let Some(direction) = dirs.get(room_id, target_id) else {
                     continue;
                 };
                 let (dx, dy) = direction.offset();
@@ -205,8 +210,8 @@ pub fn position_rooms(lookup: &RoomTable) -> Vec<Group> {
             }
         }
 
-        optimize_component(&room_order, &mut positions, lookup);
-        let violations = validate_component(&room_order, &positions, lookup);
+        optimize_component(&room_order, &mut positions, lookup, dirs);
+        let violations = validate_component(&room_order, &positions, lookup, dirs);
 
         groups.push(Group {
             index: groups.len(),
@@ -260,6 +265,7 @@ fn optimize_component(
     room_order: &[u32],
     positions: &mut HashMap<u32, Cell>,
     lookup: &RoomTable,
+    dirs: &DirectionMap,
 ) {
     if room_order.len() < 3 {
         compact_component(positions);
@@ -283,7 +289,7 @@ fn optimize_component(
             if !positions.contains_key(&target_id) {
                 continue;
             }
-            let Some(direction) = direction_for_connection(room, target_id, lookup) else {
+            let Some(direction) = dirs.get(room_id, target_id) else {
                 continue;
             };
             if !direction.is_compass() {
@@ -429,6 +435,7 @@ fn validate_component(
     room_order: &[u32],
     positions: &HashMap<u32, Cell>,
     lookup: &RoomTable,
+    dirs: &DirectionMap,
 ) -> Vec<Violation> {
     let mut violations = Vec::new();
     for &room_id in room_order {
@@ -442,7 +449,7 @@ fn validate_component(
             let Some(&target_pos) = positions.get(&target_id) else {
                 continue;
             };
-            let Some(direction) = direction_for_connection(room, target_id, lookup) else {
+            let Some(direction) = dirs.get(room_id, target_id) else {
                 continue;
             };
             if !direction.is_compass() {
