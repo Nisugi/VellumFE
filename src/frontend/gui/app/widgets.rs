@@ -3076,8 +3076,13 @@ impl VellumGuiApp {
                             }
                         }
                     }
-                    if let Some(dragged) = response.dnd_release_payload::<LinkData>() {
-                        if let Some(target) = pointer.and_then(link_at) {
+                    // Only consult (and thereby consume) the drag payload when
+                    // the release lands on an actual link; a release on the
+                    // blank part of a row must leave the payload for the
+                    // window-level fallback that resolves body drops
+                    // ("_drag #id drop" on the main window, hands, etc.).
+                    if let Some(target) = pointer.and_then(link_at) {
+                        if let Some(dragged) = response.dnd_release_payload::<LinkData>() {
                             if dragged.exist_id != target.exist_id && clicked_link.is_none() {
                                 clicked_link = Some(GuiLinkClick {
                                     link_data: LinkData {
