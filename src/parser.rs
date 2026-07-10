@@ -120,6 +120,13 @@ pub enum ParsedElement {
     StreamPush {
         id: String,
     },
+    /// `<crtrStatus exist="..." stunned="1" .../>` - full snapshot of one
+    /// creature's status flags. `attrs` holds every attribute except `exist`,
+    /// raw, so the core layer owns the flag-name mapping.
+    CreatureStatus {
+        id: String,
+        attrs: Vec<(String, String)>,
+    },
     StreamPop,
     ClearStream {
         id: String,
@@ -675,6 +682,11 @@ impl XmlParser {
         else if tag.starts_with("<dropDownBox ") {
             tracing::debug!("Parser: Matched dropDownBox tag: {}", &tag[..tag.len().min(100)]);
             self.handle_dropdown(tag, elements);
+        }
+        // Creature status snapshot (usually embedded in room objs components,
+        // which are captured whole; this arm catches any sent standalone)
+        else if tag.starts_with("<crtrStatus ") {
+            self.handle_crtr_status(tag, elements);
         }
         // Debug: catch any dropdown-related tags we might be missing
         // (case-sensitive checks - avoids a per-tag to_lowercase allocation)
@@ -2381,6 +2393,62 @@ impl XmlParser {
         None
     }
 
+    /// Extract every `name="value"` / `name='value'` pair from a tag, in
+    /// order. Valueless attributes and malformed pairs are skipped.
+    /// pub(crate) so the core layer can scan tags embedded in component
+    /// values (which are captured raw).
+    pub(crate) fn extract_all_attributes(tag: &str) -> Vec<(String, String)> {
+        let mut attrs = Vec::new();
+        let bytes = tag.as_bytes();
+        let mut i = 0;
+        // Skip past the tag name (up to the first whitespace)
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        while i < bytes.len() {
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let name_start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i == name_start {
+                // Hit '/', '>', or end - no more attributes
+                break;
+            }
+            let name = &tag[name_start..i];
+            if i < bytes.len() && bytes[i] == b'=' {
+                i += 1;
+                if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                    let quote = bytes[i];
+                    i += 1;
+                    let value_start = i;
+                    while i < bytes.len() && bytes[i] != quote {
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        attrs.push((name.to_string(), tag[value_start..i].to_string()));
+                        i += 1; // past closing quote
+                    }
+                }
+            }
+        }
+        attrs
+    }
+
+    fn handle_crtr_status(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <crtrStatus exist="607736" hostile="1" stunned="1"/> - self-closing,
+        // self-contained snapshot; a missing or "0" flag means inactive
+        if let Some(id) = Self::extract_attribute(tag, "exist") {
+            let attrs = Self::extract_all_attributes(tag)
+                .into_iter()
+                .filter(|(name, _)| name != "exist")
+                .collect();
+            elements.push(ParsedElement::CreatureStatus { id, attrs });
+        }
+    }
+
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
         // Extract attribute value from tag using simple string parsing.
         // Handles both quote styles; double quotes keep precedence to match
@@ -3619,6 +3687,75 @@ mod tests {
         assert_eq!(labels.len(), 2);
         assert_eq!(labels[0].value, "Blood Points: 100");
         assert_eq!(labels[1].value, "!a patchwork dwarf skin backpack");
+    }
+
+    // ==================== crtrStatus Parsing ====================
+
+    #[test]
+    fn test_crtr_status_standalone_tag() {
+        let mut parser = XmlParser::new();
+        let elements =
+            parser.parse_line(r#"<crtrStatus exist="607736" hostile="1" stunned="1"/>"#);
+
+        let statuses: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::CreatureStatus { .. }))
+            .collect();
+        assert_eq!(statuses.len(), 1);
+        let ParsedElement::CreatureStatus { id, attrs } = statuses[0] else {
+            unreachable!()
+        };
+        assert_eq!(id, "607736");
+        assert_eq!(
+            attrs,
+            &vec![
+                ("hostile".to_string(), "1".to_string()),
+                ("stunned".to_string(), "1".to_string()),
+            ]
+        );
+
+        // The tag must not leak into the text stream
+        assert!(!elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Text { content, .. } if !content.trim().is_empty())));
+    }
+
+    #[test]
+    fn test_crtr_status_inside_component_stays_in_component_value() {
+        let mut parser = XmlParser::new();
+        let elements = parser.parse_line(
+            r#"<component id='room objs'>  You notice<crtrStatus exist="607736" hostile="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b>.</component>"#,
+        );
+
+        // Captured whole: the component keeps the raw tag, and no separate
+        // CreatureStatus element is emitted (core parses the component value)
+        let ParsedElement::Component { id, value } = elements
+            .iter()
+            .find(|e| matches!(e, ParsedElement::Component { .. }))
+            .expect("component element")
+        else {
+            unreachable!()
+        };
+        assert_eq!(id, "room objs");
+        assert!(value.contains("<crtrStatus exist=\"607736\""));
+        assert!(!elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::CreatureStatus { .. })));
+    }
+
+    #[test]
+    fn test_extract_all_attributes_mixed_quotes() {
+        let attrs = XmlParser::extract_all_attributes(
+            r#"<crtrStatus exist='607736' hostile="1" MiniBoss='0'/>"#,
+        );
+        assert_eq!(
+            attrs,
+            vec![
+                ("exist".to_string(), "607736".to_string()),
+                ("hostile".to_string(), "1".to_string()),
+                ("MiniBoss".to_string(), "0".to_string()),
+            ]
+        );
     }
 
     // ==================== Component Parsing ====================

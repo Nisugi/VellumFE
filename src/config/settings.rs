@@ -337,6 +337,20 @@ pub struct TargetListConfig {
     /// Nouns to exclude from room objs parsing (e.g., "arm", "coal")
     #[serde(default = "default_excluded_nouns")]
     pub excluded_nouns: Vec<String>,
+    /// Text color for AscensionBoss/MiniBoss creatures (from <crtrStatus>)
+    #[serde(default = "default_boss_color")]
+    pub boss_color: Option<String>,
+    /// Text color for "challenging" creatures (from <crtrStatus>)
+    #[serde(default = "default_challenging_color")]
+    pub challenging_color: Option<String>,
+}
+
+fn default_boss_color() -> Option<String> {
+    Some("#ff5555".to_string())
+}
+
+fn default_challenging_color() -> Option<String> {
+    Some("#ffaa55".to_string())
 }
 
 fn default_target_status_position() -> String {
@@ -378,6 +392,8 @@ impl Default for TargetListConfig {
             truncation_mode: default_target_truncation_mode(),
             status_abbrev: default_status_abbrev(),
             excluded_nouns: default_excluded_nouns(),
+            boss_color: default_boss_color(),
+            challenging_color: default_challenging_color(),
         }
     }
 }

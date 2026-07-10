@@ -355,6 +355,34 @@ impl MessageProcessor {
                     room_window_dirty,
                 );
             }
+            ParsedElement::CreatureStatus { id, attrs } => {
+                // Standalone <crtrStatus> (outside a room objs component):
+                // update the matching room creature's snapshot in place. The
+                // component path re-derives flags wholesale, so only known
+                // creatures need patching here - an id we haven't seen in
+                // room objs yet gets its flags from the next component.
+                self.chunk_has_silent_updates = true;
+                let hashed_id = format!("#{}", id);
+                if let Some(creature) = game_state
+                    .room_creatures
+                    .iter_mut()
+                    .find(|c| c.id == hashed_id)
+                {
+                    let flags = crate::core::state::CreatureFlags::from_xml_attrs(
+                        attrs.iter().map(|(n, v)| (n.as_str(), v.as_str())),
+                    );
+                    if creature.flags.as_ref() != Some(&flags) {
+                        tracing::debug!(
+                            "crtrStatus update for {} ({}): {:?}",
+                            creature.name,
+                            hashed_id,
+                            flags
+                        );
+                        creature.flags = Some(flags);
+                        game_state.room_creatures_generation += 1;
+                    }
+                }
+            }
             ParsedElement::AppInfo { character } => {
                 self.chunk_has_silent_updates = true;
                 // Game feed is authoritative (the headless supervisor's
@@ -1791,6 +1819,38 @@ impl MessageProcessor {
         }
     }
 
+    /// Scan raw component content for `<crtrStatus exist="..." .../>` tags,
+    /// keyed by exist id. Component values are captured with embedded tags
+    /// intact, so this runs over the same string the creature scan uses.
+    fn parse_crtr_status_tags(
+        value: &str,
+    ) -> std::collections::HashMap<String, crate::core::state::CreatureFlags> {
+        let mut map = std::collections::HashMap::new();
+        let mut remaining = value;
+        while let Some(start) = remaining.find("<crtrStatus") {
+            let Some(end_offset) = remaining[start..].find('>') else {
+                break;
+            };
+            let tag = &remaining[start..start + end_offset + 1];
+            let attrs = crate::parser::XmlParser::extract_all_attributes(tag);
+            let exist = attrs
+                .iter()
+                .find(|(name, _)| name == "exist")
+                .map(|(_, value)| value.clone());
+            if let Some(exist) = exist {
+                let flags = crate::core::state::CreatureFlags::from_xml_attrs(
+                    attrs
+                        .iter()
+                        .filter(|(name, _)| name != "exist")
+                        .map(|(n, v)| (n.as_str(), v.as_str())),
+                );
+                map.insert(exist, flags);
+            }
+            remaining = &remaining[start + end_offset + 1..];
+        }
+        map
+    }
+
     /// Handle component data for room window and exp window (DR)
     fn handle_component(
         &mut self,
@@ -1880,6 +1940,12 @@ impl MessageProcessor {
                 tracing::debug!("Room objs now empty (previously had creatures: {})", had_objs);
             }
 
+            // Pre-scan for <crtrStatus exist="..." .../> snapshots embedded in
+            // the component (the tag precedes each creature's bold name).
+            // Keyed by exist id; the tag is self-contained so pairing by id
+            // beats positional pairing.
+            let crtr_flags = Self::parse_crtr_status_tags(value);
+
             let mut remaining = value;
             while let Some(bold_start) = remaining.find("<b>") {
                 // Find the matching </b>
@@ -1958,6 +2024,7 @@ impl MessageProcessor {
                                                 name: creature_name.to_string(),
                                                 noun: noun.clone(),
                                                 status: status.clone(),
+                                                flags: crtr_flags.get(exist_id).cloned(),
                                             };
 
                                             tracing::debug!(
@@ -3996,6 +4063,179 @@ mod tests {
         process_component(&mut processor, &mut game_state, "room objs", objs);
         assert_eq!(game_state.room_creatures_generation, 1);
         assert_eq!(game_state.room_objects_generation, 1);
+    }
+
+    // ===========================================
+    // <crtrStatus> tests (fixtures captured from a live GST session,
+    // via lich-5 PR #1425's spec suite)
+    // ===========================================
+
+    #[test]
+    fn test_crtr_status_parsed_from_room_objs() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="607736" hostile="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b>."#,
+        );
+
+        assert_eq!(game_state.room_creatures.len(), 1);
+        let nymph = &game_state.room_creatures[0];
+        assert_eq!(nymph.name, "sea nymph");
+        let flags = nymph.flags.as_ref().expect("crtrStatus flags attached");
+        assert!(flags.hostile);
+        assert!(!flags.dead);
+        assert!(flags.statuses.is_empty());
+    }
+
+    #[test]
+    fn test_crtr_status_two_creatures_one_line() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="607744" hostile="1"/><b> <pushBold/>a <a exist="607744" noun="worm">carrion worm</a><popBold/></b> and<crtrStatus exist="607736" hostile="1" stunned="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b> (stunned)."#,
+        );
+
+        assert_eq!(game_state.room_creatures.len(), 2);
+        let worm = &game_state.room_creatures[0];
+        let nymph = &game_state.room_creatures[1];
+        assert_eq!(worm.id, "#607744");
+        assert!(worm.flags.as_ref().unwrap().statuses.is_empty());
+        assert_eq!(
+            nymph.flags.as_ref().unwrap().statuses,
+            vec!["stunned".to_string()]
+        );
+        assert_eq!(nymph.display_statuses(), vec!["stunned".to_string()]);
+    }
+
+    #[test]
+    fn test_crtr_status_full_snapshot_reconciles() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="607736" hostile="1" stunned="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b> (stunned)."#,
+        );
+        // Dead snapshot: stunned absent means inactive, not unknown
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="607736" hostile="1" dead="1" prone="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b> (dead)."#,
+        );
+
+        let nymph = &game_state.room_creatures[0];
+        let flags = nymph.flags.as_ref().unwrap();
+        assert!(flags.dead);
+        assert_eq!(flags.statuses, vec!["prone".to_string()]);
+        assert!(nymph.is_dead());
+        // Display leads with dead, then transient statuses
+        assert_eq!(
+            nymph.display_statuses(),
+            vec!["dead".to_string(), "prone".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_crtr_status_flag_zero_means_inactive() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="999001" hostile="0"/><b> <pushBold/>a <a exist="999001" noun="rabbit">field rabbit</a><popBold/></b>."#,
+        );
+
+        let rabbit = &game_state.room_creatures[0];
+        let flags = rabbit.flags.as_ref().expect("flags attached even when all inactive");
+        assert!(!flags.hostile);
+    }
+
+    #[test]
+    fn test_crtr_status_maps_immobile_to_immobilized() {
+        let flags = crate::core::state::CreatureFlags::from_xml_attrs([
+            ("immobile", "1"),
+            ("AscensionBoss", "1"),
+            ("challenging", "0"),
+        ]);
+        assert_eq!(flags.statuses, vec!["immobilized".to_string()]);
+        assert!(flags.ascension_boss);
+        assert!(flags.is_boss());
+        assert!(!flags.challenging);
+    }
+
+    #[test]
+    fn test_crtr_status_standalone_element_updates_existing_creature() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::new();
+
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room objs",
+            r#"  You notice<crtrStatus exist="607736" hostile="1"/><b> <pushBold/>a <a exist="607736" noun="nymph">sea nymph</a><popBold/></b>."#,
+        );
+        let generation = game_state.room_creatures_generation;
+
+        // Standalone update (outside a component): patches the known creature
+        let element = ParsedElement::CreatureStatus {
+            id: "607736".to_string(),
+            attrs: vec![
+                ("hostile".to_string(), "1".to_string()),
+                ("stunned".to_string(), "1".to_string()),
+            ],
+        };
+        processor.process_element(
+            &element,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+
+        let nymph = &game_state.room_creatures[0];
+        assert_eq!(
+            nymph.flags.as_ref().unwrap().statuses,
+            vec!["stunned".to_string()]
+        );
+        assert_eq!(game_state.room_creatures_generation, generation + 1);
+
+        // Unknown id: no-op, no generation bump
+        let element = ParsedElement::CreatureStatus {
+            id: "111111".to_string(),
+            attrs: vec![("stunned".to_string(), "1".to_string())],
+        };
+        processor.process_element(
+            &element,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert_eq!(game_state.room_creatures_generation, generation + 1);
     }
 
     // ===========================================

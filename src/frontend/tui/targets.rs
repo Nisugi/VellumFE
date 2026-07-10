@@ -43,12 +43,10 @@ fn should_filter_creature(creature: &crate::core::state::Creature) -> (bool, boo
     // Check if it's a body part first
     let body_part = is_body_part(creature);
 
-    // Filter dead or gone creatures
-    if let Some(ref status) = creature.status {
-        let status_lower = status.to_lowercase();
-        if status_lower.contains("dead") || status_lower.contains("gone") {
-            return (true, body_part);
-        }
+    // Filter dead or gone creatures (structured <crtrStatus> dead flag when
+    // available, legacy "(dead)"/"(gone)" text otherwise)
+    if creature.is_dead() {
+        return (true, body_part);
     }
 
     let name_lower = creature.name.to_lowercase();
@@ -132,10 +130,11 @@ impl Targets {
         widget_width: u16,
         per_window_status_position: Option<&str>,
     ) -> bool {
-        // Build cache strings for comparison (include status for change detection)
+        // Build cache strings for comparison (cache_key covers statuses and
+        // boss flags so <crtrStatus> updates trigger a rebuild)
         let new_creature_ids: String = room_creatures
             .iter()
-            .map(|c| format!("{}:{}", c.id, c.status.as_deref().unwrap_or("")))
+            .map(|c| c.cache_key())
             .collect::<Vec<_>>()
             .join(",");
         let new_target_ids: String = target_ids.join(",");
@@ -203,27 +202,37 @@ impl Targets {
             // Border (2) + margin (2)
             let available_width = widget_width.saturating_sub(4) as usize;
 
-            // Build display text with status based on configuration
-            // Always look up abbreviation in config; fallback to truncating to 3 chars
-            let status_text = creature.status.as_ref().map(|s| {
-                let abbreviated = config
-                    .status_abbrev
-                    .get(&s.to_lowercase())
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // No abbreviation defined - truncate to 3 chars
-                        if s.len() <= 3 {
-                            s.to_string()
-                        } else {
-                            s.chars().take(3).collect()
-                        }
-                    });
-                format!("[{}]", abbreviated)
-            });
+            // Build display text with statuses based on configuration.
+            // <crtrStatus> can report several at once ("[stu,prn]"); the
+            // legacy text parse contributes at most one. Always look up
+            // abbreviation in config; fallback to truncating to 3 chars.
+            let statuses = creature.display_statuses();
+            let status_text = if statuses.is_empty() {
+                None
+            } else {
+                let abbreviated: Vec<String> = statuses
+                    .iter()
+                    .map(|s| {
+                        config
+                            .status_abbrev
+                            .get(&s.to_lowercase())
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                // No abbreviation defined - truncate to 3 chars
+                                if s.len() <= 3 {
+                                    s.to_string()
+                                } else {
+                                    s.chars().take(3).collect()
+                                }
+                            })
+                    })
+                    .collect();
+                Some(format!("[{}]", abbreviated.join(",")))
+            };
             let status_len = status_text.as_ref().map(|s| s.len()).unwrap_or(0);
 
             // Choose name based on truncation mode and available width
-            let base_name = if config.truncation_mode == "noun" && creature.status.is_some() {
+            let base_name = if config.truncation_mode == "noun" && status_text.is_some() {
                 // When truncation_mode is "noun" and there's a status, check if full name + status fits
                 let full_len = creature.name.len() + status_len + 1; // +1 for space
                 if full_len > available_width {
@@ -287,7 +296,8 @@ impl Targets {
                 coord: None,
             });
 
-            // Apply indicator color to current target for visual distinction
+            // Apply text color: current target wins, then boss tiers from
+            // <crtrStatus> (AscensionBoss/MiniBoss, then "challenging")
             let item_text_color = if is_current {
                 tracing::debug!(
                     "Current target: {} ({}) - applying indicator_color = {:?}",
@@ -296,6 +306,10 @@ impl Targets {
                     self.indicator_color
                 );
                 self.indicator_color.clone()
+            } else if creature.flags.as_ref().is_some_and(|f| f.is_boss()) {
+                config.boss_color.clone()
+            } else if creature.flags.as_ref().is_some_and(|f| f.challenging) {
+                config.challenging_color.clone()
             } else {
                 None
             };
@@ -516,6 +530,7 @@ mod tests {
             name: "a goblin".to_string(),
             noun: Some("goblin".to_string()),
             status: None,
+            flags: None,
         }];
 
         let config = crate::config::TargetListConfig::default();
@@ -550,12 +565,14 @@ mod tests {
                 name: "a kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 status: None,
+                flags: None,
             },
             Creature {
                 id: "2".to_string(),
                 name: "a goblin".to_string(),
                 noun: Some("goblin".to_string()),
                 status: None,
+                flags: None,
             },
         ];
         let config = crate::config::TargetListConfig::default();
@@ -575,6 +592,7 @@ mod tests {
             name: "a kobold".to_string(),
             noun: Some("kobold".to_string()),
             status: None,
+            flags: None,
         }];
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
@@ -597,12 +615,14 @@ mod tests {
                 name: "a kobold".to_string(),
                 noun: Some("kobold".to_string()),
                 status: None,
+                flags: None,
             },
             Creature {
                 id: "2".to_string(),
                 name: "a goblin".to_string(),
                 noun: Some("goblin".to_string()),
                 status: None,
+                flags: None,
             },
         ];
         let config = crate::config::TargetListConfig::default();
@@ -654,6 +674,7 @@ mod tests {
             name: "a goblin".to_string(),
             noun: Some("goblin".to_string()),
             status: Some("stunned".to_string()),
+            flags: None,
         }];
         let target_ids: Vec<String> = vec![];
 
@@ -679,6 +700,7 @@ mod tests {
             name: "a goblin".to_string(),
             noun: Some("goblin".to_string()),
             status: Some("prone".to_string()),
+            flags: None,
         }];
         let target_ids: Vec<String> = vec![];
 
@@ -694,6 +716,85 @@ mod tests {
     }
 
     #[test]
+    fn test_render_multiple_statuses_from_crtr_flags() {
+        let mut dt = Targets::new("Targets");
+        let config = crate::config::TargetListConfig::default();
+
+        let creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            status: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                statuses: vec!["stunned".to_string(), "prone".to_string()],
+                hostile: true,
+                ..Default::default()
+            }),
+        }];
+        let target_ids: Vec<String> = vec![];
+
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 40, None);
+        dt.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+        dt.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        assert!(
+            line.trim_end().starts_with("a goblin [stu,prn]"),
+            "got: {}",
+            line.trim_end()
+        );
+    }
+
+    #[test]
+    fn test_dead_flag_filters_creature() {
+        let mut dt = Targets::new("Targets");
+        let config = crate::config::TargetListConfig::default();
+
+        // Dead via structured flags only - no "(dead)" text status
+        let creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a sea nymph".to_string(),
+            noun: Some("nymph".to_string()),
+            status: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                dead: true,
+                ..Default::default()
+            }),
+        }];
+        let target_ids: Vec<String> = vec![];
+
+        dt.update_from_state(&creatures, "", &target_ids, &config, 30, None);
+        assert_eq!(dt.count, 0);
+    }
+
+    #[test]
+    fn test_crtr_flag_change_triggers_rebuild() {
+        let mut dt = Targets::new("Targets");
+        let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
+
+        let mut creatures = vec![Creature {
+            id: "1".to_string(),
+            name: "a goblin".to_string(),
+            noun: Some("goblin".to_string()),
+            status: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                hostile: true,
+                ..Default::default()
+            }),
+        }];
+        dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
+
+        // Same id, new status snapshot: cache_key must differ -> rebuild
+        creatures[0].flags.as_mut().unwrap().statuses = vec!["stunned".to_string()];
+        let changed = dt.update_from_state(&creatures, "1", &target_ids, &config, 30, None);
+        assert!(changed);
+    }
+
+    #[test]
     fn test_render_uses_noun_when_width_is_limited() {
         let mut dt = Targets::new("Targets");
         let mut config = crate::config::TargetListConfig::default();
@@ -704,6 +805,7 @@ mod tests {
             name: "a muddy hog".to_string(),
             noun: Some("hog".to_string()),
             status: Some("stunned".to_string()),
+            flags: None,
         }];
         let target_ids: Vec<String> = vec![];
 
