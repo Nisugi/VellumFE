@@ -146,6 +146,7 @@ use super::*;
             terminal_height: Some(50),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Should serialize without error
@@ -217,6 +218,7 @@ visible = true
             terminal_height: Some(60),
             base_layout: Some("default".to_string()),
             theme: Some("classic".to_string()),
+            unknown_windows: Vec::new(),
         };
 
         // Serialize to TOML
@@ -311,6 +313,7 @@ visible = true
             terminal_height: Some(50),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Serialize and deserialize
@@ -390,6 +393,7 @@ visible = true
             terminal_height: Some(50),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Serialize and deserialize
@@ -514,6 +518,7 @@ visible = true
             terminal_height: Some(20),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Resize to 100x40 (2x scale)
@@ -635,6 +640,7 @@ visible = true
             terminal_height: Some(20),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Verify gap before resize: A ends at 10, spacer starts at 10, B starts at 15
@@ -769,6 +775,7 @@ visible = true
             terminal_height: Some(25),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Verify initial no overlap

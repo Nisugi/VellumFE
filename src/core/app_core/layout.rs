@@ -1386,6 +1386,7 @@ mod tests {
             terminal_height: Some(24),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         }
     }
 
@@ -1396,6 +1397,7 @@ mod tests {
             terminal_height: Some(24),
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         }
     }
 

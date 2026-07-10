@@ -46,6 +46,11 @@ pub struct Layout {
     pub base_layout: Option<String>, // Reference to base layout (for auto layouts)
     #[serde(default)]
     pub theme: Option<String>, // Theme applied when this layout was saved
+    /// Windows whose widget_type this build can't deserialize (e.g. a layout
+    /// saved by a build from another branch/version). Skipped at runtime but
+    /// carried through saves so switching builds doesn't destroy them.
+    #[serde(skip)]
+    pub unknown_windows: Vec<toml::Value>,
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -292,11 +297,73 @@ impl Layout {
         self.terminal_height = Some(new_height);
     }
 
+    /// Parse a layout, tolerating window entries this build can't
+    /// deserialize (unknown widget types from other branches/versions).
+    /// Such windows are skipped at runtime but kept in `unknown_windows`
+    /// so saves round-trip them instead of destroying them.
+    pub(crate) fn parse_tolerant(contents: &str, source: &str) -> Result<Self> {
+        let strict_err = match toml::from_str::<Layout>(contents) {
+            Ok(layout) => return Ok(layout),
+            Err(err) => err,
+        };
+
+        let mut value: toml::Value = toml::from_str(contents)
+            .with_context(|| format!("Failed to parse layout file: {}", source))?;
+        let mut unknown = Vec::new();
+        if let Some(entries) = value.get_mut("windows").and_then(|w| w.as_array_mut()) {
+            let mut kept = Vec::new();
+            for entry in entries.drain(..) {
+                match entry.clone().try_into::<WindowDef>() {
+                    Ok(_) => kept.push(entry),
+                    Err(err) => {
+                        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                        let widget_type = entry
+                            .get("widget_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        tracing::warn!(
+                            "Skipping layout window '{}' from {}: widget type '{}' not supported by this build ({})",
+                            name,
+                            source,
+                            widget_type,
+                            err
+                        );
+                        unknown.push(entry);
+                    }
+                }
+            }
+            entries.extend(kept);
+        }
+
+        if unknown.is_empty() {
+            // Nothing skippable - the failure is elsewhere; report it as-is
+            return Err(strict_err)
+                .with_context(|| format!("Failed to parse layout file: {}", source));
+        }
+
+        let mut layout: Layout = value
+            .try_into()
+            .with_context(|| format!("Failed to parse layout file: {}", source))?;
+        layout.unknown_windows = unknown;
+        Ok(layout)
+    }
+
+    /// Serialize, re-appending any unknown windows carried from load.
+    fn to_toml_string_preserving(&self) -> Result<String> {
+        if self.unknown_windows.is_empty() {
+            return toml::to_string_pretty(self).context("Failed to serialize layout");
+        }
+        let mut value = toml::Value::try_from(self).context("Failed to serialize layout")?;
+        if let Some(arr) = value.get_mut("windows").and_then(|w| w.as_array_mut()) {
+            arr.extend(self.unknown_windows.iter().cloned());
+        }
+        toml::to_string_pretty(&value).context("Failed to serialize layout")
+    }
+
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
         let contents =
             fs::read_to_string(path).context(format!("Failed to read layout file: {:?}", path))?;
-        let mut layout: Layout = toml::from_str(&contents)
-            .context(format!("Failed to parse layout file: {:?}", path))?;
+        let mut layout = Self::parse_tolerant(&contents, &format!("{:?}", path))?;
 
         // Debug: Log what terminal size was loaded
         tracing::debug!(
@@ -433,7 +500,7 @@ impl Layout {
         fs::create_dir_all(&layouts_dir)?;
 
         let layout_path = layouts_dir.join(format!("{}.toml", name));
-        let toml_string = toml::to_string_pretty(&self).context("Failed to serialize layout")?;
+        let toml_string = self.to_toml_string_preserving()?;
         fs::write(&layout_path, toml_string).context("Failed to write layout file")?;
 
         tracing::info!("Saved layout '{}' to {:?}", name, layout_path);
@@ -465,8 +532,7 @@ impl Layout {
         fs::create_dir_all(&profile_dir)?;
 
         let layout_path = profile_dir.join("layout.toml");
-        let toml_string =
-            toml::to_string_pretty(&self).context("Failed to serialize auto layout")?;
+        let toml_string = self.to_toml_string_preserving()?;
         fs::write(&layout_path, toml_string).context("Failed to write auto layout file")?;
 
         tracing::info!(
@@ -693,5 +759,66 @@ impl Config {
             height
         );
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIXED_LAYOUT: &str = r#"
+terminal_width = 120
+terminal_height = 40
+
+[[windows]]
+widget_type = "text"
+name = "main"
+row = 0
+col = 0
+rows = 30
+cols = 120
+
+[[windows]]
+widget_type = "map"
+name = "map1"
+row = 30
+col = 0
+rows = 10
+cols = 120
+zoom = 3
+"#;
+
+    #[test]
+    fn tolerant_parse_skips_unknown_widget_types() {
+        let layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
+        assert_eq!(layout.windows.len(), 1);
+        assert_eq!(layout.windows[0].name(), "main");
+        assert_eq!(layout.unknown_windows.len(), 1);
+        assert_eq!(
+            layout.unknown_windows[0]
+                .get("widget_type")
+                .and_then(|v| v.as_str()),
+            Some("map")
+        );
+        assert_eq!(layout.terminal_width, Some(120));
+    }
+
+    #[test]
+    fn preserving_serialization_round_trips_unknown_windows() {
+        let layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
+        let serialized = layout.to_toml_string_preserving().expect("serialize");
+        // The unknown window survives the save (custom fields included)...
+        assert!(serialized.contains("widget_type = \"map\""));
+        assert!(serialized.contains("zoom = 3"));
+        // ...and a re-parse recovers the same split
+        let reparsed = Layout::parse_tolerant(&serialized, "test").expect("reparse");
+        assert_eq!(reparsed.windows.len(), 1);
+        assert_eq!(reparsed.unknown_windows.len(), 1);
+    }
+
+    #[test]
+    fn tolerant_parse_still_fails_on_real_corruption() {
+        assert!(Layout::parse_tolerant("windows = 5", "test").is_err());
+        assert!(Layout::parse_tolerant("not toml at [[", "test").is_err());
     }
 }

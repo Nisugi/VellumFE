@@ -266,6 +266,18 @@ impl AppCore {
             ));
         }
 
+        for entry in app.layout.unknown_windows.clone() {
+            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let widget_type = entry
+                .get("widget_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            app.add_system_message(&format!(
+                "Layout window '{}' skipped: widget type '{}' not supported by this build (kept in layout.toml)",
+                name, widget_type
+            ));
+        }
+
         app.apply_session_cache();
         app.apply_custom_quickbars();
 
@@ -4617,6 +4629,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4636,6 +4649,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4663,6 +4677,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4686,6 +4701,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4731,6 +4747,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4760,6 +4777,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4783,6 +4801,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -4802,6 +4821,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);

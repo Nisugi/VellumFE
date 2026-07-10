@@ -846,9 +846,10 @@ function sendJson(t, d) {
 }
 
 function setSession(d) {
+  const prevState = session.state;
   session = d || { state: "connected", session_control: false };
   if (session.character) setCharacter(session.character);
-  updateSessionUi();
+  updateSessionUi(prevState);
 }
 
 const SESSION_PROGRESS = {
@@ -856,7 +857,13 @@ const SESSION_PROGRESS = {
   connecting: "Connecting to the game…",
 };
 
-function updateSessionUi() {
+// States a fresh login passes through on its way to connected. Arriving at
+// connected from one of these plays the theme; reconnecting → connected (a
+// mid-session drop recovering) and a page load into an already-running
+// session (prevState starts out "connected") do not.
+const LOGIN_FLOW_STATES = ["idle", "disconnected", "authenticating", "connecting"];
+
+function updateSessionUi(prevState) {
   if (!session.session_control) {
     sessionOverlay.hidden = true;
     sessionBanner.hidden = true;
@@ -881,6 +888,11 @@ function updateSessionUi() {
   if (session.state === "connected") {
     sessionOverlay.hidden = true;
     profilesRequested = false;
+    // The classic theme marks the game connection coming up, not the login
+    // screen appearing.
+    if (LOGIN_FLOW_STATES.includes(prevState)) {
+      maybePlayLoginMusic();
+    }
     return;
   }
 
@@ -895,11 +907,6 @@ function updateSessionUi() {
   });
   sessionProfiles.classList.toggle("busy", inProgress);
   sessionOverlay.hidden = false;
-  // A fresh boot waiting at the login screen gets the classic theme
-  // (idle only — a mid-session disconnect shouldn't start the band).
-  if (session.state === "idle") {
-    maybePlayLoginMusic();
-  }
   if (!profilesRequested && sendJson("get_profiles")) {
     profilesRequested = true;
   }
@@ -1649,11 +1656,12 @@ function playRemoteSound(d) {
 
 // ---- Login music ------------------------------------------------------------
 // Nostalgia: the classic Wizard FE theme plays once per page load when the
-// login screen first appears at idle — the mobile analog of the TUI's
+// game connection is established — the mobile analog of the TUI's
 // [sound] startup_music. The bar's Stop silences this play; "Don't play
-// again" (and the settings-sheet toggle) persists. In a plain browser a
-// strict autoplay policy just rejects play() and nothing appears; the app
-// shells allow ungated playback, so app users hear it.
+// again" (and the settings-sheet toggle) persists. Tapping Connect counts
+// as the user interaction browsers want before audio, so plain browsers
+// usually allow it too; if a strict autoplay policy still rejects play(),
+// nothing appears.
 
 const MUSIC_OFF_KEY = "vellum-login-music-off";
 let musicOff = false;

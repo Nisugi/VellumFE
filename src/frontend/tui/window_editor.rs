@@ -7487,6 +7487,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let editor = WindowEditor::new_window_with_layout("spacer".to_string(), &layout);
@@ -7532,6 +7533,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let editor = WindowEditor::new_window_with_layout("spacer".to_string(), &layout);
@@ -7549,6 +7551,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let editor = WindowEditor::new_window_with_layout("tabbedtext".to_string(), &layout);
@@ -7566,6 +7569,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let editor = WindowEditor::new_window_with_layout("text".to_string(), &layout);
@@ -7583,6 +7587,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let editor = WindowEditor::new_window_with_layout("progress".to_string(), &layout);
@@ -7601,6 +7606,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         // Test tabbedtext_custom generates same pattern as tabbedtext
@@ -7630,6 +7636,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
 
         let indicators = WindowEditor::indicators_from_layout(&layout);
@@ -7685,6 +7692,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
         let mut editor = WindowEditor::new_window_with_layout("text_custom".to_string(), &layout);
         // No streams seeded yet -> picker does not open.
@@ -7704,6 +7712,7 @@ mod tests {
             terminal_height: None,
             base_layout: None,
             theme: None,
+            unknown_windows: Vec::new(),
         };
         let mut editor = WindowEditor::new_window_with_layout("text_custom".to_string(), &layout);
         // text_custom seeds streams = ["custom"]; start from a clean field.

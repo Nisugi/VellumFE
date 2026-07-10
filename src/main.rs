@@ -238,6 +238,17 @@ fn main() -> Result<()> {
 
                 match layout_result {
                     Ok(layout) => {
+                        for entry in &layout.unknown_windows {
+                            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let widget_type = entry
+                                .get("widget_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            eprintln!(
+                                "! Window '{}' skipped: widget type '{}' not supported by this build",
+                                name, widget_type
+                            );
+                        }
                         if let Err(e) = layout.validate_and_print() {
                             eprintln!("✗ Validation failed: {}", e);
                             std::process::exit(1);

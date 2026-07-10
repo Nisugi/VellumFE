@@ -151,6 +151,7 @@ fn process_file(path: &Path, out_dir: &Path, dry_run: bool, verbose: bool) -> Re
         terminal_height: layout.terminal_height,
         base_layout: None,
         theme: None,
+        unknown_windows: Vec::new(),
     };
 
     let mut windows_skipped = 0;
