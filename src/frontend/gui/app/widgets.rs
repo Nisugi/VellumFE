@@ -1665,10 +1665,12 @@ impl VellumGuiApp {
                 let response = ui
                     .add_sized(
                         [text_width, row_height],
-                        egui::Label::new(display_text)
-                            .truncate()
-                            .sense(egui::Sense::click_and_drag())
-                            .selectable(!Self::link_drag_blocks_selection(ui)),
+                        egui::Label::new(
+                            RichText::new(display_text).color(ui.visuals().hyperlink_color),
+                        )
+                        .truncate()
+                        .sense(egui::Sense::click_and_drag())
+                        .selectable(!Self::link_drag_blocks_selection(ui)),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 // Drag source only: releases over hand windows resolve at the
