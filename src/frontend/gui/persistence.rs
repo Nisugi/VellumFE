@@ -873,6 +873,7 @@ mod tests {
             accent_color: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
+            map_zoom: None,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -1091,6 +1092,7 @@ mod tests {
                 accent_color: Some("#4784d9".to_string()),
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
+                map_zoom: None,
             },
         );
         layout.set_tab_settings(
