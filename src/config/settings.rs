@@ -543,3 +543,16 @@ impl Default for WebConfig {
         }
     }
 }
+
+/// Map system configuration (mini map widget + map explorer).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MapConfig {
+    /// Lich install directory (the folder containing `data/`). The newest
+    /// `data/<GAME>/map-<timestamp>.json` build for the connected game is
+    /// used. Edited from the GUI settings editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lich_dir: Option<String>,
+    /// Explicit mapdb JSON file; overrides `lich_dir` discovery when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapdb_path: Option<String>,
+}

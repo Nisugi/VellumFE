@@ -93,6 +93,9 @@ pub struct AppCore {
 
     // === Navigation State ===
     /// Navigation room ID from <nav rm='...'/>
+    /// Live map state: mapdb, generated layouts, current-room tracking.
+    pub map: crate::core::map_service::MapService,
+
     pub nav_room_id: Option<String>,
 
     /// Lich room ID extracted from room display
@@ -213,8 +216,13 @@ impl AppCore {
         let keybind_map = Self::build_keybind_map(&config);
 
         let layout_theme = layout.theme.clone();
+        let map_cache_dir = Config::base_dir()
+            .map(|d| d.join("cache").join("layouts"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("cache/layouts"));
+
         let mut app = Self {
             config,
+            map: crate::core::map_service::MapService::new(map_cache_dir),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -260,7 +268,39 @@ impl AppCore {
             // The frontend will refresh during initialization from config.
         }
 
+        app.refresh_map_source();
+
         Ok(app)
+    }
+
+    /// Resolve the mapdb source from config and (re)start the load when it
+    /// changes. Called at startup and after the settings editor saves.
+    pub fn refresh_map_source(&mut self) {
+        use crate::core::map_service::{lich_game_dir_name, MapDbSource};
+        let non_empty = |s: &&str| !s.trim().is_empty();
+        let source = if let Some(path) = self.config.map.mapdb_path.as_deref().filter(non_empty) {
+            MapDbSource::File(std::path::PathBuf::from(path))
+        } else if let Some(dir) = self.config.map.lich_dir.as_deref().filter(non_empty) {
+            let game = lich_game_dir_name(self.config.connection.game.as_deref());
+            MapDbSource::GameDataDir(std::path::Path::new(dir).join("data").join(game))
+        } else {
+            MapDbSource::Unconfigured
+        };
+        self.map.ensure_db(source);
+    }
+
+    /// Push the latest stream-reported room identifiers into the map service.
+    /// `nav_room_id` carries the game uid; `lich_room_id` the Lich room id.
+    fn sync_map_room(&mut self) {
+        let uid = self
+            .nav_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<i64>().ok());
+        let lich_id = self
+            .lich_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        self.map.note_room(uid, lich_id);
     }
 
     fn apply_custom_quickbars(&mut self) {
@@ -1716,6 +1756,8 @@ impl AppCore {
                 self.game_state.society.update(society_lines);
             }
         }
+
+        self.sync_map_room();
 
         Ok(())
     }

@@ -146,6 +146,7 @@ pub struct MapDb {
     locations: std::collections::BTreeMap<String, Vec<Room>>,
     location_of_id: std::collections::HashMap<u32, String>,
     location_of_uid: std::collections::HashMap<i64, String>,
+    room_id_of_uid: std::collections::HashMap<i64, u32>,
 }
 
 impl MapDb {
@@ -159,6 +160,7 @@ impl MapDb {
         let mut locations: std::collections::BTreeMap<String, Vec<Room>> = Default::default();
         let mut location_of_id = std::collections::HashMap::new();
         let mut location_of_uid = std::collections::HashMap::new();
+        let mut room_id_of_uid = std::collections::HashMap::new();
         for value in &db {
             let Some(room) = Room::from_json(value) else {
                 continue;
@@ -169,6 +171,7 @@ impl MapDb {
             location_of_id.insert(room.id, location.clone());
             for &uid in &room.uid {
                 location_of_uid.insert(uid, location.clone());
+                room_id_of_uid.insert(uid, room.id);
             }
             locations.entry(location).or_default().push(room);
         }
@@ -179,6 +182,7 @@ impl MapDb {
             locations,
             location_of_id,
             location_of_uid,
+            room_id_of_uid,
         })
     }
 
@@ -197,6 +201,12 @@ impl MapDb {
 
     pub fn location_of_room_id(&self, id: u32) -> Option<&str> {
         self.location_of_id.get(&id).map(String::as_str)
+    }
+
+    /// The Lich room id carrying this game uid (`<nav rm='…'/>` reports uids;
+    /// layouts and `;go2` speak room ids).
+    pub fn room_id_of_uid(&self, uid: i64) -> Option<u32> {
+        self.room_id_of_uid.get(&uid).copied()
     }
 }
 
