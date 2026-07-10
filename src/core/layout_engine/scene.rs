@@ -292,22 +292,51 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
         }
     }
 
-    // Interior group labels (building names).
-    for &idx in &layout.interiors {
-        let group = &layout.groups[idx];
-        let Some(name) = group.name.clone() else {
-            continue;
-        };
-        let bounds = group.bounds();
-        let off = group.base_offset.unwrap_or_default();
-        scene.interiors.labels.push(GroupLabel {
-            text: name,
-            cell: Cell {
-                x: bounds.min_x + off.x,
-                y: bounds.min_y + off.y,
-            },
-            group: idx,
-        });
+    // Interior labels: one per CLUSTER (one building, one label), named by
+    // the majority group name among its members, anchored at the combined
+    // bounds' top-left. The cluster id is its smallest member group index,
+    // so it always passes a cluster-set group filter.
+    {
+        let mut clusters: Vec<usize> = scene.group_cluster.values().copied().collect();
+        clusters.sort_unstable();
+        clusters.dedup();
+        for cluster in clusters {
+            let mut name_votes: Vec<(&str, usize)> = Vec::new();
+            let mut min = Cell {
+                x: i32::MAX,
+                y: i32::MAX,
+            };
+            for (&idx, &c) in &scene.group_cluster {
+                if c != cluster {
+                    continue;
+                }
+                let group = &layout.groups[idx];
+                let bounds = group.bounds();
+                let off = group.base_offset.unwrap_or_default();
+                min.x = min.x.min(bounds.min_x + off.x);
+                min.y = min.y.min(bounds.min_y + off.y);
+                if let Some(name) = group.name.as_deref() {
+                    match name_votes.iter_mut().find(|(n, _)| *n == name) {
+                        Some(entry) => entry.1 += 1,
+                        None => name_votes.push((name, 1)),
+                    }
+                }
+            }
+            let mut best: Option<(&str, usize)> = None;
+            for (name, count) in name_votes {
+                if best.map(|(_, c)| count > c).unwrap_or(true) {
+                    best = Some((name, count));
+                }
+            }
+            let Some((name, _)) = best else {
+                continue;
+            };
+            scene.interiors.labels.push(GroupLabel {
+                text: name.to_owned(),
+                cell: min,
+                group: cluster,
+            });
+        }
     }
 
     for sheet in [&mut scene.outdoor, &mut scene.interiors] {
