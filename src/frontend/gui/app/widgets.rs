@@ -1903,6 +1903,95 @@ impl VellumGuiApp {
         clicked
     }
 
+    pub(super) fn render_hotkeybar_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        window_name: &str,
+        bar_name: &str,
+    ) -> Option<GuiLinkClick> {
+        let Some(bar_def) = app_core.config.hotbars.find_bar(bar_name) else {
+            ui.weak(format!(
+                "Hotbar '{}' is not defined - use .hotbars to create it.",
+                bar_name
+            ));
+            return None;
+        };
+
+        let now_server =
+            chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
+        let buttons =
+            crate::core::hotbar::resolve_bar(bar_def, &app_core.game_state, now_server);
+
+        // Countdown overlays tick between game events
+        if buttons.iter().any(|b| b.countdown_secs.is_some()) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
+        }
+
+        let vertical = app_core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == window_name)
+            .is_some_and(|def| {
+                matches!(
+                    def,
+                    crate::config::WindowDef::Hotkeybar { data, .. }
+                        if data.orientation == "vertical"
+                )
+            });
+
+        let mut clicked = None;
+        let mut render_buttons = |ui: &mut egui::Ui| {
+            for button in &buttons {
+                let text = match button.countdown_secs {
+                    Some(secs) if secs > 0 => format!("{}  {}s", button.label, secs),
+                    _ => button.label.clone(),
+                };
+                let mut rich = RichText::new(text);
+                if button.dim {
+                    rich = rich.color(ui.visuals().weak_text_color());
+                } else if let Some(fg) = button.fg.as_deref().and_then(parse_hex_color) {
+                    rich = rich.color(fg);
+                }
+
+                let mut widget = egui::Button::new(rich);
+                if !button.dim {
+                    if let Some(bg) = button.bg.as_deref().and_then(parse_hex_color) {
+                        widget = widget.fill(bg);
+                    }
+                }
+
+                let mut response = ui.add(widget);
+                let mut hover = button.tooltip.clone().unwrap_or_default();
+                if let Some(hotkey) = &button.hotkey {
+                    if !hover.is_empty() {
+                        hover.push('\n');
+                    }
+                    hover.push_str(&format!("[{}]", hotkey));
+                }
+                if !hover.is_empty() {
+                    response = response.on_hover_text(hover);
+                }
+
+                if response.clicked() && clicked.is_none() {
+                    clicked = Some(Self::gui_link_click_from_response(
+                        &response,
+                        ui,
+                        Self::direct_command_link(button.command.clone()),
+                    ));
+                }
+            }
+        };
+
+        if vertical {
+            ui.vertical(render_buttons);
+        } else {
+            ui.horizontal_wrapped(render_buttons);
+        }
+        clicked
+    }
+
     pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
         let cfg = app_core.perf_overlay_data(true);
         let stats = &app_core.perf_stats;
@@ -2861,8 +2950,9 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
-            // Renderer lands with the GUI hotkeybar phase
-            WindowContent::Hotkeybar { .. } => None,
+            WindowContent::Hotkeybar { bar } => {
+                Self::render_hotkeybar_content(app_core, ui, &window.name, bar)
+            }
             WindowContent::Performance => {
                 Self::render_performance_content(app_core, ui);
                 None
