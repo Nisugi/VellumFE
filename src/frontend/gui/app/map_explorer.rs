@@ -610,7 +610,7 @@ impl VellumGuiApp {
                 None
             };
             let result =
-                map_view::paint_sheet(ui, rect, sheet, camera, current, true, &style);
+                map_view::paint_sheet(ui, rect, sheet, camera, current, true, None, &style);
 
             if let Some(id) = result.double_clicked_room {
                 out.walk_to = Some(id);

@@ -73,6 +73,9 @@ pub fn paint_sheet(
     camera: MapCamera,
     current_room: Option<u32>,
     interactive: bool,
+    // group_filter: draw only this group (the mini map shows just the
+    // building you're in on the interiors sheet); None = the whole sheet.
+    group_filter: Option<usize>,
     style: &MapStyle,
 ) -> MapViewResult {
     let painter = ui.painter().with_clip_rect(rect);
@@ -93,6 +96,9 @@ pub fn paint_sheet(
 
     // --- Edges (under rooms) ---
     for edge in &sheet.edges {
+        if group_filter.is_some_and(|g| edge.group != g) {
+            continue;
+        }
         let (ax, ay) = (edge.a.x as f32, edge.a.y as f32);
         let (bx, by) = (edge.b.x as f32, edge.b.y as f32);
         if !visible(ax, ay) && !visible(bx, by) {
@@ -172,6 +178,9 @@ pub fn paint_sheet(
     // --- Rooms ---
     let mut result = MapViewResult::default();
     for room in &sheet.rooms {
+        if group_filter.is_some_and(|g| room.group != g) {
+            continue;
+        }
         let (cx, cy) = (room.cell.x as f32, room.cell.y as f32);
         if !visible(cx, cy) {
             continue;

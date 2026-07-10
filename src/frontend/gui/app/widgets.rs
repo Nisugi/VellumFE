@@ -1147,8 +1147,15 @@ impl VellumGuiApp {
         };
 
         let current = map.current_room_id;
-        let (sheet_kind, center) = match current.and_then(|id| scene.room(id)) {
-            Some((sheet, room)) => (sheet, room.cell),
+        let (sheet_kind, center, group_filter) = match current.and_then(|id| scene.room(id)) {
+            // Indoors, show just the building the character is in — the full
+            // interiors shelf (every building side by side) is explorer
+            // territory.
+            Some((sheet, room)) => (
+                sheet,
+                room.cell,
+                (sheet == crate::core::layout_engine::Sheet::Interiors).then_some(room.group),
+            ),
             None => {
                 let b = &scene.outdoor;
                 (
@@ -1157,6 +1164,7 @@ impl VellumGuiApp {
                         x: (b.min.x + b.max.x) / 2,
                         y: (b.min.y + b.max.y) / 2,
                     },
+                    None,
                 )
             }
         };
@@ -1174,6 +1182,7 @@ impl VellumGuiApp {
             camera,
             current,
             true,
+            group_filter,
             &style,
         );
 

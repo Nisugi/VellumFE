@@ -56,6 +56,9 @@ pub struct SceneEdge {
     pub b: Cell,
     pub a_room: u32,
     pub b_room: u32,
+    /// Group of the `a` endpoint (directional/stub edges are intra-group;
+    /// connectors only exist on the outdoor sheet).
+    pub group: usize,
     pub kind: SceneEdgeKind,
     /// Movement label for connectors ("dock", "gate") when one is worth
     /// showing.
@@ -219,6 +222,7 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                         b,
                         a_room: room.id,
                         b_room: target_id,
+                        group: room_group,
                         kind: if len > LONG_EDGE_CELLS {
                             SceneEdgeKind::Stub
                         } else {
@@ -228,8 +232,11 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                     },
                 );
             } else {
-                // Connector — only drawn when both ends share a sheet.
-                if a_sheet != sheet_of(target_group) {
+                // Connector — outdoor sheet only. The interiors shelf packs
+                // unrelated buildings side by side; drawing "go door" edges
+                // between them would imply physical adjacency that isn't
+                // there (doorways show as door markers outdoors instead).
+                if a_sheet != Sheet::Outdoor || sheet_of(target_group) != Sheet::Outdoor {
                     continue;
                 }
                 if !seen.insert(key) {
@@ -249,6 +256,7 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                         b,
                         a_room: room.id,
                         b_room: target_id,
+                        group: room_group,
                         kind: SceneEdgeKind::Connector,
                         label: connector_label(cmd),
                     },
