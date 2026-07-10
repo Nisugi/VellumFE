@@ -1661,7 +1661,7 @@ impl WindowEditor {
                 fields.push(FieldRef::Timestamps);
                 fields.push(FieldRef::TextCompact);
             }
-            WindowDef::Inventory { .. } => {
+            WindowDef::Inventory { .. } | WindowDef::Reserve { .. } => {
                 fields.push(FieldRef::Streams);
                 fields.push(FieldRef::BufferSize);
                 fields.push(FieldRef::Wordwrap);
@@ -1904,7 +1904,9 @@ impl WindowEditor {
             text_show_timestamps = data.show_timestamps;
             text_compact = data.compact;
         }
-        if let crate::config::WindowDef::Inventory { data, .. } = &window_def {
+        if let crate::config::WindowDef::Inventory { data, .. }
+        | crate::config::WindowDef::Reserve { data, .. } = &window_def
+        {
             streams_input.insert_str(data.streams.join(", "));
             buffer_size_input.insert_str(data.buffer_size.to_string());
             text_wordwrap = data.wordwrap;
@@ -4493,7 +4495,9 @@ impl WindowEditor {
             data.compact = self.text_compact;
         }
 
-        if let crate::config::WindowDef::Inventory { data, .. } = &mut self.window_def {
+        if let crate::config::WindowDef::Inventory { data, .. }
+        | crate::config::WindowDef::Reserve { data, .. } = &mut self.window_def
+        {
             let streams: Vec<String> = self.streams_input.lines()[0]
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -6251,7 +6255,7 @@ impl WindowEditor {
                     self.field_click_areas.push((special_row, left_x, FieldRef::TextCompact));
                 }
             }
-            WindowDef::Inventory { .. } => {
+            WindowDef::Inventory { .. } | WindowDef::Reserve { .. } => {
                 self.render_textarea_compact(
                     FieldRef::Streams.legacy_field_id(),
                     "Streams:",

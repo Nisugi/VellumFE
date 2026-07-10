@@ -253,6 +253,7 @@ impl VellumGuiApp {
                     WidgetType::Text
                         | WidgetType::TabbedText
                         | WidgetType::Inventory
+                        | WidgetType::Reserve
                         | WidgetType::Spells
                         | WidgetType::Container
                 )

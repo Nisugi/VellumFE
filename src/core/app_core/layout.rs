@@ -268,6 +268,9 @@ impl AppCore {
                     WindowContent::Inventory(text) => {
                         text.title = base.title.clone().unwrap_or_default();
                     }
+                    WindowContent::Reserve(text) => {
+                        text.title = base.title.clone().unwrap_or_default();
+                    }
                     WindowContent::Spells(text) => {
                         text.title = base.title.clone().unwrap_or_default();
                     }

@@ -29,6 +29,7 @@ pub enum WidgetType {
     Indicator,
     Room,
     Inventory,
+    Reserve,
     CommandInput,
     Dashboard,
     InjuryDoll,
@@ -75,6 +76,7 @@ impl WidgetType {
             "indicator" => Some(WidgetType::Indicator),
             "room" => Some(WidgetType::Room),
             "inventory" => Some(WidgetType::Inventory),
+            "reserve" => Some(WidgetType::Reserve),
             "command_input" | "commandinput" => Some(WidgetType::CommandInput),
             "dashboard" => Some(WidgetType::Dashboard),
             "hand" => Some(WidgetType::Hand),
@@ -110,6 +112,7 @@ impl WidgetType {
         "indicator",
         "room",
         "inventory",
+        "reserve",
         "command_input",
         "dashboard",
         "hand",
@@ -144,6 +147,9 @@ pub enum WindowContent {
     Indicator(IndicatorData),
     Room(RoomContent),
     Inventory(TextContent),
+    /// Reserved-items window - same snapshot semantics as Inventory but fed
+    /// by the `reserve` stream
+    Reserve(TextContent),
     CommandInput {
         text: String,
         cursor: usize,

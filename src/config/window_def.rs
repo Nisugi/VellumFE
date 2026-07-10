@@ -43,6 +43,14 @@ pub enum WindowDef {
         data: InventoryWidgetData,
     },
 
+    #[serde(rename = "reserve")]
+    Reserve {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: InventoryWidgetData,
+    },
+
     #[serde(rename = "command_input")]
     CommandInput {
         #[serde(flatten)]
@@ -260,6 +268,7 @@ impl WindowDef {
             WindowDef::TabbedText { base, .. } => &base.name,
             WindowDef::Room { base, .. } => &base.name,
             WindowDef::Inventory { base, .. } => &base.name,
+            WindowDef::Reserve { base, .. } => &base.name,
             WindowDef::CommandInput { base, .. } => &base.name,
             WindowDef::Progress { base, .. } => &base.name,
             WindowDef::Countdown { base, .. } => &base.name,
@@ -295,6 +304,7 @@ impl WindowDef {
             WindowDef::TabbedText { .. } => "tabbedtext",
             WindowDef::Room { .. } => "room",
             WindowDef::Inventory { .. } => "inventory",
+            WindowDef::Reserve { .. } => "reserve",
             WindowDef::CommandInput { .. } => "command_input",
             WindowDef::Progress { .. } => "progress",
             WindowDef::Countdown { .. } => "countdown",
@@ -330,6 +340,7 @@ impl WindowDef {
             WindowDef::TabbedText { base, .. } => base,
             WindowDef::Room { base, .. } => base,
             WindowDef::Inventory { base, .. } => base,
+            WindowDef::Reserve { base, .. } => base,
             WindowDef::CommandInput { base, .. } => base,
             WindowDef::Progress { base, .. } => base,
             WindowDef::Countdown { base, .. } => base,
@@ -365,6 +376,7 @@ impl WindowDef {
             WindowDef::TabbedText { base, .. } => base,
             WindowDef::Room { base, .. } => base,
             WindowDef::Inventory { base, .. } => base,
+            WindowDef::Reserve { base, .. } => base,
             WindowDef::CommandInput { base, .. } => base,
             WindowDef::Progress { base, .. } => base,
             WindowDef::Countdown { base, .. } => base,
