@@ -277,16 +277,21 @@ impl MapService {
         let Some(db) = self.mapdb.clone() else {
             return;
         };
-        let room_id = self
+        // Lich reports id 0 for rooms missing from its mapdb, but 0 is also a
+        // real room id — the fallback must never trust it. A uid miss plus id
+        // 0 means "somewhere unmapped": hold the last known room, so stepping
+        // into an unmapped shop keeps the street outside on screen.
+        let resolved = self
             .last_uid
             .and_then(|uid| db.room_id_of_uid(uid))
-            .or(self.last_lich_id);
-        let location = room_id
-            .and_then(|id| db.location_of_room_id(id))
-            .map(str::to_owned);
+            .or(self.last_lich_id.filter(|&id| id != 0));
+        let Some(room_id) = resolved else {
+            return;
+        };
+        let location = db.location_of_room_id(room_id).map(str::to_owned);
 
-        if room_id != self.current_room_id || location != self.current_location {
-            self.current_room_id = room_id;
+        if Some(room_id) != self.current_room_id || location != self.current_location {
+            self.current_room_id = Some(room_id);
             self.current_location = location.clone();
             self.revision += 1;
         }
@@ -499,5 +504,46 @@ mod tests {
         ));
         assert_eq!(svc.db_state(), DbState::Failed);
         assert!(svc.db_error.is_some());
+    }
+
+    /// Lich reports id 0 for rooms it can't find in the mapdb, and the GSIV
+    /// mapdb also has a REAL room 0 (the Moonglae Inn Atrium). Walking into
+    /// an unmapped shop must hold the map on the last known room, not
+    /// teleport it to the inn; standing in the actual Atrium still resolves
+    /// through its uid.
+    #[test]
+    fn unmapped_room_reports_hold_the_last_known_room() {
+        let tmp = std::env::temp_dir();
+        let db_path = tmp.join("vellum-map-svc-id0-test.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 0, "uid": [13107012], "location": "the Moonglae Inn",
+                 "title": ["[Moonglae Inn, Atrium]"], "wayto": {}, "paths": "Obvious exits: out"},
+                {"id": 369, "uid": [731009], "location": "Mist Harbor",
+                 "title": ["[East Row, Fel Road]"], "wayto": {}, "paths": "Obvious paths: north"}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-id0-cache"),
+            tmp.join("vellum-map-svc-id0-overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+
+        // On the street: uid resolves normally.
+        svc.note_room(Some(731009), Some(369));
+        assert_eq!(svc.current_room_id, Some(369));
+        assert_eq!(svc.current_location.as_deref(), Some("Mist Harbor"));
+
+        // Inside an unmapped shop: unknown uid, Lich placeholder id 0.
+        svc.note_room(Some(633107), Some(0));
+        assert_eq!(svc.current_room_id, Some(369), "id 0 must not be trusted");
+        assert_eq!(svc.current_location.as_deref(), Some("Mist Harbor"));
+
+        // Genuinely in the Atrium: its uid resolves to room 0 directly.
+        svc.note_room(Some(13107012), Some(0));
+        assert_eq!(svc.current_room_id, Some(0));
+        assert_eq!(svc.current_location.as_deref(), Some("the Moonglae Inn"));
     }
 }
