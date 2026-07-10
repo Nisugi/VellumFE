@@ -750,8 +750,15 @@ impl MessageProcessor {
                             link: ref mut window_link,
                         } = left_hand_window.content
                         {
+                            let item_changed = *window_item != game_state.left_hand;
                             *window_item = game_state.left_hand.clone();
-                            *window_link = link.clone();
+                            // A refresh that repeats the same item without
+                            // exist/noun must not clobber a live link; only
+                            // replace it when the item changed or the update
+                            // carries one.
+                            if link.is_some() || item_changed {
+                                *window_link = link.clone();
+                            }
                         }
                         break;
                     }
@@ -776,8 +783,15 @@ impl MessageProcessor {
                             link: ref mut window_link,
                         } = right_hand_window.content
                         {
+                            let item_changed = *window_item != game_state.right_hand;
                             *window_item = game_state.right_hand.clone();
-                            *window_link = link.clone();
+                            // A refresh that repeats the same item without
+                            // exist/noun must not clobber a live link; only
+                            // replace it when the item changed or the update
+                            // carries one.
+                            if link.is_some() || item_changed {
+                                *window_link = link.clone();
+                            }
                         }
                         break;
                     }
@@ -4068,6 +4082,122 @@ mod tests {
         push_test_segment(&mut processor, "A rat scurries past.");
         processor.flush_current_stream(&mut ui_state);
         assert_eq!(text_line_count(&ui_state, "main"), 1);
+    }
+
+    fn make_hand_window(name: &str) -> crate::data::window::WindowState {
+        let mut ws = crate::data::window::WindowState::new_text(name, 10);
+        ws.widget_type = crate::data::window::WidgetType::Hand;
+        ws.content = WindowContent::Hand {
+            item: None,
+            link: None,
+        };
+        ws
+    }
+
+    fn process_hand_element(
+        processor: &mut MessageProcessor,
+        game_state: &mut crate::core::state::GameState,
+        ui_state: &mut UiState,
+        element: &ParsedElement,
+    ) {
+        processor.process_element(
+            element,
+            game_state,
+            ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_bare_hand_refresh_keeps_link_for_unchanged_item() {
+        let mut processor =
+            MessageProcessor::new(Config::default(), SavedDialogPositions::default());
+        let mut ui_state = UiState::new();
+        let mut game_state = crate::core::state::GameState::new();
+        ui_state
+            .windows
+            .insert("right".to_string(), make_hand_window("right"));
+        ui_state.rebuild_widget_index();
+
+        let link = crate::data::LinkData {
+            exist_id: "123".to_string(),
+            noun: "shard".to_string(),
+            text: "jagged nephrite shard".to_string(),
+            coord: None,
+        };
+        process_hand_element(
+            &mut processor,
+            &mut game_state,
+            &mut ui_state,
+            &ParsedElement::RightHand {
+                item: "jagged nephrite shard".to_string(),
+                link: Some(link),
+            },
+        );
+
+        // A refresh repeating the same item without exist/noun must keep
+        // the live link.
+        process_hand_element(
+            &mut processor,
+            &mut game_state,
+            &mut ui_state,
+            &ParsedElement::RightHand {
+                item: "jagged nephrite shard".to_string(),
+                link: None,
+            },
+        );
+        match &ui_state.windows.get("right").unwrap().content {
+            WindowContent::Hand { item, link } => {
+                assert_eq!(item.as_deref(), Some("jagged nephrite shard"));
+                assert_eq!(
+                    link.as_ref().map(|l| l.exist_id.as_str()),
+                    Some("123"),
+                    "bare refresh must not clobber the link"
+                );
+            }
+            _ => panic!("not a hand window"),
+        }
+
+        // A different item without a link must clear the stale link.
+        process_hand_element(
+            &mut processor,
+            &mut game_state,
+            &mut ui_state,
+            &ParsedElement::RightHand {
+                item: "a wooden club".to_string(),
+                link: None,
+            },
+        );
+        match &ui_state.windows.get("right").unwrap().content {
+            WindowContent::Hand { link, .. } => {
+                assert!(link.is_none(), "stale link must not follow a new item");
+            }
+            _ => panic!("not a hand window"),
+        }
+
+        // Emptying the hand clears both.
+        process_hand_element(
+            &mut processor,
+            &mut game_state,
+            &mut ui_state,
+            &ParsedElement::RightHand {
+                item: String::new(),
+                link: None,
+            },
+        );
+        match &ui_state.windows.get("right").unwrap().content {
+            WindowContent::Hand { item, link } => {
+                assert!(item.is_none());
+                assert!(link.is_none());
+            }
+            _ => panic!("not a hand window"),
+        }
     }
 
     #[test]

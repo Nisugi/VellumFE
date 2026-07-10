@@ -816,6 +816,9 @@ impl XmlParser {
                         text: item.clone(),
                         coord: Self::extract_attribute(whole_tag, "coord"),
                     });
+                if link.is_none() && !item.is_empty() && item != "Empty" {
+                    tracing::debug!("left hand tag without exist/noun: {}", whole_tag);
+                }
                 elements.push(ParsedElement::LeftHand { item, link });
             }
         }
@@ -839,6 +842,9 @@ impl XmlParser {
                         text: item.clone(),
                         coord: Self::extract_attribute(whole_tag, "coord"),
                     });
+                if link.is_none() && !item.is_empty() && item != "Empty" {
+                    tracing::debug!("right hand tag without exist/noun: {}", whole_tag);
+                }
                 elements.push(ParsedElement::RightHand { item, link });
             }
         }
