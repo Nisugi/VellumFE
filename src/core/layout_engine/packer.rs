@@ -943,50 +943,233 @@ pub fn pack_groups(
 }
 
 /// Interiors sheet: wrapped shelf rows in an independent coordinate space.
-/// Groups of one interior cluster (one walkable building) are seated
-/// consecutively so their connecting passages ("go arch") stay short;
-/// clusters are name-sorted so related buildings sit together (spec §7).
+/// A cluster (one walkable building) is merged into a single floor plan
+/// first — members are placed beside the rooms their passages connect to,
+/// like the outdoor connector pass but cluster-local — and then each merged
+/// building is shelved as one unit (spec §7).
 pub fn pack_interior_shelf(
     groups: &mut Vec<Group>,
     interior: &[usize],
     clusters: &HashMap<usize, usize>,
+    lookup: &RoomTable,
 ) {
     if interior.is_empty() {
         return;
     }
-    // Names are not assigned yet at this point in the pipeline (they land
-    // after packing), so the order is cluster-first: one building's groups
-    // sit consecutively, clusters follow component order.
-    let mut sorted: Vec<usize> = interior.to_vec();
-    sorted.sort_by_key(|&idx| (clusters.get(&idx).copied().unwrap_or(idx), idx));
+
+    // Cluster membership, canonical order (BTreeMap keys + sorted members).
+    let mut members_of: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for &idx in interior {
+        members_of
+            .entry(clusters.get(&idx).copied().unwrap_or(idx))
+            .or_default()
+            .push(idx);
+    }
+    for members in members_of.values_mut() {
+        members.sort_unstable();
+    }
+
+    // One shelf item per cluster: member → cluster-local frame offset.
+    struct Item {
+        local: Vec<(usize, Cell)>,
+        width: i32,
+        height: i32,
+    }
+    let mut items: Vec<Item> = Vec::new();
+    for members in members_of.values() {
+        let mut local: HashMap<usize, Cell> = HashMap::new();
+        if members.len() == 1 {
+            local.insert(members[0], Cell::default());
+        } else {
+            merge_cluster_members(groups, members, lookup, &mut local);
+        }
+        // Normalize the frame to a (0,0) top-left.
+        let mut min = Cell {
+            x: i32::MAX,
+            y: i32::MAX,
+        };
+        let mut max = Cell {
+            x: i32::MIN,
+            y: i32::MIN,
+        };
+        for (&idx, off) in &local {
+            let b = groups[idx].bounds();
+            min.x = min.x.min(b.min_x + off.x);
+            min.y = min.y.min(b.min_y + off.y);
+            max.x = max.x.max(b.max_x + off.x);
+            max.y = max.y.max(b.max_y + off.y);
+        }
+        let mut ordered: Vec<(usize, Cell)> = members
+            .iter()
+            .map(|&idx| {
+                let off = local[&idx];
+                (
+                    idx,
+                    Cell {
+                        x: off.x - min.x,
+                        y: off.y - min.y,
+                    },
+                )
+            })
+            .collect();
+        ordered.sort_unstable_by_key(|&(idx, _)| idx);
+        items.push(Item {
+            local: ordered,
+            width: max.x - min.x + 1,
+            height: max.y - min.y + 1,
+        });
+    }
 
     // Padded area, so the sheet comes out roughly square even when padding
-    // dwarfs the mostly tiny groups.
-    let total_area: i64 = sorted
+    // dwarfs the mostly tiny buildings.
+    let total_area: i64 = items
         .iter()
-        .map(|&idx| {
-            let b = groups[idx].bounds();
-            (b.width() + GROUP_PADDING) as i64 * (b.height() + GROUP_PADDING) as i64
-        })
+        .map(|i| (i.width + GROUP_PADDING) as i64 * (i.height + GROUP_PADDING) as i64)
         .sum();
     let row_width = ((total_area as f64).sqrt().ceil() as i32).max(20);
 
     let mut cursor_x = 0;
     let mut cursor_y = 0;
     let mut row_height = 0;
-    for idx in sorted {
-        let bounds = groups[idx].bounds();
-        if cursor_x > 0 && cursor_x + bounds.width() > row_width {
+    for item in items {
+        if cursor_x > 0 && cursor_x + item.width > row_width {
             cursor_y += row_height + GROUP_PADDING;
             cursor_x = 0;
             row_height = 0;
         }
-        groups[idx].base_offset = Some(Cell {
-            x: cursor_x - bounds.min_x,
-            y: cursor_y - bounds.min_y,
+        for (idx, local) in &item.local {
+            groups[*idx].base_offset = Some(Cell {
+                x: cursor_x + local.x,
+                y: cursor_y + local.y,
+            });
+            groups[*idx].packing = Some(PackMethod::InteriorShelf);
+        }
+        cursor_x += item.width + GROUP_PADDING;
+        row_height = row_height.max(item.height);
+    }
+}
+
+/// Place a multi-component building's members into one local frame: seed the
+/// largest, then repeatedly land the member with the most passages into the
+/// placed set beside the room its lowest-uid-delta passage connects to
+/// (nearest free offset). Clusters are connected by construction, but any
+/// straggler falls back to the frame's right edge.
+fn merge_cluster_members(
+    groups: &[Group],
+    members: &[usize],
+    lookup: &RoomTable,
+    local: &mut HashMap<usize, Cell>,
+) {
+    let member_set: std::collections::HashSet<usize> = members.iter().copied().collect();
+    let mut group_of: HashMap<u32, usize> = HashMap::new();
+    for &idx in members {
+        for &id in &groups[idx].room_ids {
+            group_of.insert(id, idx);
+        }
+    }
+    // Passages between members: (member, other_member, room, other_room, uid delta).
+    let mut edges: HashMap<usize, Vec<Edge>> = HashMap::new();
+    for &idx in members {
+        for &room_id in &groups[idx].room_ids {
+            let Some(room) = lookup.get(room_id) else {
+                continue;
+            };
+            for &target_id in room.wayto.keys() {
+                let Some(&other) = group_of.get(&target_id) else {
+                    continue;
+                };
+                if other == idx || !member_set.contains(&other) {
+                    continue;
+                }
+                edges.entry(idx).or_default().push(Edge {
+                    other_group: other,
+                    room_id,
+                    other_room_id: target_id,
+                    uid_delta: uid_delta(Some(room), lookup.get(target_id)),
+                });
+            }
+        }
+    }
+
+    let mut occupied: HashSet<Cell> = HashSet::new();
+    let mut place = |idx: usize, off: Cell, occupied: &mut HashSet<Cell>| {
+        for p in groups[idx].positions.values() {
+            occupied.insert(Cell {
+                x: p.x + off.x,
+                y: p.y + off.y,
+            });
+        }
+    };
+
+    let seed = *members
+        .iter()
+        .max_by_key(|&&idx| (groups[idx].room_ids.len(), std::cmp::Reverse(idx)))
+        .expect("members is non-empty");
+    local.insert(seed, Cell::default());
+    place(seed, Cell::default(), &mut occupied);
+
+    loop {
+        // Most placed-passages first; ties to the lowest member index.
+        let mut best: Option<(usize, Vec<Edge>)> = None;
+        for &idx in members {
+            if local.contains_key(&idx) {
+                continue;
+            }
+            let placed_edges: Vec<Edge> = edges
+                .get(&idx)
+                .map(|l| {
+                    l.iter()
+                        .filter(|e| local.contains_key(&e.other_group))
+                        .copied()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if placed_edges.is_empty() {
+                continue;
+            }
+            if best
+                .as_ref()
+                .map(|(_, b)| placed_edges.len() > b.len())
+                .unwrap_or(true)
+            {
+                best = Some((idx, placed_edges));
+            }
+        }
+
+        let Some((idx, placed_edges)) = best else {
+            // Stragglers (shouldn't happen: clusters are connected).
+            let Some(&idx) = members.iter().find(|&&m| !local.contains_key(&m)) else {
+                return;
+            };
+            let max_x = occupied.iter().map(|c| c.x).max().unwrap_or(0);
+            let bounds = groups[idx].bounds();
+            let proposed = Cell {
+                x: max_x + 2 - bounds.min_x,
+                y: 0,
+            };
+            let off = find_free_offset(&groups[idx], proposed, &occupied).unwrap_or(proposed);
+            local.insert(idx, off);
+            place(idx, off, &mut occupied);
+            continue;
+        };
+
+        let edge = *placed_edges
+            .iter()
+            .min_by_key(|e| e.uid_delta)
+            .expect("placed_edges is non-empty");
+        let neighbor_off = local[&edge.other_group];
+        let neighbor_room = groups[edge.other_group].positions[&edge.other_room_id];
+        let internal = groups[idx].positions[&edge.room_id];
+        // Land the passage endpoints as close together as the frame allows.
+        let proposed = Cell {
+            x: neighbor_room.x + neighbor_off.x - internal.x,
+            y: neighbor_room.y + neighbor_off.y - internal.y,
+        };
+        let off = find_free_offset(&groups[idx], proposed, &occupied).unwrap_or(Cell {
+            x: proposed.x + groups[edge.other_group].bounds().width() + 1,
+            y: proposed.y,
         });
-        groups[idx].packing = Some(PackMethod::InteriorShelf);
-        cursor_x += bounds.width() + GROUP_PADDING;
-        row_height = row_height.max(bounds.height());
+        local.insert(idx, off);
+        place(idx, off, &mut occupied);
     }
 }

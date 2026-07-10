@@ -13,8 +13,8 @@ use super::mapdb::Room;
 use super::{generate_layout, Layout};
 
 /// Bump when the algorithms change so stale cached layouts regenerate.
-/// v2: interiors shelf seats cluster members consecutively.
-pub const ENGINE_VERSION: u32 = 2;
+/// v3: interior clusters merge into one floor plan before shelving.
+pub const ENGINE_VERSION: u32 = 3;
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
