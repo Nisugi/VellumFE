@@ -604,6 +604,7 @@ impl VellumGuiApp {
                 id: name.to_string(),
             },
             WidgetType::Compass => TabKey::Compass,
+            WidgetType::Map => TabKey::Map,
             WidgetType::Indicator => TabKey::Indicators,
             WidgetType::Targets => TabKey::Targets,
             WidgetType::Players => TabKey::Players,
@@ -1641,6 +1642,9 @@ impl VellumGuiApp {
                 }
             }
         }
+
+        // Drain map worker results (mapdb load, layout generation).
+        self.app_core.map.poll();
 
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
@@ -3347,6 +3351,12 @@ impl eframe::App for VellumGuiApp {
             .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
+        // Keep painting while the map worker is busy so results appear
+        // without waiting for user input or game text.
+        if self.app_core.map.has_pending() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(150));
+        }
         self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();
         let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);

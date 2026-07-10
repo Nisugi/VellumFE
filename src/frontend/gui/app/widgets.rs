@@ -1100,6 +1100,91 @@ impl VellumGuiApp {
         });
     }
 
+    /// Mini map: follows the current room (auto-centered, auto-switching
+    /// between the outdoor sheet and the interior group the character is
+    /// in); clicking a room walks there via `;go2`.
+    pub(super) fn render_map_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        map_data: &crate::data::MapData,
+    ) -> Option<GuiLinkClick> {
+        use crate::core::map_service::DbState;
+        use crate::frontend::gui::map_view::{self, MapCamera, MapStyle};
+
+        let map = &app_core.map;
+        let hint = |ui: &mut egui::Ui, text: &str| {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new(text).weak());
+            });
+        };
+        match map.db_state() {
+            DbState::NotLoaded => {
+                hint(ui, "Set your Lich folder in Settings > Map to enable the map");
+                return None;
+            }
+            DbState::Loading => {
+                ui.centered_and_justified(|ui| ui.spinner());
+                return None;
+            }
+            DbState::Failed => {
+                let msg = map
+                    .db_error
+                    .clone()
+                    .unwrap_or_else(|| "mapdb load failed".to_string());
+                hint(ui, &format!("Map unavailable: {msg}"));
+                return None;
+            }
+            DbState::Loaded => {}
+        }
+        let Some(scene) = map.current_scene() else {
+            let msg = if map.current_location.is_some() {
+                "Generating map..."
+            } else {
+                "Waiting for a mapped room..."
+            };
+            hint(ui, msg);
+            return None;
+        };
+
+        let current = map.current_room_id;
+        let (sheet_kind, center) = match current.and_then(|id| scene.room(id)) {
+            Some((sheet, room)) => (sheet, room.cell),
+            None => {
+                let b = &scene.outdoor;
+                (
+                    crate::core::layout_engine::Sheet::Outdoor,
+                    crate::core::layout_engine::Cell {
+                        x: (b.min.x + b.max.x) / 2,
+                        y: (b.min.y + b.max.y) / 2,
+                    },
+                )
+            }
+        };
+
+        let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        if rect.width() < 8.0 || rect.height() < 8.0 {
+            return None;
+        }
+        let camera = MapCamera::centered_on_cell(center.x, center.y, map_data.zoom);
+        let style = MapStyle::from_visuals(ui.visuals());
+        let result = map_view::paint_sheet(
+            ui,
+            rect,
+            scene.sheet(sheet_kind),
+            camera,
+            current,
+            true,
+            &style,
+        );
+
+        result.clicked_room.map(|id| GuiLinkClick {
+            link_data: Self::direct_command_link(format!(";go2 {id}")),
+            click_pos: Self::click_pos_to_grid(
+                ui.ctx().pointer_latest_pos().unwrap_or(Pos2::ZERO),
+            ),
+        })
+    }
+
     pub(super) fn render_compass_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -2743,6 +2828,7 @@ impl VellumGuiApp {
             WindowContent::Compass(compass) => {
                 Self::render_compass_content(app_core, ui, compass, settings.skin_art.as_deref())
             }
+            WindowContent::Map(map_data) => Self::render_map_content(app_core, ui, map_data),
             WindowContent::Hand { item, link } => {
                 let hand_prefix = if window.name.to_ascii_lowercase().contains("left") {
                     "L"

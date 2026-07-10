@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 
-use crate::core::layout_engine::{find_latest_mapdb, Layout, LayoutCache, MapDb};
+use crate::core::layout_engine::{
+    build_scene, find_latest_mapdb, Layout, LayoutCache, MapDb, MapScene, RoomTable,
+};
 
 /// Lich's per-game data subdirectory for a VellumFE game code
 /// (`--game prime` → `data/GSIV`).
@@ -39,6 +41,7 @@ enum MapEvent {
     LayoutReady {
         location: String,
         layout: Arc<Layout>,
+        scene: Arc<MapScene>,
     },
 }
 
@@ -75,6 +78,8 @@ pub struct MapService {
 
     /// Generated layouts by location (backed by the disk cache on the worker).
     layouts: HashMap<String, Arc<Layout>>,
+    /// Drawable scenes matching `layouts`.
+    scenes: HashMap<String, Arc<MapScene>>,
     /// Locations with a generation job in flight.
     pending: std::collections::HashSet<String>,
 
@@ -112,9 +117,12 @@ impl MapService {
                                 continue;
                             };
                             let (layout, _) = cache.get_or_generate(&location, rooms);
+                            let scene =
+                                build_scene(&location, &layout, &RoomTable::new(rooms));
                             MapEvent::LayoutReady {
                                 location,
                                 layout: Arc::new(layout),
+                                scene: Arc::new(scene),
                             }
                         }
                     };
@@ -134,6 +142,7 @@ impl MapService {
             mapdb: None,
             db_error: None,
             layouts: HashMap::new(),
+            scenes: HashMap::new(),
             pending: Default::default(),
             last_uid: None,
             last_lich_id: None,
@@ -182,6 +191,7 @@ impl MapService {
         self.db_state = DbState::Loading;
         self.mapdb = None;
         self.layouts.clear();
+        self.scenes.clear();
         self.pending.clear();
         self.revision += 1;
         let _ = self.job_tx.send(MapJob::LoadDb(path));
@@ -244,13 +254,28 @@ impl MapService {
         self.layouts.get(location)
     }
 
+    pub fn scene_for(&self, location: &str) -> Option<&Arc<MapScene>> {
+        self.scenes.get(location)
+    }
+
     /// The layout for wherever the character currently is.
     pub fn current_layout(&self) -> Option<&Arc<Layout>> {
         self.layouts.get(self.current_location.as_deref()?)
     }
 
+    /// The drawable scene for wherever the character currently is.
+    pub fn current_scene(&self) -> Option<&Arc<MapScene>> {
+        self.scenes.get(self.current_location.as_deref()?)
+    }
+
     pub fn is_pending(&self, location: &str) -> bool {
         self.pending.contains(location)
+    }
+
+    /// Work is in flight (db load or generation); callers should keep
+    /// repainting until it drains.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty() || matches!(self.db_state, DbState::Loading)
     }
 
     /// Drain worker results. Call once per frame/tick.
@@ -270,9 +295,14 @@ impl MapService {
                     self.db_error = Some(e);
                     self.revision += 1;
                 }
-                MapEvent::LayoutReady { location, layout } => {
+                MapEvent::LayoutReady {
+                    location,
+                    layout,
+                    scene,
+                } => {
                     self.pending.remove(&location);
-                    self.layouts.insert(location, layout);
+                    self.layouts.insert(location.clone(), layout);
+                    self.scenes.insert(location, scene);
                     self.revision += 1;
                 }
             }

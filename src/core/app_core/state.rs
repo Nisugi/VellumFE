@@ -722,6 +722,7 @@ impl AppCore {
             crate::data::WidgetType::Progress => "progress",
             crate::data::WidgetType::Countdown => "countdown",
             crate::data::WidgetType::Compass => "compass",
+            crate::data::WidgetType::Map => "map",
             crate::data::WidgetType::Indicator => "indicator",
             crate::data::WidgetType::Room => "room",
             crate::data::WidgetType::Inventory => "inventory",
@@ -1122,7 +1123,8 @@ impl AppCore {
                         color,
                     })
                 }
-                WidgetType::Compass => WindowContent::Compass(CompassData {
+                WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
+            WidgetType::Compass => WindowContent::Compass(CompassData {
                     directions: Vec::new(),
                 }),
                 WidgetType::InjuryDoll => WindowContent::InjuryDoll(InjuryDollData::new()),
@@ -1454,6 +1456,7 @@ impl AppCore {
                     color,
                 })
             }
+            WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),
@@ -2649,6 +2652,7 @@ impl AppCore {
                 countdown_id: name.to_string(),
                 color: None,
             }),
+            WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),

@@ -21,6 +21,7 @@
 
 pub mod app;
 pub mod launcher;
+pub mod map_view;
 pub mod persistence;
 pub mod skin;
 pub mod tab_id;

@@ -317,7 +317,7 @@ fn add_bridged_edges(
     // Excluded component → packed-side contacts, in first-encounter order.
     let mut contact_order: Vec<usize> = Vec::new();
     let mut contacts: HashMap<usize, Vec<Contact>> = HashMap::new();
-    let mut add_contact =
+    let add_contact =
         |excluded: usize,
          packed_idx: usize,
          room_id: u32,
@@ -548,7 +548,7 @@ fn find_best_connector_offset(
     let mut best: Option<Cell> = None;
     let mut best_score = i64::MAX;
 
-    let mut consider = |candidate: Cell, best: &mut Option<Cell>, best_score: &mut i64| {
+    let consider = |candidate: Cell, best: &mut Option<Cell>, best_score: &mut i64| {
         if !fits(group, candidate, occupied) {
             return;
         }

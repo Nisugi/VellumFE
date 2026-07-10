@@ -15,6 +15,7 @@ pub mod direction;
 pub mod mapdb;
 pub mod packer;
 pub mod positioner;
+pub mod scene;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -24,6 +25,7 @@ pub use cache::{rooms_content_hash, CacheOutcome, LayoutCache};
 pub use classifier::Classification;
 pub use mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
 pub use packer::PackInfo;
+pub use scene::{build_scene, MapScene, SceneEdgeKind, Sheet};
 pub use positioner::{Cell, Group, PackMethod, Violation};
 
 /// A generated layout: every component with internal positions and sheet
