@@ -4009,6 +4009,15 @@ pub fn run_native_gui(
         &window_title,
         options,
         Box::new(move |cc| {
+            // Virtualized text windows intentionally re-address screen rects
+            // to different (content-stable) widget ids as they scroll; egui's
+            // debug-build id-instability lint paints red warning boxes over
+            // exactly that pattern, so opt out. Release builds compile the
+            // lint out entirely.
+            #[cfg(debug_assertions)]
+            cc.egui_ctx.global_style_mut(|style| {
+                style.debug.warn_if_rect_changes_id = false;
+            });
             app.set_repaint_context(cc.egui_ctx.clone());
             Ok(Box::new(app))
         }),
