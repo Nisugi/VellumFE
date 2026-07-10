@@ -107,12 +107,13 @@ fn corrupt_or_stale_entries_regenerate() {
         .expect("one cache entry");
 
     // A future engine version must not serve yesterday's layout.
+    let current = format!(
+        "\"engine_version\":{}",
+        vellum_fe::core::layout_engine::cache::ENGINE_VERSION
+    );
     let json = std::fs::read_to_string(&entry).unwrap();
-    std::fs::write(
-        &entry,
-        json.replace("\"engine_version\":1", "\"engine_version\":0"),
-    )
-    .unwrap();
+    assert!(json.contains(&current), "test setup: version marker present");
+    std::fs::write(&entry, json.replace(&current, "\"engine_version\":0")).unwrap();
     let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
     assert_eq!(outcome, CacheOutcome::Generated, "version mismatch → miss");
 
