@@ -1650,8 +1650,9 @@ impl VellumGuiApp {
             }
         }
 
-        // Drain map worker results (mapdb load, layout generation).
-        self.app_core.map.poll();
+        // Drain map worker results (mapdb load, layout generation) and the
+        // mapdb release updater.
+        self.app_core.poll_map();
 
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
@@ -3358,9 +3359,10 @@ impl eframe::App for VellumGuiApp {
             .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
-        // Keep painting while the map worker is busy so results appear
-        // without waiting for user input or game text.
-        if self.app_core.map.has_pending() {
+        // Keep painting while the map worker or mapdb download is busy so
+        // results and progress appear without waiting for user input or
+        // game text.
+        if self.app_core.map.has_pending() || self.app_core.map_updater.in_flight() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(150));
         }

@@ -26,6 +26,7 @@ pub(in super::super) struct SettingsEditorState {
     min_command_length: usize,
     lich_dir: String,
     mapdb_path: String,
+    mapdb_repo: String,
     sound_enabled: bool,
     sound_volume: f32,
     sound_cooldown_ms: u64,
@@ -59,6 +60,7 @@ impl SettingsEditorState {
             character: config.connection.character.clone().unwrap_or_default(),
             lich_dir: config.map.lich_dir.clone().unwrap_or_default(),
             mapdb_path: config.map.mapdb_path.clone().unwrap_or_default(),
+            mapdb_repo: config.map.mapdb_repo.clone(),
             buffer_size: config.ui.buffer_size,
             border_style: config.ui.border_style.clone(),
             countdown_icon: config.ui.countdown_icon.clone(),
@@ -95,6 +97,7 @@ impl SettingsEditorState {
             "" => None,
             path => Some(path.to_string()),
         };
+        config.map.mapdb_repo = self.mapdb_repo.trim().to_string();
         config.ui.buffer_size = self.buffer_size;
         config.ui.border_style = self.border_style.clone();
         config.ui.countdown_icon = self.countdown_icon.clone();
@@ -135,6 +138,13 @@ impl VellumGuiApp {
         let mut open = true;
         let mut saved = false;
         let mut cancelled = false;
+        // Map download actions fire immediately (they're actions, not
+        // settings); the repo text itself still applies on Save.
+        let mut map_download_repo: Option<String> = None;
+        let mut map_remove_clicked = false;
+        let updater_status = self.app_core.map_updater.status.clone();
+        let updater_installed = self.app_core.map_updater.installed.clone();
+        let updater_in_flight = self.app_core.map_updater.in_flight();
         egui::Window::new("Settings")
             .id(egui::Id::new("gui_settings_editor"))
             .open(&mut open)
@@ -163,11 +173,17 @@ impl VellumGuiApp {
 
                         ui.collapsing("Map", |ui| {
                             ui.label(
-                                "Point at your Lich install so the map can read its room                                  database (data/<game>/map-<timestamp>.json).",
+                                "Map data comes from a downloaded release or your Lich install                                  (data/<game>/map-<timestamp>.json); downloaded data wins.",
                             );
                             egui::Grid::new("settings_map_grid").num_columns(2).show(
                                 ui,
                                 |ui| {
+                                    ui.label("Map data repo");
+                                    ui.text_edit_singleline(&mut state.mapdb_repo)
+                                        .on_hover_text(
+                                            "GitHub owner/repo whose releases attach a mapdb.json asset",
+                                        );
+                                    ui.end_row();
                                     ui.label("Lich folder");
                                     ui.text_edit_singleline(&mut state.lich_dir)
                                         .on_hover_text("e.g. C:/Gemstone/Lich5");
@@ -175,11 +191,70 @@ impl VellumGuiApp {
                                     ui.label("mapdb file (override)");
                                     ui.text_edit_singleline(&mut state.mapdb_path)
                                         .on_hover_text(
-                                            "Optional explicit map-*.json; overrides the Lich folder",
+                                            "Optional explicit map-*.json; overrides both sources above",
                                         );
                                     ui.end_row();
                                 },
                             );
+                            ui.horizontal(|ui| {
+                                let can_download =
+                                    !updater_in_flight && !state.mapdb_repo.trim().is_empty();
+                                let label = if updater_installed.is_some() {
+                                    "Check for update"
+                                } else {
+                                    "Download map data"
+                                };
+                                if ui.add_enabled(can_download, egui::Button::new(label)).clicked()
+                                {
+                                    map_download_repo = Some(state.mapdb_repo.trim().to_string());
+                                }
+                                if updater_installed.is_some()
+                                    && ui
+                                        .add_enabled(
+                                            !updater_in_flight,
+                                            egui::Button::new("Remove downloaded"),
+                                        )
+                                        .on_hover_text(
+                                            "Delete downloaded map data and fall back to the Lich folder",
+                                        )
+                                        .clicked()
+                                {
+                                    map_remove_clicked = true;
+                                }
+                            });
+                            use crate::core::mapdb_update::UpdateStatus;
+                            let status_text = match &updater_status {
+                                UpdateStatus::Idle => match &updater_installed {
+                                    Some(tag) => format!("Installed: {tag}"),
+                                    None => "No downloaded map data".to_string(),
+                                },
+                                UpdateStatus::Checking => {
+                                    "Checking for the latest release...".to_string()
+                                }
+                                UpdateStatus::Downloading {
+                                    tag,
+                                    received,
+                                    total,
+                                } => match total {
+                                    Some(total) => format!(
+                                        "Downloading {tag}: {:.1} / {:.1} MB",
+                                        *received as f64 / 1e6,
+                                        *total as f64 / 1e6
+                                    ),
+                                    None => format!(
+                                        "Downloading {tag}: {:.1} MB",
+                                        *received as f64 / 1e6
+                                    ),
+                                },
+                                UpdateStatus::UpToDate { tag } => format!("Up to date ({tag})"),
+                                UpdateStatus::Updated { tag } => format!("Installed {tag}"),
+                                UpdateStatus::Failed(e) => format!("Update failed: {e}"),
+                            };
+                            if matches!(updater_status, UpdateStatus::Failed(_)) {
+                                ui.colored_label(ui.visuals().error_fg_color, status_text);
+                            } else {
+                                ui.label(egui::RichText::new(status_text).weak());
+                            }
                         });
 
                         ui.collapsing("UI", |ui| {
@@ -504,6 +579,14 @@ impl VellumGuiApp {
                         });
                     });
             });
+
+        if let Some(repo) = map_download_repo {
+            self.app_core.start_mapdb_download(&repo);
+        }
+        if map_remove_clicked {
+            self.app_core.remove_downloaded_mapdb();
+            self.app_core.add_system_message("Downloaded map data removed.");
+        }
 
         if saved {
             state.apply_to_config(&mut self.app_core.config);

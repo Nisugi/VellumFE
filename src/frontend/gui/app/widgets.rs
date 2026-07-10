@@ -1120,7 +1120,10 @@ impl VellumGuiApp {
         };
         match map.db_state() {
             DbState::NotLoaded => {
-                hint(ui, "Set your Lich folder in Settings > Map to enable the map");
+                hint(
+                    ui,
+                    "Download map data in Settings > Map (or point at your Lich folder)",
+                );
                 return None;
             }
             DbState::Loading => {
