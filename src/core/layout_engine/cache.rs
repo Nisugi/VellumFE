@@ -32,6 +32,10 @@ struct CacheFile {
     location: String,
     /// Hex content hash of the location's rooms (see `rooms_content_hash`).
     rooms_hash: String,
+    /// Hex hash of the generation-input overrides baked into this layout
+    /// (edge directions, classification flips); zeros = pristine.
+    #[serde(default)]
+    curated: String,
     layout: Layout,
 }
 
@@ -39,6 +43,13 @@ struct CacheFile {
 /// and Rust versions is the requirement here (std's SipHash keys differ per
 /// process); collisions only cost a wrong cache hit against another build of
 /// the same location, and the engine version + location name also gate loads.
+/// One-shot FNV-1a 64 over a byte slice (shared with the override hasher).
+pub fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h = Fnv1a::new();
+    h.write(bytes);
+    h.0
+}
+
 struct Fnv1a(u64);
 
 impl Fnv1a {
@@ -127,14 +138,22 @@ impl LayoutCache {
 
     /// Load the cached layout, or generate (and best-effort store) it. The
     /// engine is deterministic, so a hit is byte-equivalent to regenerating.
-    pub fn get_or_generate(&self, location: &str, rooms: &[Room]) -> (Layout, CacheOutcome) {
+    /// `gen_overrides` is the generation-input override subset baked into
+    /// the produced layout (`LocationOverrides::generation_subset`).
+    pub fn get_or_generate(
+        &self,
+        location: &str,
+        rooms: &[Room],
+        gen_overrides: &super::LocationOverrides,
+    ) -> (Layout, CacheOutcome) {
         let hash = rooms_content_hash(rooms);
-        if let Some(layout) = self.load(location, hash) {
+        let curated = gen_overrides.curated_hash();
+        if let Some(layout) = self.load(location, hash, curated) {
             return (layout, CacheOutcome::Hit);
         }
         let mut owned = rooms.to_vec();
-        let layout = generate_layout(&mut owned);
-        if let Err(e) = self.store(location, hash, &layout) {
+        let layout = super::generate_layout_curated(&mut owned, gen_overrides);
+        if let Err(e) = self.store(location, hash, curated, &layout) {
             tracing::warn!("layout cache store failed for {location}: {e}");
         }
         (layout, CacheOutcome::Generated)
@@ -142,20 +161,27 @@ impl LayoutCache {
 
     /// A valid entry must match the format, engine version, location, and
     /// content hash; anything else (including parse errors) is a miss.
-    pub fn load(&self, location: &str, rooms_hash: u64) -> Option<Layout> {
+    pub fn load(&self, location: &str, rooms_hash: u64, curated: u64) -> Option<Layout> {
         let path = self.entry_path(location, rooms_hash);
         let json = std::fs::read_to_string(&path).ok()?;
         let file: CacheFile = serde_json::from_str(&json).ok()?;
         (file.format_version == FORMAT_VERSION
             && file.engine_version == ENGINE_VERSION
             && file.location == location
-            && file.rooms_hash == format!("{rooms_hash:016x}"))
+            && file.rooms_hash == format!("{rooms_hash:016x}")
+            && file.curated == format!("{curated:016x}"))
         .then_some(file.layout)
     }
 
     /// Write the entry and prune other (stale-hash) entries for the same
     /// location. Returns the entry path.
-    pub fn store(&self, location: &str, rooms_hash: u64, layout: &Layout) -> io::Result<PathBuf> {
+    pub fn store(
+        &self,
+        location: &str,
+        rooms_hash: u64,
+        curated: u64,
+        layout: &Layout,
+    ) -> io::Result<PathBuf> {
         std::fs::create_dir_all(&self.dir)?;
         let path = self.entry_path(location, rooms_hash);
         let file = CacheFile {
@@ -163,6 +189,7 @@ impl LayoutCache {
             engine_version: ENGINE_VERSION,
             location: location.to_owned(),
             rooms_hash: format!("{rooms_hash:016x}"),
+            curated: format!("{curated:016x}"),
             layout: layout.clone(),
         };
         let json = serde_json::to_string(&file)

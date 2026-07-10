@@ -6,7 +6,7 @@
 use eframe::egui::{self, Pos2, Rect, Sense, Vec2, ViewportBuilder, ViewportId};
 
 use crate::core::layout_engine::scene::Sheet;
-use crate::core::layout_engine::Cell;
+use crate::core::layout_engine::{Cell, EdgeAction, SheetChoice};
 use crate::core::map_service::{DbState, OverrideEdit};
 use crate::frontend::gui::map_view::{self, MapCamera, MapStyle};
 
@@ -390,6 +390,32 @@ impl VellumGuiApp {
                                 });
                             }
                         });
+                        // Classification: where does this group belong?
+                        let current_choice = ex
+                            .location
+                            .as_deref()
+                            .and_then(|loc| map.overrides_for(loc))
+                            .and_then(|ov| ov.sheets.get(&anchor).copied());
+                        ui.horizontal(|ui| {
+                            ui.label("Sheet:");
+                            for (label, choice) in [
+                                ("Auto", None),
+                                ("Outdoor", Some(SheetChoice::Outdoor)),
+                                ("Interior", Some(SheetChoice::Interior)),
+                            ] {
+                                if ui
+                                    .selectable_label(current_choice == choice, label)
+                                    .clicked()
+                                    && current_choice != choice
+                                {
+                                    out.override_edit = Some(OverrideEdit::Sheet {
+                                        location: ex.location.clone().unwrap_or_default(),
+                                        anchor,
+                                        choice,
+                                    });
+                                }
+                            }
+                        });
                     }
                     let key = scene_room.uid.unwrap_or(selected as i64);
                     let pinned = ex
@@ -409,9 +435,102 @@ impl VellumGuiApp {
                 if let Some(room) = room {
                     ui.separator();
                     ui.label(egui::RichText::new("Exits").strong());
+                    let rooms_slice = ex
+                        .location
+                        .as_deref()
+                        .and_then(|loc| map.mapdb().map(|db| (db, loc)))
+                        .and_then(|(db, loc)| db.rooms(loc));
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for (target, cmd) in &room.wayto {
-                            ui.label(format!("{cmd} \u{2192} {target}"));
+                            if !ex.edit_mode {
+                                ui.label(format!("{cmd} \u{2192} {target}"));
+                                continue;
+                            }
+                            // Edge action editor, keyed by the room-key pair.
+                            let target_key = rooms_slice
+                                .and_then(|rooms| {
+                                    rooms
+                                        .binary_search_by_key(target, |r| r.id)
+                                        .ok()
+                                        .map(|i| &rooms[i])
+                                })
+                                .map(|r| r.uid.first().copied().unwrap_or(r.id as i64));
+                            let Some(target_key) = target_key else {
+                                ui.label(format!("{cmd} \u{2192} {target}"));
+                                continue;
+                            };
+                            let my_key = scene_room.uid.unwrap_or(selected as i64);
+                            let (ka, kb) = (my_key.min(target_key), my_key.max(target_key));
+                            let current_action = ex
+                                .location
+                                .as_deref()
+                                .and_then(|loc| map.overrides_for(loc))
+                                .and_then(|ov| {
+                                    ov.edges
+                                        .iter()
+                                        .find(|e| (e.a, e.b) == (ka, kb))
+                                        .map(|e| e.action)
+                                });
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{cmd} \u{2192} {target}"));
+                                let text = match current_action {
+                                    None => "auto".to_string(),
+                                    Some(EdgeAction::Hide) => "hidden".to_string(),
+                                    Some(EdgeAction::Connector) => "passage".to_string(),
+                                    Some(EdgeAction::Direction(d)) => d.name().to_string(),
+                                };
+                                egui::ComboBox::from_id_salt(("map_edge", ka, kb, *target))
+                                    .selected_text(text)
+                                    .width(90.0)
+                                    .show_ui(ui, |ui| {
+                                        let mut pick =
+                                            |ui: &mut egui::Ui,
+                                             label: &str,
+                                             action: Option<EdgeAction>| {
+                                                if ui
+                                                    .selectable_label(
+                                                        current_action == action,
+                                                        label,
+                                                    )
+                                                    .clicked()
+                                                    && current_action != action
+                                                {
+                                                    out.override_edit =
+                                                        Some(OverrideEdit::Edge {
+                                                            location: ex
+                                                                .location
+                                                                .clone()
+                                                                .unwrap_or_default(),
+                                                            a: ka,
+                                                            b: kb,
+                                                            action,
+                                                        });
+                                                }
+                                            };
+                                        pick(ui, "auto", None);
+                                        pick(ui, "hidden", Some(EdgeAction::Hide));
+                                        pick(ui, "passage", Some(EdgeAction::Connector));
+                                        ui.separator();
+                                        for dir in [
+                                            crate::core::layout_engine::direction::Dir::North,
+                                            crate::core::layout_engine::direction::Dir::Northeast,
+                                            crate::core::layout_engine::direction::Dir::East,
+                                            crate::core::layout_engine::direction::Dir::Southeast,
+                                            crate::core::layout_engine::direction::Dir::South,
+                                            crate::core::layout_engine::direction::Dir::Southwest,
+                                            crate::core::layout_engine::direction::Dir::West,
+                                            crate::core::layout_engine::direction::Dir::Northwest,
+                                            crate::core::layout_engine::direction::Dir::Up,
+                                            crate::core::layout_engine::direction::Dir::Down,
+                                        ] {
+                                            pick(
+                                                ui,
+                                                dir.name(),
+                                                Some(EdgeAction::Direction(dir)),
+                                            );
+                                        }
+                                    });
+                            });
                         }
                     });
                 }
@@ -609,8 +728,11 @@ impl VellumGuiApp {
             } else {
                 None
             };
-            let result =
-                map_view::paint_sheet(ui, rect, sheet, camera, current, true, None, &style);
+            let exits = (current.is_some())
+                .then(|| app_core.game_state.compass_dirs.as_slice());
+            let result = map_view::paint_sheet(
+                ui, rect, sheet, camera, current, exits, true, None, &style,
+            );
 
             if let Some(id) = result.double_clicked_room {
                 out.walk_to = Some(id);

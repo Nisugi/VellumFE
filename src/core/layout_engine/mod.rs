@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 pub use cache::{rooms_content_hash, CacheOutcome, LayoutCache};
 pub use classifier::Classification;
 pub use mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
-pub use overrides::{LocationOverrides, MapOverrides};
+pub use overrides::{EdgeAction, EdgeOverride, LocationOverrides, MapOverrides, SheetChoice};
 pub use packer::PackInfo;
 pub use scene::{build_scene, MapScene, SceneEdgeKind, Sheet};
 pub use positioner::{Cell, Group, PackMethod, Violation};
@@ -47,12 +47,23 @@ pub struct Layout {
 /// filtered to the location; order does not matter (they are re-sorted to the
 /// canonical ascending-id order).
 pub fn generate_layout(rooms: &mut Vec<Room>) -> Layout {
+    generate_layout_curated(rooms, &LocationOverrides::default())
+}
+
+/// `generate_layout` with the generation-input override subset applied:
+/// forced/demoted edge directions patch the direction map before
+/// positioning, and classification flips move groups between sheets before
+/// packing. Position pins and names are NOT applied here (see
+/// `overrides::apply`) so cached layouts stay reusable across those edits.
+pub fn generate_layout_curated(rooms: &mut Vec<Room>, curated: &LocationOverrides) -> Layout {
     rooms.sort_by_key(|r| r.id);
     let lookup = RoomTable::new(rooms);
-    let dirs = direction::DirectionMap::build(&lookup);
+    let mut dirs = direction::DirectionMap::build(&lookup);
+    dirs.apply_edge_overrides(&lookup, &curated.edges);
 
     let mut groups = positioner::position_rooms(&lookup, &dirs);
-    let classification = classifier::classify(&groups, &lookup);
+    let mut classification = classifier::classify(&groups, &lookup);
+    classifier::apply_sheet_overrides(&mut classification, &groups, &lookup, &curated.sheets);
 
     let mut outdoor: Vec<usize> = groups
         .iter()

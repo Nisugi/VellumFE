@@ -84,6 +84,19 @@ pub enum OverrideEdit {
         anchor: i64,
         name: Option<String>,
     },
+    /// Set (or clear with `None`) the edge action for a room-key pair.
+    Edge {
+        location: String,
+        a: i64,
+        b: i64,
+        action: Option<crate::core::layout_engine::EdgeAction>,
+    },
+    /// Force (or reset with `None`) a group's sheet.
+    Sheet {
+        location: String,
+        anchor: i64,
+        choice: Option<crate::core::layout_engine::SheetChoice>,
+    },
     /// Drop every override for the location.
     ResetLocation { location: String },
 }
@@ -155,10 +168,19 @@ impl MapService {
                             let Some(rooms) = db.rooms(&location) else {
                                 continue;
                             };
-                            let (mut layout, _) = cache.get_or_generate(&location, rooms);
+                            let (mut layout, _) = cache.get_or_generate(
+                                &location,
+                                rooms,
+                                &location_overrides.generation_subset(),
+                            );
                             let lookup = RoomTable::new(rooms);
                             overrides::apply(&mut layout, &lookup, &location_overrides);
-                            let scene = build_scene(&location, &layout, &lookup);
+                            let scene = build_scene(
+                                &location,
+                                &layout,
+                                &lookup,
+                                &location_overrides.edges,
+                            );
                             MapEvent::LayoutReady {
                                 location,
                                 layout: Arc::new(layout),
@@ -333,6 +355,8 @@ impl MapService {
             OverrideEdit::GroupOffset { location, .. }
             | OverrideEdit::RoomPin { location, .. }
             | OverrideEdit::GroupName { location, .. }
+            | OverrideEdit::Edge { location, .. }
+            | OverrideEdit::Sheet { location, .. }
             | OverrideEdit::ResetLocation { location } => location.clone(),
         };
         {
@@ -364,6 +388,23 @@ impl MapService {
                     }
                     None => {
                         entry.names.remove(&anchor);
+                    }
+                },
+                OverrideEdit::Edge { a, b, action, .. } => {
+                    let (a, b) = crate::core::layout_engine::overrides::edge_pair(a, b);
+                    entry.edges.retain(|e| (e.a, e.b) != (a, b));
+                    if let Some(action) = action {
+                        entry
+                            .edges
+                            .push(crate::core::layout_engine::EdgeOverride { a, b, action });
+                    }
+                }
+                OverrideEdit::Sheet { anchor, choice, .. } => match choice {
+                    Some(choice) => {
+                        entry.sheets.insert(anchor, choice);
+                    }
+                    None => {
+                        entry.sheets.remove(&anchor);
                     }
                 },
                 OverrideEdit::ResetLocation { .. } => {

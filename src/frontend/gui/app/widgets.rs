@@ -1175,11 +1175,21 @@ impl VellumGuiApp {
         if rect.width() < 8.0 || rect.height() < 8.0 {
             return None;
         }
-        let camera = MapCamera::centered_on_cell(
-            center.x,
-            center.y,
-            zoom_override.unwrap_or(map_data.zoom),
+        // Glide toward the new room instead of jump-cutting.
+        let cx = ui.ctx().animate_value_with_time(
+            ui.id().with("map_center_x"),
+            center.x as f32,
+            0.25,
         );
+        let cy = ui.ctx().animate_value_with_time(
+            ui.id().with("map_center_y"),
+            center.y as f32,
+            0.25,
+        );
+        let camera = map_view::MapCamera {
+            center: egui::Pos2::new(cx, cy),
+            px_per_cell: zoom_override.unwrap_or(map_data.zoom).clamp(2.0, 96.0),
+        };
         let style = MapStyle::from_visuals(ui.visuals());
         let result = map_view::paint_sheet(
             ui,
@@ -1187,6 +1197,7 @@ impl VellumGuiApp {
             scene.sheet(sheet_kind),
             camera,
             current,
+            Some(app_core.game_state.compass_dirs.as_slice()),
             true,
             group_filter.as_ref(),
             &style,

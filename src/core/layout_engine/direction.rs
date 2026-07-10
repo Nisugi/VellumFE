@@ -234,6 +234,49 @@ impl DirectionMap {
     pub fn get(&self, from: u32, to: u32) -> Option<Dir> {
         self.map.get(&(from, to)).copied()
     }
+
+    /// Apply curation edge overrides (spec §8) before positioning:
+    /// `Direction` forces a heading on whichever wayto edges exist between
+    /// the pair, `Connector` strips any inferred heading, `Hide` is a
+    /// presentation matter and changes nothing here. Unresolvable keys are
+    /// skipped silently.
+    pub fn apply_edge_overrides(
+        &mut self,
+        lookup: &RoomTable,
+        edges: &[super::overrides::EdgeOverride],
+    ) {
+        use super::overrides::EdgeAction;
+        if edges.is_empty() {
+            return;
+        }
+        let keys = super::overrides::room_key_index(lookup);
+        for edge in edges {
+            let (Some(&a), Some(&b)) = (keys.get(&edge.a), keys.get(&edge.b)) else {
+                continue;
+            };
+            match edge.action {
+                EdgeAction::Hide => {}
+                EdgeAction::Connector => {
+                    self.map.remove(&(a, b));
+                    self.map.remove(&(b, a));
+                }
+                EdgeAction::Direction(dir) => {
+                    let has = |from: u32, to: u32| {
+                        lookup
+                            .get(from)
+                            .map(|r| r.wayto.contains_key(&to))
+                            .unwrap_or(false)
+                    };
+                    if has(a, b) {
+                        self.map.insert((a, b), dir);
+                    }
+                    if has(b, a) {
+                        self.map.insert((b, a), dir.opposite());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

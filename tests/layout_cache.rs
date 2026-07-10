@@ -67,13 +67,13 @@ fn store_then_load_roundtrips_the_layout_exactly() {
     let layout = generate_layout(&mut owned);
     let hash = rooms_content_hash(&rooms);
 
-    cache.store("Moonsedge", hash, &layout).expect("store");
-    let loaded = cache.load("Moonsedge", hash).expect("load hit");
+    cache.store("Moonsedge", hash, 0, &layout).expect("store");
+    let loaded = cache.load("Moonsedge", hash, 0).expect("load hit");
     assert_eq!(loaded, layout, "cache roundtrip must be lossless");
 
     // Wrong hash or location is a miss, not an error.
-    assert!(cache.load("Moonsedge", hash ^ 1).is_none());
-    assert!(cache.load("the Atoll", hash).is_none());
+    assert!(cache.load("Moonsedge", hash ^ 1, 0).is_none());
+    assert!(cache.load("the Atoll", hash, 0).is_none());
 }
 
 #[test]
@@ -82,10 +82,10 @@ fn get_or_generate_generates_once_then_hits() {
     let cache = LayoutCache::new(scratch.0.clone());
     let rooms = load_rooms("the-atoll");
 
-    let (first, first_outcome) = cache.get_or_generate("the Atoll", &rooms);
+    let (first, first_outcome) = cache.get_or_generate("the Atoll", &rooms, &Default::default());
     assert_eq!(first_outcome, CacheOutcome::Generated);
 
-    let (second, second_outcome) = cache.get_or_generate("the Atoll", &rooms);
+    let (second, second_outcome) = cache.get_or_generate("the Atoll", &rooms, &Default::default());
     assert_eq!(second_outcome, CacheOutcome::Hit);
     assert_eq!(second, first, "hit must equal the generated layout");
 }
@@ -96,7 +96,7 @@ fn corrupt_or_stale_entries_regenerate() {
     let cache = LayoutCache::new(scratch.0.clone());
     let rooms = load_rooms("moonsedge");
 
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated);
 
     let entry = std::fs::read_dir(&scratch.0)
@@ -114,16 +114,16 @@ fn corrupt_or_stale_entries_regenerate() {
     let json = std::fs::read_to_string(&entry).unwrap();
     assert!(json.contains(&current), "test setup: version marker present");
     std::fs::write(&entry, json.replace(&current, "\"engine_version\":0")).unwrap();
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated, "version mismatch → miss");
 
     // Truncated/corrupt JSON is a miss, not a panic.
     std::fs::write(&entry, "{ not json").unwrap();
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated, "corrupt entry → miss");
 
     // And the rewrite healed it.
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Hit);
 }
 
@@ -133,13 +133,13 @@ fn new_mapdb_build_prunes_the_old_entry() {
     let cache = LayoutCache::new(scratch.0.clone());
 
     let rooms = load_rooms("moonsedge");
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated);
 
     // Same location, changed data — as after a mapdb update.
     let mut updated = rooms.clone();
     updated[0].title = vec!["[Moonsedge, Renamed Plaza]".into()];
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &updated);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &updated, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated);
 
     let entries: Vec<_> = std::fs::read_dir(&scratch.0)
@@ -155,10 +155,10 @@ fn new_mapdb_build_prunes_the_old_entry() {
     );
 
     // The survivor serves the updated data.
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &updated);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &updated, &Default::default());
     assert_eq!(outcome, CacheOutcome::Hit);
     // ...and the original data regenerates rather than mis-hitting.
-    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms);
+    let (_, outcome) = cache.get_or_generate("Moonsedge", &rooms, &Default::default());
     assert_eq!(outcome, CacheOutcome::Generated);
 }
 
@@ -192,11 +192,11 @@ fn real_lich_mapdb_end_to_end() {
     for location in ["Moonsedge", "Wehnimer's Landing"] {
         let rooms = db.rooms(location).expect("location exists");
         let t0 = std::time::Instant::now();
-        let (layout, outcome) = cache.get_or_generate(location, rooms);
+        let (layout, outcome) = cache.get_or_generate(location, rooms, &Default::default());
         let cold = t0.elapsed();
         assert_eq!(outcome, CacheOutcome::Generated);
         let t0 = std::time::Instant::now();
-        let (_, outcome) = cache.get_or_generate(location, rooms);
+        let (_, outcome) = cache.get_or_generate(location, rooms, &Default::default());
         let warm = t0.elapsed();
         assert_eq!(outcome, CacheOutcome::Hit);
         println!(
@@ -277,4 +277,62 @@ fn overrides_shift_groups_pin_rooms_and_skip_orphans() {
         vellum_fe::core::layout_engine::Cell { x: 5, y: -3 }
     );
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn classification_override_moves_a_group_between_sheets() {
+    use vellum_fe::core::layout_engine::{
+        generate_layout_curated, overrides, LocationOverrides, RoomTable, SheetChoice,
+    };
+
+    let mut rooms = load_rooms("moonsedge");
+    let pristine = generate_layout(&mut rooms.clone());
+    let lookup = RoomTable::new(&rooms);
+    let &interior_idx = pristine.interiors.first().expect("has interiors");
+    let anchor = overrides::group_anchor_key(&pristine.groups[interior_idx], &lookup);
+
+    let mut curated = LocationOverrides::default();
+    curated.sheets.insert(anchor, SheetChoice::Outdoor);
+    let flipped = generate_layout_curated(&mut rooms, &curated);
+
+    assert_eq!(
+        flipped.interiors.len(),
+        pristine.interiors.len() - 1,
+        "forced-outdoor group must leave the interiors sheet"
+    );
+    assert!(
+        flipped.outdoor.contains(&interior_idx),
+        "…and get packed on the outdoor sheet"
+    );
+    // Door markers were recomputed for the new split, not carried over.
+    assert_ne!(
+        flipped.classification.entrance_room_ids,
+        pristine.classification.entrance_room_ids
+    );
+}
+
+#[test]
+fn curated_hash_gates_the_cache() {
+    use vellum_fe::core::layout_engine::{EdgeAction, EdgeOverride, LocationOverrides};
+
+    let scratch = ScratchDir::new("curated");
+    let cache = LayoutCache::new(scratch.0.clone());
+    let rooms = load_rooms("the-atoll");
+
+    let (_, outcome) = cache.get_or_generate("the Atoll", &rooms, &Default::default());
+    assert_eq!(outcome, CacheOutcome::Generated);
+    let (_, outcome) = cache.get_or_generate("the Atoll", &rooms, &Default::default());
+    assert_eq!(outcome, CacheOutcome::Hit);
+
+    // Different generation-input overrides → different curated hash → miss.
+    let mut curated = LocationOverrides::default();
+    curated.edges.push(EdgeOverride {
+        a: 1,
+        b: 2,
+        action: EdgeAction::Hide,
+    });
+    let (_, outcome) = cache.get_or_generate("the Atoll", &rooms, &curated);
+    assert_eq!(outcome, CacheOutcome::Generated, "curated change → miss");
+    let (_, outcome) = cache.get_or_generate("the Atoll", &rooms, &curated);
+    assert_eq!(outcome, CacheOutcome::Hit, "same curated state → hit");
 }

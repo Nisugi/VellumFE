@@ -10,9 +10,40 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::direction::Dir;
 use super::mapdb::RoomTable;
 use super::positioner::{Cell, Group};
 use super::Layout;
+
+/// What to do with the edge between two rooms (keyed by uid pair).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeAction {
+    /// Don't draw the edge at all (presentation only).
+    Hide,
+    /// Treat as a directionless passage: no geometry constraint, drawn
+    /// dashed. Un-welds rooms the solver placed adjacent on bad data.
+    Connector,
+    /// Force this direction from `a` to `b` (`b` to `a` gets the opposite).
+    /// Applied before positioning, so the rooms lay out accordingly.
+    Direction(Dir),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeOverride {
+    /// Room keys (uid, fallback id), canonically `a < b`.
+    pub a: i64,
+    pub b: i64,
+    pub action: EdgeAction,
+}
+
+/// Force a group onto a sheet regardless of what the classifier decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetChoice {
+    Outdoor,
+    Interior,
+}
 
 /// All override state, one section per location.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -34,12 +65,63 @@ pub struct LocationOverrides {
     /// Display names, keyed by group anchor.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub names: HashMap<i64, String>,
+    /// Edge overrides, keyed by canonical room-key pair.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<EdgeOverride>,
+    /// Classification overrides, keyed by group anchor.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub sheets: HashMap<i64, SheetChoice>,
 }
 
 impl LocationOverrides {
     pub fn is_empty(&self) -> bool {
-        self.group_offsets.is_empty() && self.room_pins.is_empty() && self.names.is_empty()
+        self.group_offsets.is_empty()
+            && self.room_pins.is_empty()
+            && self.names.is_empty()
+            && self.edges.is_empty()
+            && self.sheets.is_empty()
     }
+
+    /// The subset that changes GENERATION (not just presentation): edge and
+    /// classification overrides feed positioning and packing, so the cache
+    /// entry records a hash of them and regenerates when it moves. Position
+    /// pins and names stay out — they apply after loading.
+    pub fn generation_subset(&self) -> LocationOverrides {
+        LocationOverrides {
+            edges: self.edges.clone(),
+            sheets: self.sheets.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Stable hash of the generation subset (0 when empty).
+    pub fn curated_hash(&self) -> u64 {
+        if self.edges.is_empty() && self.sheets.is_empty() {
+            return 0;
+        }
+        let mut edges = self.edges.clone();
+        edges.sort_by_key(|e| (e.a, e.b));
+        let mut sheets: Vec<(i64, SheetChoice)> =
+            self.sheets.iter().map(|(&k, &v)| (k, v)).collect();
+        sheets.sort_by_key(|&(k, _)| k);
+        // Debug formatting is stable for these plain enums/ints.
+        let repr = format!("{edges:?}|{sheets:?}");
+        super::cache::fnv1a_64(repr.as_bytes())
+    }
+}
+
+/// Room key → room id for this mapdb build, for resolving edge overrides.
+pub fn room_key_index(lookup: &RoomTable) -> HashMap<i64, u32> {
+    lookup
+        .rooms()
+        .iter()
+        .map(|r| (r.uid.first().copied().unwrap_or(r.id as i64), r.id))
+        .collect()
+}
+
+/// Canonical edge-override key order.
+pub fn edge_pair(k1: i64, k2: i64) -> (i64, i64) {
+    (k1.min(k2), k1.max(k2))
 }
 
 /// The stable identity of a group across mapdb builds: its lowest room uid,

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::classifier::interior_clusters;
 use super::direction::DirectionMap;
 use super::mapdb::RoomTable;
-use super::overrides::group_anchor_key;
+use super::overrides::{group_anchor_key, EdgeAction, EdgeOverride};
 use super::positioner::Cell;
 use super::Layout;
 
@@ -152,8 +152,34 @@ fn connector_label(cmd: &str) -> Option<String> {
     }
 }
 
-pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapScene {
-    let dirs = DirectionMap::build(lookup);
+pub fn build_scene(
+    location: &str,
+    layout: &Layout,
+    lookup: &RoomTable,
+    edge_overrides: &[EdgeOverride],
+) -> MapScene {
+    let mut dirs = DirectionMap::build(lookup);
+    dirs.apply_edge_overrides(lookup, edge_overrides);
+
+    // Hidden and demoted pairs by room id, resolved once.
+    let keys = super::overrides::room_key_index(lookup);
+    let mut hidden: HashSet<(u32, u32)> = HashSet::new();
+    let mut demoted: HashSet<(u32, u32)> = HashSet::new();
+    for e in edge_overrides {
+        let (Some(&a), Some(&b)) = (keys.get(&e.a), keys.get(&e.b)) else {
+            continue;
+        };
+        let pair = (a.min(b), a.max(b));
+        match e.action {
+            EdgeAction::Hide => {
+                hidden.insert(pair);
+            }
+            EdgeAction::Connector => {
+                demoted.insert(pair);
+            }
+            EdgeAction::Direction(_) => {}
+        }
+    }
     let mut scene = MapScene {
         location: location.to_owned(),
         ..Default::default()
@@ -220,8 +246,33 @@ pub fn build_scene(location: &str, layout: &Layout, lookup: &RoomTable) -> MapSc
                 continue;
             };
             let key = (room.id.min(target_id), room.id.max(target_id));
+            if hidden.contains(&key) {
+                continue;
+            }
             let a_sheet = sheet_of(room_group);
             if room_group == target_group {
+                // Demoted to connector: same group, but drawn as a dashed
+                // passage instead of a solid directional line.
+                if demoted.contains(&key) {
+                    if !seen.insert(key) {
+                        continue;
+                    }
+                    let group = &layout.groups[room_group];
+                    push_edge(
+                        &mut scene,
+                        a_sheet,
+                        SceneEdge {
+                            a: group.final_cell(room.id),
+                            b: group.final_cell(target_id),
+                            a_room: room.id,
+                            b_room: target_id,
+                            group: room_group,
+                            kind: SceneEdgeKind::Connector,
+                            label: connector_label(cmd),
+                        },
+                    );
+                    continue;
+                }
                 // Directional edge (or nothing drawable).
                 if dirs.get(room.id, target_id).is_none() {
                     continue;

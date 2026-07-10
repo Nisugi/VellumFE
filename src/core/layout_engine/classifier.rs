@@ -79,7 +79,29 @@ pub fn classify(groups: &[Group], lookup: &RoomTable) -> Classification {
         }
     }
 
-    // Entrances: every edge from an outdoor room into an interior component.
+    let (entrances, entrance_room_ids) = compute_entrances(groups, lookup, &interior);
+
+    Classification {
+        interior_groups: interior,
+        entrances,
+        entrance_room_ids,
+    }
+}
+
+/// Entrances: every edge from an outdoor room into an interior component.
+/// Factored out so classification overrides can recompute after flipping
+/// groups between sheets.
+fn compute_entrances(
+    groups: &[Group],
+    lookup: &RoomTable,
+    interior: &HashSet<usize>,
+) -> (HashMap<usize, Vec<Entrance>>, HashSet<u32>) {
+    let mut component_of: HashMap<u32, usize> = HashMap::new();
+    for group in groups {
+        for &id in &group.room_ids {
+            component_of.insert(id, group.index);
+        }
+    }
     let mut entrances: HashMap<usize, Vec<Entrance>> = HashMap::new();
     let mut entrance_room_ids: HashSet<u32> = HashSet::new();
     for group in groups {
@@ -105,12 +127,42 @@ pub fn classify(groups: &[Group], lookup: &RoomTable) -> Classification {
             }
         }
     }
+    (entrances, entrance_room_ids)
+}
 
-    Classification {
-        interior_groups: interior,
-        entrances,
-        entrance_room_ids,
+/// Apply classification overrides: flip the listed groups (keyed by anchor)
+/// onto the chosen sheet and recompute the doorway markers. Orphaned anchors
+/// are skipped silently.
+pub fn apply_sheet_overrides(
+    classification: &mut Classification,
+    groups: &[Group],
+    lookup: &RoomTable,
+    sheets: &HashMap<i64, super::overrides::SheetChoice>,
+) {
+    if sheets.is_empty() {
+        return;
     }
+    let mut by_anchor: HashMap<i64, usize> = HashMap::new();
+    for group in groups {
+        by_anchor.insert(super::overrides::group_anchor_key(group, lookup), group.index);
+    }
+    for (&anchor, &choice) in sheets {
+        let Some(&idx) = by_anchor.get(&anchor) else {
+            continue;
+        };
+        match choice {
+            super::overrides::SheetChoice::Outdoor => {
+                classification.interior_groups.remove(&idx);
+            }
+            super::overrides::SheetChoice::Interior => {
+                classification.interior_groups.insert(idx);
+            }
+        }
+    }
+    let (entrances, entrance_room_ids) =
+        compute_entrances(groups, lookup, &classification.interior_groups);
+    classification.entrances = entrances;
+    classification.entrance_room_ids = entrance_room_ids;
 }
 
 #[derive(PartialEq)]

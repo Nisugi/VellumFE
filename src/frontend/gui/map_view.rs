@@ -39,6 +39,7 @@ pub struct MapViewResult {
 /// later).
 pub struct MapStyle {
     pub room_fill: Color32,
+    pub room_id: Color32,
     pub room_stroke: Stroke,
     pub entrance: Color32,
     pub directional: Stroke,
@@ -53,6 +54,7 @@ impl MapStyle {
         let accent = visuals.selection.bg_fill;
         MapStyle {
             room_fill: visuals.widgets.inactive.bg_fill,
+            room_id: visuals.weak_text_color(),
             room_stroke: Stroke::new(1.0, visuals.widgets.inactive.fg_stroke.color),
             entrance: visuals.warn_fg_color,
             directional: Stroke::new(1.5, visuals.widgets.noninteractive.fg_stroke.color),
@@ -72,6 +74,9 @@ pub fn paint_sheet(
     sheet: &SheetScene,
     camera: MapCamera,
     current_room: Option<u32>,
+    // Available exits of the current room ("n", "sw", ...), drawn as accent
+    // ticks around its square so the live compass reads on the map.
+    current_exits: Option<&[String]>,
     interactive: bool,
     // group_filter: draw only these groups (the mini map shows just the
     // building — cluster of groups — the character is in on the interiors
@@ -94,6 +99,8 @@ pub fn paint_sheet(
 
     let room_size = (ppc * 0.55).clamp(3.0, 26.0);
     let show_labels = ppc >= 12.0;
+    let show_connector_labels = ppc >= 14.0;
+    let show_room_ids = ppc >= 20.0;
 
     // --- Edges (under rooms) ---
     for edge in &sheet.edges {
@@ -118,13 +125,15 @@ pub fn paint_sheet(
                     ppc * 0.25,
                     ppc * 0.18,
                 ));
-                if show_labels {
+                // Declutter: labels only when zoomed in and the passage is
+                // long enough that the text doesn't sit on the rooms.
+                if show_connector_labels && chebyshev_px(a, b) >= ppc * 1.9 {
                     if let Some(label) = &edge.label {
                         painter.text(
                             a.lerp(b, 0.5),
                             Align2::CENTER_CENTER,
                             label,
-                            FontId::proportional((ppc * 0.5).clamp(8.0, 14.0)),
+                            FontId::proportional((ppc * 0.45).clamp(8.0, 13.0)),
                             style.label,
                         );
                     }
@@ -144,6 +153,18 @@ pub fn paint_sheet(
                         style.connector,
                         ppc * 0.18,
                         ppc * 0.12,
+                    ));
+                    // Arrowhead at the tip.
+                    let head = (ppc * 0.22).clamp(3.0, 7.0);
+                    let perp = Vec2::new(-toward.y, toward.x);
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            tip + toward * head,
+                            tip - toward * head * 0.4 + perp * head * 0.6,
+                            tip - toward * head * 0.4 - perp * head * 0.6,
+                        ],
+                        style.connector.color,
+                        Stroke::NONE,
                     ));
                     if show_labels {
                         painter.text(
@@ -217,6 +238,20 @@ pub fn paint_sheet(
                 style.entrance,
             );
         }
+        if show_room_ids {
+            painter.text(
+                room_rect.center_bottom() + Vec2::new(0.0, 1.0),
+                Align2::CENTER_TOP,
+                room.id.to_string(),
+                FontId::proportional((ppc * 0.32).clamp(8.0, 11.0)),
+                style.room_id,
+            );
+        }
+        if is_current {
+            if let Some(exits) = current_exits {
+                paint_exit_ticks(&painter, room_rect, exits, style);
+            }
+        }
 
         if interactive {
             let response = ui.interact(
@@ -237,4 +272,31 @@ pub fn paint_sheet(
     }
 
     result
+}
+
+fn chebyshev_px(a: Pos2, b: Pos2) -> f32 {
+    (a.x - b.x).abs().max((a.y - b.y).abs())
+}
+
+/// Accent ticks on the current room's square for each available compass
+/// exit (up/down/out have no planar heading and are skipped).
+fn paint_exit_ticks(painter: &egui::Painter, room_rect: Rect, exits: &[String], style: &MapStyle) {
+    let half = room_rect.width() / 2.0;
+    let len = (half * 0.8).clamp(3.0, 8.0);
+    let stroke = Stroke::new(2.0, style.current_ring.color);
+    for exit in exits {
+        let dir = match exit.as_str() {
+            "n" => Vec2::new(0.0, -1.0),
+            "s" => Vec2::new(0.0, 1.0),
+            "e" => Vec2::new(1.0, 0.0),
+            "w" => Vec2::new(-1.0, 0.0),
+            "ne" => Vec2::new(1.0, -1.0).normalized(),
+            "nw" => Vec2::new(-1.0, -1.0).normalized(),
+            "se" => Vec2::new(1.0, 1.0).normalized(),
+            "sw" => Vec2::new(-1.0, 1.0).normalized(),
+            _ => continue,
+        };
+        let from = room_rect.center() + dir * (half + 2.0);
+        painter.line_segment([from, from + dir * len], stroke);
+    }
 }
