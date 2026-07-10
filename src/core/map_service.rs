@@ -33,6 +33,35 @@ pub fn lich_game_dir_name(game: Option<&str>) -> &'static str {
     }
 }
 
+/// Resolve which mapdb to load from the configured options. Priority:
+/// explicit file > downloaded release > Lich folder. Downloaded releases
+/// carry GemStone data, so DragonRealms sessions skip straight to the
+/// Lich folder (which is per-game).
+pub fn resolve_source(
+    mapdb_path: Option<&str>,
+    lich_dir: Option<&str>,
+    game: Option<&str>,
+    download_dir: &std::path::Path,
+) -> MapDbSource {
+    fn non_empty(s: &str) -> Option<&str> {
+        let t = s.trim();
+        (!t.is_empty()).then_some(t)
+    }
+    if let Some(path) = mapdb_path.and_then(non_empty) {
+        return MapDbSource::File(PathBuf::from(path));
+    }
+    let game_dir = lich_game_dir_name(game);
+    if !game_dir.starts_with("DR") {
+        if let Some((_, path)) = crate::core::mapdb_update::latest_downloaded(download_dir) {
+            return MapDbSource::File(path);
+        }
+    }
+    if let Some(dir) = lich_dir.and_then(non_empty) {
+        return MapDbSource::GameDataDir(std::path::Path::new(dir).join("data").join(game_dir));
+    }
+    MapDbSource::Unconfigured
+}
+
 enum MapJob {
     LoadDb(PathBuf),
     Generate {
@@ -479,6 +508,44 @@ mod tests {
         assert_eq!(lich_game_dir_name(Some("Test")), "GST");
         assert_eq!(lich_game_dir_name(Some("platinum")), "GSPlat");
         assert_eq!(lich_game_dir_name(Some("unknown")), "GSIV");
+    }
+
+    #[test]
+    fn source_resolution_prefers_explicit_then_downloaded_then_lich() {
+        let downloads = tempfile::tempdir().unwrap();
+        let empty = tempfile::tempdir().unwrap();
+
+        // Nothing configured, nothing downloaded.
+        assert_eq!(
+            resolve_source(None, None, None, empty.path()),
+            MapDbSource::Unconfigured
+        );
+        // Lich folder alone resolves per-game.
+        assert_eq!(
+            resolve_source(None, Some("C:/lich"), Some("prime"), empty.path()),
+            MapDbSource::GameDataDir(std::path::Path::new("C:/lich").join("data").join("GSIV"))
+        );
+        // A downloaded release outranks the Lich folder...
+        let downloaded = downloads.path().join("mapdb-v0.4.0.json");
+        std::fs::write(&downloaded, "[]").unwrap();
+        assert_eq!(
+            resolve_source(None, Some("C:/lich"), Some("prime"), downloads.path()),
+            MapDbSource::File(downloaded.clone())
+        );
+        // ...but never leaks GemStone rooms into a DragonRealms session.
+        assert_eq!(
+            resolve_source(None, Some("C:/lich"), Some("dr"), downloads.path()),
+            MapDbSource::GameDataDir(std::path::Path::new("C:/lich").join("data").join("DR"))
+        );
+        // An explicit file outranks everything; blank strings don't count.
+        assert_eq!(
+            resolve_source(Some("D:/my.json"), Some("C:/lich"), None, downloads.path()),
+            MapDbSource::File(PathBuf::from("D:/my.json"))
+        );
+        assert_eq!(
+            resolve_source(Some("  "), Some(""), None, downloads.path()),
+            MapDbSource::File(downloaded)
+        );
     }
 
     #[test]

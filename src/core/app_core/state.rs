@@ -95,6 +95,8 @@ pub struct AppCore {
     /// Navigation room ID from <nav rm='...'/>
     /// Live map state: mapdb, generated layouts, current-room tracking.
     pub map: crate::core::map_service::MapService,
+    /// Downloads released mapdbs from GitHub (Settings > Map).
+    pub map_updater: crate::core::mapdb_update::MapDbUpdater,
 
     pub nav_room_id: Option<String>,
 
@@ -223,6 +225,9 @@ impl AppCore {
         let mut app = Self {
             config,
             map: crate::core::map_service::MapService::new(map_cache_dir, map_overrides_path),
+            map_updater: crate::core::mapdb_update::MapDbUpdater::new(
+                crate::core::mapdb_update::download_dir(&map_base),
+            ),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -274,19 +279,42 @@ impl AppCore {
     }
 
     /// Resolve the mapdb source from config and (re)start the load when it
-    /// changes. Called at startup and after the settings editor saves.
+    /// changes. Called at startup, after the settings editor saves, and when
+    /// the updater installs a fresh download.
     pub fn refresh_map_source(&mut self) {
-        use crate::core::map_service::{lich_game_dir_name, MapDbSource};
-        let non_empty = |s: &&str| !s.trim().is_empty();
-        let source = if let Some(path) = self.config.map.mapdb_path.as_deref().filter(non_empty) {
-            MapDbSource::File(std::path::PathBuf::from(path))
-        } else if let Some(dir) = self.config.map.lich_dir.as_deref().filter(non_empty) {
-            let game = lich_game_dir_name(self.config.connection.game.as_deref());
-            MapDbSource::GameDataDir(std::path::Path::new(dir).join("data").join(game))
-        } else {
-            MapDbSource::Unconfigured
-        };
+        let base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let source = crate::core::map_service::resolve_source(
+            self.config.map.mapdb_path.as_deref(),
+            self.config.map.lich_dir.as_deref(),
+            self.config.connection.game.as_deref(),
+            &crate::core::mapdb_update::download_dir(&base),
+        );
         self.map.ensure_db(source);
+    }
+
+    /// Drain the map worker and the mapdb updater; a freshly installed
+    /// download is picked up immediately. Frontends call this once per frame.
+    pub fn poll_map(&mut self) {
+        self.map.poll();
+        if self.map_updater.poll() {
+            self.refresh_map_source();
+        }
+    }
+
+    /// Check the given GitHub repo for a mapdb release and download it if
+    /// it's new. Progress lands in `map_updater.status`.
+    pub fn start_mapdb_download(&mut self, repo: &str) {
+        let repo = repo.trim();
+        if repo.is_empty() {
+            return;
+        }
+        self.map_updater.start(repo.to_owned());
+    }
+
+    /// Delete all downloaded mapdb versions and fall back to the Lich folder.
+    pub fn remove_downloaded_mapdb(&mut self) {
+        self.map_updater.remove_downloaded();
+        self.refresh_map_source();
     }
 
     /// Push the latest stream-reported room identifiers into the map service.
