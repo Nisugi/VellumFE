@@ -9,6 +9,7 @@
 //! per-component hill-climb + compaction → interior classification →
 //! cluster packing (outdoor sheet) + interior shelf.
 
+pub mod cache;
 pub mod classifier;
 pub mod direction;
 pub mod mapdb;
@@ -19,14 +20,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+pub use cache::{rooms_content_hash, CacheOutcome, LayoutCache};
 pub use classifier::Classification;
-pub use mapdb::{Room, RoomTable};
+pub use mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
 pub use packer::PackInfo;
 pub use positioner::{Cell, Group, PackMethod, Violation};
 
 /// A generated layout: every component with internal positions and sheet
 /// offsets, plus the interior/outdoor split and packing debug info.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
     pub groups: Vec<Group>,
     /// Indices (into `groups`) packed onto the shared outdoor sheet.
@@ -178,12 +180,7 @@ impl LayoutStats {
             inter_group_connectors: connector_lens.len(),
             connector_len_median: quantile(0.5),
             connector_len_p90: quantile(0.9),
-            pack_methods: layout
-                .pack_info
-                .methods
-                .iter()
-                .map(|(&k, &v)| (k.to_owned(), v))
-                .collect(),
+            pack_methods: layout.pack_info.methods.clone(),
             primary_image: layout.pack_info.primary_image.clone(),
         }
     }

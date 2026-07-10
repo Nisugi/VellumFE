@@ -7,16 +7,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use super::mapdb::{Room, RoomTable};
 use super::positioner::Group;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entrance {
     pub outdoor_room_id: u32,
     pub interior_room_id: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Classification {
     pub interior_groups: HashSet<usize>,
     /// interior group index → doorway edges into it.

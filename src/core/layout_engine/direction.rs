@@ -3,9 +3,12 @@
 //! Resolves the direction of a `wayto` edge from curated `dirto` overrides,
 //! the movement command text, or the reverse edge (spec §3).
 
+use serde::{Deserialize, Serialize};
+
 use super::mapdb::{Room, RoomTable};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Dir {
     North,
     South,

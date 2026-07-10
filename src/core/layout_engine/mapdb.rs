@@ -139,6 +139,91 @@ pub fn rooms_from_array(json: &str) -> serde_json::Result<Vec<Room>> {
     Ok(rooms)
 }
 
+/// The whole mapdb, indexed for layout generation: rooms grouped by location
+/// plus uid/id → location lookups (uids are the stable identity the game
+/// stream reports; ids are Lich's build-local numbering).
+pub struct MapDb {
+    locations: std::collections::BTreeMap<String, Vec<Room>>,
+    location_of_id: std::collections::HashMap<u32, String>,
+    location_of_uid: std::collections::HashMap<i64, String>,
+}
+
+impl MapDb {
+    /// Parse a full mapdb JSON array (Lich's `data/<GAME>/map-<ts>.json`).
+    /// Rooms without a `location` cannot be laid out and are dropped.
+    pub fn load(path: &std::path::Path) -> std::io::Result<MapDb> {
+        let json = std::fs::read_to_string(path)?;
+        let db: Vec<Value> = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let mut locations: std::collections::BTreeMap<String, Vec<Room>> = Default::default();
+        let mut location_of_id = std::collections::HashMap::new();
+        let mut location_of_uid = std::collections::HashMap::new();
+        for value in &db {
+            let Some(room) = Room::from_json(value) else {
+                continue;
+            };
+            let Some(location) = room.location.clone() else {
+                continue;
+            };
+            location_of_id.insert(room.id, location.clone());
+            for &uid in &room.uid {
+                location_of_uid.insert(uid, location.clone());
+            }
+            locations.entry(location).or_default().push(room);
+        }
+        for rooms in locations.values_mut() {
+            rooms.sort_by_key(|r| r.id);
+        }
+        Ok(MapDb {
+            locations,
+            location_of_id,
+            location_of_uid,
+        })
+    }
+
+    pub fn locations(&self) -> impl Iterator<Item = &str> {
+        self.locations.keys().map(String::as_str)
+    }
+
+    /// Rooms of one location, in canonical ascending-id order.
+    pub fn rooms(&self, location: &str) -> Option<&[Room]> {
+        self.locations.get(location).map(Vec::as_slice)
+    }
+
+    pub fn location_of_uid(&self, uid: i64) -> Option<&str> {
+        self.location_of_uid.get(&uid).map(String::as_str)
+    }
+
+    pub fn location_of_room_id(&self, id: u32) -> Option<&str> {
+        self.location_of_id.get(&id).map(String::as_str)
+    }
+}
+
+/// Newest `map-<timestamp>.json` in Lich's per-game data directory
+/// (`<lich>/data/GSIV` for prime, `GST` for test).
+pub fn find_latest_mapdb(game_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut best: Option<(u64, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(game_data_dir).ok()? {
+        let path = entry.ok()?.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_owned(),
+            None => continue,
+        };
+        let Some(ts) = name
+            .strip_prefix("map-")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .and_then(|ts| ts.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if best.as_ref().map(|(t, _)| ts > *t).unwrap_or(true) {
+            best = Some((ts, path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
 /// Room list plus an id → index lookup, the shape every pipeline stage takes.
 pub struct RoomTable<'a> {
     rooms: &'a [Room],

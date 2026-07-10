@@ -6,16 +6,18 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use serde::{Deserialize, Serialize};
+
 use super::direction::{Dir, DirectionMap};
 use super::mapdb::RoomTable;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Cell {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Violation {
     pub from: u32,
     pub to: u32,
@@ -24,7 +26,7 @@ pub struct Violation {
 }
 
 /// How a group was placed on the shared sheet by the cluster packer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PackMethod {
     Image,
     Connector,
@@ -47,7 +49,7 @@ impl PackMethod {
 
 /// One connected component: rooms in placement order, their internal grid
 /// positions, and (after packing) the offset onto the shared sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     pub index: usize,
     /// Room ids in BFS placement order (the reference's `componentRooms`).

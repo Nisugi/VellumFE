@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use super::direction::DirectionMap;
 use super::mapdb::{Room, RoomTable};
 use super::positioner::{Cell, Group, PackMethod};
@@ -67,11 +69,11 @@ struct AnchorLine {
     other_room_id: u32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PackInfo {
     pub primary_image: Option<String>,
     /// pack method name → group count (over the packed subset).
-    pub methods: BTreeMap<&'static str, usize>,
+    pub methods: BTreeMap<String, usize>,
     pub scale: f64,
 }
 
@@ -928,10 +930,10 @@ pub fn pack_groups(
         }
     }
 
-    let mut methods: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut methods: BTreeMap<String, usize> = BTreeMap::new();
     for &idx in packed {
         let name = groups[idx].packing.map(PackMethod::name).unwrap_or("none");
-        *methods.entry(name).or_insert(0) += 1;
+        *methods.entry(name.to_owned()).or_insert(0) += 1;
     }
     PackInfo {
         primary_image,
