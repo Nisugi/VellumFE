@@ -21,6 +21,12 @@ use super::Layout;
 pub const LONG_EDGE_CELLS: i32 = 8;
 /// Connectors longer than this are not drawn at all.
 pub const CONNECTOR_MAX_CELLS: i32 = 30;
+/// On the interiors sheet, passages draw only when the rooms sit close
+/// together. Merged placement seats each component beside the room its
+/// anchoring passage connects to, so genuine doorways stay short; in huge
+/// complexes (player-shop districts) the remaining long cross-links are
+/// noise that reads as spaghetti.
+pub const INTERIOR_CONNECTOR_MAX_CELLS: i32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sheet {
@@ -323,7 +329,12 @@ pub fn build_scene(
                 let a = layout.groups[room_group].final_cell(room.id);
                 let b = layout.groups[target_group].final_cell(target_id);
                 let len = (a.x - b.x).abs().max((a.y - b.y).abs());
-                if len > CONNECTOR_MAX_CELLS {
+                let cap = if a_sheet == Sheet::Interiors {
+                    INTERIOR_CONNECTOR_MAX_CELLS
+                } else {
+                    CONNECTOR_MAX_CELLS
+                };
+                if len > cap {
                     continue;
                 }
                 push_edge(
@@ -373,15 +384,21 @@ pub fn build_scene(
                     }
                 }
             }
+            let named_total: usize = name_votes.iter().map(|(_, c)| c).sum();
             let mut best: Option<(&str, usize)> = None;
             for (name, count) in name_votes {
                 if best.map(|(_, c)| count > c).unwrap_or(true) {
                     best = Some((name, count));
                 }
             }
-            let Some((name, _)) = best else {
+            // Only label when one name truly speaks for the building — a
+            // 300-shop district must not wear one shop's name.
+            let Some((name, count)) = best else {
                 continue;
             };
+            if count * 2 <= named_total {
+                continue;
+            }
             scene.interiors.labels.push(GroupLabel {
                 text: name.to_owned(),
                 cell: min,
