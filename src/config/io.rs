@@ -39,6 +39,7 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
         config.macros_local = MacrosConfig::load_local(character).unwrap_or_default();
@@ -149,6 +150,12 @@ impl Config {
         if !cmdlist_path.exists() {
             fs::write(&cmdlist_path, DEFAULT_CMDLIST).context("Failed to write cmdlist1.xml")?;
             tracing::info!("Extracted cmdlist1.xml to {:?}", cmdlist_path);
+        }
+
+        let hotbars_path = Self::common_hotbars_path()?;
+        if !hotbars_path.exists() {
+            fs::write(&hotbars_path, DEFAULT_HOTBARS).context("Failed to write hotbars.toml")?;
+            tracing::info!("Extracted hotbars.toml to {:?}", hotbars_path);
         }
 
         let spell_abbrev_path = Self::spell_abbrev_path()?;
@@ -345,6 +352,7 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
@@ -562,6 +570,7 @@ impl Default for Config {
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
+            hotbars: HotbarsConfig::default(), // Loaded from hotbars.toml
             app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
             colors: ColorConfig::default(), // Loaded from colors.toml
             sound: SoundConfig::default(),

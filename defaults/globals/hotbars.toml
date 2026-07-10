@@ -1,0 +1,92 @@
+# VellumFE hotbars — named bars of buttons for the "hotkeybar" widget.
+#
+# Prefer the built-in editor over hand-editing this file:
+#   .hotbars    opens the hotbar editor (TUI and GUI)
+#
+# A layout.toml window with widget_type = "hotkeybar" references a bar here by
+# name. This global file applies to all characters; a per-character
+# profiles/<name>/hotbars.toml may define bars too — a character bar with the
+# same name replaces the global one entirely.
+#
+# Each button:
+#   id       - stable id, unique within the bar
+#   label    - text shown on the button
+#   command  - game command sent on click or hotkey
+#   hotkey   - optional key combo (keybinds.toml syntax, e.g. "alt+h", "f5");
+#              existing keybinds.toml bindings win on conflict
+#   tooltip  - hover text (GUI)
+#   category - editor grouping only
+#
+# Optional [bars.buttons.countdown] overlays remaining seconds on the button:
+#   source = "roundtime" | "casttime" | "effect"
+#   (effect also takes: category = "Buffs"|"Debuffs"|"Cooldowns"|"ActiveSpells",
+#    name = "...", name_match = "exact"|"contains")
+#
+# Optional [[bars.buttons.states]] entries restyle the button while a condition
+# holds; the first matching state wins. Conditions (type = ...):
+#   effect_active / effect_inactive  { category, name, name_match }
+#   effect_time                      { category, name, name_match, cmp, seconds }
+#   rt_active / ct_active            (roundtime / casttime running)
+#   indicator                        { id = standing|kneeling|sitting|prone|
+#                                      stunned|bleeding|hidden|invisible|
+#                                      webbed|joined|dead, active = true|false }
+#   vital                            { vital = health|mana|stamina|spirit,
+#                                      cmp = "<"|"<="|">"|">=", value = N,
+#                                      unit = "percent"|"absolute" }
+#   all / any                        { conditions = [ ... ] }
+
+[[bars]]
+name = "default"
+title = "Actions"
+
+[[bars.buttons]]
+id = "look"
+label = "Look"
+command = "look"
+tooltip = "Look at the room"
+
+[[bars.buttons]]
+id = "hide"
+label = "Hide"
+command = "hide"
+tooltip = "Attempt to hide"
+
+# While hidden, show the button green and relabeled.
+[[bars.buttons.states]]
+[bars.buttons.states.when]
+type = "all"
+conditions = [
+  { type = "indicator", id = "hidden", active = true },
+]
+[bars.buttons.states.style]
+label = "Hidden"
+fg = "#80ff80"
+
+# Dim the button while in roundtime.
+[[bars.buttons.states]]
+[bars.buttons.states.when]
+type = "all"
+conditions = [
+  { type = "rt_active" },
+]
+[bars.buttons.states.style]
+dim = true
+
+[[bars.buttons]]
+id = "stance-def"
+label = "Defensive"
+command = "stance defensive"
+tooltip = "Set stance to defensive"
+
+# Show roundtime remaining on this button and dim it while RT runs.
+[bars.buttons.countdown]
+source = "roundtime"
+
+[[bars.buttons.states]]
+[bars.buttons.states.when]
+type = "all"
+conditions = [
+  { type = "rt_active" },
+]
+[bars.buttons.states.style]
+dim = true
