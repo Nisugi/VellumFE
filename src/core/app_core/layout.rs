@@ -302,6 +302,7 @@ impl AppCore {
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
             "quickbar" => (20, 1),
+            "hotkeybar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
@@ -1410,6 +1411,7 @@ mod tests {
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
             "quickbar" => (20, 1),
+            "hotkeybar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
