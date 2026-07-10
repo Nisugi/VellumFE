@@ -228,16 +228,26 @@ fn is_interior_component(
     weatherless > 0 && weatherless == group.room_ids.len()
 }
 
+/// A component this large is a zone (catacombs, sewers, castle floors),
+/// not a room of somebody's building: it gets its own cluster and never
+/// welds its neighbors (Wehnimer's underground touches half the town's
+/// cellars — without this line every shop with a trapdoor merges into one
+/// monster "building"). Spec §10 lists proper large-interior splitting as
+/// future work.
+pub const ZONE_COMPONENT_ROOMS: usize = 50;
+
 /// Interior clusters: interior groups connected by ANY wayto edge between
 /// interior rooms form one walkable interior space (one building) — "go
-/// arch" joins as surely as "north". Only edges that lead outdoors separate.
-/// Returns interior group index → cluster id (the smallest group index in
-/// the cluster), so ids are stable for a given mapdb build.
+/// arch" joins as surely as "north". Only edges that lead outdoors (or into
+/// a zone-sized component) separate. Returns interior group index → cluster
+/// id (the smallest group index in the cluster), so ids are stable for a
+/// given mapdb build.
 pub fn interior_clusters(
     groups: &[Group],
     interior: &HashSet<usize>,
     lookup: &RoomTable,
 ) -> HashMap<usize, usize> {
+    let is_zone = |idx: usize| groups[idx].room_ids.len() > ZONE_COMPONENT_ROOMS;
     let mut group_of: HashMap<u32, usize> = HashMap::new();
     for group in groups {
         if interior.contains(&group.index) {
@@ -258,7 +268,7 @@ pub fn interior_clusters(
         g
     }
     for group in groups {
-        if !interior.contains(&group.index) {
+        if !interior.contains(&group.index) || is_zone(group.index) {
             continue;
         }
         for &room_id in &group.room_ids {
@@ -269,8 +279,8 @@ pub fn interior_clusters(
                 let Some(&other) = group_of.get(&target_id) else {
                     continue; // outdoors or outside the selection: a boundary
                 };
-                if other == group.index {
-                    continue;
+                if other == group.index || is_zone(other) {
+                    continue; // a zone is a neighbor, not a wing
                 }
                 let a = find(&mut parent, group.index);
                 let b = find(&mut parent, other);

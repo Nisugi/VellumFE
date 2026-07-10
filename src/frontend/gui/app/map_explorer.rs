@@ -157,6 +157,9 @@ impl VellumGuiApp {
                 egui::ComboBox::from_id_salt("map_explorer_location")
                     .selected_text(selected_text)
                     .width(240.0)
+                    // Keep the popup open while typing in the filter box;
+                    // selection closes it explicitly below.
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show_ui(ui, |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut ex.filter)
@@ -173,15 +176,16 @@ impl VellumGuiApp {
                                         continue;
                                     }
                                     let is_current = ex.location.as_deref() == Some(location);
-                                    if ui.selectable_label(is_current, location).clicked()
-                                        && !is_current
-                                    {
-                                        ex.location = Some(location.to_owned());
-                                        ex.follow = false;
-                                        ex.selected = None;
-                                        ex.centered = false;
-                                        ex.sheet = Sheet::Outdoor;
-                                        out.request_location = Some(location.to_owned());
+                                    if ui.selectable_label(is_current, location).clicked() {
+                                        if !is_current {
+                                            ex.location = Some(location.to_owned());
+                                            ex.follow = false;
+                                            ex.selected = None;
+                                            ex.centered = false;
+                                            ex.sheet = Sheet::Outdoor;
+                                            out.request_location = Some(location.to_owned());
+                                        }
+                                        ui.close();
                                     }
                                 }
                             });
