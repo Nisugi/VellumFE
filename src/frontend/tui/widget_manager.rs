@@ -58,6 +58,8 @@ pub struct WidgetManager {
     pub encumbrance_widgets: HashMap<String, super::encumbrance::Encumbrance>,
     /// Cache of Quickbar widgets per window name
     pub quickbar_widgets: HashMap<String, super::quickbar::Quickbar>,
+    /// Cache of HotkeyBar widgets per window name
+    pub hotkey_bar_widgets: HashMap<String, super::hotkey_bar::HotkeyBar>,
     /// Cache of MiniVitals widgets per window name (GS4 horizontal vital bars)
     pub minivitals_widgets: HashMap<String, super::minivitals::MiniVitals>,
     /// Cache of Betrayer widgets per window name (GS4 blood pool)
@@ -100,6 +102,7 @@ impl WidgetManager {
             gs4_experience_widgets: HashMap::new(),
             encumbrance_widgets: HashMap::new(),
             quickbar_widgets: HashMap::new(),
+            hotkey_bar_widgets: HashMap::new(),
             minivitals_widgets: HashMap::new(),
             betrayer_widgets: HashMap::new(),
             last_synced_generation: HashMap::new(),
@@ -134,6 +137,7 @@ impl WidgetManager {
         self.gs4_experience_widgets.clear();
         self.encumbrance_widgets.clear();
         self.quickbar_widgets.clear();
+        self.hotkey_bar_widgets.clear();
         self.minivitals_widgets.clear();
         self.betrayer_widgets.clear();
         self.last_synced_generation.clear();
@@ -168,6 +172,7 @@ impl WidgetManager {
         self.gs4_experience_widgets.remove(name);
         self.encumbrance_widgets.remove(name);
         self.quickbar_widgets.remove(name);
+        self.hotkey_bar_widgets.remove(name);
         self.minivitals_widgets.remove(name);
         self.betrayer_widgets.remove(name);
         self.last_synced_generation.remove(name);

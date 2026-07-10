@@ -235,8 +235,29 @@ pub struct ActiveEffect {
     pub text: String, // Display text (e.g., "Fasthr's Reward")
     pub value: u32,   // Progress/percentage (0-100)
     pub time: String, // Time remaining (e.g., "03:06:54")
+    /// Absolute expiry (server unix time), derived from `time` when the
+    /// effect arrives. The protocol only re-sends effects on change, so the
+    /// `time` string goes stale; this stays comparable against current time.
+    /// None for unparseable durations (e.g. "Indefinite").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
     pub bar_color: Option<String>,
     pub text_color: Option<String>,
+}
+
+/// Parse an effect duration string ("HH:MM:SS" or "MM:SS") into seconds.
+/// Returns None for anything non-numeric (e.g. "Indefinite", "").
+pub fn parse_time_seconds(s: &str) -> Option<i64> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let mut total: i64 = 0;
+    for part in &parts {
+        let n: i64 = part.trim().parse().ok()?;
+        total = total * 60 + n;
+    }
+    Some(total)
 }
 
 /// Active effects content (for buffs, debuffs, cooldowns, active spells)
@@ -992,6 +1013,7 @@ mod tests {
             text: "Fasthr's Reward".to_string(),
             value: 74,
             time: "03:06:54".to_string(),
+            expires_at: None,
             bar_color: Some("#00FF00".to_string()),
             text_color: None,
         };
@@ -1000,6 +1022,18 @@ mod tests {
         assert_eq!(effect.text, "Fasthr's Reward");
         assert_eq!(effect.value, 74);
         assert_eq!(effect.time, "03:06:54");
+    }
+
+    #[test]
+    fn test_parse_time_seconds() {
+        assert_eq!(parse_time_seconds("03:06:54"), Some(11214));
+        assert_eq!(parse_time_seconds("00:01:05"), Some(65));
+        assert_eq!(parse_time_seconds("01:05"), Some(65));
+        assert_eq!(parse_time_seconds("0:24:10"), Some(1450));
+        assert_eq!(parse_time_seconds("45"), Some(45));
+        assert_eq!(parse_time_seconds("Indefinite"), None);
+        assert_eq!(parse_time_seconds(""), None);
+        assert_eq!(parse_time_seconds("1:2:3:4"), None);
     }
 
     // ==================== TabbedTextContent update_tabs Tests ====================

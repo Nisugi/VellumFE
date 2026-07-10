@@ -2,10 +2,24 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::config::{BorderSides, Config, KeyAction, KeyBindAction, PerformanceWidgetData, WindowBase, WindowDef};
+use crate::config::{
+    BorderSides, Config, HotbarsConfig, KeyAction, KeyBindAction, MacroAction,
+    PerformanceWidgetData, WindowBase, WindowDef,
+};
 use crate::data::input::KeyEvent;
 
 use super::AppCore;
+
+/// A hotbar button hotkey that could not be registered because the key is
+/// already bound (keybinds.toml wins; among buttons, first registration wins).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HotbarKeyConflict {
+    pub key: String,
+    pub bar: String,
+    pub button: String,
+    /// What already owns the key: "keybinds.toml" or "bar:button".
+    pub conflicts_with: String,
+}
 
 impl AppCore {
     /// Build runtime keybind map from config for fast O(1) lookups
@@ -28,9 +42,68 @@ impl AppCore {
         map
     }
 
-    /// Rebuild the keybind map (call after config changes)
+    /// Merge hotbar button hotkeys into the runtime keybind map as Macro
+    /// entries (both frontends already dispatch Macro hits to the network).
+    /// These live only in the runtime map — never in config.keybinds — so
+    /// they are invisible to the keybind editor and never saved to disk.
+    /// Existing bindings win; losers are reported as conflicts.
+    pub(super) fn merge_hotbar_hotkeys(
+        map: &mut HashMap<KeyEvent, KeyBindAction>,
+        hotbars: &HotbarsConfig,
+    ) -> Vec<HotbarKeyConflict> {
+        let mut conflicts = Vec::new();
+        // Track which bar:button claimed each key so later conflicts can
+        // name the actual owner rather than just "already bound".
+        let mut owners: HashMap<KeyEvent, String> = HashMap::new();
+
+        for bar in &hotbars.bars {
+            for button in &bar.buttons {
+                let Some(hotkey) = button.hotkey.as_deref().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let Some((code, modifiers)) = crate::config::parse_key_string(hotkey) else {
+                    tracing::warn!(
+                        "Hotbar '{}' button '{}': failed to parse hotkey '{}'",
+                        bar.name,
+                        button.id,
+                        hotkey
+                    );
+                    continue;
+                };
+                let key_event = KeyEvent { code, modifiers };
+
+                if map.contains_key(&key_event) {
+                    let conflicts_with = owners
+                        .get(&key_event)
+                        .cloned()
+                        .unwrap_or_else(|| "keybinds.toml".to_string());
+                    conflicts.push(HotbarKeyConflict {
+                        key: hotkey.to_string(),
+                        bar: bar.name.clone(),
+                        button: button.id.clone(),
+                        conflicts_with,
+                    });
+                    continue;
+                }
+
+                map.insert(
+                    key_event,
+                    KeyBindAction::Macro(MacroAction {
+                        macro_text: format!("{}\r", button.command),
+                    }),
+                );
+                owners.insert(key_event, format!("{}:{}", bar.name, button.id));
+            }
+        }
+        conflicts
+    }
+
+    /// Rebuild the keybind map (call after config changes).
+    /// Re-merges hotbar hotkeys and refreshes the conflict list.
     pub fn rebuild_keybind_map(&mut self) {
-        self.keybind_map = Self::build_keybind_map(&self.config);
+        let mut map = Self::build_keybind_map(&self.config);
+        self.hotbar_key_conflicts = Self::merge_hotbar_hotkeys(&mut map, &self.config.hotbars);
+        self.keybind_map = map;
     }
 
     /// Execute a keybind action (called when a bound key is pressed)
@@ -339,7 +412,7 @@ impl AppCore {
 #[cfg(test)]
 mod tests {
     use super::AppCore;
-    use crate::config::{Config, KeyBindAction};
+    use crate::config::{Config, HotbarButton, HotbarDef, HotbarsConfig, KeyBindAction};
     use crate::data::input::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -378,5 +451,99 @@ mod tests {
 
         let map = AppCore::build_keybind_map(&config);
         assert!(map.is_empty(), "Invalid keybind should be skipped");
+    }
+
+    fn hotbars_with_buttons(buttons: Vec<(&str, &str, Option<&str>)>) -> HotbarsConfig {
+        HotbarsConfig {
+            bars: vec![HotbarDef {
+                name: "combat".to_string(),
+                title: None,
+                buttons: buttons
+                    .into_iter()
+                    .map(|(id, command, hotkey)| HotbarButton {
+                        id: id.to_string(),
+                        label: id.to_string(),
+                        command: command.to_string(),
+                        hotkey: hotkey.map(|s| s.to_string()),
+                        tooltip: None,
+                        category: None,
+                        countdown: None,
+                        states: vec![],
+                        default_style: None,
+                    })
+                    .collect(),
+            }],
+        }
+    }
+
+    #[test]
+    fn merge_hotbar_hotkeys_inserts_macro_with_cr() {
+        let mut map = std::collections::HashMap::new();
+        let hotbars = hotbars_with_buttons(vec![("hide", "hide", Some("alt+h"))]);
+
+        let conflicts = AppCore::merge_hotbar_hotkeys(&mut map, &hotbars);
+        assert!(conflicts.is_empty());
+
+        let alt_h = KeyEvent {
+            code: KeyCode::Char('h'),
+            modifiers: KeyModifiers::ALT,
+        };
+        match map.get(&alt_h) {
+            Some(KeyBindAction::Macro(m)) => assert_eq!(m.macro_text, "hide\r"),
+            other => panic!("expected macro entry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn merge_hotbar_hotkeys_existing_binding_wins() {
+        let mut config = Config::default();
+        config.keybinds.insert(
+            "alt+h".to_string(),
+            KeyBindAction::Action("copy".to_string()),
+        );
+        let mut map = AppCore::build_keybind_map(&config);
+        let hotbars = hotbars_with_buttons(vec![("hide", "hide", Some("alt+h"))]);
+
+        let conflicts = AppCore::merge_hotbar_hotkeys(&mut map, &hotbars);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].key, "alt+h");
+        assert_eq!(conflicts[0].bar, "combat");
+        assert_eq!(conflicts[0].button, "hide");
+        assert_eq!(conflicts[0].conflicts_with, "keybinds.toml");
+
+        // Original binding untouched
+        let alt_h = KeyEvent {
+            code: KeyCode::Char('h'),
+            modifiers: KeyModifiers::ALT,
+        };
+        assert!(matches!(map.get(&alt_h), Some(KeyBindAction::Action(a)) if a == "copy"));
+    }
+
+    #[test]
+    fn merge_hotbar_hotkeys_duplicate_button_key_reported() {
+        let mut map = std::collections::HashMap::new();
+        let hotbars = hotbars_with_buttons(vec![
+            ("hide", "hide", Some("alt+h")),
+            ("heal", "incant 1101", Some("alt+h")),
+        ]);
+
+        let conflicts = AppCore::merge_hotbar_hotkeys(&mut map, &hotbars);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].button, "heal");
+        assert_eq!(conflicts[0].conflicts_with, "combat:hide");
+    }
+
+    #[test]
+    fn merge_hotbar_hotkeys_skips_invalid_and_empty() {
+        let mut map = std::collections::HashMap::new();
+        let hotbars = hotbars_with_buttons(vec![
+            ("bad", "x", Some("ctrl+notakey")),
+            ("none", "y", None),
+            ("blank", "z", Some("")),
+        ]);
+
+        let conflicts = AppCore::merge_hotbar_hotkeys(&mut map, &hotbars);
+        assert!(conflicts.is_empty());
+        assert!(map.is_empty());
     }
 }

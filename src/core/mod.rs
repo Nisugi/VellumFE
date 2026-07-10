@@ -7,6 +7,7 @@
 pub mod app_core;
 pub mod bounty_parser;
 pub mod highlight_engine;
+pub mod hotbar;
 pub mod input_router;
 pub mod menu_actions;
 pub mod messages;

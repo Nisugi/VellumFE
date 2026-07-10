@@ -135,8 +135,13 @@ pub struct AppCore {
 
     // === Keybind Runtime Cache ===
     /// Runtime keybind map for fast O(1) lookups (KeyEvent -> KeyBindAction)
-    /// Built from config.keybinds at startup and on config reload
+    /// Built from config.keybinds at startup and on config reload,
+    /// then merged with hotbar button hotkeys (as Macro entries)
     pub keybind_map: HashMap<crate::data::input::KeyEvent, crate::config::KeyBindAction>,
+
+    /// Hotbar hotkeys that lost a conflict with an existing binding
+    /// (keybinds.toml or an earlier hotbar button). Editors surface these.
+    pub hotbar_key_conflicts: Vec<crate::core::app_core::keybinds::HotbarKeyConflict>,
 
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml
@@ -209,8 +214,10 @@ impl AppCore {
             tracing::info!("TTS enabled - accessibility features active");
         }
 
-        // Build the runtime keybind map from config
-        let keybind_map = Self::build_keybind_map(&config);
+        // Build the runtime keybind map from config, then merge hotbar
+        // button hotkeys (existing bindings win; conflicts surfaced below)
+        let mut keybind_map = Self::build_keybind_map(&config);
+        let hotbar_key_conflicts = Self::merge_hotbar_hotkeys(&mut keybind_map, &config.hotbars);
 
         let layout_theme = layout.theme.clone();
         let mut app = Self {
@@ -248,8 +255,16 @@ impl AppCore {
             save_reminder_shown: false,
             base_layout_name: None,
             keybind_map,
+            hotbar_key_conflicts,
             saved_dialog_positions,
         };
+
+        for conflict in &app.hotbar_key_conflicts.clone() {
+            app.add_system_message(&format!(
+                "Hotbar key '{}' ({}:{}) not registered - already bound by {}",
+                conflict.key, conflict.bar, conflict.button, conflict.conflicts_with
+            ));
+        }
 
         app.apply_session_cache();
         app.apply_custom_quickbars();
@@ -701,6 +716,7 @@ impl AppCore {
             crate::data::WidgetType::GS4Experience => "gs4_experience",
             crate::data::WidgetType::Encumbrance => "encum",
             crate::data::WidgetType::Quickbar => "quickbar",
+            crate::data::WidgetType::Hotkeybar => "hotkeybar",
             crate::data::WidgetType::MiniVitals => "minivitals",
             crate::data::WidgetType::Betrayer => "betrayer",
             crate::data::WidgetType::Items => "items",
@@ -1170,6 +1186,14 @@ impl AppCore {
                 WidgetType::GS4Experience => WindowContent::GS4Experience,
                 WidgetType::Encumbrance => WindowContent::Encumbrance,
                 WidgetType::Quickbar => WindowContent::Quickbar,
+                WidgetType::Hotkeybar => {
+                    let bar = if let crate::config::WindowDef::Hotkeybar { data, .. } = window_def {
+                        data.bar.clone()
+                    } else {
+                        String::new()
+                    };
+                    WindowContent::Hotkeybar { bar }
+                }
                 WidgetType::MiniVitals => WindowContent::MiniVitals,
                 WidgetType::Betrayer => WindowContent::Betrayer,
                 WidgetType::WebUi => {
@@ -1501,6 +1525,14 @@ impl AppCore {
             WidgetType::GS4Experience => WindowContent::GS4Experience,
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::Quickbar => WindowContent::Quickbar,
+            WidgetType::Hotkeybar => {
+                let bar = if let crate::config::WindowDef::Hotkeybar { data, .. } = window_def {
+                    data.bar.clone()
+                } else {
+                    String::new()
+                };
+                WindowContent::Hotkeybar { bar }
+            }
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
             WidgetType::WebUi => {
@@ -2022,7 +2054,7 @@ impl AppCore {
         self.add_system_message("  .version / .ver         - Show version info");
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
-        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|settings|colors)");
+        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("");
 
         // Layout commands
@@ -2072,6 +2104,12 @@ impl AppCore {
         self.add_system_message("  .savekeybinds [name]    - Save keybinds as profile (default: 'default')");
         self.add_system_message("  .loadkeybinds <name>    - Load keybinds from profile");
         self.add_system_message("  .keybindprofiles        - List saved keybind profiles");
+        self.add_system_message("");
+
+        // Hotbars
+        self.add_system_message("HOTBARS:");
+        self.add_system_message("  .hotbars / .hotbar      - Open hotbar editor (bars of command buttons)");
+        self.add_system_message("    Add a bar to a layout with a 'hotkeybar' window (.addwindow)");
         self.add_system_message("");
 
         // Colors
@@ -2668,6 +2706,11 @@ impl AppCore {
             WidgetType::Encumbrance => WindowContent::Encumbrance,
             WidgetType::MiniVitals => WindowContent::MiniVitals,
             WidgetType::Betrayer => WindowContent::Betrayer,
+            // A dot-command-created hotkeybar binds to the bar with the
+            // same name as the window
+            WidgetType::Hotkeybar => WindowContent::Hotkeybar {
+                bar: name.to_string(),
+            },
             WidgetType::WebUi => WindowContent::WebUi(
                 crate::data::webui::WebUiPanelContent::new(name, name),
             ),
@@ -3855,6 +3898,7 @@ impl AppCore {
         self.add_system_message("Reloading all configuration...");
         self.reload_highlights();
         self.reload_keybinds();
+        self.reload_hotbars();
         self.reload_settings();
         self.reload_colors();
         self.reload_layout();
@@ -3915,12 +3959,33 @@ impl AppCore {
         match crate::config::Config::load_keybinds(self.config.character.as_deref()) {
             Ok(keybinds) => {
                 self.config.keybinds = keybinds;
-                // Rebuild keybind map for O(1) lookups
-                self.keybind_map = Self::build_keybind_map(&self.config);
+                // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
+                self.rebuild_keybind_map();
                 self.add_system_message("Keybinds reloaded");
             }
             Err(e) => {
                 self.add_system_message(&format!("Failed to reload keybinds: {}", e));
+            }
+        }
+    }
+
+    /// Reload hotbars from disk and re-register their hotkeys
+    pub fn reload_hotbars(&mut self) {
+        match crate::config::Config::load_hotbars(self.config.character.as_deref()) {
+            Ok(hotbars) => {
+                self.config.hotbars = hotbars;
+                self.rebuild_keybind_map();
+                for conflict in &self.hotbar_key_conflicts.clone() {
+                    self.add_system_message(&format!(
+                        "Hotbar key '{}' ({}:{}) not registered - already bound by {}",
+                        conflict.key, conflict.bar, conflict.button, conflict.conflicts_with
+                    ));
+                }
+                self.add_system_message("Hotbars reloaded");
+                self.needs_render = true;
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload hotbars: {}", e));
             }
         }
     }

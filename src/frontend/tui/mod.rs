@@ -22,6 +22,8 @@ mod gs4_experience;
 mod hand;
 pub mod highlight_browser;
 pub mod highlight_form;
+pub mod hotbar_editor;
+mod hotkey_bar;
 mod indicator;
 pub mod indicator_template_editor;
 mod injury_doll;
@@ -96,6 +98,8 @@ pub struct TuiFrontend {
     pub keybind_browser: Option<keybind_browser::KeybindBrowser>,
     /// Active keybind form (if any)
     pub keybind_form: Option<keybind_form::KeybindFormWidget>,
+    /// Active hotbar editor (if any)
+    pub hotbar_editor: Option<hotbar_editor::HotbarEditor>,
     /// Active color palette browser (if any)
     pub color_palette_browser: Option<color_palette_browser::ColorPaletteBrowser>,
     /// Active color form (if any)
@@ -239,6 +243,7 @@ impl TuiFrontend {
             highlight_form: None,
             keybind_browser: None,
             keybind_form: None,
+            hotbar_editor: None,
             color_palette_browser: None,
             color_form: None,
             uicolors_browser: None,

@@ -937,6 +937,71 @@ impl TuiFrontend {
         }
     }
 
+    /// Sync hotkey bar widgets: resolve each window's bound bar against the
+    /// current GameState (states, countdowns) via core::hotbar::resolve_bar
+    pub(crate) fn sync_hotkey_bars(
+        &mut self,
+        app_core: &crate::core::AppCore,
+        theme: &crate::theme::AppTheme,
+    ) {
+        let window_defs = window_def_map(&app_core.layout);
+        let now_server =
+            chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
+
+        for (name, window) in &app_core.ui_state.windows {
+            let crate::data::WindowContent::Hotkeybar { bar } = &window.content else {
+                continue;
+            };
+
+            if !self.widget_manager.hotkey_bar_widgets.contains_key(name) {
+                let widget = hotkey_bar::HotkeyBar::new(name);
+                self.widget_manager
+                    .hotkey_bar_widgets
+                    .insert(name.clone(), widget);
+            }
+
+            if let Some(bar_widget) = self.widget_manager.hotkey_bar_widgets.get_mut(name) {
+                let bar_def = app_core.config.hotbars.find_bar(bar);
+                let buttons = bar_def
+                    .map(|def| {
+                        crate::core::hotbar::resolve_bar(def, &app_core.game_state, now_server)
+                    })
+                    .unwrap_or_default();
+                bar_widget.set_buttons(buttons);
+
+                let window_def = window_defs.get(name.as_str()).copied();
+                if let Some(def) = window_def {
+                    if let crate::config::WindowDef::Hotkeybar { data, .. } = def {
+                        bar_widget.set_vertical(data.orientation == "vertical");
+                    }
+                    let colors = resolve_window_colors(def.base(), theme);
+                    bar_widget.set_border_config(
+                        def.base().show_border,
+                        Some(def.base().border_style.clone()),
+                        colors.border.clone(),
+                    );
+                    bar_widget.set_border_sides(def.base().border_sides.clone());
+                    bar_widget.set_background_color(colors.background.clone());
+                    bar_widget.set_text_color(colors.text.clone());
+                    bar_widget.set_transparent_background(def.base().transparent_background);
+                }
+
+                // Title: bar's own title, else the bar name; a missing bar is
+                // called out so the user sees the broken binding
+                let title = if bar_def.is_none() {
+                    format!("{} (bar not found)", bar)
+                } else if window_def.map(|d| d.base().show_title).unwrap_or(true) {
+                    bar_def
+                        .and_then(|d| d.title.clone())
+                        .unwrap_or_else(|| bar.clone())
+                } else {
+                    String::new()
+                };
+                bar_widget.set_title(title);
+            }
+        }
+    }
+
     /// Sync indicator widget data from AppCore to indicator widgets
     pub(crate) fn sync_indicator_widgets(
         &mut self,

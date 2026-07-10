@@ -1524,6 +1524,16 @@ impl MessageProcessor {
                     _ => return, // Unknown category
                 };
 
+                // Derive an absolute expiry now: effects are only re-sent on
+                // change, so the remaining-time string goes stale immediately.
+                let time_base = if game_state.game_time > 0 {
+                    game_state.game_time
+                } else {
+                    chrono::Utc::now().timestamp()
+                };
+                let expires_at =
+                    crate::data::parse_time_seconds(time).map(|secs| time_base + secs);
+
                 let spell_style = id
                     .parse::<u32>()
                     .ok()
@@ -1549,6 +1559,7 @@ impl MessageProcessor {
                     effect.text = text.clone();
                     effect.value = *value;
                     effect.time = time.clone();
+                    effect.expires_at = expires_at;
                     effect.bar_color = style.bar_color.clone();
                     effect.text_color = style.text_color.clone();
                 } else {
@@ -1557,6 +1568,7 @@ impl MessageProcessor {
                         text: text.clone(),
                         value: *value,
                         time: time.clone(),
+                        expires_at,
                         bar_color: style.bar_color.clone(),
                         text_color: style.text_color.clone(),
                     });
@@ -1576,6 +1588,7 @@ impl MessageProcessor {
                             effect.text = text.clone();
                             effect.value = *value;
                             effect.time = time.clone();
+                            effect.expires_at = expires_at;
                             effect.bar_color = style.bar_color.clone();
                             effect.text_color = style.text_color.clone();
                         } else {
@@ -1585,6 +1598,7 @@ impl MessageProcessor {
                                 text: text.clone(),
                                 value: *value,
                                 time: time.clone(),
+                                expires_at,
                                 bar_color: style.bar_color.clone(),
                                 text_color: style.text_color.clone(),
                             });
@@ -3762,6 +3776,66 @@ mod tests {
             window: None,
             compiled_regex: None,
         }
+    }
+
+    // ===========================================
+    // Active effect expiry derivation
+    // ===========================================
+
+    #[test]
+    fn test_active_effect_derives_expires_at_from_game_time() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        game_state.game_time = 1_000_000;
+
+        let element = ParsedElement::ActiveEffect {
+            category: "Buffs".to_string(),
+            id: "509".to_string(),
+            value: 92,
+            text: "Strength of the Bull".to_string(),
+            time: "00:01:05".to_string(),
+        };
+        processor.process_element(
+            &element,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+
+        let store = game_state.effects.get("Buffs").expect("Buffs store");
+        assert_eq!(store.effects.len(), 1);
+        assert_eq!(store.effects[0].expires_at, Some(1_000_065));
+
+        // Unparseable duration -> no expiry
+        let element = ParsedElement::ActiveEffect {
+            category: "Buffs".to_string(),
+            id: "905".to_string(),
+            value: 100,
+            text: "Prestidigitation".to_string(),
+            time: "Indefinite".to_string(),
+        };
+        processor.process_element(
+            &element,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        let store = game_state.effects.get("Buffs").expect("Buffs store");
+        let indef = store.effects.iter().find(|e| e.id == "905").unwrap();
+        assert_eq!(indef.expires_at, None);
     }
 
     // ===========================================

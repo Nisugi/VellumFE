@@ -16,6 +16,7 @@ pub mod menu_keybind_validator;
 pub mod wrayth_import;
 mod colors;
 mod highlights;
+mod hotbars;
 mod io;
 mod macros;
 mod paths;
@@ -29,6 +30,10 @@ mod window_def;
 
 pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle};
 pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
+pub use hotbars::{
+    EffectCategory, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
+    HotbarCountdownSource, HotbarDef, HotbarStyle, HotbarsConfig, NameMatch, VitalKind, VitalUnit,
+};
 pub use keybinds::{
     parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
 };
@@ -45,7 +50,7 @@ pub use widgets::{
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
     DashboardIndicatorDef, DashboardWidgetData, EncumbranceWidgetData, ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandWidgetData, IndicatorWidgetData, InjuryDollWidgetData,
+    GS4ExperienceWidgetData, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData, InjuryDollWidgetData,
     InventoryWidgetData, ItemsWidgetData, MiniVitalsWidgetData, PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
@@ -60,6 +65,7 @@ const DEFAULT_CONFIG: &str = include_str!("../defaults/globals/config.toml");
 const DEFAULT_COLORS: &str = include_str!("../defaults/globals/colors.toml");
 const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/globals/highlights.toml");
 const DEFAULT_KEYBINDS: &str = include_str!("../defaults/globals/keybinds.toml");
+const DEFAULT_HOTBARS: &str = include_str!("../defaults/globals/hotbars.toml");
 const DEFAULT_MACROS: &str = include_str!("../defaults/globals/macros.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/globals/cmdlist1.xml");
 const DEFAULT_SPELL_ABBREVS: &str = include_str!("../defaults/globals/spell_abbrev.toml");
@@ -214,6 +220,8 @@ pub struct Config {
     pub highlights: HashMap<String, HighlightPattern>,
     #[serde(skip)] // Loaded from separate keybinds.toml file
     pub keybinds: HashMap<String, KeyBindAction>,
+    #[serde(skip)] // Loaded from separate hotbars.toml file
+    pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml
     pub app_keybinds: AppKeybinds,
     #[serde(default)]
@@ -265,6 +273,7 @@ fn default_focus_exclude() -> Vec<String> {
     // Exclude all non-text widget types from focus by default
     vec![
         "quickbar".to_string(),
+        "hotkeybar".to_string(),
         "targets".to_string(),
         "players".to_string(),
         "items".to_string(),

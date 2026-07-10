@@ -113,6 +113,12 @@ impl Config {
         Ok(Self::global_dir()?.join("keybinds.toml"))
     }
 
+    /// Get path to common (global) hotbars file
+    /// Returns: ~/.vellum-fe/global/hotbars.toml
+    pub fn common_hotbars_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("hotbars.toml"))
+    }
+
     /// Get path to common (global) colors file
     /// Returns: ~/.vellum-fe/global/colors.toml
     pub fn common_colors_path() -> Result<PathBuf> {
@@ -197,6 +203,12 @@ impl Config {
     /// Returns: ~/.vellum-fe/{character}/keybinds.toml
     pub fn keybinds_path(character: Option<&str>) -> Result<PathBuf> {
         Ok(Self::profile_dir(character)?.join("keybinds.toml"))
+    }
+
+    /// Get path to hotbars.toml for a character
+    /// Returns: ~/.vellum-fe/{character}/hotbars.toml
+    pub fn hotbars_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("hotbars.toml"))
     }
 
     /// Get path to auto-saved layout.toml for a character
