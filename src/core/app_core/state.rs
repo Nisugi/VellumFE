@@ -135,8 +135,13 @@ pub struct AppCore {
 
     // === Keybind Runtime Cache ===
     /// Runtime keybind map for fast O(1) lookups (KeyEvent -> KeyBindAction)
-    /// Built from config.keybinds at startup and on config reload
+    /// Built from config.keybinds at startup and on config reload,
+    /// then merged with hotbar button hotkeys (as Macro entries)
     pub keybind_map: HashMap<crate::data::input::KeyEvent, crate::config::KeyBindAction>,
+
+    /// Hotbar hotkeys that lost a conflict with an existing binding
+    /// (keybinds.toml or an earlier hotbar button). Editors surface these.
+    pub hotbar_key_conflicts: Vec<crate::core::app_core::keybinds::HotbarKeyConflict>,
 
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml
@@ -209,8 +214,10 @@ impl AppCore {
             tracing::info!("TTS enabled - accessibility features active");
         }
 
-        // Build the runtime keybind map from config
-        let keybind_map = Self::build_keybind_map(&config);
+        // Build the runtime keybind map from config, then merge hotbar
+        // button hotkeys (existing bindings win; conflicts surfaced below)
+        let mut keybind_map = Self::build_keybind_map(&config);
+        let hotbar_key_conflicts = Self::merge_hotbar_hotkeys(&mut keybind_map, &config.hotbars);
 
         let layout_theme = layout.theme.clone();
         let mut app = Self {
@@ -248,8 +255,16 @@ impl AppCore {
             save_reminder_shown: false,
             base_layout_name: None,
             keybind_map,
+            hotbar_key_conflicts,
             saved_dialog_positions,
         };
+
+        for conflict in &app.hotbar_key_conflicts.clone() {
+            app.add_system_message(&format!(
+                "Hotbar key '{}' ({}:{}) not registered - already bound by {}",
+                conflict.key, conflict.bar, conflict.button, conflict.conflicts_with
+            ));
+        }
 
         app.apply_session_cache();
         app.apply_custom_quickbars();
@@ -3855,6 +3870,7 @@ impl AppCore {
         self.add_system_message("Reloading all configuration...");
         self.reload_highlights();
         self.reload_keybinds();
+        self.reload_hotbars();
         self.reload_settings();
         self.reload_colors();
         self.reload_layout();
@@ -3915,12 +3931,33 @@ impl AppCore {
         match crate::config::Config::load_keybinds(self.config.character.as_deref()) {
             Ok(keybinds) => {
                 self.config.keybinds = keybinds;
-                // Rebuild keybind map for O(1) lookups
-                self.keybind_map = Self::build_keybind_map(&self.config);
+                // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
+                self.rebuild_keybind_map();
                 self.add_system_message("Keybinds reloaded");
             }
             Err(e) => {
                 self.add_system_message(&format!("Failed to reload keybinds: {}", e));
+            }
+        }
+    }
+
+    /// Reload hotbars from disk and re-register their hotkeys
+    pub fn reload_hotbars(&mut self) {
+        match crate::config::Config::load_hotbars(self.config.character.as_deref()) {
+            Ok(hotbars) => {
+                self.config.hotbars = hotbars;
+                self.rebuild_keybind_map();
+                for conflict in &self.hotbar_key_conflicts.clone() {
+                    self.add_system_message(&format!(
+                        "Hotbar key '{}' ({}:{}) not registered - already bound by {}",
+                        conflict.key, conflict.bar, conflict.button, conflict.conflicts_with
+                    ));
+                }
+                self.add_system_message("Hotbars reloaded");
+                self.needs_render = true;
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Failed to reload hotbars: {}", e));
             }
         }
     }

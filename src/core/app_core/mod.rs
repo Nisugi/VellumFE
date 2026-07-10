@@ -10,4 +10,5 @@ mod keybinds;
 mod layout;
 mod state;
 
+pub use keybinds::HotbarKeyConflict;
 pub use state::*;
