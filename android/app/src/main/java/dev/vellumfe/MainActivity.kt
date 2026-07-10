@@ -68,6 +68,10 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#111318"))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            // Sound alerts and the login music fire from JS without a user
+            // gesture — mirrors mediaTypesRequiringUserActionForPlayback = []
+            // in the iOS shell's WebViewContainer.
+            settings.mediaPlaybackRequiresUserGesture = false
             // Surface page JS errors in logcat: an engine too old for the
             // client's JavaScript otherwise fails as a silent static page.
             webChromeClient = object : WebChromeClient() {

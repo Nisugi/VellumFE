@@ -895,6 +895,11 @@ function updateSessionUi() {
   });
   sessionProfiles.classList.toggle("busy", inProgress);
   sessionOverlay.hidden = false;
+  // A fresh boot waiting at the login screen gets the classic theme
+  // (idle only — a mid-session disconnect shouldn't start the band).
+  if (session.state === "idle") {
+    maybePlayLoginMusic();
+  }
   if (!profilesRequested && sendJson("get_profiles")) {
     profilesRequested = true;
   }
@@ -1342,6 +1347,13 @@ function openSettingsSheet() {
       } catch { /* private mode */ }
     },
   );
+  // Login music only exists where a login screen does (session_control).
+  if (session.session_control) {
+    sheetButton(
+      musicOff ? "Login music: off — tap to enable" : "Login music: on — tap to disable",
+      () => setMusicOff(!musicOff),
+    );
+  }
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
@@ -1634,6 +1646,60 @@ function playRemoteSound(d) {
     console.debug("sound blocked or missing", d.file, e);
   });
 }
+
+// ---- Login music ------------------------------------------------------------
+// Nostalgia: the classic Wizard FE theme plays once per page load when the
+// login screen first appears at idle — the mobile analog of the TUI's
+// [sound] startup_music. The bar's Stop silences this play; "Don't play
+// again" (and the settings-sheet toggle) persists. In a plain browser a
+// strict autoplay policy just rejects play() and nothing appears; the app
+// shells allow ungated playback, so app users hear it.
+
+const MUSIC_OFF_KEY = "vellum-login-music-off";
+let musicOff = false;
+try {
+  musicOff = !!localStorage.getItem(MUSIC_OFF_KEY);
+} catch { /* default on */ }
+
+const musicBar = document.getElementById("music-bar");
+let loginMusic = null; // Audio element while playing
+let musicPlayed = false; // once per page load
+
+function stopLoginMusic() {
+  if (loginMusic) {
+    loginMusic.pause();
+    loginMusic = null;
+  }
+  musicBar.hidden = true;
+}
+
+function setMusicOff(off) {
+  musicOff = off;
+  try {
+    if (off) {
+      localStorage.setItem(MUSIC_OFF_KEY, "1");
+    } else {
+      localStorage.removeItem(MUSIC_OFF_KEY);
+    }
+  } catch { /* private mode */ }
+  if (off) stopLoginMusic();
+}
+
+function maybePlayLoginMusic() {
+  if (musicPlayed || musicOff || soundMuted) return;
+  musicPlayed = true;
+  const audio = new Audio(`/sounds/wizard_music?token=${encodeURIComponent(pairingToken)}`);
+  audio.addEventListener("ended", stopLoginMusic);
+  audio.play().then(() => {
+    loginMusic = audio;
+    musicBar.hidden = false;
+  }).catch((e) => {
+    console.debug("login music blocked or missing", e);
+  });
+}
+
+document.getElementById("music-stop").addEventListener("click", stopLoginMusic);
+document.getElementById("music-never").addEventListener("click", () => setMusicOff(true));
 
 function editorStatusMsg(text, isError) {
   editorStatus.textContent = text;

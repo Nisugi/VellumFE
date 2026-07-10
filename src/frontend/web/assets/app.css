@@ -1076,6 +1076,31 @@ html, body {
 #lich-note code,
 #remote-note code { font-size: 11px; }
 
+/* Startup-music bar: visible only while the login theme is playing. */
+#music-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#music-bar[hidden] { display: none; }
+
+#music-label {
+  flex: 1;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+#music-bar button {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+}
+
 #session-form button[type="submit"] {
   padding: 10px;
   background: var(--bg-panel);
