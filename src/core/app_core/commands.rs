@@ -12,6 +12,10 @@ impl AppCore {
             return self.handle_dot_command(&command);
         }
 
+        // If the next room turns out to be unmapped, this command is the
+        // edge label on its ghost-room sketch ("go shop").
+        self.map.note_command(&command);
+
         // Intercept game "quit" command - save settings before disconnecting
         // This handles the case where users close terminal after game disconnect
         if command.trim().eq_ignore_ascii_case("quit") {

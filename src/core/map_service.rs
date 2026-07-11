@@ -164,6 +164,15 @@ pub struct MapService {
     overrides: MapOverrides,
     overrides_path: PathBuf,
 
+    /// Session-only sketches of unmapped rooms (see `core::ghost_rooms`).
+    ghosts: crate::core::ghost_rooms::GhostStore,
+    /// Ghost uid the character is standing in, when the current room is
+    /// unmapped. `current_room_id` keeps the last mapped room (the anchor).
+    pub current_ghost: Option<i64>,
+    /// Last command sent to the game; consumed as the edge label when the
+    /// next room turns out to be a ghost ("go shop").
+    last_command: Option<String>,
+
     pub current_location: Option<String>,
     /// Lich room id of the current room (layouts and `;go2` speak room ids).
     pub current_room_id: Option<u32>,
@@ -237,6 +246,9 @@ impl MapService {
             pending: Default::default(),
             overrides: loaded_overrides,
             overrides_path,
+            ghosts: Default::default(),
+            current_ghost: None,
+            last_command: None,
             last_uid: None,
             last_lich_id: None,
             current_location: None,
@@ -293,30 +305,77 @@ impl MapService {
     /// Feed the room identifiers the stream reports. `<nav rm='…'/>` carries
     /// the game uid; the `[Name - 12345]` scrape carries the Lich room id.
     /// Either (or both) may be present; uid wins when both resolve.
-    pub fn note_room(&mut self, nav_uid: Option<i64>, lich_id: Option<u32>) {
+    /// `snapshot` carries what the stream said about the room (title, obvious
+    /// exits) — that's all a ghost room has to go on.
+    pub fn note_room(
+        &mut self,
+        nav_uid: Option<i64>,
+        lich_id: Option<u32>,
+        snapshot: crate::core::ghost_rooms::RoomSnapshot,
+    ) {
         if nav_uid == self.last_uid && lich_id == self.last_lich_id {
+            // Same room; exits/title often arrive a line after the nav tag,
+            // so keep the current ghost's sketch fresh.
+            if let Some(uid) = self.current_ghost {
+                self.ghosts
+                    .visit(uid, snapshot, crate::core::ghost_rooms::Origin::Unknown, None);
+            }
             return;
         }
         self.last_uid = nav_uid;
         self.last_lich_id = lich_id;
-        self.resolve_current_room();
+        self.resolve_current_room(snapshot);
     }
 
-    fn resolve_current_room(&mut self) {
+    /// Remember the last outbound command; if the next room resolution turns
+    /// out to be a ghost, this is the command that walked into it.
+    pub fn note_command(&mut self, command: &str) {
+        let command = command.trim();
+        if !command.is_empty() {
+            self.last_command = Some(command.to_owned());
+        }
+    }
+
+    fn resolve_current_room(&mut self, snapshot: crate::core::ghost_rooms::RoomSnapshot) {
+        use crate::core::ghost_rooms::Origin;
         let Some(db) = self.mapdb.clone() else {
             return;
         };
         // Lich reports id 0 for rooms missing from its mapdb, but 0 is also a
         // real room id — the fallback must never trust it. A uid miss plus id
-        // 0 means "somewhere unmapped": hold the last known room, so stepping
-        // into an unmapped shop keeps the street outside on screen.
+        // 0 means "somewhere unmapped".
         let resolved = self
             .last_uid
             .and_then(|uid| db.room_id_of_uid(uid))
             .or(self.last_lich_id.filter(|&id| id != 0));
         let Some(room_id) = resolved else {
+            // Unmapped. With a usable uid, sketch a ghost room hanging off
+            // the held room; without one the room has no identity — just
+            // hold, so stepping into an unmapped shop keeps the street
+            // outside on screen.
+            let Some(uid) = self.last_uid.filter(|&u| u != 0) else {
+                return;
+            };
+            let from = match self.current_ghost {
+                Some(prev) => Origin::Ghost(prev),
+                None => match self.current_room_id {
+                    Some(anchor) => Origin::Mapped(anchor),
+                    None => Origin::Unknown,
+                },
+            };
+            let command = self.last_command.take();
+            self.ghosts.visit(uid, snapshot, from, command);
+            if self.current_ghost != Some(uid) {
+                self.current_ghost = Some(uid);
+                self.revision += 1;
+            }
             return;
         };
+        // Back on the map: the sketch stays for the session, but we're no
+        // longer standing in it.
+        if self.current_ghost.take().is_some() {
+            self.revision += 1;
+        }
         let location = db.location_of_room_id(room_id).map(str::to_owned);
 
         if Some(room_id) != self.current_room_id || location != self.current_location {
@@ -327,6 +386,11 @@ impl MapService {
         if let Some(location) = location {
             self.request_location(&location);
         }
+    }
+
+    /// The session's ghost-room sketches (unmapped interiors).
+    pub fn ghosts(&self) -> &crate::core::ghost_rooms::GhostStore {
+        &self.ghosts
     }
 
     /// Ask for a location's layout (used for the current location and by the
@@ -474,7 +538,9 @@ impl MapService {
                     self.db_state = DbState::Loaded;
                     self.revision += 1;
                     // Room identifiers may have arrived while loading.
-                    self.resolve_current_room();
+                    // No stream snapshot here; if this resolves into a ghost,
+                    // the next same-room report backfills title/exits.
+                    self.resolve_current_room(Default::default());
                 }
                 MapEvent::DbLoaded(Err(e)) => {
                     tracing::warn!("mapdb load failed: {e}");
@@ -556,7 +622,7 @@ mod tests {
             tmp.join("vellum-map-svc-test-overrides.json"),
         );
         // Room reports before the db loads are remembered, not resolved.
-        svc.note_room(Some(4577251), None);
+        svc.note_room(Some(4577251), None, Default::default());
         svc.poll();
         assert_eq!(svc.current_room_id, None);
         assert_eq!(svc.current_location, None);
@@ -599,18 +665,91 @@ mod tests {
         svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
 
         // On the street: uid resolves normally.
-        svc.note_room(Some(731009), Some(369));
+        svc.note_room(Some(731009), Some(369), Default::default());
         assert_eq!(svc.current_room_id, Some(369));
         assert_eq!(svc.current_location.as_deref(), Some("Mist Harbor"));
 
         // Inside an unmapped shop: unknown uid, Lich placeholder id 0.
-        svc.note_room(Some(633107), Some(0));
+        svc.note_room(Some(633107), Some(0), Default::default());
         assert_eq!(svc.current_room_id, Some(369), "id 0 must not be trusted");
         assert_eq!(svc.current_location.as_deref(), Some("Mist Harbor"));
 
         // Genuinely in the Atrium: its uid resolves to room 0 directly.
-        svc.note_room(Some(13107012), Some(0));
+        svc.note_room(Some(13107012), Some(0), Default::default());
         assert_eq!(svc.current_room_id, Some(0));
         assert_eq!(svc.current_location.as_deref(), Some("the Moonglae Inn"));
+    }
+
+    /// The full ghost lifecycle: an unmapped room becomes a session sketch
+    /// anchored on the held room, deeper rooms extend the cluster, exits
+    /// arriving a line late refresh the sketch, and stepping back onto the
+    /// map ends ghost mode without discarding the sketch.
+    #[test]
+    fn unmapped_rooms_sketch_an_anchored_ghost_cluster() {
+        use crate::core::ghost_rooms::RoomSnapshot;
+        let tmp = std::env::temp_dir();
+        let db_path = tmp.join("vellum-map-svc-ghost-test.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 369, "uid": [731009], "location": "Mist Harbor",
+                 "title": ["[East Row, Fel Road]"], "wayto": {}, "paths": "Obvious paths: north"}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-ghost-cache"),
+            tmp.join("vellum-map-svc-ghost-overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+
+        svc.note_room(Some(731009), Some(369), Default::default());
+        assert_eq!(svc.current_ghost, None);
+
+        // "go shop" into an unmapped interior: ghost anchored on the street.
+        svc.note_command("go shop");
+        svc.note_room(
+            Some(633107),
+            Some(0),
+            RoomSnapshot {
+                title: Some("[Shop, Front]".into()),
+                exits: vec![],
+            },
+        );
+        assert_eq!(svc.current_ghost, Some(633107));
+        assert_eq!(svc.current_room_id, Some(369), "anchor room is held");
+        let front = svc.ghosts().get(633107).unwrap();
+        assert_eq!(front.anchor.as_ref().unwrap().room_id, 369);
+        assert_eq!(front.anchor.as_ref().unwrap().command.as_deref(), Some("go shop"));
+
+        // Exits often arrive a line after the nav tag: same ids, richer data.
+        svc.note_room(
+            Some(633107),
+            Some(0),
+            RoomSnapshot {
+                title: Some("[Shop, Front]".into()),
+                exits: vec!["out".into()],
+            },
+        );
+        assert_eq!(svc.ghosts().get(633107).unwrap().exits, vec!["out"]);
+
+        // Deeper in: ghost→ghost edge labeled with the crossing command.
+        svc.note_command("go curtain");
+        svc.note_room(
+            Some(633108),
+            Some(0),
+            RoomSnapshot {
+                title: Some("[Shop, Back]".into()),
+                exits: vec![],
+            },
+        );
+        assert_eq!(svc.current_ghost, Some(633108));
+        assert_eq!(svc.ghosts().len(), 2);
+
+        // Back out to the street: ghost mode ends, the sketch survives.
+        svc.note_room(Some(731009), Some(369), Default::default());
+        assert_eq!(svc.current_ghost, None);
+        assert_eq!(svc.current_room_id, Some(369));
+        assert_eq!(svc.ghosts().len(), 2);
     }
 }

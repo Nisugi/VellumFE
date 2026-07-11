@@ -274,6 +274,119 @@ pub fn paint_sheet(
     result
 }
 
+/// Paint the session's ghost-room sketch over a sheet: dashed dim squares
+/// hanging off their anchor rooms, dashed traversal edges with the crossing
+/// command as label. Deliberately unmistakable from mapped rooms — truth is
+/// solid, inference is dashed.
+pub fn paint_ghosts(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    overlay: &crate::core::ghost_rooms::GhostOverlay,
+    camera: MapCamera,
+    current_ghost: Option<i64>,
+    // Live compass exits, drawn on the current ghost like on a mapped room.
+    current_exits: Option<&[String]>,
+    style: &MapStyle,
+) {
+    let painter = ui.painter().with_clip_rect(rect);
+    let ppc = camera.px_per_cell;
+    let to_screen = |cx: f32, cy: f32| -> Pos2 {
+        rect.center() + Vec2::new((cx - camera.center.x) * ppc, (cy - camera.center.y) * ppc)
+    };
+    let half_w = rect.width() / 2.0 / ppc + 1.0;
+    let half_h = rect.height() / 2.0 / ppc + 1.0;
+    let visible = |cx: f32, cy: f32| -> bool {
+        (cx - camera.center.x).abs() <= half_w && (cy - camera.center.y).abs() <= half_h
+    };
+
+    let room_size = (ppc * 0.55).clamp(3.0, 26.0);
+    let show_labels = ppc >= 14.0;
+    let fill = style.room_fill.gamma_multiply(0.5);
+    let outline = Stroke::new(1.0, style.connector.color);
+
+    for edge in &overlay.edges {
+        let (ax, ay) = (edge.a.x as f32, edge.a.y as f32);
+        let (bx, by) = (edge.b.x as f32, edge.b.y as f32);
+        if !visible(ax, ay) && !visible(bx, by) {
+            continue;
+        }
+        let a = to_screen(ax, ay);
+        let b = to_screen(bx, by);
+        painter.extend(egui::Shape::dashed_line(
+            &[a, b],
+            style.connector,
+            ppc * 0.18,
+            ppc * 0.14,
+        ));
+        if show_labels && chebyshev_px(a, b) >= ppc * 1.9 {
+            if let Some(label) = &edge.label {
+                painter.text(
+                    a.lerp(b, 0.5),
+                    Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional((ppc * 0.45).clamp(8.0, 13.0)),
+                    style.label,
+                );
+            }
+        }
+    }
+
+    for node in &overlay.nodes {
+        let (cx, cy) = (node.cell.x as f32, node.cell.y as f32);
+        if !visible(cx, cy) {
+            continue;
+        }
+        let center = to_screen(cx, cy);
+        let room_rect = Rect::from_center_size(center, Vec2::splat(room_size));
+        let is_current = current_ghost == Some(node.uid);
+
+        if is_current {
+            painter.rect(
+                room_rect.expand(2.0),
+                2.0,
+                style.current_fill.gamma_multiply(0.6),
+                style.current_ring,
+                egui::StrokeKind::Outside,
+            );
+        }
+        painter.rect_filled(room_rect, 1.5, fill);
+        dashed_rect_outline(&painter, room_rect, outline, ppc);
+        if is_current {
+            if let Some(exits) = current_exits {
+                paint_exit_ticks(&painter, room_rect, exits, style);
+            }
+        }
+
+        let response = ui.interact(
+            room_rect,
+            ui.id().with(("ghost_room", node.uid)),
+            Sense::hover(),
+        );
+        if response.hovered() {
+            let title = node.title.as_deref().unwrap_or("unknown room");
+            response.on_hover_text(format!("{title} — unmapped (session sketch)"));
+        }
+    }
+}
+
+fn dashed_rect_outline(painter: &egui::Painter, rect: Rect, stroke: Stroke, ppc: f32) {
+    let corners = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+        rect.left_top(),
+    ];
+    for side in corners.windows(2) {
+        painter.extend(egui::Shape::dashed_line(
+            &[side[0], side[1]],
+            stroke,
+            (ppc * 0.12).max(2.0),
+            (ppc * 0.08).max(1.5),
+        ));
+    }
+}
+
 fn chebyshev_px(a: Pos2, b: Pos2) -> f32 {
     (a.x - b.x).abs().max((a.y - b.y).abs())
 }

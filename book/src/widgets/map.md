@@ -30,6 +30,20 @@ a Lich connection with the go2 script available.
 
 Right-click the window for a zoom control and **Open Map Explorer**.
 
+## Ghost Rooms (Unmapped Interiors)
+
+Map maintainers deliberately leave most shop interiors out of the map
+database — they change too often to keep current. When you walk into an
+unmapped room, the mini map sketches a **ghost room** instead of losing
+you: a dashed, dimmed square hanging off the street you entered from,
+labeled with the command that took you inside ("go shop"). Moving between
+unmapped rooms grows the sketch, and hovering a ghost shows the room's
+title.
+
+Ghosts are drawn dashed on purpose: solid squares are mapped truth,
+dashed squares are what your client saw this session. The sketch lasts
+until you close VellumFE — it is never saved, so it can never go stale.
+
 ## Map Explorer
 
 A separate native OS window (like detached tabs) for browsing the whole
