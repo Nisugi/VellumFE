@@ -712,6 +712,7 @@ impl AppCore {
             crate::data::WidgetType::Indicator => "indicator",
             crate::data::WidgetType::Room => "room",
             crate::data::WidgetType::Inventory => "inventory",
+            crate::data::WidgetType::Reserve => "reserve",
             crate::data::WidgetType::CommandInput => "command_input",
             crate::data::WidgetType::Dashboard => "dashboard",
             crate::data::WidgetType::InjuryDoll => "injury_doll",
@@ -1154,6 +1155,11 @@ impl AppCore {
                     content.streams = vec!["inv".to_string()];
                     WindowContent::Inventory(content)
                 }
+                WidgetType::Reserve => {
+                    let mut content = TextContent::new(title, 10000);
+                    content.streams = vec!["reserve".to_string()];
+                    WindowContent::Reserve(content)
+                }
                 WidgetType::Spells => {
                     let mut content = TextContent::new(title, 10000);
                     content.streams = vec!["Spells".to_string()];
@@ -1499,6 +1505,11 @@ impl AppCore {
                 content.streams = vec!["inv".to_string()];
                 WindowContent::Inventory(content)
             }
+            WidgetType::Reserve => {
+                let mut content = TextContent::new(title, 0);
+                content.streams = vec!["reserve".to_string()];
+                WindowContent::Reserve(content)
+            }
             WidgetType::Spells => {
                 let mut content = TextContent::new(title, 0);
                 content.streams = vec!["Spells".to_string()];
@@ -1576,6 +1587,11 @@ impl AppCore {
         // Clear inventory cache if this is an inventory window to force initial render
         if window_def.widget_type() == "inventory" {
             self.message_processor.clear_inventory_cache();
+        }
+
+        // Same for reserve windows - force the next reserve update to render
+        if window_def.widget_type() == "reserve" {
+            self.message_processor.clear_reserve_cache();
         }
 
         // Populate spells window from buffer if this is a spells window
@@ -2693,6 +2709,11 @@ impl AppCore {
                 let mut content = TextContent::new(name, 0);
                 content.streams = vec!["inv".to_string()];
                 WindowContent::Inventory(content)
+            }
+            WidgetType::Reserve => {
+                let mut content = TextContent::new(name, 0);
+                content.streams = vec!["reserve".to_string()];
+                WindowContent::Reserve(content)
             }
             WidgetType::Spells => {
                 let mut content = TextContent::new(name, 0);

@@ -46,6 +46,13 @@ pub struct MessageProcessor {
     /// Buffer for accumulating inventory stream lines (double-buffer system)
     inventory_buffer: Vec<Vec<TextSegment>>,
 
+    /// Buffer for accumulating reserve stream lines (double-buffer system,
+    /// same snapshot semantics as inventory)
+    reserve_buffer: Vec<Vec<TextSegment>>,
+
+    /// Previous reserve buffer for comparison (avoid unnecessary updates)
+    previous_reserve: Vec<Vec<TextSegment>>,
+
     /// Previous inventory buffer for comparison (avoid unnecessary updates)
     previous_inventory: Vec<Vec<TextSegment>>,
 
@@ -176,6 +183,8 @@ impl MessageProcessor {
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
+            reserve_buffer: Vec::new(),
+            previous_reserve: Vec::new(),
             spells_buffer: Vec::new(),
             previous_spells: Vec::new(),
             spells_line_buffer: Vec::new(),
@@ -414,6 +423,13 @@ impl MessageProcessor {
                     tracing::debug!("Inventory stream pushed - cleared inventory buffer");
                 }
 
+                // Clear reserve buffer when reserve stream is pushed (each push
+                // is a full snapshot of reserved items, like inv)
+                if id == "reserve" {
+                    self.reserve_buffer.clear();
+                    tracing::debug!("Reserve stream pushed - cleared reserve buffer");
+                }
+
                 // Note: perception buffer is NOT cleared on pushStream
                 // It's cleared on clearStream (which comes before all entries)
                 // This allows entries from multiple push/pop pairs to accumulate
@@ -424,6 +440,11 @@ impl MessageProcessor {
                 // Flush inventory buffer if we're leaving inv stream
                 if self.current_stream == "inv" {
                     self.flush_inventory_buffer(ui_state);
+                }
+
+                // Flush reserve buffer if we're leaving reserve stream
+                if self.current_stream == "reserve" {
+                    self.flush_reserve_buffer(ui_state);
                 }
 
                 // Flush spells line buffer if we're leaving Spells stream
@@ -495,6 +516,16 @@ impl MessageProcessor {
                         }
                         tracing::debug!("ClearStream Spells - cleared buffer and window(s)");
                     }
+                } else if id == "reserve" {
+                    // Clear the reserve buffers and window content for a fresh snapshot
+                    self.reserve_buffer.clear();
+                    self.previous_reserve.clear();
+                    for window in ui_state.windows.values_mut() {
+                        if let WindowContent::Reserve(ref mut content) = window.content {
+                            content.lines.clear();
+                        }
+                    }
+                    tracing::debug!("ClearStream reserve - cleared buffer and window(s)");
                 } else {
                     // Generic clearStream handling for text windows
                     // Check if any text window subscribes to this stream and clear it
@@ -2482,6 +2513,28 @@ impl MessageProcessor {
             return;
         }
 
+        // Special handling for reserve stream - buffer instead of directly adding
+        // to window, same snapshot-and-compare handling as inv
+        if self.current_stream == "reserve" {
+            self.chunk_has_silent_updates = true;
+            // Check if ANY window has Reserve content type
+            if !ui_state
+                .windows
+                .values()
+                .any(|w| matches!(w.content, WindowContent::Reserve(_)))
+            {
+                tracing::trace!("Discarding reserve stream content - no reserve window exists");
+                self.current_stream = original_stream;
+                return;
+            }
+            // Add line to reserve buffer instead of window
+            let num_segments = line.segments.len();
+            self.reserve_buffer.push(line.segments);
+            tracing::trace!("Buffered reserve line ({} segments)", num_segments);
+            self.current_stream = original_stream;
+            return;
+        }
+
         // Special handling for percWindow stream - buffer for perception widget
         // Perception stream is always a silent update (shouldn't trigger prompts in main window)
         if self.current_stream == "percWindow" {
@@ -2638,7 +2691,7 @@ impl MessageProcessor {
                         added_here = true;
                     }
                 }
-                WindowContent::Inventory(content) => {
+                WindowContent::Inventory(content) | WindowContent::Reserve(content) => {
                     if is_last && !needed_later {
                         if !tts_handled {
                             if let Some(tts_mgr) = tts_manager.as_deref_mut() {
@@ -2848,7 +2901,8 @@ impl MessageProcessor {
                         };
                         content.add_line(final_line);
                     }
-                    WindowContent::Inventory(ref mut content) => {
+                    WindowContent::Inventory(ref mut content)
+                    | WindowContent::Reserve(ref mut content) => {
                         content.add_line(line.clone());
                     }
                     WindowContent::Spells(ref mut content) => {
@@ -2942,6 +2996,66 @@ impl MessageProcessor {
 
         // Clear buffer for next update
         self.inventory_buffer.clear();
+    }
+
+    /// Flush reserve buffer to window (only if content changed)
+    pub fn flush_reserve_buffer(&mut self, ui_state: &mut UiState) {
+        // If buffer is empty, nothing to do
+        if self.reserve_buffer.is_empty() {
+            return;
+        }
+
+        // Compare to previous reserve snapshot
+        let reserve_changed = self.reserve_buffer != self.previous_reserve;
+
+        if reserve_changed {
+            tracing::debug!(
+                "Reserve changed - updating window ({} lines)",
+                self.reserve_buffer.len()
+            );
+
+            // Find ALL reserve windows and update them
+            let mut updated_count = 0;
+            for (name, window) in ui_state.windows.iter_mut() {
+                if let WindowContent::Reserve(ref mut content) = window.content {
+                    // Clear existing content
+                    content.lines.clear();
+
+                    // Add all buffered lines
+                    for line_segments in &self.reserve_buffer {
+                        content.add_line(StyledLine {
+                            segments: line_segments.clone(),
+                            stream: String::from("reserve"),
+                            timestamp: None,
+                        });
+                    }
+                    tracing::debug!(
+                        "Updated reserve window '{}' with {} lines",
+                        name,
+                        content.lines.len()
+                    );
+                    updated_count += 1;
+                }
+            }
+
+            if updated_count == 0 {
+                tracing::warn!("No reserve windows found to update!");
+            } else {
+                tracing::debug!("Updated {} reserve window(s)", updated_count);
+            }
+
+            // Store as new previous reserve. The buffer is cleared below
+            // either way, so swapping avoids deep-cloning every line.
+            std::mem::swap(&mut self.previous_reserve, &mut self.reserve_buffer);
+        } else {
+            tracing::debug!(
+                "Reserve unchanged - skipping update ({} lines)",
+                self.reserve_buffer.len()
+            );
+        }
+
+        // Clear buffer for next update
+        self.reserve_buffer.clear();
     }
 
     /// Flush spells buffer to all Spells windows (only if content changed)
@@ -3312,6 +3426,7 @@ impl MessageProcessor {
             "main" => "main",
             "room" => "room",
             "inv" => "inventory",
+            "reserve" => "reserve",
             "thoughts" => "thoughts",
             "speech" => "speech",
             "announcements" => "announcements",
@@ -3357,6 +3472,11 @@ impl MessageProcessor {
     pub fn clear_inventory_cache(&mut self) {
         self.previous_inventory.clear();
         tracing::debug!("Cleared inventory cache - next inventory update will render");
+    }
+
+    pub fn clear_reserve_cache(&mut self) {
+        self.previous_reserve.clear();
+        tracing::debug!("Cleared reserve cache - next reserve update will render");
     }
 
     pub fn set_spells_buffer(&mut self, buffer: Vec<Vec<TextSegment>>) {
@@ -3582,6 +3702,13 @@ impl MessageProcessor {
 
                 // Inventory widget uses its streams field (like Text windows)
                 WindowContent::Inventory(content) => {
+                    for stream in &content.streams {
+                        add(&mut subscribers, stream, window_name);
+                    }
+                }
+
+                // Reserve widget uses its streams field (like Text windows)
+                WindowContent::Reserve(content) => {
                     for stream in &content.streams {
                         add(&mut subscribers, stream, window_name);
                     }
@@ -4337,6 +4464,103 @@ mod tests {
         // Clear cache
         processor.clear_inventory_cache();
         assert!(processor.previous_inventory.is_empty());
+    }
+
+    // ===========================================
+    // Reserve stream buffering tests
+    // ===========================================
+
+    fn make_reserve_window(name: &str) -> crate::data::window::WindowState {
+        let mut ws = crate::data::window::WindowState::new_text(name, 100);
+        ws.widget_type = crate::data::window::WidgetType::Reserve;
+        let mut content = crate::data::TextContent::new(name.to_string(), 100);
+        content.streams = vec!["reserve".to_string()];
+        ws.content = WindowContent::Reserve(content);
+        ws
+    }
+
+    fn reserve_line_count(ui_state: &UiState, window: &str) -> usize {
+        match &ui_state.windows.get(window).expect("window exists").content {
+            WindowContent::Reserve(c) => c.lines.len(),
+            _ => panic!("not a reserve window"),
+        }
+    }
+
+    #[test]
+    fn test_map_stream_reserve() {
+        let processor = create_test_processor();
+        assert_eq!(processor.map_stream_to_window("reserve"), "reserve");
+    }
+
+    #[test]
+    fn test_reserve_stream_buffers_then_flushes_snapshot() {
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("reserve".to_string(), make_reserve_window("reserve"));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        // Line arrives while in the reserve stream: buffered, not delivered
+        processor.current_stream = "reserve".to_string();
+        push_test_segment(&mut processor, "a sprig of wild lilac");
+        processor.flush_current_stream(&mut ui_state);
+        assert_eq!(reserve_line_count(&ui_state, "reserve"), 0);
+        assert_eq!(processor.reserve_buffer.len(), 1);
+
+        // Stream pop flushes the snapshot into the window
+        processor.flush_reserve_buffer(&mut ui_state);
+        assert_eq!(reserve_line_count(&ui_state, "reserve"), 1);
+        assert!(processor.reserve_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_reserve_identical_snapshot_skips_update_changed_replaces() {
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("reserve".to_string(), make_reserve_window("reserve"));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        // First snapshot
+        processor.current_stream = "reserve".to_string();
+        push_test_segment(&mut processor, "a sprig of wild lilac");
+        processor.flush_current_stream(&mut ui_state);
+        processor.flush_reserve_buffer(&mut ui_state);
+        assert_eq!(reserve_line_count(&ui_state, "reserve"), 1);
+
+        // Identical snapshot: dedupe leaves existing content untouched
+        processor.current_stream = "reserve".to_string();
+        push_test_segment(&mut processor, "a sprig of wild lilac");
+        processor.flush_current_stream(&mut ui_state);
+        processor.flush_reserve_buffer(&mut ui_state);
+        assert_eq!(reserve_line_count(&ui_state, "reserve"), 1);
+
+        // Changed snapshot: content is replaced, not appended
+        processor.current_stream = "reserve".to_string();
+        push_test_segment(&mut processor, "a blue potion");
+        processor.flush_current_stream(&mut ui_state);
+        processor.flush_reserve_buffer(&mut ui_state);
+        assert_eq!(reserve_line_count(&ui_state, "reserve"), 1);
+    }
+
+    #[test]
+    fn test_reserve_stream_discarded_without_window() {
+        let mut processor = create_test_processor();
+        let mut ui_state = UiState::new();
+        ui_state
+            .windows
+            .insert("main".to_string(), make_text_window("main", &["main"]));
+        processor.update_text_stream_subscribers(&ui_state);
+
+        processor.current_stream = "reserve".to_string();
+        push_test_segment(&mut processor, "a sprig of wild lilac");
+        processor.flush_current_stream(&mut ui_state);
+
+        // No reserve window: content dropped, nothing buffered, nothing in main
+        assert!(processor.reserve_buffer.is_empty());
+        assert_eq!(text_line_count(&ui_state, "main"), 0);
     }
 
     // ===========================================

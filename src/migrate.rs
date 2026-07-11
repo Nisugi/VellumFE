@@ -751,6 +751,7 @@ impl BaseMut for WindowDef {
             WindowDef::TabbedText { base, .. } => Some(base),
             WindowDef::Room { base, .. } => Some(base),
             WindowDef::Inventory { base, .. } => Some(base),
+            WindowDef::Reserve { base, .. } => Some(base),
             WindowDef::CommandInput { base, .. } => Some(base),
             WindowDef::Progress { base, .. } => Some(base),
             WindowDef::Countdown { base, .. } => Some(base),

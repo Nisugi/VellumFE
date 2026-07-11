@@ -182,6 +182,23 @@ impl Config {
                 },
             }),
 
+            "reserve" => Some(WindowDef::Reserve {
+                base: WindowBase {
+                    name: "reserve".to_string(),
+                    title: Some("Reserve".to_string()),
+                    rows: 20,
+                    cols: 40,
+                    min_rows: Some(4),
+                    ..base_defaults.clone()
+                },
+                data: InventoryWidgetData {
+                    streams: vec!["reserve".to_string()],
+                    buffer_size: 0, // No scrollback (content replaced each snapshot)
+                    wordwrap: true,
+                    show_timestamps: false,
+                },
+            }),
+
             "command_input" => Some(WindowDef::CommandInput {
                 base: WindowBase {
                     name: "command_input".to_string(),
@@ -1448,6 +1465,7 @@ impl Config {
             "active_effects_custom".to_string(),
             // Other
             "inventory".to_string(),
+            "reserve".to_string(),
             "room".to_string(),
             "spells".to_string(),
             "compass".to_string(),
@@ -1500,7 +1518,7 @@ impl Config {
             // DR-specific templates
             "experience" | "concentration" | "perception" => Some(GameType::DR),
             // GS4-specific templates
-            "gs4_experience" | "betrayer" | "minivitals" => Some(GameType::GS4),
+            "gs4_experience" | "betrayer" | "minivitals" | "reserve" => Some(GameType::GS4),
             // All others (including encum) available for both games
             _ => None,
         }

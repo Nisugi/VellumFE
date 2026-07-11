@@ -374,6 +374,7 @@ impl TuiFrontend {
             // Check for both Inventory and Text content types
             let text_content = match &window.content {
                 crate::data::WindowContent::Inventory(content) => Some(content),
+                crate::data::WindowContent::Reserve(content) => Some(content),
                 crate::data::WindowContent::Text(content)
                     if name == "inventory"
                         || content.title.to_lowercase().contains("inventory") =>

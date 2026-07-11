@@ -125,6 +125,7 @@ fn text_content_of(content: &WindowContent) -> Option<&crate::data::TextContent>
     match content {
         WindowContent::Text(text)
         | WindowContent::Inventory(text)
+        | WindowContent::Reserve(text)
         | WindowContent::Spells(text) => Some(text),
         _ => None,
     }
@@ -134,6 +135,7 @@ fn text_content_mut(content: &mut WindowContent) -> Option<&mut crate::data::Tex
     match content {
         WindowContent::Text(text)
         | WindowContent::Inventory(text)
+        | WindowContent::Reserve(text)
         | WindowContent::Spells(text) => Some(text),
         _ => None,
     }

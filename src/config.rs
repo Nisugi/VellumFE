@@ -278,6 +278,7 @@ fn default_focus_exclude() -> Vec<String> {
         "players".to_string(),
         "items".to_string(),
         "inventory".to_string(),
+        "reserve".to_string(),
         "spells".to_string(),
         "progress".to_string(),
         "countdown".to_string(),

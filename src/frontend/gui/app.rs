@@ -650,6 +650,7 @@ impl VellumGuiApp {
         match &window.content {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
+            | WindowContent::Reserve(content)
             | WindowContent::Spells(content) => content
                 .streams
                 .iter()
@@ -2718,6 +2719,7 @@ impl VellumGuiApp {
                     .filter_map(|window| match &window.content {
                         WindowContent::Text(content)
                         | WindowContent::Inventory(content)
+                        | WindowContent::Reserve(content)
                         | WindowContent::Spells(content) => Some(content),
                         WindowContent::TabbedText(tabbed) => tabbed
                             .tabs

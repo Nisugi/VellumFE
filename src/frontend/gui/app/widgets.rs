@@ -2810,6 +2810,7 @@ impl VellumGuiApp {
         match &window.content {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
+            | WindowContent::Reserve(content)
             | WindowContent::Spells(content) => {
                 let query = Self::active_search_query(app_core);
                 Self::render_text_content(

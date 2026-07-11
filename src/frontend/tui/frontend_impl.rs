@@ -331,8 +331,9 @@ impl Frontend for TuiFrontend {
                             room_window.render(area, f.buffer_mut());
                         }
                     }
-                    WindowContent::Inventory(_) => {
+                    WindowContent::Inventory(_) | WindowContent::Reserve(_) => {
                         // Use the InventoryWindow widget for proper link rendering
+                        // (reserve windows share the same widget cache, keyed by name)
                         if let Some(inventory_window) = inventory_windows.get_mut(name) {
                             inventory_window.render(area, f.buffer_mut());
                         }
