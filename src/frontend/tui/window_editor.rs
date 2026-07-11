@@ -1662,10 +1662,11 @@ impl WindowEditor {
                 fields.push(FieldRef::TextCompact);
             }
             WindowDef::Inventory { .. } | WindowDef::Reserve { .. } => {
+                // No Timestamps here: timestamps are for chatter-style text
+                // windows (thoughts, speech), not inventory-style lists.
                 fields.push(FieldRef::Streams);
                 fields.push(FieldRef::BufferSize);
                 fields.push(FieldRef::Wordwrap);
-                fields.push(FieldRef::Timestamps);
             }
             WindowDef::Quickbar { .. } => {}
             WindowDef::Hotkeybar { .. } => {}
@@ -1705,16 +1706,15 @@ impl WindowEditor {
             // GUI-only widget: no TUI-editable special fields.
             WindowDef::Map { .. } => {}
             WindowDef::InjuryDoll { .. } => {
+                // Tab order matches the rendered rows: Wound/Scar pairs,
+                // then the uninjured default.
                 fields.push(FieldRef::Injury1Color);
-                fields.push(FieldRef::Injury2Color);
-                fields.push(FieldRef::Injury3Color);
-                fields.push(FieldRef::InjuryDefaultColor);
-                fields.push(FieldRef::Injury1Color);
-                fields.push(FieldRef::Injury2Color);
-                fields.push(FieldRef::Injury3Color);
                 fields.push(FieldRef::Scar1Color);
+                fields.push(FieldRef::Injury2Color);
                 fields.push(FieldRef::Scar2Color);
+                fields.push(FieldRef::Injury3Color);
                 fields.push(FieldRef::Scar3Color);
+                fields.push(FieldRef::InjuryDefaultColor);
             }
             WindowDef::Indicator { .. } => {
                 fields.push(FieldRef::IndicatorId);
@@ -4691,6 +4691,12 @@ impl WindowEditor {
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
+            data.background_color = self
+                .countdown_bg_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
         }
 
         if let crate::config::WindowDef::Hand { data, .. } = &mut self.window_def {
@@ -6627,6 +6633,18 @@ impl WindowEditor {
                     is_focus(FieldRef::CountdownColor, self.focused_field),
                 );
                 self.field_click_areas.push((special_row, left_x, FieldRef::CountdownColor));
+                self.render_color_field(
+                    FieldRef::CountdownBgColor.legacy_field_id(),
+                    "BG Color",
+                    &self.countdown_bg_color_input,
+                    right_x,
+                    special_row,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::CountdownBgColor, self.focused_field),
+                );
+                self.field_click_areas.push((special_row, right_x, FieldRef::CountdownBgColor));
             }
             WindowDef::Compass { .. } => {
                 // Clear left column row for a clean right-column layout
