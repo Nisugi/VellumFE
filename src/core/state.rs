@@ -343,6 +343,26 @@ impl Creature {
         }
     }
 
+    /// Body-part "creatures" (severed arms, tentacles, …) that combat
+    /// spawns; target lists filter these out, Lich-style. The amaranthine
+    /// kraken tentacle is a real creature, not an appendage.
+    pub fn is_body_part(&self) -> bool {
+        static BODY_PART_REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let regex = BODY_PART_REGEX.get_or_init(|| {
+            regex::Regex::new(
+                r"(?i)^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$",
+            )
+            .unwrap()
+        });
+        self.noun.as_deref().is_some_and(|noun| {
+            regex.is_match(noun)
+                && !self
+                    .name
+                    .to_lowercase()
+                    .contains("amaranthine kraken tentacle")
+        })
+    }
+
     /// Dead by the structured flag, or by the legacy text status
     /// ("dead"/"gone") when no snapshot has been seen.
     pub fn is_dead(&self) -> bool {
@@ -976,6 +996,41 @@ impl Default for Vitals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ========== Creature::is_body_part tests ==========
+
+    fn body_part_creature(name: &str, noun: Option<&str>) -> Creature {
+        Creature {
+            name: name.to_string(),
+            noun: noun.map(str::to_string),
+            id: "#1".to_string(),
+            status: None,
+            flags: None,
+        }
+    }
+
+    #[test]
+    fn test_is_body_part_matches_appendage_nouns() {
+        for noun in ["arm", "arms", "tentacle", "claws", "limb", "pincer", "palpi"] {
+            assert!(
+                body_part_creature("a severed thing", Some(noun)).is_body_part(),
+                "noun '{}' should be a body part",
+                noun
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_body_part_kraken_tentacle_is_a_creature() {
+        let kraken = body_part_creature("an amaranthine kraken tentacle", Some("tentacle"));
+        assert!(!kraken.is_body_part());
+    }
+
+    #[test]
+    fn test_is_body_part_normal_creature_and_missing_noun() {
+        assert!(!body_part_creature("a muddy hog", Some("hog")).is_body_part());
+        assert!(!body_part_creature("a severed arm", None).is_body_part());
+    }
 
     // ========== ContainerCache tests ==========
 

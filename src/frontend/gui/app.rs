@@ -4405,7 +4405,7 @@ mod tests {
 
     #[test]
     fn test_format_target_line_respects_status_position() {
-        let mut cfg = TargetListConfig::default();
+        let cfg = TargetListConfig::default();
         let creature = Creature {
             name: "a goblin".to_string(),
             noun: Some("goblin".to_string()),
@@ -4414,12 +4414,10 @@ mod tests {
             flags: None,
         };
 
-        cfg.status_position = "start".to_string();
-        let start = VellumGuiApp::format_target_line(&creature, &cfg);
+        let start = VellumGuiApp::format_target_line(&creature, &cfg, "start");
         assert_eq!(start, "[stu] a goblin");
 
-        cfg.status_position = "end".to_string();
-        let end = VellumGuiApp::format_target_line(&creature, &cfg);
+        let end = VellumGuiApp::format_target_line(&creature, &cfg, "end");
         assert_eq!(end, "a goblin [stu]");
     }
 
@@ -4439,7 +4437,7 @@ mod tests {
             }),
         };
 
-        let line = VellumGuiApp::format_target_line(&creature, &cfg);
+        let line = VellumGuiApp::format_target_line(&creature, &cfg, &cfg.status_position);
         assert_eq!(line, "a sea nymph [stu,prn]");
     }
 

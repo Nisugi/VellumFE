@@ -6,42 +6,13 @@
 
 use crate::data::LinkData;
 use ratatui::{buffer::Buffer, layout::Rect};
-use regex::Regex;
-use std::sync::OnceLock;
-
-/// Regex for body part nouns that should be filtered out
-static BODY_PART_REGEX: OnceLock<Regex> = OnceLock::new();
-
-fn get_body_part_regex() -> &'static Regex {
-    BODY_PART_REGEX.get_or_init(|| {
-        Regex::new(r"(?i)^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$")
-            .unwrap()
-    })
-}
-
-/// Check if a creature is a body part (arm, tentacle, etc.)
-/// Returns true for body parts except "amaranthine kraken tentacle"
-fn is_body_part(creature: &crate::core::state::Creature) -> bool {
-    let name_lower = creature.name.to_lowercase();
-
-    // Check noun against body part regex
-    if let Some(ref noun) = creature.noun {
-        if get_body_part_regex().is_match(noun)
-            && !name_lower.contains("amaranthine kraken tentacle")
-        {
-            return true;
-        }
-    }
-
-    false
-}
 
 /// Check if a creature should be filtered from the targets list
 /// Based on Lich's filtering logic for dead/gone, animated, and body parts
 /// Returns (should_filter, is_body_part) tuple
 fn should_filter_creature(creature: &crate::core::state::Creature) -> (bool, bool) {
     // Check if it's a body part first
-    let body_part = is_body_part(creature);
+    let body_part = creature.is_body_part();
 
     // Filter dead or gone creatures (structured <crtrStatus> dead flag when
     // available, legacy "(dead)"/"(gone)" text otherwise)

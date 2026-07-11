@@ -4,6 +4,7 @@
 
 use super::super::VellumGuiApp;
 use super::color_field;
+use super::custom_windows::append_stream_id;
 use crate::data::WindowContent;
 use eframe::egui;
 
@@ -26,9 +27,34 @@ pub(in super::super) struct WindowEditorState {
     ts_at_start: bool,
     /// Some for ActiveEffects windows: which effect category feeds it.
     effects_category: Option<String>,
+    /// Some for Room windows: section visibility toggles. The room-name
+    /// heading is always shown in the GUI (the def's show_name flag drives
+    /// the TUI border title instead).
+    room: Option<RoomFields>,
+    /// Some for Targets windows: per-window display options.
+    targets: Option<TargetFields>,
+    /// Lock flag from the layout definition; None when the window has no
+    /// layout def. Locked windows can't be deleted.
+    locked: Option<bool>,
     /// Some for tabbed-text windows: the editable tab list.
     tabs: Option<Vec<TabBuffer>>,
     error: Option<String>,
+}
+
+/// Room window section toggles (shared with the TUI editor via RoomWidgetData).
+struct RoomFields {
+    show_desc: bool,
+    show_objs: bool,
+    show_players: bool,
+    show_exits: bool,
+}
+
+/// Targets window display options (shared via TargetsWidgetData).
+struct TargetFields {
+    /// Show the count of filtered body parts (arms, tentacles, …).
+    show_appendages: bool,
+    /// Per-window status position override: "" = follow global config.
+    status_position: String,
 }
 
 /// One editable tab row. Keeps the original config tab so fields this
@@ -115,6 +141,9 @@ impl WindowEditorState {
             show_timestamps: false,
             ts_at_start: false,
             effects_category: None,
+            room: None,
+            targets: None,
+            locked: None,
             tabs: None,
             error: None,
         }
@@ -167,7 +196,37 @@ impl VellumGuiApp {
         state.show_timestamps = false;
         state.ts_at_start = false;
         state.effects_category = None;
+        state.room = None;
+        state.targets = None;
+        state.locked = None;
         state.tabs = None;
+        // Def-backed options (lock flag, room/targets display settings).
+        if let Some(def) = self
+            .app_core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == name)
+        {
+            state.locked = Some(def.base().locked);
+            match def {
+                crate::config::WindowDef::Room { data, .. } => {
+                    state.room = Some(RoomFields {
+                        show_desc: data.show_desc,
+                        show_objs: data.show_objs,
+                        show_players: data.show_players,
+                        show_exits: data.show_exits,
+                    });
+                }
+                crate::config::WindowDef::Targets { data, .. } => {
+                    state.targets = Some(TargetFields {
+                        show_appendages: data.show_body_part_count,
+                        status_position: data.status_position.clone().unwrap_or_default(),
+                    });
+                }
+                _ => {}
+            }
+        }
         // Tabbed windows: edit the tab list from the layout definition (the
         // canonical home of per-tab config; live tabs sync from it on save).
         if matches!(window.content, WindowContent::TabbedText(_)) {
@@ -410,6 +469,52 @@ impl VellumGuiApp {
             self.app_core.layout_modified_since_save = true;
         }
 
+        if let Some(room) = &state.room {
+            if let Some(crate::config::WindowDef::Room { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                data.show_desc = room.show_desc;
+                data.show_objs = room.show_objs;
+                data.show_players = room.show_players;
+                data.show_exits = room.show_exits;
+                self.app_core.layout_modified_since_save = true;
+            }
+        }
+
+        if let Some(targets) = &state.targets {
+            if let Some(crate::config::WindowDef::Targets { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                data.show_body_part_count = targets.show_appendages;
+                data.status_position = Some(targets.status_position.clone())
+                    .filter(|position| !position.is_empty());
+                self.app_core.layout_modified_since_save = true;
+            }
+        }
+
+        if let Some(locked) = state.locked {
+            if let Some(def) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                if def.base().locked != locked {
+                    def.base_mut().locked = locked;
+                    self.app_core.layout_modified_since_save = true;
+                }
+            }
+        }
+
         if let Some(tabs) = &state.tabs {
             if tabs.is_empty() {
                 return Err("A tabbed window needs at least one tab.".to_string());
@@ -456,6 +561,15 @@ impl VellumGuiApp {
         let mut load_request: Option<String> = None;
         let mut save_request = false;
         let mut delete_request = false;
+        // A stream id clicked in the "seen this session" list, to append to
+        // the Streams field after the UI closure.
+        let mut append_stream: Option<String> = None;
+        // Snapshot outside the closure: the closure borrows self immutably.
+        let seen_streams = if state.supports_streams {
+            self.app_core.message_processor.seen_streams()
+        } else {
+            Vec::new()
+        };
 
         egui::Window::new("Window Editor")
             .id(egui::Id::new("gui_window_editor"))
@@ -465,13 +579,15 @@ impl VellumGuiApp {
                 if state.selected.is_none() {
                     ui.weak("Pick a window to edit.");
                     ui.separator();
-                    let mut names: Vec<(String, String)> = self
+                    let mut names: Vec<(String, String, bool)> = self
                         .app_core
                         .ui_state
                         .windows
                         .iter()
                         .map(|(name, window)| {
-                            (name.clone(), format!("{:?}", window.widget_type))
+                            let hidden = Self::tab_key_for_window(name, window)
+                                .is_some_and(|key| self.hidden_tabs.contains(&key));
+                            (name.clone(), format!("{:?}", window.widget_type), hidden)
                         })
                         .collect();
                     names.sort();
@@ -479,13 +595,16 @@ impl VellumGuiApp {
                         .id_salt("window_editor_picker")
                         .max_height(300.0)
                         .show(ui, |ui| {
-                            for (name, widget_type) in names {
+                            for (name, widget_type, hidden) in names {
                                 ui.horizontal(|ui| {
                                     if ui.small_button("Edit").clicked() {
                                         load_request = Some(name.clone());
                                     }
                                     ui.label(&name);
                                     ui.weak(widget_type);
+                                    if hidden {
+                                        ui.weak("(hidden)");
+                                    }
                                 });
                             }
                         });
@@ -503,6 +622,14 @@ impl VellumGuiApp {
                         ui.label("Title");
                         ui.text_edit_singleline(&mut state.title);
                         ui.end_row();
+                        if let Some(locked) = state.locked.as_mut() {
+                            ui.label("Locked");
+                            ui.checkbox(locked, "protect from delete")
+                                .on_hover_text(
+                                    "A locked window can't be deleted until unlocked.",
+                                );
+                            ui.end_row();
+                        }
                         if state.supports_streams {
                             ui.label("Streams");
                             ui.text_edit_singleline(&mut state.streams);
@@ -571,9 +698,65 @@ impl VellumGuiApp {
                                 });
                             ui.end_row();
                         }
+                        if let Some(room) = state.room.as_mut() {
+                            ui.label("Sections");
+                            ui.vertical(|ui| {
+                                ui.checkbox(&mut room.show_desc, "description");
+                                ui.checkbox(&mut room.show_objs, "objects");
+                                ui.checkbox(&mut room.show_players, "players");
+                                ui.checkbox(&mut room.show_exits, "exits");
+                            });
+                            ui.end_row();
+                        }
+                        if let Some(targets) = state.targets.as_mut() {
+                            ui.label("Appendages");
+                            ui.checkbox(&mut targets.show_appendages, "show filtered count")
+                                .on_hover_text(
+                                    "Body parts (arms, tentacles, …) are filtered from \
+                                     the target list; show how many were hidden.",
+                                );
+                            ui.end_row();
+                            ui.label("Status position");
+                            let position_label = |value: &str| match value {
+                                "start" => "Before the name",
+                                "end" => "After the name",
+                                _ => "Global default",
+                            };
+                            egui::ComboBox::from_id_salt("window_editor_status_position")
+                                .selected_text(position_label(&targets.status_position))
+                                .show_ui(ui, |ui| {
+                                    for option in ["", "start", "end"] {
+                                        ui.selectable_value(
+                                            &mut targets.status_position,
+                                            option.to_string(),
+                                            position_label(option),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        }
                     });
                 if state.supports_streams {
                     ui.weak("Comma-separated stream ids (e.g. main, speech, thoughts).");
+                    if !seen_streams.is_empty() {
+                        ui.weak("Seen this session (click to add):");
+                        egui::ScrollArea::vertical()
+                            .id_salt("window_editor_seen_scroll")
+                            .max_height(70.0)
+                            .show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    for (id, label) in &seen_streams {
+                                        let text = match label {
+                                            Some(label) => format!("{} ({})", id, label),
+                                            None => id.clone(),
+                                        };
+                                        if ui.small_button(text).clicked() {
+                                            append_stream = Some(id.clone());
+                                        }
+                                    }
+                                });
+                            });
+                    }
                 }
                 if let Some(feed) = &state.feed {
                     ui.weak(match feed.kind {
@@ -682,6 +865,10 @@ impl VellumGuiApp {
                     });
                 });
             });
+
+        if let Some(id) = append_stream {
+            append_stream_id(&mut state.streams, &id);
+        }
 
         match load_request.as_deref() {
             Some("") => {

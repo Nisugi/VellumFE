@@ -2752,6 +2752,7 @@ impl VellumGuiApp {
     pub(super) fn format_target_line(
         creature: &crate::core::state::Creature,
         target_cfg: &TargetListConfig,
+        status_position: &str,
     ) -> String {
         // <crtrStatus> can report several statuses at once ("[stu,prn]");
         // the legacy text parse contributes at most one
@@ -2766,7 +2767,7 @@ impl VellumGuiApp {
             Some(format!("[{}]", abbreviated.join(",")))
         };
         if let Some(status) = status_tag {
-            if target_cfg.status_position.eq_ignore_ascii_case("start") {
+            if status_position.eq_ignore_ascii_case("start") {
                 format!("{} {}", status, creature.name)
             } else {
                 format!("{} {}", creature.name, status)
@@ -2805,9 +2806,29 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn render_targets_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+    pub(super) fn render_targets_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        window_name: &str,
+    ) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
         let target_cfg = &app_core.config.target_list;
+        // Per-window options from the layout def (set in the window editor,
+        // shared with the TUI).
+        let (show_appendage_count, status_override) = match app_core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == window_name)
+        {
+            Some(crate::config::WindowDef::Targets { data, .. }) => {
+                (data.show_body_part_count, data.status_position.clone())
+            }
+            _ => (false, None),
+        };
+        let status_position = status_override
+            .as_deref()
+            .unwrap_or(target_cfg.status_position.as_str());
         let current_target =
             Self::normalize_entity_id(&app_core.game_state.target_list.current_target);
         let targetable_ids: HashSet<String> = app_core
@@ -2825,16 +2846,24 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
+                let mut body_part_count: u32 = 0;
                 for creature in &app_core.game_state.room_creatures {
                     let creature_id = Self::normalize_entity_id(&creature.id);
                     if !targetable_ids.is_empty() && !targetable_ids.contains(&creature_id) {
+                        continue;
+                    }
+                    // Body parts (severed arms, tentacles, …) are filtered
+                    // from the list, Lich-style, matching the TUI widget.
+                    if creature.is_body_part() {
+                        body_part_count += 1;
                         continue;
                     }
                     if Self::should_filter_target_creature(creature, target_cfg) {
                         continue;
                     }
 
-                    let display_text = Self::format_target_line(creature, target_cfg);
+                    let display_text =
+                        Self::format_target_line(creature, target_cfg, status_position);
                     let is_current = !current_target.is_empty() && creature_id == current_target;
                     // Color priority: current target, then boss tiers from
                     // <crtrStatus> (AscensionBoss/MiniBoss, then challenging)
@@ -2869,6 +2898,9 @@ impl VellumGuiApp {
                             Self::direct_command_link(format!("target #{}", creature_id)),
                         ));
                     }
+                }
+                if show_appendage_count && body_part_count > 0 {
+                    ui.weak(format!("Appendages: {}", body_part_count));
                 }
             });
 
@@ -3577,6 +3609,24 @@ impl VellumGuiApp {
                 clicked_link
             }
             WindowContent::Room(room) => {
+                // Per-window section toggles from the layout def (set in the
+                // window editor, shared with the TUI). The room-name heading
+                // is always shown: the def's show_name flag drives the TUI
+                // border title, which has no GUI equivalent.
+                let (show_desc, show_objs, show_players, show_exits) = match app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| w.name() == tab.window_name)
+                {
+                    Some(crate::config::WindowDef::Room { data, .. }) => (
+                        data.show_desc,
+                        data.show_objs,
+                        data.show_players,
+                        data.show_exits,
+                    ),
+                    _ => (true, true, true, true),
+                };
                 // Explicit size: room names track the window's text size, not
                 // the Heading style (which the title-bar size setting owns).
                 ui.label(
@@ -3588,19 +3638,29 @@ impl VellumGuiApp {
                         .strong(),
                 );
                 ui.separator();
-                let mut clicked_link = Self::render_room_description(
-                    ui,
-                    &room.description,
-                    &tab.window_name,
-                    &font_id,
-                );
-                if let Some(exit_click) = Self::render_room_exits(ui, &room.exits) {
-                    if clicked_link.is_none() {
-                        clicked_link = Some(exit_click);
+                let mut clicked_link = if show_desc {
+                    Self::render_room_description(
+                        ui,
+                        &room.description,
+                        &tab.window_name,
+                        &font_id,
+                    )
+                } else {
+                    None
+                };
+                if show_exits {
+                    if let Some(exit_click) = Self::render_room_exits(ui, &room.exits) {
+                        if clicked_link.is_none() {
+                            clicked_link = Some(exit_click);
+                        }
                     }
                 }
-                Self::render_room_entities(ui, "Players", &room.players);
-                Self::render_room_entities(ui, "Objects", &room.objects);
+                if show_players {
+                    Self::render_room_entities(ui, "Players", &room.players);
+                }
+                if show_objs {
+                    Self::render_room_entities(ui, "Objects", &room.objects);
+                }
                 clicked_link
             }
             WindowContent::ActiveEffects(content) => {
@@ -3611,7 +3671,9 @@ impl VellumGuiApp {
                 Self::render_webui_content(ui, content);
                 None
             }
-            WindowContent::Targets => Self::render_targets_content(app_core, ui),
+            WindowContent::Targets => {
+                Self::render_targets_content(app_core, ui, &tab.window_name)
+            }
             WindowContent::Players => Self::render_players_content(app_core, ui),
             WindowContent::Countdown(countdown) => {
                 Self::render_countdown_content(app_core, ui, countdown, &settings);

@@ -442,7 +442,8 @@ impl VellumGuiApp {
 }
 
 /// Append a stream id to a comma-separated field if not already present.
-fn append_stream_id(field: &mut String, id: &str) {
+/// Shared with the Window Editor's seen-streams picker.
+pub(super) fn append_stream_id(field: &mut String, id: &str) {
     let already = field
         .split(',')
         .any(|s| s.trim().eq_ignore_ascii_case(id));
