@@ -2162,6 +2162,7 @@ impl AppCore {
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
+        self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
         self.add_system_message("");
 
         // Layout commands

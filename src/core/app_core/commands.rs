@@ -243,6 +243,55 @@ impl AppCore {
     }
 
     /// Handle dot commands (local client commands)
+    /// `.room`: how the stream's room identifiers resolved against the
+    /// mapdb — the ground truth for debugging pathing and the mini map.
+    fn show_room_debug(&mut self) {
+        use crate::core::map_service::DbState;
+        let nav = self.nav_room_id.clone().unwrap_or_else(|| "-".into());
+        let lich = self.lich_room_id.clone().unwrap_or_else(|| "-".into());
+        self.add_system_message(&format!("Stream ids: nav uid={nav}, lich id={lich}"));
+        match self.map.db_state() {
+            DbState::Loaded => {}
+            state => {
+                self.add_system_message(&format!("Mapdb not available ({state:?})"));
+                return;
+            }
+        }
+        let Some(room_id) = self.map.current_room_id else {
+            self.add_system_message("No mapdb room resolved yet.");
+            return;
+        };
+        let location = self.map.current_location.clone().unwrap_or_else(|| "?".into());
+        let mut summary = format!("Resolved: room {room_id} in {location}");
+        if let Some(db) = self.map.mapdb() {
+            if let Some(room) = db.room(room_id) {
+                if let Some(title) = room.title.first() {
+                    summary.push_str(&format!(" — {title}"));
+                }
+                let routable = room
+                    .wayto
+                    .iter()
+                    .filter(|(dest, cmd)| {
+                        !crate::core::mapdb::is_proc_command(cmd)
+                            && matches!(
+                                room.timeto.get(dest),
+                                Some(crate::core::mapdb::TimeTo::Seconds(s)) if *s >= 0.0
+                            )
+                    })
+                    .count();
+                summary.push_str(&format!(
+                    " · {} wayto edges ({} routable)",
+                    room.wayto.len(),
+                    routable
+                ));
+                if !room.tags.is_empty() {
+                    summary.push_str(&format!(" · tags: {}", room.tags.join(", ")));
+                }
+            }
+        }
+        self.add_system_message(&summary);
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -258,6 +307,12 @@ impl AppCore {
             }
             "version" | "ver" => {
                 self.show_version();
+            }
+
+            // Map debug: how the stream's room identifiers resolved against
+            // the mapdb (go2 plan phase 2).
+            "room" => {
+                self.show_room_debug();
             }
 
             // Web frontend: reload macros.toml (+ the phone-edited local

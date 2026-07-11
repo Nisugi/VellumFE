@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use crate::core::layout_engine::positioner::Cell;
 use crate::core::layout_engine::{
-    build_scene, find_latest_mapdb, overrides, Layout, LayoutCache, LocationOverrides, MapDb,
-    MapOverrides, MapScene, RoomTable,
+    build_scene, overrides, Layout, LayoutCache, LocationOverrides, MapOverrides, MapScene,
 };
+use crate::core::mapdb::{find_latest_mapdb, MapDb, RoomTable};
 
 /// Lich's per-game data subdirectory for a VellumFE game code
 /// (`--game prime` → `data/GSIV`).

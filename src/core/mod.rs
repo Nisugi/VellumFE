@@ -12,9 +12,11 @@ pub mod hotbar;
 pub mod input_router;
 pub mod layout_engine;
 pub mod map_service;
+pub mod mapdb;
 pub mod mapdb_update;
 pub mod menu_actions;
 pub mod messages;
+pub mod pathing;
 pub mod remote;
 pub mod state;
 

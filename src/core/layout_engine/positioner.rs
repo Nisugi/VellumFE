@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use super::direction::{Dir, DirectionMap};
-use super::mapdb::RoomTable;
+use crate::core::mapdb::RoomTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Cell {

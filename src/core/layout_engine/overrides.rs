@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::direction::Dir;
-use super::mapdb::RoomTable;
+use crate::core::mapdb::RoomTable;
 use super::positioner::{Cell, Group};
 use super::Layout;
 
