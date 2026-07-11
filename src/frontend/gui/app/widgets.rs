@@ -2334,10 +2334,18 @@ impl VellumGuiApp {
         creature: &crate::core::state::Creature,
         target_cfg: &TargetListConfig,
     ) -> String {
-        let status_tag = creature
-            .status
-            .as_deref()
-            .map(|status| format!("[{}]", Self::status_abbreviation(status, target_cfg)));
+        // <crtrStatus> can report several statuses at once ("[stu,prn]");
+        // the legacy text parse contributes at most one
+        let statuses = creature.display_statuses();
+        let status_tag = if statuses.is_empty() {
+            None
+        } else {
+            let abbreviated: Vec<String> = statuses
+                .iter()
+                .map(|s| Self::status_abbreviation(s, target_cfg))
+                .collect();
+            Some(format!("[{}]", abbreviated.join(",")))
+        };
         if let Some(status) = status_tag {
             if target_cfg.status_position.eq_ignore_ascii_case("start") {
                 format!("{} {}", status, creature.name)
@@ -2409,9 +2417,26 @@ impl VellumGuiApp {
 
                     let display_text = Self::format_target_line(creature, target_cfg);
                     let is_current = !current_target.is_empty() && creature_id == current_target;
+                    // Color priority: current target, then boss tiers from
+                    // <crtrStatus> (AscensionBoss/MiniBoss, then challenging)
                     let styled = if is_current {
                         RichText::new(format!("> {}", display_text))
                             .color(Color32::from_rgb(0x62, 0xcf, 0x79))
+                    } else if let Some(color) = creature
+                        .flags
+                        .as_ref()
+                        .and_then(|f| {
+                            if f.is_boss() {
+                                target_cfg.boss_color.as_deref()
+                            } else if f.challenging {
+                                target_cfg.challenging_color.as_deref()
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(parse_hex_color)
+                    {
+                        RichText::new(display_text).color(color)
                     } else {
                         RichText::new(display_text)
                     };
@@ -2435,11 +2460,10 @@ impl VellumGuiApp {
         creature: &crate::core::state::Creature,
         target_cfg: &TargetListConfig,
     ) -> bool {
-        if let Some(status) = creature.status.as_deref() {
-            let status_lower = status.to_ascii_lowercase();
-            if status_lower.contains("dead") || status_lower.contains("gone") {
-                return true;
-            }
+        // Structured <crtrStatus> dead flag when available, legacy
+        // "(dead)"/"(gone)" text otherwise
+        if creature.is_dead() {
+            return true;
         }
 
         let name_lower = creature.name.to_ascii_lowercase();

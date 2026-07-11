@@ -318,8 +318,136 @@ pub struct Creature {
     pub noun: Option<String>,
     /// Creature ID (e.g., "#146101714")
     pub id: String,
-    /// Creature status (e.g., "stunned", "dead", "sitting")
+    /// Creature status parsed from the "(stunned)" text after the bold name.
+    /// Legacy single-status fallback; `flags` is authoritative when present.
     pub status: Option<String>,
+    /// Structured status snapshot from the `<crtrStatus>` XML tag.
+    /// None when the feed hasn't sent one for this creature.
+    pub flags: Option<CreatureFlags>,
+}
+
+impl Creature {
+    /// Statuses to display, most reliable source first: the structured
+    /// `<crtrStatus>` snapshot when present, else the legacy text-parsed
+    /// status as a single entry.
+    pub fn display_statuses(&self) -> Vec<String> {
+        if let Some(flags) = &self.flags {
+            let mut out = Vec::new();
+            if flags.dead {
+                out.push("dead".to_string());
+            }
+            out.extend(flags.statuses.iter().cloned());
+            out
+        } else {
+            self.status.clone().into_iter().collect()
+        }
+    }
+
+    /// Dead by the structured flag, or by the legacy text status
+    /// ("dead"/"gone") when no snapshot has been seen.
+    pub fn is_dead(&self) -> bool {
+        if let Some(flags) = &self.flags {
+            return flags.dead;
+        }
+        self.status.as_deref().is_some_and(|s| {
+            let lower = s.to_lowercase();
+            lower.contains("dead") || lower.contains("gone")
+        })
+    }
+
+    /// Fingerprint for widget change detection: id plus everything that
+    /// affects how the entry renders.
+    pub fn cache_key(&self) -> String {
+        let boss_bits = self.flags.as_ref().map_or(0u8, |f| {
+            (f.ascension_boss as u8) | ((f.mini_boss as u8) << 1) | ((f.challenging as u8) << 2)
+        });
+        format!(
+            "{}:{}:{}",
+            self.id,
+            self.display_statuses().join("+"),
+            boss_bits
+        )
+    }
+}
+
+/// Structured creature status from the `<crtrStatus>` XML tag (a full
+/// snapshot: absent or "0" flags mean inactive, not unknown).
+///
+/// Two vocabularies, mirroring lich-5's split: transient combat statuses
+/// (collected into `statuses` under the same canonical names the legacy
+/// text parse produces) and classification flags (dedicated bools).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CreatureFlags {
+    /// Active transient statuses in feed order ("stunned", "prone", ...)
+    pub statuses: Vec<String>,
+    pub hostile: bool,
+    pub disengaged: bool,
+    pub dead: bool,
+    pub sympathetic: bool,
+    pub ascended: bool,
+    pub inferior: bool,
+    pub ascension_boss: bool,
+    pub mini_boss: bool,
+    pub challenging: bool,
+    pub rider: bool,
+    pub mount: bool,
+}
+
+/// Maps `<crtrStatus>` transient-status attribute names to the canonical
+/// status names used by the text parse and the status_abbrev config
+/// (e.g. the feed says "immobile", everything else says "immobilized").
+const CRTR_STATUS_FLAGS: [(&str, &str); 12] = [
+    ("immobile", "immobilized"),
+    ("webbed", "webbed"),
+    ("sleeping", "sleeping"),
+    ("disoriented", "disoriented"),
+    ("stunned", "stunned"),
+    ("rooted", "rooted"),
+    ("calmed", "calmed"),
+    ("kneeling", "kneeling"),
+    ("prone", "prone"),
+    ("sitting", "sitting"),
+    ("flying", "flying"),
+    ("hovering", "hovering"),
+];
+
+impl CreatureFlags {
+    /// Builds a snapshot from raw `<crtrStatus>` attributes (excluding
+    /// `exist`). Attribute values are "1"/"0"; unknown names are ignored so
+    /// new server flags degrade gracefully.
+    pub fn from_xml_attrs<'a>(attrs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut flags = Self::default();
+        for (name, value) in attrs {
+            let active = value == "1";
+            if !active {
+                continue;
+            }
+            if let Some((_, canonical)) = CRTR_STATUS_FLAGS.iter().find(|(xml, _)| *xml == name) {
+                flags.statuses.push(canonical.to_string());
+                continue;
+            }
+            match name {
+                "hostile" => flags.hostile = true,
+                "disengaged" => flags.disengaged = true,
+                "dead" => flags.dead = true,
+                "sympathetic" => flags.sympathetic = true,
+                "ascended" => flags.ascended = true,
+                "inferior" => flags.inferior = true,
+                "AscensionBoss" => flags.ascension_boss = true,
+                "MiniBoss" => flags.mini_boss = true,
+                "challenging" => flags.challenging = true,
+                "rider" => flags.rider = true,
+                "mount" => flags.mount = true,
+                _ => tracing::debug!("Unknown crtrStatus flag: {}", name),
+            }
+        }
+        flags
+    }
+
+    /// Boss-tier creature (AscensionBoss or MiniBoss).
+    pub fn is_boss(&self) -> bool {
+        self.ascension_boss || self.mini_boss
+    }
 }
 
 /// A player in the room (from room players component)

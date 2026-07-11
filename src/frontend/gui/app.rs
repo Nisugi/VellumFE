@@ -4340,6 +4340,7 @@ mod tests {
             noun: Some("goblin".to_string()),
             id: "#101".to_string(),
             status: Some("stunned".to_string()),
+            flags: None,
         };
 
         cfg.status_position = "start".to_string();
@@ -4349,6 +4350,26 @@ mod tests {
         cfg.status_position = "end".to_string();
         let end = VellumGuiApp::format_target_line(&creature, &cfg);
         assert_eq!(end, "a goblin [stu]");
+    }
+
+    #[test]
+    fn test_format_target_line_joins_crtr_statuses() {
+        let cfg = TargetListConfig::default();
+        let creature = Creature {
+            name: "a sea nymph".to_string(),
+            noun: Some("nymph".to_string()),
+            id: "#607736".to_string(),
+            // Structured flags beat the legacy text status
+            status: Some("stunned".to_string()),
+            flags: Some(crate::core::state::CreatureFlags {
+                statuses: vec!["stunned".to_string(), "prone".to_string()],
+                hostile: true,
+                ..Default::default()
+            }),
+        };
+
+        let line = VellumGuiApp::format_target_line(&creature, &cfg);
+        assert_eq!(line, "a sea nymph [stu,prn]");
     }
 
     #[test]
@@ -4378,12 +4399,14 @@ mod tests {
             noun: Some("goblin".to_string()),
             id: "#1".to_string(),
             status: Some("dead".to_string()),
+            flags: None,
         };
         let body_part_creature = Creature {
             name: "an arm".to_string(),
             noun: Some("arm".to_string()),
             id: "#2".to_string(),
             status: None,
+            flags: None,
         };
 
         assert!(VellumGuiApp::should_filter_target_creature(
@@ -4404,6 +4427,7 @@ mod tests {
             noun: Some("troll".to_string()),
             id: "#3".to_string(),
             status: Some("stunned".to_string()),
+            flags: None,
         };
 
         assert!(!VellumGuiApp::should_filter_target_creature(
