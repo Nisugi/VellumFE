@@ -4180,7 +4180,8 @@ impl TuiFrontend {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible && matches!(w.widget_type(), "indicator"))
+                // Hidden indicators stay editable, matching the edit picker.
+                .filter(|w| matches!(w.widget_type(), "indicator"))
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_edit_menu(&indicators);

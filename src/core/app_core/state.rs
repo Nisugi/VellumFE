@@ -4765,7 +4765,9 @@ impl AppCore {
 
     /// Build "Edit Window" menu showing widget categories (only categories with visible windows)
     pub fn build_edit_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_visible_templates_by_category(&self.layout, false);
+        // include_hidden: hidden windows stay editable from the picker.
+        let categories_map =
+            crate::config::Config::get_layout_templates_by_category(&self.layout, false, true);
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -4788,7 +4790,9 @@ impl AppCore {
         &self,
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_visible_templates_by_category(&self.layout, false);
+        // include_hidden: hidden windows stay editable from the picker.
+        let categories_map =
+            crate::config::Config::get_layout_templates_by_category(&self.layout, false, true);
 
         if let Some(templates) = categories_map.get(category) {
             // Special handling for Status: Dashboard + Indicators submenu
@@ -4801,7 +4805,7 @@ impl AppCore {
                 let mut items: Vec<crate::data::ui_state::PopupMenuItem> = Vec::new();
                 for name in dashboards {
                     items.push(crate::data::ui_state::PopupMenuItem {
-                        text: self.get_window_display_name(&name),
+                        text: self.edit_menu_entry_text(&name),
                         command: format!("__EDIT__{}", name),
                         disabled: false,
                     });
@@ -4817,13 +4821,28 @@ impl AppCore {
             templates
                 .iter()
                 .map(|name| crate::data::ui_state::PopupMenuItem {
-                    text: self.get_window_display_name(name),
+                    text: self.edit_menu_entry_text(name),
                     command: format!("__EDIT__{}", name),
                     disabled: false,
                 })
                 .collect()
         } else {
             vec![]
+        }
+    }
+
+    /// Display text for an edit-menu entry; hidden windows are tagged so the
+    /// picker makes their state obvious.
+    fn edit_menu_entry_text(&self, name: &str) -> String {
+        let display = self.get_window_display_name(name);
+        let hidden = self
+            .layout
+            .get_window(name)
+            .is_some_and(|w| !w.base().visible);
+        if hidden {
+            format!("{} (hidden)", display)
+        } else {
+            display
         }
     }
 
@@ -4867,6 +4886,37 @@ mod tests {
             content_align: None,
             title_position: "top-left".to_string(),
         }
+    }
+
+    #[test]
+    fn test_edit_picker_reaches_hidden_windows() {
+        // A hidden spacer must appear in the edit picker's template map when
+        // include_hidden is set, and stay out of the visible-only map.
+        let mut base = test_window_base("spacer_1");
+        base.visible = false;
+        let layout = Layout {
+            windows: vec![WindowDef::Spacer {
+                base,
+                data: SpacerWidgetData {},
+            }],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+
+        let with_hidden =
+            crate::config::Config::get_layout_templates_by_category(&layout, false, true);
+        assert!(with_hidden
+            .get(&crate::config::WidgetCategory::Other)
+            .is_some_and(|names| names.iter().any(|n| n == "spacer_1")));
+
+        let visible_only =
+            crate::config::Config::get_visible_templates_by_category(&layout, false);
+        assert!(!visible_only
+            .get(&crate::config::WidgetCategory::Other)
+            .is_some_and(|names| names.iter().any(|n| n == "spacer_1")));
     }
 
     #[test]
