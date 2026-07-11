@@ -343,12 +343,28 @@ impl AppCore {
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
+        // Active spell numbers for scripted-edge checkspell branches.
+        let active_spells: Vec<u16> = self
+            .game_state
+            .effects
+            .get("ActiveSpells")
+            .map(|content| {
+                content
+                    .effects
+                    .iter()
+                    .filter_map(|e| e.id.trim().parse::<u16>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
         let ctx = crate::core::travel::TravelContext {
             db: &db,
             current_room: self.map.current_room_id,
             dead: self.game_state.status.dead,
             muckled: self.game_state.status.stunned || self.game_state.status.webbed,
             standing: self.game_state.status.standing,
+            sitting: self.game_state.status.sitting,
+            kneeling: self.game_state.status.kneeling,
+            active_spells: &active_spells,
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
         };

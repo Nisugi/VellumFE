@@ -32,21 +32,21 @@ pub struct Dijkstra {
     pub distance: HashMap<u32, f64>,
 }
 
-/// The v1 cost of stepping from `room` to its wayto neighbor `dest`.
+/// The cost of stepping from `room` to its wayto neighbor `dest`.
 /// `None` = edge not routable (see module docs for the rules).
+///
+/// Scripted commands are admitted when the transpiler understands them;
+/// scripted costs resolve through `transpile::resolve_timeto` (delegation
+/// follows, settings gates default off, negative costs — which would
+/// corrupt the search — are rejected).
 fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
-    if is_proc_command(command) {
+    if is_proc_command(command) && !super::transpile::transpilable(command) {
         return None;
     }
     if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
         return None;
     }
-    match room.timeto.get(&dest)? {
-        // Negative costs would corrupt the search; the mapdb shouldn't
-        // contain any, but a data bug must not produce silent wrong paths.
-        TimeTo::Seconds(s) if *s >= 0.0 => Some(*s),
-        _ => None,
-    }
+    super::transpile::resolve_timeto(db, room, dest)
 }
 
 /// Non-NaN f64 ordering for the heap (timeto costs are plain numbers).
