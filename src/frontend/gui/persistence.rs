@@ -81,6 +81,10 @@ pub struct TabSettings {
     /// How to copy text to clipboard
     #[serde(default)]
     pub copy_behavior: CopyBehavior,
+
+    /// Mini map zoom (pixels per grid cell); None uses the widget default
+    #[serde(default)]
+    pub map_zoom: Option<f32>,
 }
 
 fn default_wrap_text() -> bool {
@@ -96,6 +100,7 @@ impl Default for TabSettings {
             accent_color: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
+            map_zoom: None,
         }
     }
 }
@@ -868,6 +873,7 @@ mod tests {
             accent_color: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
+            map_zoom: None,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -1086,6 +1092,7 @@ mod tests {
                 accent_color: Some("#4784d9".to_string()),
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
+                map_zoom: None,
             },
         );
         layout.set_tab_settings(

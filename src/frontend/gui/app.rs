@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 mod detached;
+mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
@@ -62,6 +63,8 @@ struct GuiTab {
 pub(super) struct WidgetRenderSettings {
     /// Effective text size for this window (per-tab override or global).
     text_size: f32,
+    /// Mini map zoom override (px per cell).
+    map_zoom: Option<f32>,
     /// Effective font family for this window's proportional text.
     font_family: egui::FontFamily,
     /// Height of one active-effect bar row.
@@ -163,6 +166,8 @@ pub struct VellumGuiApp {
     history_draft: String,
     close_requested: bool,
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
+    /// Map Explorer native window (separate OS viewport).
+    map_explorer: map_explorer::MapExplorerState,
     detached_context_menu: Option<DetachedMenuState>,
     /// Which detached tab's viewport hosts the game popup menus. The menu
     /// stack renders inside that OS window (at its local click coords);
@@ -451,6 +456,7 @@ impl VellumGuiApp {
             history_draft: String::new(),
             close_requested: false,
             detached_tabs,
+            map_explorer: Default::default(),
             detached_context_menu: None,
             popup_menu_host: None,
             available_tabs,
@@ -606,6 +612,7 @@ impl VellumGuiApp {
                 id: name.to_string(),
             },
             WidgetType::Compass => TabKey::Compass,
+            WidgetType::Map => TabKey::Map,
             WidgetType::Indicator => TabKey::Indicators,
             WidgetType::Targets => TabKey::Targets,
             WidgetType::Players => TabKey::Players,
@@ -937,6 +944,7 @@ impl VellumGuiApp {
     fn widget_render_settings(&self, key: &TabKey) -> WidgetRenderSettings {
         WidgetRenderSettings {
             text_size: self.effective_text_size(key),
+            map_zoom: self.tab_settings.get(key).and_then(|s| s.map_zoom),
             font_family: self.effective_font_family(key),
             effects_bar_height: self.ui_settings.effects_bar_height.clamp(10.0, 60.0),
             bar_corner_radius: self.ui_settings.bar_corner_radius.clamp(0.0, 12.0),
@@ -1644,6 +1652,10 @@ impl VellumGuiApp {
                 }
             }
         }
+
+        // Drain map worker results (mapdb load, layout generation) and the
+        // mapdb release updater.
+        self.app_core.poll_map();
 
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
@@ -3355,6 +3367,13 @@ impl eframe::App for VellumGuiApp {
             .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
+        // Keep painting while the map worker or mapdb download is busy so
+        // results and progress appear without waiting for user input or
+        // game text.
+        if self.app_core.map.has_pending() || self.app_core.map_updater.in_flight() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(150));
+        }
         self.sync_room_windows_from_components();
         self.refresh_available_tabs_if_needed();
         let monitor_bounds = Self::monitor_bounds_from_ctx(&ctx);
@@ -3786,6 +3805,7 @@ impl eframe::App for VellumGuiApp {
         });
 
         let detached_link_clicks = self.render_detached_viewports(&ctx);
+        self.render_map_explorer(&ctx);
 
         let zone_drop_result =
             self.render_zone_drop_overlay(&ctx, &visible_zone_rects, &zone_window_rects);

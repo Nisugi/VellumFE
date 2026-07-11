@@ -55,6 +55,11 @@ getrandom = "0.3"  # Web pairing token generation
 # `desktop` feature (desktop uses the OS keyring instead).
 chacha20poly1305 = "0.10"
 
+# Mapdb release downloads (GitHub releases API + asset fetch). Blocking on
+# purpose — it runs on the mapdb-update worker thread. Rides the same
+# native-tls stack as eAccess login; no rustls, no second TLS stack.
+ureq = { version = "2", default-features = false, features = ["native-tls", "gzip"] }
+
 # Web server (mobile web frontend) - HTTP + WebSocket sidecar
 axum = { version = "0.8", features = ["ws"] }
 # WebSocket client for the Lich WebUI bridge (loopback only, no TLS)

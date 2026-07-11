@@ -1702,6 +1702,8 @@ impl WindowEditor {
                 fields.push(FieldRef::CompassActiveColor);
                 fields.push(FieldRef::CompassInactiveColor);
             }
+            // GUI-only widget: no TUI-editable special fields.
+            WindowDef::Map { .. } => {}
             WindowDef::InjuryDoll { .. } => {
                 fields.push(FieldRef::Injury1Color);
                 fields.push(FieldRef::Injury2Color);

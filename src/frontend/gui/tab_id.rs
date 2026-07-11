@@ -65,6 +65,9 @@ pub enum TabKey {
     /// Navigation compass
     Compass,
 
+    /// Auto-generated location map (mini map)
+    Map,
+
     /// Left hand contents
     LeftHand,
 
@@ -137,6 +140,7 @@ impl TabKey {
                 }
             }
             TabKey::Compass => "Compass".to_string(),
+            TabKey::Map => "Map".to_string(),
             TabKey::LeftHand => "Left Hand".to_string(),
             TabKey::RightHand => "Right Hand".to_string(),
             TabKey::SpellHand => "Spell".to_string(),
@@ -168,6 +172,7 @@ impl TabKey {
             TabKey::ProgressBar { id } => format!("bar:{}", id),
             TabKey::Countdown { id } => format!("countdown:{}", id),
             TabKey::Compass => "compass".to_string(),
+            TabKey::Map => "map".to_string(),
             TabKey::LeftHand => "left_hand".to_string(),
             TabKey::RightHand => "right_hand".to_string(),
             TabKey::SpellHand => "spell_hand".to_string(),

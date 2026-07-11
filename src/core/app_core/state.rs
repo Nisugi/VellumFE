@@ -93,6 +93,11 @@ pub struct AppCore {
 
     // === Navigation State ===
     /// Navigation room ID from <nav rm='...'/>
+    /// Live map state: mapdb, generated layouts, current-room tracking.
+    pub map: crate::core::map_service::MapService,
+    /// Downloads released mapdbs from GitHub (Settings > Map).
+    pub map_updater: crate::core::mapdb_update::MapDbUpdater,
+
     pub nav_room_id: Option<String>,
 
     /// Lich room ID extracted from room display
@@ -220,8 +225,16 @@ impl AppCore {
         let hotbar_key_conflicts = Self::merge_hotbar_hotkeys(&mut keybind_map, &config.hotbars);
 
         let layout_theme = layout.theme.clone();
+        let map_base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let map_cache_dir = map_base.join("cache").join("layouts");
+        let map_overrides_path = map_base.join("map_overrides.json");
+
         let mut app = Self {
             config,
+            map: crate::core::map_service::MapService::new(map_cache_dir, map_overrides_path),
+            map_updater: crate::core::mapdb_update::MapDbUpdater::new(
+                crate::core::mapdb_update::download_dir(&map_base),
+            ),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -287,7 +300,62 @@ impl AppCore {
             // The frontend will refresh during initialization from config.
         }
 
+        app.refresh_map_source();
+
         Ok(app)
+    }
+
+    /// Resolve the mapdb source from config and (re)start the load when it
+    /// changes. Called at startup, after the settings editor saves, and when
+    /// the updater installs a fresh download.
+    pub fn refresh_map_source(&mut self) {
+        let base = Config::base_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let source = crate::core::map_service::resolve_source(
+            self.config.map.mapdb_path.as_deref(),
+            self.config.map.lich_dir.as_deref(),
+            self.config.connection.game.as_deref(),
+            &crate::core::mapdb_update::download_dir(&base),
+        );
+        self.map.ensure_db(source);
+    }
+
+    /// Drain the map worker and the mapdb updater; a freshly installed
+    /// download is picked up immediately. Frontends call this once per frame.
+    pub fn poll_map(&mut self) {
+        self.map.poll();
+        if self.map_updater.poll() {
+            self.refresh_map_source();
+        }
+    }
+
+    /// Check the given GitHub repo for a mapdb release and download it if
+    /// it's new. Progress lands in `map_updater.status`.
+    pub fn start_mapdb_download(&mut self, repo: &str) {
+        let repo = repo.trim();
+        if repo.is_empty() {
+            return;
+        }
+        self.map_updater.start(repo.to_owned());
+    }
+
+    /// Delete all downloaded mapdb versions and fall back to the Lich folder.
+    pub fn remove_downloaded_mapdb(&mut self) {
+        self.map_updater.remove_downloaded();
+        self.refresh_map_source();
+    }
+
+    /// Push the latest stream-reported room identifiers into the map service.
+    /// `nav_room_id` carries the game uid; `lich_room_id` the Lich room id.
+    fn sync_map_room(&mut self) {
+        let uid = self
+            .nav_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<i64>().ok());
+        let lich_id = self
+            .lich_room_id
+            .as_deref()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        self.map.note_room(uid, lich_id);
     }
 
     fn apply_custom_quickbars(&mut self) {
@@ -709,6 +777,7 @@ impl AppCore {
             crate::data::WidgetType::Progress => "progress",
             crate::data::WidgetType::Countdown => "countdown",
             crate::data::WidgetType::Compass => "compass",
+            crate::data::WidgetType::Map => "map",
             crate::data::WidgetType::Indicator => "indicator",
             crate::data::WidgetType::Room => "room",
             crate::data::WidgetType::Inventory => "inventory",
@@ -1111,7 +1180,8 @@ impl AppCore {
                         color,
                     })
                 }
-                WidgetType::Compass => WindowContent::Compass(CompassData {
+                WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
+            WidgetType::Compass => WindowContent::Compass(CompassData {
                     directions: Vec::new(),
                 }),
                 WidgetType::InjuryDoll => WindowContent::InjuryDoll(InjuryDollData::new()),
@@ -1456,6 +1526,7 @@ impl AppCore {
                     color,
                 })
             }
+            WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),
@@ -1776,6 +1847,8 @@ impl AppCore {
                 self.game_state.society.update(society_lines);
             }
         }
+
+        self.sync_map_room();
 
         Ok(())
     }
@@ -2673,6 +2746,7 @@ impl AppCore {
                 countdown_id: name.to_string(),
                 color: None,
             }),
+            WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {
                 directions: Vec::new(),
             }),

@@ -433,6 +433,14 @@ pub struct CompassWidgetData {
     pub inactive_color: Option<String>, // Color for unavailable exits (default: dark gray)
 }
 
+/// Map widget specific data
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MapWidgetData {
+    /// Pixels per grid cell (default 16).
+    #[serde(default)]
+    pub zoom: Option<f32>,
+}
+
 /// Injury doll widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InjuryDollWidgetData {

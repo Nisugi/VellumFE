@@ -183,6 +183,19 @@ pub struct CompassData {
     pub directions: Vec<String>, // Available exits: "n", "s", "e", "w", etc.
 }
 
+/// Mini map view state
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MapData {
+    /// Pixels per grid cell.
+    pub zoom: f32,
+}
+
+impl Default for MapData {
+    fn default() -> Self {
+        MapData { zoom: 16.0 }
+    }
+}
+
 /// Injury doll state
 #[derive(Clone, Debug)]
 pub struct InjuryDollData {

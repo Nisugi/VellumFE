@@ -83,6 +83,14 @@ pub enum WindowDef {
         data: CompassWidgetData,
     },
 
+    #[serde(rename = "map")]
+    Map {
+        #[serde(flatten)]
+        base: WindowBase,
+        #[serde(flatten)]
+        data: MapWidgetData,
+    },
+
     #[serde(rename = "injury_doll")]
     InjuryDoll {
         #[serde(flatten)]
@@ -273,6 +281,7 @@ impl WindowDef {
             WindowDef::Progress { base, .. } => &base.name,
             WindowDef::Countdown { base, .. } => &base.name,
             WindowDef::Compass { base, .. } => &base.name,
+            WindowDef::Map { base, .. } => &base.name,
             WindowDef::Indicator { base, .. } => &base.name,
             WindowDef::Dashboard { base, .. } => &base.name,
             WindowDef::InjuryDoll { base, .. } => &base.name,
@@ -309,6 +318,7 @@ impl WindowDef {
             WindowDef::Progress { .. } => "progress",
             WindowDef::Countdown { .. } => "countdown",
             WindowDef::Compass { .. } => "compass",
+            WindowDef::Map { .. } => "map",
             WindowDef::Indicator { .. } => "indicator",
             WindowDef::Dashboard { .. } => "dashboard",
             WindowDef::InjuryDoll { .. } => "injury_doll",
@@ -345,6 +355,7 @@ impl WindowDef {
             WindowDef::Progress { base, .. } => base,
             WindowDef::Countdown { base, .. } => base,
             WindowDef::Compass { base, .. } => base,
+            WindowDef::Map { base, .. } => base,
             WindowDef::Indicator { base, .. } => base,
             WindowDef::Dashboard { base, .. } => base,
             WindowDef::InjuryDoll { base, .. } => base,
@@ -381,6 +392,7 @@ impl WindowDef {
             WindowDef::Progress { base, .. } => base,
             WindowDef::Countdown { base, .. } => base,
             WindowDef::Compass { base, .. } => base,
+            WindowDef::Map { base, .. } => base,
             WindowDef::Indicator { base, .. } => base,
             WindowDef::Dashboard { base, .. } => base,
             WindowDef::InjuryDoll { base, .. } => base,

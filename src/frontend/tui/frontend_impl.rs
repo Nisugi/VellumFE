@@ -404,6 +404,14 @@ impl Frontend for TuiFrontend {
                             injury_doll_widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::Map(_) => {
+                        // The map is GUI-only; show a hint instead of a blank pane.
+                        let hint = ratatui::widgets::Paragraph::new(
+                            "Map is available in the GUI frontend (--frontend gui)",
+                        )
+                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        ratatui::widgets::Widget::render(hint, area, f.buffer_mut());
+                    }
                     WindowContent::Empty => {
                         // Check if this is a spacer widget
                         if window.widget_type == crate::data::WidgetType::Spacer {

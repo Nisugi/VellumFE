@@ -52,6 +52,8 @@ pub enum WidgetType {
     Betrayer,
     /// Lich WebUI page rendered natively from its JSON component tree
     WebUi,
+    /// Auto-generated location map (mini map)
+    Map,
 }
 
 impl WidgetType {
@@ -97,6 +99,7 @@ impl WidgetType {
             "minivitals" => Some(WidgetType::MiniVitals),
             "betrayer" => Some(WidgetType::Betrayer),
             "webui" | "lichui" => Some(WidgetType::WebUi),
+            "map" => Some(WidgetType::Map),
             _ => None,
         }
     }
@@ -132,6 +135,7 @@ impl WidgetType {
         "minivitals",
         "betrayer",
         "webui",
+        "map",
     ];
 }
 
@@ -139,6 +143,7 @@ impl WidgetType {
 #[derive(Clone, Debug)]
 pub enum WindowContent {
     Text(TextContent),
+    Map(MapData),
     TabbedText(TabbedTextContent),
     Progress(ProgressData),
     Countdown(CountdownData),

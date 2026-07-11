@@ -756,6 +756,7 @@ impl BaseMut for WindowDef {
             WindowDef::Progress { base, .. } => Some(base),
             WindowDef::Countdown { base, .. } => Some(base),
             WindowDef::Compass { base, .. } => Some(base),
+            WindowDef::Map { base, .. } => Some(base),
             WindowDef::Indicator { base, .. } => Some(base),
             WindowDef::Dashboard { base, .. } => Some(base),
             WindowDef::InjuryDoll { base, .. } => Some(base),

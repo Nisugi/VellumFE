@@ -1,0 +1,156 @@
+{
+  "generated": "2026-07-10T07:20:00.335Z",
+  "note": "Statistical targets; small drift from iteration order is fine, large drift is a logic bug.",
+  "zones": {
+    "Moonsedge": {
+      "rooms": 109,
+      "components": 25,
+      "outdoorComponents": 4,
+      "outdoorRooms": 52,
+      "interiorComponents": 21,
+      "interiorRooms": 57,
+      "directionViolations": 0,
+      "entranceRooms": 10,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 3,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 2,
+      "packMethods": {
+        "image": 2,
+        "connector": 2
+      },
+      "primaryImage": "imt-Moonsedge-1770317665.png",
+      "jsMs": 16
+    },
+    "the Atoll": {
+      "rooms": 60,
+      "components": 10,
+      "outdoorComponents": 6,
+      "outdoorRooms": 52,
+      "interiorComponents": 4,
+      "interiorRooms": 8,
+      "directionViolations": 2,
+      "entranceRooms": 4,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 5,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 7,
+      "packMethods": {
+        "image": 2,
+        "connector": 4
+      },
+      "primaryImage": "kf-atoll-1652294074.jpg",
+      "jsMs": 3
+    },
+    "Mist Harbor": {
+      "rooms": 1691,
+      "components": 891,
+      "outdoorComponents": 199,
+      "outdoorRooms": 450,
+      "interiorComponents": 692,
+      "interiorRooms": 1241,
+      "directionViolations": 60,
+      "entranceRooms": 89,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 189,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 3,
+      "packMethods": {
+        "connector": 172,
+        "strip": 9,
+        "seed": 14,
+        "image": 4
+      },
+      "primaryImage": "fest-Iyo_Glade-1657378562.png",
+      "jsMs": 402
+    },
+    "Icemule Trace": {
+      "rooms": 1354,
+      "components": 530,
+      "outdoorComponents": 68,
+      "outdoorRooms": 434,
+      "interiorComponents": 462,
+      "interiorRooms": 920,
+      "directionViolations": 9,
+      "entranceRooms": 115,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 66,
+      "connectorLenMedian": 2,
+      "connectorLenP90": 13,
+      "packMethods": {
+        "image": 12,
+        "connector": 44,
+        "strip": 3,
+        "seed": 9
+      },
+      "primaryImage": "imt-icemule-1474811966.png",
+      "jsMs": 176
+    },
+    "Wehnimer's Landing": {
+      "rooms": 3227,
+      "components": 1596,
+      "outdoorComponents": 165,
+      "outdoorRooms": 664,
+      "interiorComponents": 1431,
+      "interiorRooms": 2563,
+      "directionViolations": 51,
+      "entranceRooms": 67,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 110,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 3,
+      "packMethods": {
+        "seed": 37,
+        "image": 18,
+        "strip": 21,
+        "connector": 89
+      },
+      "primaryImage": "wl-halcyon_hills-1617459871.png",
+      "jsMs": 1263
+    },
+    "Solhaven": {
+      "rooms": 1276,
+      "components": 601,
+      "outdoorComponents": 67,
+      "outdoorRooms": 226,
+      "interiorComponents": 534,
+      "interiorRooms": 1050,
+      "directionViolations": 36,
+      "entranceRooms": 46,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 40,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 2,
+      "packMethods": {
+        "seed": 19,
+        "image": 1,
+        "connector": 38,
+        "strip": 9
+      },
+      "primaryImage": "en-vo-homes-1264234799.png",
+      "jsMs": 177
+    },
+    "Ta'Illistim": {
+      "rooms": 1163,
+      "components": 523,
+      "outdoorComponents": 65,
+      "outdoorRooms": 323,
+      "interiorComponents": 458,
+      "interiorRooms": 840,
+      "directionViolations": 44,
+      "entranceRooms": 117,
+      "cellOverlaps": 0,
+      "interGroupConnectors": 68,
+      "connectorLenMedian": 1,
+      "connectorLenP90": 4,
+      "packMethods": {
+        "image": 16,
+        "connector": 38,
+        "seed": 8,
+        "strip": 3
+      },
+      "primaryImage": "en-ta_illistim-new.jpg",
+      "jsMs": 142
+    }
+  }
+}

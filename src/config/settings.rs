@@ -559,3 +559,39 @@ impl Default for WebConfig {
         }
     }
 }
+
+/// Testing-phase default for `MapConfig::mapdb_repo`; flip to
+/// `elanthia-online/mapdb` when the Cartographer pipeline launches upstream.
+pub const DEFAULT_MAPDB_REPO: &str = "Nisugi/mapdb";
+
+fn default_mapdb_repo() -> String {
+    DEFAULT_MAPDB_REPO.to_string()
+}
+
+/// Map system configuration (mini map widget + map explorer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapConfig {
+    /// Lich install directory (the folder containing `data/`). The newest
+    /// `data/<GAME>/map-<timestamp>.json` build for the connected game is
+    /// used. Edited from the GUI settings editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lich_dir: Option<String>,
+    /// Explicit mapdb JSON file; overrides `lich_dir` discovery when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapdb_path: Option<String>,
+    /// GitHub repository (`owner/repo`) whose releases carry a `mapdb.json`
+    /// asset; the Download button in Settings > Map pulls from here.
+    /// Downloaded data outranks `lich_dir`. Empty disables downloads.
+    #[serde(default = "default_mapdb_repo")]
+    pub mapdb_repo: String,
+}
+
+impl Default for MapConfig {
+    fn default() -> Self {
+        Self {
+            lich_dir: None,
+            mapdb_path: None,
+            mapdb_repo: default_mapdb_repo(),
+        }
+    }
+}

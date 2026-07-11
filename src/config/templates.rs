@@ -726,6 +726,22 @@ impl Config {
                 },
             }),
 
+            "map" => Some(WindowDef::Map {
+                base: WindowBase {
+                    name: "map".to_string(),
+                    title: Some("Map".to_string()),
+                    row: 0,
+                    col: 0,
+                    rows: 12,
+                    cols: 30,
+                    show_border: true,
+                    min_rows: Some(5),
+                    min_cols: Some(10),
+                    ..base_defaults.clone()
+                },
+                data: MapWidgetData::default(),
+            }),
+
             "compass" => Some(WindowDef::Compass {
                 base: WindowBase {
                     name: "compass".to_string(),
@@ -1469,6 +1485,7 @@ impl Config {
             "room".to_string(),
             "spells".to_string(),
             "compass".to_string(),
+            "map".to_string(),
             "injuries".to_string(),
             "quickbar".to_string(),
             "hotkeybar".to_string(),

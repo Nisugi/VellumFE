@@ -581,6 +581,7 @@ impl Default for Config {
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default
+            map: MapConfig::default(),
             macros: MacrosConfig::default(), // Loaded from macros.toml
             macros_local: MacrosConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config
