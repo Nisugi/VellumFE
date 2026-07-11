@@ -127,7 +127,10 @@ nine-slice borders, icon sprites, a sprite compass and paperdoll. See
 
 ## Differences from the TUI
 
-- Copying is plain text: select with the mouse, `Ctrl+C`.
+- Copying is plain text: select with the mouse, `Ctrl+C`. Selections are
+  anchored to the text itself, so they survive scrolling — drag past the
+  window edge to auto-scroll, and copy picks up everything selected, even
+  lines currently scrolled out of view.
 - `Ctrl+F` opens in-window search with match highlighting.
 - Up/Down in the input bar browse command history; whatever you were
   typing is stashed and restored when you come back down.
