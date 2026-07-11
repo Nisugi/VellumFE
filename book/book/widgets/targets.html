@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-b2b40ef9.js";
+            window.path_to_searchindex_js = "../searchindex-ca9f5ded.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-f5efc91a.js"></script>
+        <script src="../toc-9b682bd4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,28 +190,40 @@ cols = 35
 </code></pre>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
 <pre><code>┌─ Targets [03] ────────────┐
-│ &gt; a mud hog [stunned]     │
-│   a mud hog               │
-│   a large rat [dead]      │
+│ &gt; a mud hog [stu]         │
+│   a mud hog [stu,prn]     │
+│   a large rat             │
 └───────────────────────────┘
 </code></pre>
 <ul>
 <li><code>&gt;</code> marks your current target</li>
-<li>Status shown in brackets</li>
+<li>Statuses shown abbreviated in brackets — when the game sends its
+structured status feed (<code>&lt;crtrStatus&gt;</code>), every active status shows at
+once (<code>[stu,prn]</code>); otherwise the single status parsed from the room
+text is used</li>
+<li>Dead creatures are filtered out of the list</li>
 <li>Count in title</li>
 </ul>
+<h2 id="boss-colors"><a class="header" href="#boss-colors">Boss Colors</a></h2>
+<p>The structured feed also classifies creatures. Boss-tier creatures
+(Ascension bosses and mini-bosses) render in <code>boss_color</code>, and creatures
+flagged “challenging” in <code>challenging_color</code>. The current-target color
+always wins.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <p>Configure via <code>config.toml</code>:</p>
 <pre><code class="language-toml">[target_list]
 status_position = "end"         # "end" or "start"
 truncation_mode = "noun"        # "full" or "noun"
 excluded_nouns = ["arm", "coal"]
+boss_color = "#ff5555"          # AscensionBoss / MiniBoss creatures
+challenging_color = "#ffaa55"   # "challenging" creatures
 
 [target_list.status_abbrev]
 stunned = "stu"
 frozen = "frz"
 dead = "ded"
 </code></pre>
+<p>Statuses without an abbreviation fall back to their first three letters.</p>
 <h2 id="interaction"><a class="header" href="#interaction">Interaction</a></h2>
 <ul>
 <li>Click creature to target</li>

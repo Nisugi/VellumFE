@@ -21,8 +21,10 @@ Widgets are the visual building blocks of your layout. Each widget type displays
 | [players](./players.md) | Players in room |
 | [items](./items.md) | Items on ground |
 | [inventory](./inventory.md) | Carried items |
+| [reserve](./reserve.md) | Reserved items (GS4 RESERVE) |
 | [spells](./spells.md) | Known spells |
 | [container](./containers.md) | Container contents |
+| [hotkeybar](./hotkeybar.md) | Bars of command buttons (hotbars) |
 
 ## Common Properties
 
@@ -61,4 +63,4 @@ Widgets are organized into categories in the Add Window menu:
 | Navigation | compass, room |
 | Entity | targets, players, items |
 | Lists | inventory, spells, container |
-| Other | injury_doll, active_effects |
+| Other | injury_doll, active_effects, reserve, quickbar, hotkeybar |

@@ -74,12 +74,17 @@ Configure the targets widget display:
 status_position = "end"         # "end" or "start"
 truncation_mode = "noun"        # "full" or "noun"
 excluded_nouns = ["arm", "coal"]
+boss_color = "#ff5555"          # AscensionBoss / MiniBoss creatures
+challenging_color = "#ffaa55"   # "challenging" creatures
 
 [target_list.status_abbrev]
 stunned = "stu"
 frozen = "frz"
 dead = "ded"
 ```
+
+The boss and challenging colors apply when the game's structured creature
+status feed classifies a creature; see [Targets](../widgets/targets.md).
 
 ## Highlights
 

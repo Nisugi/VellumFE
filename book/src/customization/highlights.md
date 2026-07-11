@@ -81,6 +81,10 @@ fg = "#9370db"
 stream = "thoughts"       # only applies to the thoughts stream
 ```
 
+For replacement patterns, `window = "..."` limits the *replacement* to one
+window by name (colors still apply everywhere). Both filter fields are
+editable in the TUI highlight form (`.edithighlight`).
+
 ## Test Your Patterns
 
 Don't wait for the game — inject a line:

@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-b2b40ef9.js";
+            window.path_to_searchindex_js = "searchindex-ca9f5ded.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-f5efc91a.js"></script>
+        <script src="toc-9b682bd4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -302,7 +302,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.4</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.6</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -1026,12 +1026,16 @@ order = []                      # Custom focus order (empty = layout order)
 status_position = "end"         # "end" or "start"
 truncation_mode = "noun"        # "full" or "noun"
 excluded_nouns = ["arm", "coal"]
+boss_color = "#ff5555"          # AscensionBoss / MiniBoss creatures
+challenging_color = "#ffaa55"   # "challenging" creatures
 
 [target_list.status_abbrev]
 stunned = "stu"
 frozen = "frz"
 dead = "ded"
 </code></pre>
+<p>The boss and challenging colors apply when the game’s structured creature
+status feed classifies a creature; see <a href="#targets">Targets</a>.</p>
 <h2 id="highlights"><a class="header" href="#highlights">Highlights</a></h2>
 <p>Global toggles for the highlight system:</p>
 <pre><code class="language-toml">[highlights]
@@ -1679,6 +1683,95 @@ rewritten by the app</li>
 <p>Buttons created on the phone are editable from the phone; hand-written
 buttons are read-only there.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="hotbarstoml"><a class="header" href="#hotbarstoml">hotbars.toml</a></h1>
+<p>Named bars of buttons for the <a href="#hotbars">hotbars widget</a>.</p>
+<p><strong>Prefer the built-in editor over hand-editing:</strong> <code>.hotbars</code> opens the
+hotbar editor in both TUI and GUI.</p>
+<p>Location: <code>~/.vellum-fe/global/hotbars.toml</code>, plus an optional
+per-character <code>~/.vellum-fe/profiles/&lt;name&gt;/hotbars.toml</code>. A character bar
+with the same name replaces the global one entirely.</p>
+<h2 id="bars-and-buttons"><a class="header" href="#bars-and-buttons">Bars and Buttons</a></h2>
+<pre><code class="language-toml">[[bars]]
+name = "default"      # referenced by hotkeybar windows in layout.toml
+title = "Actions"
+
+[[bars.buttons]]
+id = "hide"           # stable id, unique within the bar
+label = "Hide"        # text shown on the button
+command = "hide"      # game command sent on click or hotkey
+hotkey = "alt+h"      # optional (keybinds.toml syntax); keybinds.toml wins on conflict
+tooltip = "Attempt to hide"   # hover text (GUI)
+category = "Stealth"  # editor grouping only
+</code></pre>
+<h2 id="countdowns-1"><a class="header" href="#countdowns-1">Countdowns</a></h2>
+<p>An optional <code>[bars.buttons.countdown]</code> overlays remaining seconds on the
+button:</p>
+<pre><code class="language-toml">[bars.buttons.countdown]
+source = "roundtime"          # "roundtime" | "casttime" | "effect"
+</code></pre>
+<p>For <code>source = "effect"</code>, name the effect to track:</p>
+<pre><code class="language-toml">[bars.buttons.countdown]
+source = "effect"
+category = "Buffs"            # Buffs | Debuffs | Cooldowns | ActiveSpells
+name = "Celerity"
+name_match = "exact"          # "exact" or "contains"
+</code></pre>
+<h2 id="conditional-states"><a class="header" href="#conditional-states">Conditional States</a></h2>
+<p><code>[[bars.buttons.states]]</code> entries restyle a button while a condition holds.
+The first matching state wins. Each state has a <code>when</code> condition and a
+<code>style</code>:</p>
+<pre><code class="language-toml"># Show the Hide button green and relabeled while hidden
+[[bars.buttons.states]]
+[bars.buttons.states.when]
+type = "indicator"
+id = "hidden"
+active = true
+[bars.buttons.states.style]
+label = "Hidden"
+fg = "#80ff80"
+
+# Dim it during roundtime
+[[bars.buttons.states]]
+[bars.buttons.states.when]
+type = "rt_active"
+[bars.buttons.states.style]
+dim = true
+</code></pre>
+<h3 id="condition-types"><a class="header" href="#condition-types">Condition Types</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>type</code></th><th>Fields</th><th>Matches when</th></tr>
+</thead>
+<tbody>
+<tr><td><code>effect_active</code></td><td><code>category</code>, <code>name</code>, <code>name_match</code></td><td>The effect is up</td></tr>
+<tr><td><code>effect_inactive</code></td><td><code>category</code>, <code>name</code>, <code>name_match</code></td><td>The effect is not up</td></tr>
+<tr><td><code>effect_time</code></td><td><code>category</code>, <code>name</code>, <code>name_match</code>, <code>cmp</code>, <code>seconds</code></td><td>Remaining time compares true (e.g. <code>cmp = "&lt;"</code>, <code>seconds = 30</code>)</td></tr>
+<tr><td><code>rt_active</code></td><td>—</td><td>Roundtime is running</td></tr>
+<tr><td><code>ct_active</code></td><td>—</td><td>Casttime is running</td></tr>
+<tr><td><code>indicator</code></td><td><code>id</code>, <code>active</code></td><td>A status indicator matches: <code>standing</code>, <code>kneeling</code>, <code>sitting</code>, <code>prone</code>, <code>stunned</code>, <code>bleeding</code>, <code>hidden</code>, <code>invisible</code>, <code>webbed</code>, <code>joined</code>, <code>dead</code></td></tr>
+<tr><td><code>vital</code></td><td><code>vital</code>, <code>cmp</code>, <code>value</code>, <code>unit</code></td><td>A vital compares true: <code>health</code>/<code>mana</code>/<code>stamina</code>/<code>spirit</code>, <code>cmp</code> one of <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>, <code>unit</code> <code>"percent"</code> or <code>"absolute"</code></td></tr>
+<tr><td><code>all</code> / <code>any</code></td><td><code>conditions = [ ... ]</code></td><td>All / any of the nested conditions match</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="style-fields"><a class="header" href="#style-fields">Style Fields</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>label</code></td><td>Replace the button text</td></tr>
+<tr><td><code>fg</code> / <code>bg</code></td><td>Text / background color (<code>#rrggbb</code>)</td></tr>
+<tr><td><code>dim</code></td><td>Render the button dimmed</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="reloading"><a class="header" href="#reloading">Reloading</a></h2>
+<p><code>.reload hotbars</code> re-reads the file; the editor saves and applies
+immediately.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="widgets"><a class="header" href="#widgets">Widgets</a></h1>
 <p>Widgets are the visual building blocks of your layout. Each widget type displays specific game information.</p>
 <h2 id="widget-types"><a class="header" href="#widget-types">Widget Types</a></h2>
@@ -1691,7 +1784,7 @@ buttons are read-only there.</p>
 <tr><td><a href="#text-windows-1">text</a></td><td>Scrollable game text</td></tr>
 <tr><td><a href="#tabbed-text-windows">tabbedtext</a></td><td>Multiple streams in tabs</td></tr>
 <tr><td><a href="#progress-bars-1">progress</a></td><td>Health, mana, stamina bars</td></tr>
-<tr><td><a href="#countdowns-1">countdown</a></td><td>Roundtime, cast time timers</td></tr>
+<tr><td><a href="#countdowns-2">countdown</a></td><td>Roundtime, cast time timers</td></tr>
 <tr><td><a href="#compass">compass</a></td><td>Available exits</td></tr>
 <tr><td><a href="#hands">hand</a></td><td>Items in hands</td></tr>
 <tr><td><a href="#status-indicators">indicator</a></td><td>Status conditions</td></tr>
@@ -1703,8 +1796,10 @@ buttons are read-only there.</p>
 <tr><td><a href="#players">players</a></td><td>Players in room</td></tr>
 <tr><td><a href="#items">items</a></td><td>Items on ground</td></tr>
 <tr><td><a href="#inventory">inventory</a></td><td>Carried items</td></tr>
+<tr><td><a href="#reserve">reserve</a></td><td>Reserved items (GS4 RESERVE)</td></tr>
 <tr><td><a href="#spells">spells</a></td><td>Known spells</td></tr>
 <tr><td><a href="#containers">container</a></td><td>Container contents</td></tr>
+<tr><td><a href="#hotbars">hotkeybar</a></td><td>Bars of command buttons (hotbars)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1743,7 +1838,7 @@ title = "Custom Title"
 <tr><td>Navigation</td><td>compass, room</td></tr>
 <tr><td>Entity</td><td>targets, players, items</td></tr>
 <tr><td>Lists</td><td>inventory, spells, container</td></tr>
-<tr><td>Other</td><td>injury_doll, active_effects</td></tr>
+<tr><td>Other</td><td>injury_doll, active_effects, reserve, quickbar, hotkeybar</td></tr>
 </tbody>
 </table>
 </div>
@@ -2040,7 +2135,7 @@ bar_color = "#32CD32"
 <li>Green (high) → Yellow (medium) → Red (low)</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="countdowns-1"><a class="header" href="#countdowns-1">Countdowns</a></h1>
+<h1 id="countdowns-2"><a class="header" href="#countdowns-2">Countdowns</a></h1>
 <p>Display roundtime, cast time, and stun timers.</p>
 <h2 id="basic-usage-3"><a class="header" href="#basic-usage-3">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -2583,28 +2678,40 @@ cols = 35
 </code></pre>
 <h2 id="display-7"><a class="header" href="#display-7">Display</a></h2>
 <pre><code>┌─ Targets [03] ────────────┐
-│ &gt; a mud hog [stunned]     │
-│   a mud hog               │
-│   a large rat [dead]      │
+│ &gt; a mud hog [stu]         │
+│   a mud hog [stu,prn]     │
+│   a large rat             │
 └───────────────────────────┘
 </code></pre>
 <ul>
 <li><code>&gt;</code> marks your current target</li>
-<li>Status shown in brackets</li>
+<li>Statuses shown abbreviated in brackets — when the game sends its
+structured status feed (<code>&lt;crtrStatus&gt;</code>), every active status shows at
+once (<code>[stu,prn]</code>); otherwise the single status parsed from the room
+text is used</li>
+<li>Dead creatures are filtered out of the list</li>
 <li>Count in title</li>
 </ul>
+<h2 id="boss-colors"><a class="header" href="#boss-colors">Boss Colors</a></h2>
+<p>The structured feed also classifies creatures. Boss-tier creatures
+(Ascension bosses and mini-bosses) render in <code>boss_color</code>, and creatures
+flagged “challenging” in <code>challenging_color</code>. The current-target color
+always wins.</p>
 <h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
 <p>Configure via <code>config.toml</code>:</p>
 <pre><code class="language-toml">[target_list]
 status_position = "end"         # "end" or "start"
 truncation_mode = "noun"        # "full" or "noun"
 excluded_nouns = ["arm", "coal"]
+boss_color = "#ff5555"          # AscensionBoss / MiniBoss creatures
+challenging_color = "#ffaa55"   # "challenging" creatures
 
 [target_list.status_abbrev]
 stunned = "stu"
 frozen = "frz"
 dead = "ded"
 </code></pre>
+<p>Statuses without an abbreviation fall back to their first three letters.</p>
 <h2 id="interaction-2"><a class="header" href="#interaction-2">Interaction</a></h2>
 <ul>
 <li>Click creature to target</li>
@@ -2752,9 +2859,44 @@ title = "Carried Items"
 <li>Open/close containers</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reserve"><a class="header" href="#reserve">Reserve</a></h1>
+<p>Displays your reserved items — the GS4 <code>RESERVE</code> list — in its own window.
+GemStone IV only.</p>
+<p>Works exactly like the <a href="#inventory">Inventory</a> window: the game sends
+the full list as a snapshot on the <code>reserve</code> stream, and the window
+replaces its contents whenever the snapshot changes.</p>
+<h2 id="basic-usage-15"><a class="header" href="#basic-usage-15">Basic Usage</a></h2>
+<pre><code class="language-toml">[[windows]]
+name = "reserve"
+widget_type = "reserve"
+row = 0
+col = 0
+rows = 15
+cols = 35
+</code></pre>
+<p>Or in-app: <code>.addwindow reserve</code> (listed under <strong>Other</strong> in the add-window
+menu).</p>
+<h2 id="display-11"><a class="header" href="#display-11">Display</a></h2>
+<pre><code>┌─ Reserve ──────────────────┐
+│ a sprig of wild lilac      │
+│ a blue potion              │
+└────────────────────────────┘
+</code></pre>
+<h2 id="interaction-6"><a class="header" href="#interaction-6">Interaction</a></h2>
+<ul>
+<li>Click an item to interact</li>
+<li>Right-click for the context menu</li>
+</ul>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>No scrollback: the content is replaced on each update, like inventory.</li>
+<li>The streams field is editable in the window editor, but the default
+(<code>reserve</code>) is what the game sends.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="spells"><a class="header" href="#spells">Spells</a></h1>
 <p>Displays known spells from the spell list.</p>
-<h2 id="basic-usage-15"><a class="header" href="#basic-usage-15">Basic Usage</a></h2>
+<h2 id="basic-usage-16"><a class="header" href="#basic-usage-16">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "spells"
 widget_type = "spells"
@@ -2763,7 +2905,7 @@ col = 0
 rows = 20
 cols = 35
 </code></pre>
-<h2 id="display-11"><a class="header" href="#display-11">Display</a></h2>
+<h2 id="display-12"><a class="header" href="#display-12">Display</a></h2>
 <p>Shows spells from the <code>Spells</code> stream:</p>
 <pre><code>┌─ Spells ───────────────────┐
 │ Spirit Warding I (101)     │
@@ -2771,7 +2913,7 @@ cols = 35
 │ Spirit Defense (103)       │
 └────────────────────────────┘
 </code></pre>
-<h2 id="interaction-6"><a class="header" href="#interaction-6">Interaction</a></h2>
+<h2 id="interaction-7"><a class="header" href="#interaction-7">Interaction</a></h2>
 <ul>
 <li>Click spell to prepare/cast</li>
 <li>Right-click for context menu</li>
@@ -2792,7 +2934,7 @@ title = "Known Spells"
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="containers"><a class="header" href="#containers">Containers</a></h1>
 <p>Displays contents of open containers (bags, backpacks, chests).</p>
-<h2 id="basic-usage-16"><a class="header" href="#basic-usage-16">Basic Usage</a></h2>
+<h2 id="basic-usage-17"><a class="header" href="#basic-usage-17">Basic Usage</a></h2>
 <p>Container windows are created dynamically when you look in a container.</p>
 <h2 id="enabling-containers"><a class="header" href="#enabling-containers">Enabling Containers</a></h2>
 <p>Enable container windows via command:</p>
@@ -2806,14 +2948,14 @@ title = "Known Spells"
 <li>A window appears showing contents</li>
 <li>Window closes when you close/leave the container</li>
 </ol>
-<h2 id="display-12"><a class="header" href="#display-12">Display</a></h2>
+<h2 id="display-13"><a class="header" href="#display-13">Display</a></h2>
 <pre><code>┌─ leather backpack ─────────┐
 │ a silver ring              │
 │ some gold coins            │
 │ a healing herb             │
 └────────────────────────────┘
 </code></pre>
-<h2 id="interaction-7"><a class="header" href="#interaction-7">Interaction</a></h2>
+<h2 id="interaction-8"><a class="header" href="#interaction-8">Interaction</a></h2>
 <ul>
 <li>Click items to interact</li>
 <li>Right-click for context menu</li>
@@ -2831,6 +2973,64 @@ rows = 10
 cols = 30
 </code></pre>
 <p>The <code>container_title</code> must match the container name in-game.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="hotbars"><a class="header" href="#hotbars">Hotbars</a></h1>
+<p>Bars of clickable command buttons — VellumFE’s take on barbar-style action
+bars. Buttons send a game command on click (or hotkey), can overlay a
+countdown, and can restyle themselves while a condition holds (hidden,
+stunned, low health, a spell about to drop…).</p>
+<p>Bars are defined once in <a href="#hotbarstoml">hotbars.toml</a>
+and displayed by <code>hotkeybar</code> windows in a layout. Several windows can show
+the same bar, and one layout can show several bars.</p>
+<h2 id="basic-usage-18"><a class="header" href="#basic-usage-18">Basic Usage</a></h2>
+<p>Prefer the built-in editor: <code>.hotbars</code> (TUI and GUI) creates and edits bars
+without touching TOML. Then add a window for the bar:</p>
+<pre><code class="language-toml">[[windows]]
+name = "actions"
+widget_type = "hotkeybar"
+row = 38
+col = 0
+rows = 1
+cols = 60
+bar = "default"              # bar name from hotbars.toml
+orientation = "horizontal"   # or "vertical" (one button per row)
+</code></pre>
+<p>Or in-app: <code>.addwindow hotkeybar</code>.</p>
+<h2 id="display-14"><a class="header" href="#display-14">Display</a></h2>
+<pre><code>┌─ Actions ──────────────────────────────────────┐
+│ [Look] [Hidden] [Defensive] [Offensive] [Heal] │
+└────────────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li>Buttons show their <code>label</code>, restyled (color, relabel, dim) while a
+state condition matches — e.g. the Hide button turns green and reads
+“Hidden” while you’re hidden, or dims during roundtime.</li>
+<li>Buttons with a countdown source show remaining seconds
+(<code>Heal  12s</code>).</li>
+<li>In the GUI, hovering shows the tooltip and hotkey.</li>
+</ul>
+<h2 id="hotkeys"><a class="header" href="#hotkeys">Hotkeys</a></h2>
+<p>Each button can bind a key combo (<code>keybinds.toml</code> syntax, e.g. <code>alt+h</code>,
+<code>f5</code>). Hotkeys register automatically while a window shows the bar;
+existing <code>keybinds.toml</code> bindings win on conflict.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.hotbars</code> / <code>.hotbar</code></td><td>Open the hotbar editor</td></tr>
+<tr><td><code>.reload hotbars</code></td><td>Reload hotbars.toml from disk</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="per-character-bars"><a class="header" href="#per-character-bars">Per-Character Bars</a></h2>
+<p>The global <code>~/.vellum-fe/global/hotbars.toml</code> applies to all characters. A
+per-character <code>~/.vellum-fe/profiles/&lt;name&gt;/hotbars.toml</code> can define bars
+too — a character bar with the same name replaces the global one entirely.</p>
+<p>See <a href="#hotbarstoml">hotbars.toml</a> for the full button
+and condition schema.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="customization"><a class="header" href="#customization">Customization</a></h1>
 <p>Create your perfect interface with custom layouts, highlights, keybinds,
@@ -3074,6 +3274,9 @@ pattern = "^\\[(\\w+)\\]"
 fg = "#9370db"
 stream = "thoughts"       # only applies to the thoughts stream
 </code></pre>
+<p>For replacement patterns, <code>window = "..."</code> limits the <em>replacement</em> to one
+window by name (colors still apply everywhere). Both filter fields are
+editable in the TUI highlight form (<code>.edithighlight</code>).</p>
 <h2 id="test-your-patterns"><a class="header" href="#test-your-patterns">Test Your Patterns</a></h2>
 <p>Don’t wait for the game — inject a line:</p>
 <pre><code>.testline The death cry of Grimswarm echoes!
@@ -3169,9 +3372,9 @@ cooldown_ms = 500         # Min time between sounds
 startup_music = true      # Play music on launch
 </code></pre>
 <p><code>startup_music</code> plays the classic login theme when a TUI or GUI session
-starts. The mobile apps play it too, the first time the login screen
-appears — a <strong>Stop / Don’t play again</strong> bar sits right on the login card,
-and it can be turned back on under <strong>⚙ Settings → Login music</strong>.</p>
+starts. The mobile apps play it too, once the game connection comes up —
+a <strong>Stop / Don’t play again</strong> bar appears while it plays, and it can be
+turned back on under <strong>⚙ Settings → Login music</strong>.</p>
 <h2 id="disabling-sounds"><a class="header" href="#disabling-sounds">Disabling Sounds</a></h2>
 <h3 id="all-sounds"><a class="header" href="#all-sounds">All Sounds</a></h3>
 <pre><code class="language-toml">[sound]
@@ -3374,7 +3577,7 @@ injury2 = "doll/head_i2.png"
 injury3 = "doll/head_i3.png"
 scar1 = "doll/head_s1.png"
 </code></pre>
-<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<h2 id="notes-1"><a class="header" href="#notes-1">Notes</a></h2>
 <ul>
 <li>Absolute image paths are allowed on purpose, so a skin can point at art
 from another install (e.g. your local Wrayth graphics) without copying.</li>
@@ -3399,7 +3602,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.quit</code></td><td><code>.q</code></td><td>Exit VellumFE (saves settings)</td></tr>
 <tr><td><code>.menu</code></td><td></td><td>Open the main menu</td></tr>
 <tr><td><code>.settings</code></td><td></td><td>Open the settings editor</td></tr>
-<tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
+<tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
 </tbody>
 </table>
 </div>
@@ -3451,11 +3654,22 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>.keybinds</code></td><td><code>.kb</code></td><td>Browse keybinds</td></tr>
+<tr><td><code>.keybinds</code></td><td><code>.kb</code></td><td>Browse keybinds (press <code>f</code> to cycle the scope filter: all / global / character)</td></tr>
 <tr><td><code>.addkeybind</code></td><td><code>.addkey</code></td><td>Create a keybind</td></tr>
 <tr><td><code>.savekeybinds [name]</code></td><td><code>.savekb</code></td><td>Save keybinds as a named profile</td></tr>
 <tr><td><code>.loadkeybinds &lt;name&gt;</code></td><td><code>.loadkb</code></td><td>Load a keybind profile</td></tr>
 <tr><td><code>.keybindprofiles</code></td><td><code>.kbprofiles</code></td><td>List keybind profiles</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="hotbars-1"><a class="header" href="#hotbars-1">Hotbars</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.hotbars</code></td><td><code>.hotbar</code></td><td>Open the hotbar editor (bars of command buttons; see <a href="#hotbars">Hotbars</a>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -3647,7 +3861,7 @@ Yes: <code>vellum-fe import-highlights settings.xml</code>. See the
 <li>Delete the cached certificate and retry: remove <code>~/.vellum-fe/simu.pem</code></li>
 <li>Check <code>~/.vellum-fe/vellum-fe.log</code> for details</li>
 </ol>
-<h2 id="display-13"><a class="header" href="#display-13">Display</a></h2>
+<h2 id="display-15"><a class="header" href="#display-15">Display</a></h2>
 <p><strong>Colors look wrong</strong></p>
 <ol>
 <li>Use a true-color terminal with <code>color_mode = "direct"</code> (Windows

@@ -16,7 +16,7 @@ command `quit` also saves your settings on the way out.)
 | `.quit` | `.q` | Exit VellumFE (saves settings) |
 | `.menu` | | Open the main menu |
 | `.settings` | | Open the settings editor |
-| `.reload [what]` | | Reload config from disk: `highlights`, `keybinds`, `settings`, `colors`, `layout`, or everything |
+| `.reload [what]` | | Reload config from disk: `highlights`, `keybinds`, `hotbars`, `settings`, `colors`, `layout`, or everything |
 
 ## Windows & Layout
 
@@ -53,11 +53,17 @@ command `quit` also saves your settings on the way out.)
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `.keybinds` | `.kb` | Browse keybinds |
+| `.keybinds` | `.kb` | Browse keybinds (press `f` to cycle the scope filter: all / global / character) |
 | `.addkeybind` | `.addkey` | Create a keybind |
 | `.savekeybinds [name]` | `.savekb` | Save keybinds as a named profile |
 | `.loadkeybinds <name>` | `.loadkb` | Load a keybind profile |
 | `.keybindprofiles` | `.kbprofiles` | List keybind profiles |
+
+## Hotbars
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.hotbars` | `.hotbar` | Open the hotbar editor (bars of command buttons; see [Hotbars](../widgets/hotkeybar.md)) |
 
 ## Colors & Themes
 

@@ -25,6 +25,7 @@
   - [highlights.toml](./configuration/highlights-toml.md)
   - [colors.toml](./configuration/colors-toml.md)
   - [macros.toml](./configuration/macros-toml.md)
+  - [hotbars.toml](./configuration/hotbars-toml.md)
 
 - [Widgets](./widgets/README.md)
   - [Text Windows](./widgets/text-windows.md)
@@ -42,8 +43,10 @@
   - [Players](./widgets/players.md)
   - [Items](./widgets/items.md)
   - [Inventory](./widgets/inventory.md)
+  - [Reserve](./widgets/reserve.md)
   - [Spells](./widgets/spells.md)
   - [Containers](./widgets/containers.md)
+  - [Hotbars](./widgets/hotkeybar.md)
 
 - [Customization](./customization/README.md)
   - [Creating Layouts](./customization/layouts.md)
