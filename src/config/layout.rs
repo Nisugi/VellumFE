@@ -779,8 +779,10 @@ rows = 30
 cols = 120
 
 [[windows]]
-widget_type = "map"
-name = "map1"
+# A widget type from some future VellumFE this build doesn't know about
+# ("map" served here until it became a real widget type)
+widget_type = "holomap"
+name = "holomap1"
 row = 30
 col = 0
 rows = 10
@@ -798,7 +800,7 @@ zoom = 3
             layout.unknown_windows[0]
                 .get("widget_type")
                 .and_then(|v| v.as_str()),
-            Some("map")
+            Some("holomap")
         );
         assert_eq!(layout.terminal_width, Some(120));
     }
@@ -808,7 +810,7 @@ zoom = 3
         let layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
         let serialized = layout.to_toml_string_preserving().expect("serialize");
         // The unknown window survives the save (custom fields included)...
-        assert!(serialized.contains("widget_type = \"map\""));
+        assert!(serialized.contains("widget_type = \"holomap\""));
         assert!(serialized.contains("zoom = 3"));
         // ...and a re-parse recovers the same split
         let reparsed = Layout::parse_tolerant(&serialized, "test").expect("reparse");
