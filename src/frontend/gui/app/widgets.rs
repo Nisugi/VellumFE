@@ -1174,6 +1174,21 @@ impl VellumGuiApp {
             }
         };
 
+        // Unmapped interiors: session ghost sketches hang off their anchor
+        // room; standing in one moves the camera and the current ring to it.
+        let ghost_overlay = (!map.ghosts().is_empty()).then(|| {
+            crate::core::ghost_rooms::build_overlay(
+                map.ghosts(),
+                scene,
+                sheet_kind,
+                group_filter.as_ref(),
+            )
+        });
+        let current_ghost_cell = map
+            .current_ghost
+            .and_then(|uid| ghost_overlay.as_ref()?.cell_of(uid));
+        let center = current_ghost_cell.unwrap_or(center);
+
         let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         if rect.width() < 8.0 || rect.height() < 8.0 {
             return None;
@@ -1194,17 +1209,32 @@ impl VellumGuiApp {
             px_per_cell: zoom_override.unwrap_or(map_data.zoom).clamp(2.0, 96.0),
         };
         let style = MapStyle::from_visuals(ui.visuals());
+        let compass = Some(app_core.game_state.compass_dirs.as_slice());
+        // While standing in a ghost, the ring and compass ticks belong to the
+        // sketch, not the held anchor room.
+        let in_ghost = current_ghost_cell.is_some();
         let result = map_view::paint_sheet(
             ui,
             rect,
             scene.sheet(sheet_kind),
             camera,
-            current,
-            Some(app_core.game_state.compass_dirs.as_slice()),
+            if in_ghost { None } else { current },
+            if in_ghost { None } else { compass },
             true,
             group_filter.as_ref(),
             &style,
         );
+        if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
+            map_view::paint_ghosts(
+                ui,
+                rect,
+                overlay,
+                camera,
+                map.current_ghost,
+                if in_ghost { compass } else { None },
+                &style,
+            );
+        }
 
         result.clicked_room.map(|id| GuiLinkClick {
             link_data: Self::direct_command_link(format!(";go2 {id}")),

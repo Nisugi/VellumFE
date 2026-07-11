@@ -346,6 +346,8 @@ impl AppCore {
 
     /// Push the latest stream-reported room identifiers into the map service.
     /// `nav_room_id` carries the game uid; `lich_room_id` the Lich room id.
+    /// Title and obvious exits ride along — unmapped rooms are sketched as
+    /// ghosts from exactly this data.
     fn sync_map_room(&mut self) {
         let uid = self
             .nav_room_id
@@ -355,7 +357,11 @@ impl AppCore {
             .lich_room_id
             .as_deref()
             .and_then(|s| s.trim().parse::<u32>().ok());
-        self.map.note_room(uid, lich_id);
+        let snapshot = crate::core::ghost_rooms::RoomSnapshot {
+            title: self.game_state.room_name.clone(),
+            exits: self.game_state.exits.clone(),
+        };
+        self.map.note_room(uid, lich_id, snapshot);
     }
 
     fn apply_custom_quickbars(&mut self) {
