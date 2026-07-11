@@ -1236,8 +1236,44 @@ impl VellumGuiApp {
             );
         }
 
+        // Travel progress rides on the map while the walk executor runs.
+        if let (Some(task), Some(current)) = (app_core.travel.task(), map.current_room_id) {
+            if let Some(db) = map.mapdb() {
+                let done = task.rooms_total().saturating_sub(task.rooms_remaining());
+                let label = format!(
+                    "→ {} · {}/{} rooms · ETA {}",
+                    task.destination,
+                    done,
+                    task.rooms_total(),
+                    crate::core::travel::format_eta(task.eta_seconds(db, current))
+                );
+                let font = egui::FontId::proportional(12.0);
+                let galley = ui.painter().layout_no_wrap(
+                    label,
+                    font.clone(),
+                    ui.visuals().strong_text_color(),
+                );
+                let pad = egui::vec2(6.0, 3.0);
+                let banner = egui::Rect::from_min_size(
+                    rect.left_top() + egui::vec2(4.0, 4.0),
+                    galley.size() + pad * 2.0,
+                );
+                let painter = ui.painter().with_clip_rect(rect);
+                painter.rect_filled(
+                    banner,
+                    3.0,
+                    ui.visuals().extreme_bg_color.gamma_multiply(0.85),
+                );
+                painter.galley(banner.min + pad, galley, ui.visuals().strong_text_color());
+            }
+        }
+
         result.clicked_room.map(|id| GuiLinkClick {
-            link_data: Self::direct_command_link(format!(";go2 {id}")),
+            link_data: Self::direct_command_link(if app_core.config.go2.native_map_clicks {
+                format!(".go2 {id}")
+            } else {
+                format!(";go2 {id}")
+            }),
             click_pos: Self::click_pos_to_grid(
                 ui.ctx().pointer_latest_pos().unwrap_or(Pos2::ZERO),
             ),

@@ -3313,7 +3313,13 @@ impl VellumGuiApp {
                 self.app_core.request_menu(exist_id, noun, click.click_pos)
             }
         };
-        self.dispatch_raw_command(outbound);
+        // Direct links carrying a dot command (e.g. the map's native ".go2")
+        // are client commands, not game text.
+        if outbound.starts_with('.') {
+            self.dispatch_command(outbound);
+        } else {
+            self.dispatch_raw_command(outbound);
+        }
     }
 }
 
