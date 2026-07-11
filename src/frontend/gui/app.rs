@@ -208,10 +208,13 @@ pub struct VellumGuiApp {
     /// Zoom factor pushed to egui at startup; afterwards egui owns it
     /// (Ctrl+= / Ctrl+- / Ctrl+0) and we persist changes back.
     zoom_applied: bool,
-    /// Deadline for delayed startup music ([sound] startup_music_delay_ms);
-    /// None once played, or when startup music is off. The player is !Send,
-    /// so the frame loop fires this instead of a timer thread — same
-    /// reasoning as the TUI runtime's deferred deadline.
+    /// Login music is armed when the first server data arrives — the
+    /// connection actually being established — not when the window opens.
+    startup_music_pending: bool,
+    /// Deadline for delayed startup music ([sound] startup_music_delay_ms,
+    /// counted from first server data); None once played or when off. The
+    /// player is !Send, so the frame loop fires this instead of a timer
+    /// thread — same reasoning as the TUI runtime's deferred deadline.
     startup_music_at: Option<std::time::Instant>,
     /// Title font size currently applied to the egui style; None forces
     /// a re-apply on the next frame.
@@ -427,21 +430,11 @@ impl VellumGuiApp {
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
 
-        // Startup music, exactly like the TUI runtime: play now, or arm a
-        // deadline the frame loop fires.
-        let mut startup_music_at = None;
-        if app_core.config.sound.startup_music && app_core.sound_player.is_some() {
-            let delay_ms = app_core.config.sound.startup_music_delay_ms;
-            if delay_ms > 0 {
-                startup_music_at = Some(
-                    std::time::Instant::now() + std::time::Duration::from_millis(delay_ms),
-                );
-            } else if let Some(ref player) = app_core.sound_player {
-                if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
-                    tracing::debug!("Startup music not available: {e}");
-                }
-            }
-        }
+        // Login music plays when the game connection is established (first
+        // server data), not when the login screen opens — the frame loop
+        // arms the deadline on first receive.
+        let startup_music_pending =
+            app_core.config.sound.startup_music && app_core.sound_player.is_some();
 
         Ok(Self {
             app_core,
@@ -482,7 +475,8 @@ impl VellumGuiApp {
             tab_settings,
             tab_groups,
             zoom_applied: false,
-            startup_music_at,
+            startup_music_pending,
+            startup_music_at: None,
             applied_title_font_size: None,
             applied_density: None,
             settings_editor: None,
@@ -1666,6 +1660,17 @@ impl VellumGuiApp {
         while let Ok(message) = self.server_rx.try_recv() {
             match message {
                 ServerMessage::Text(line) => {
+                    // First data from the game = connection established:
+                    // time the login music from here.
+                    if self.startup_music_pending {
+                        self.startup_music_pending = false;
+                        self.startup_music_at = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_millis(
+                                    self.app_core.config.sound.startup_music_delay_ms,
+                                ),
+                        );
+                    }
                     self.app_core
                         .perf_stats
                         .record_bytes_received((line.len() + 1) as u64);

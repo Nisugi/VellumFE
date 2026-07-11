@@ -279,20 +279,13 @@ async fn async_run(
         tracing::warn!("Failed to load command history: {}", e);
     }
 
-    // Startup music: play now, or arm a deadline the main loop fires. The
-    // old thread::sleep here froze the whole startup (no render, no input)
-    // for the configured delay; the player is !Send, so defer instead.
+    // Login music plays when the game connection is established (first
+    // server data), not when the client opens. The main loop arms the
+    // deadline on first receive and fires it later — the player is !Send,
+    // so no timer thread (an old thread::sleep here froze startup).
+    let mut startup_music_pending =
+        app_core.config.sound.startup_music && app_core.sound_player.is_some();
     let mut startup_music_at: Option<Instant> = None;
-    if app_core.config.sound.startup_music && app_core.sound_player.is_some() {
-        let delay_ms = app_core.config.sound.startup_music_delay_ms;
-        if delay_ms > 0 {
-            startup_music_at = Some(Instant::now() + std::time::Duration::from_millis(delay_ms));
-        } else if let Some(ref player) = app_core.sound_player {
-            if let Err(e) = player.play_from_sounds_dir("wizard_music", None) {
-                tracing::debug!("Startup music not available: {}", e);
-            }
-        }
-    }
 
     if direct.is_none() {
         app_core.seed_default_quickbars_if_empty();
@@ -627,6 +620,17 @@ async fn async_run(
         while let Ok(msg) = server_rx.try_recv() {
             match msg {
                 ServerMessage::Text(line) => {
+                    // First data from the game = connection established:
+                    // time the login music from here.
+                    if startup_music_pending {
+                        startup_music_pending = false;
+                        startup_music_at = Some(
+                            Instant::now()
+                                + std::time::Duration::from_millis(
+                                    app_core.config.sound.startup_music_delay_ms,
+                                ),
+                        );
+                    }
                     app_core
                         .perf_stats
                         .record_bytes_received((line.len() + 1) as u64);
