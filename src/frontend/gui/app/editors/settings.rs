@@ -27,6 +27,7 @@ pub(in super::super) struct SettingsEditorState {
     lich_dir: String,
     mapdb_path: String,
     mapdb_repo: String,
+    go2_native_map_clicks: bool,
     sound_enabled: bool,
     sound_volume: f32,
     sound_cooldown_ms: u64,
@@ -61,6 +62,7 @@ impl SettingsEditorState {
             lich_dir: config.map.lich_dir.clone().unwrap_or_default(),
             mapdb_path: config.map.mapdb_path.clone().unwrap_or_default(),
             mapdb_repo: config.map.mapdb_repo.clone(),
+            go2_native_map_clicks: config.go2.native_map_clicks,
             buffer_size: config.ui.buffer_size,
             border_style: config.ui.border_style.clone(),
             countdown_icon: config.ui.countdown_icon.clone(),
@@ -98,6 +100,7 @@ impl SettingsEditorState {
             path => Some(path.to_string()),
         };
         config.map.mapdb_repo = self.mapdb_repo.trim().to_string();
+        config.go2.native_map_clicks = self.go2_native_map_clicks;
         config.ui.buffer_size = self.buffer_size;
         config.ui.border_style = self.border_style.clone();
         config.ui.countdown_icon = self.countdown_icon.clone();
@@ -145,6 +148,7 @@ impl VellumGuiApp {
         let updater_status = self.app_core.map_updater.status.clone();
         let updater_installed = self.app_core.map_updater.installed.clone();
         let updater_in_flight = self.app_core.map_updater.in_flight();
+        let saved_target_count = self.app_core.config.go2.saved.len();
         egui::Window::new("Settings")
             .id(egui::Id::new("gui_settings_editor"))
             .open(&mut open)
@@ -255,6 +259,25 @@ impl VellumGuiApp {
                             } else {
                                 ui.label(egui::RichText::new(status_text).weak());
                             }
+                        });
+
+                        ui.collapsing("Travel", |ui| {
+                            ui.label(
+                                "Native .go2 walks the map without Lich — travel with                                  .go2 <room|tag|name>, stop with .go2 stop.",
+                            );
+                            ui.checkbox(
+                                &mut state.go2_native_map_clicks,
+                                "Map clicks travel natively",
+                            )
+                            .on_hover_text(
+                                "Off = clicks send ;go2 to Lich instead (its go2 knows silvers, day passes, urchins)",
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Saved targets: {saved_target_count} (manage with .go2 save / .go2 targets)"
+                                ))
+                                .weak(),
+                            );
                         });
 
                         ui.collapsing("UI", |ui| {

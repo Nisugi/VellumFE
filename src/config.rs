@@ -41,8 +41,8 @@ pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{DialogPosition, SavedDialogPositions};
 pub use settings::{
-    ConnectionConfig, FocusConfig, HighlightsConfig, LoggingConfig, MapConfig, SoundConfig,
-    StreamsConfig, TargetListConfig, TtsConfig, UiConfig, WebConfig,
+    ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
+    SoundConfig, StreamsConfig, TargetListConfig, TtsConfig, UiConfig, WebConfig,
 };
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
 pub use widgets::{
@@ -257,6 +257,8 @@ pub struct Config {
     pub web: WebConfig, // Embedded web server for the mobile web frontend
     #[serde(default)]
     pub map: MapConfig, // Mapdb discovery for the mini map / map explorer
+    #[serde(default)]
+    pub go2: Go2Config, // Native travel: saved targets, travel options
     #[serde(skip)] // Merged view of macros.toml + macros-local.toml
     pub macros: MacrosConfig, // Macro buttons for the web frontend
     #[serde(skip)] // Phone-edited overlay, persisted to macros-local.toml

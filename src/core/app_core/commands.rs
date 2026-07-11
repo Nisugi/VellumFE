@@ -292,6 +292,118 @@ impl AppCore {
         self.add_system_message(&summary);
     }
 
+    /// `.go2 <target>` — native map travel. Subcommands: `stop`, `status`,
+    /// `save <name> [id]`, `targets`, `back`.
+    fn handle_go2(&mut self, args: &[String]) {
+        use crate::core::travel::target::Resolved;
+        let first = args.first().map(String::as_str).unwrap_or("");
+        match first {
+            "" => {
+                self.add_system_message(
+                    "usage: .go2 <room id | uid | tag | saved name | text> — also: .go2 stop / status / save <name> [id] / targets / back",
+                );
+            }
+            "stop" => self.stop_travel(),
+            "status" => {
+                let status = match (self.travel.task(), self.map.mapdb(), self.map.current_room_id)
+                {
+                    (Some(task), Some(db), Some(current)) => {
+                        let done = task.rooms_total() - task.rooms_remaining();
+                        format!(
+                            "[go2] → room {}: {}/{} rooms, ETA {}",
+                            task.destination,
+                            done,
+                            task.rooms_total(),
+                            crate::core::travel::format_eta(task.eta_seconds(db, current))
+                        )
+                    }
+                    (Some(task), _, _) => format!("[go2] → room {} (resolving...)", task.destination),
+                    _ => "[go2] not traveling.".to_string(),
+                };
+                self.add_system_message(&status);
+            }
+            "save" => {
+                let Some(name) = args.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                    self.add_system_message("usage: .go2 save <name> [room id] (defaults to the current room)");
+                    return;
+                };
+                if name.parse::<u32>().is_ok() || name.eq_ignore_ascii_case("back") {
+                    self.add_system_message("[go2] that name would shadow a room id or keyword — pick another");
+                    return;
+                }
+                let id = match args.get(2) {
+                    Some(arg) => match arg.parse::<u32>() {
+                        Ok(id) => Some(id),
+                        Err(_) => {
+                            self.add_system_message(&format!("[go2] '{arg}' is not a room id"));
+                            return;
+                        }
+                    },
+                    None => self.map.current_room_id,
+                };
+                let Some(id) = id else {
+                    self.add_system_message(
+                        "[go2] current room unknown — give an explicit id: .go2 save <name> <id>",
+                    );
+                    return;
+                };
+                self.config.go2.saved.insert(name.to_lowercase(), id);
+                match self.save_config() {
+                    Ok(()) => self.add_system_message(&format!(
+                        "[go2] saved '{}' → room {id} (travel there with .go2 {})",
+                        name.to_lowercase(),
+                        name.to_lowercase()
+                    )),
+                    Err(e) => self.add_system_message(&format!("[go2] save failed: {e}")),
+                }
+            }
+            "targets" => {
+                if self.config.go2.saved.is_empty() {
+                    self.add_system_message("[go2] no saved targets (.go2 save <name>)");
+                } else {
+                    let list: Vec<String> = self
+                        .config
+                        .go2
+                        .saved
+                        .iter()
+                        .map(|(name, id)| format!("{name} → {id}"))
+                        .collect();
+                    self.add_system_message(&format!("[go2] saved targets: {}", list.join(", ")));
+                }
+            }
+            _ => {
+                let Some(db) = self.map.mapdb().cloned() else {
+                    self.add_system_message(
+                        "[go2] map database not loaded — configure it in Settings > Map",
+                    );
+                    return;
+                };
+                let input = args.join(" ");
+                let resolved = crate::core::travel::target::resolve(
+                    &db,
+                    self.map.current_room_id,
+                    &self.config.go2.saved,
+                    self.travel.last_start_room,
+                    &input,
+                );
+                match resolved {
+                    Resolved::Room(id) => self.start_travel(id),
+                    Resolved::Ambiguous(matches) => {
+                        self.add_system_message(&format!(
+                            "[go2] several rooms match '{input}' — pick one with .go2 <id>:"
+                        ));
+                        for (id, title) in matches {
+                            self.add_system_message(&format!("  {id}  {title}"));
+                        }
+                    }
+                    Resolved::NotFound(reason) => {
+                        self.add_system_message(&format!("[go2] {reason}"));
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -313,6 +425,12 @@ impl AppCore {
             // the mapdb (go2 plan phase 2).
             "room" => {
                 self.show_room_debug();
+            }
+
+            // Native map travel (no Lich needed).
+            "go2" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.handle_go2(&args);
             }
 
             // Web frontend: reload macros.toml (+ the phone-edited local

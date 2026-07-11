@@ -1,0 +1,26 @@
+# Travel edge overrides — hand-curated movement for edges the StringProc
+# transpiler can't derive from the mapdb (event gates, ferries, anything
+# whose script is too weird to pattern-match).
+#
+# VellumFE ships this file empty; copy it to ~/.vellum-fe/travel_overrides.toml
+# and add entries to make specific edges walkable. User entries win over
+# shipped ones for the same edge.
+#
+# Each entry names a directed edge by mapdb room ids and the actions the
+# walk executor runs to cross it:
+#
+#   actions:  "move:<command>"   send a command that changes the room
+#             "put:<command>"    send a command (no room change expected)
+#             "waitrt"           wait out roundtime
+#             "sleep:<seconds>"  fixed pause
+#             "noop"             nothing (edge exists, no command needed)
+#   cost:     optional seconds for pathfinding when the mapdb's timeto is a
+#             gated proc (defaults to the mapdb cost, then 0.2)
+#
+# Example — a lever-gate:
+#
+# [[edge]]
+# from = 3670
+# to = 3671
+# cost = 12.0
+# actions = ["put:pull lever", "waitrt", "move:go gate"]

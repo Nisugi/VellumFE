@@ -1653,9 +1653,14 @@ impl VellumGuiApp {
             }
         }
 
-        // Drain map worker results (mapdb load, layout generation) and the
-        // mapdb release updater.
+        // Drain map worker results (mapdb load, layout generation), the
+        // mapdb release updater, and the walk executor.
         self.app_core.poll_map();
+        // Commands the walk executor queued go out through the same path as
+        // typed commands (echo, ghost-room labels, network).
+        for command in self.app_core.take_outbound() {
+            self.dispatch_command(command);
+        }
 
         let mut received_text = false;
         while let Ok(message) = self.server_rx.try_recv() {
@@ -3308,7 +3313,13 @@ impl VellumGuiApp {
                 self.app_core.request_menu(exist_id, noun, click.click_pos)
             }
         };
-        self.dispatch_raw_command(outbound);
+        // Direct links carrying a dot command (e.g. the map's native ".go2")
+        // are client commands, not game text.
+        if outbound.starts_with('.') {
+            self.dispatch_command(outbound);
+        } else {
+            self.dispatch_raw_command(outbound);
+        }
     }
 }
 
@@ -3367,10 +3378,13 @@ impl eframe::App for VellumGuiApp {
             .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
-        // Keep painting while the map worker or mapdb download is busy so
-        // results and progress appear without waiting for user input or
-        // game text.
-        if self.app_core.map.has_pending() || self.app_core.map_updater.in_flight() {
+        // Keep painting while the map worker, mapdb download, or walk
+        // executor is busy so results and progress appear without waiting
+        // for user input or game text (travel needs ticks for RT waits).
+        if self.app_core.map.has_pending()
+            || self.app_core.map_updater.in_flight()
+            || self.app_core.travel.is_traveling()
+        {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(150));
         }

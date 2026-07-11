@@ -18,6 +18,7 @@ pub mod menu_actions;
 pub mod messages;
 pub mod pathing;
 pub mod remote;
+pub mod travel;
 pub mod state;
 
 pub use app_core::AppCore;

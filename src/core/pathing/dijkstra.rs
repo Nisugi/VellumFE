@@ -32,21 +32,28 @@ pub struct Dijkstra {
     pub distance: HashMap<u32, f64>,
 }
 
-/// The v1 cost of stepping from `room` to its wayto neighbor `dest`.
+/// The cost of stepping from `room` to its wayto neighbor `dest`.
 /// `None` = edge not routable (see module docs for the rules).
+///
+/// Scripted commands are admitted when the transpiler understands them;
+/// scripted costs resolve through `transpile::resolve_timeto` (delegation
+/// follows, settings gates default off, negative costs — which would
+/// corrupt the search — are rejected).
 fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
-    if is_proc_command(command) {
-        return None;
-    }
     if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
         return None;
     }
-    match room.timeto.get(&dest)? {
-        // Negative costs would corrupt the search; the mapdb shouldn't
-        // contain any, but a data bug must not produce silent wrong paths.
-        TimeTo::Seconds(s) if *s >= 0.0 => Some(*s),
-        _ => None,
+    // Curated overrides make an edge walkable regardless of its script.
+    if let Some(ov) = super::overrides::edge_override(room.id, dest) {
+        return ov
+            .cost
+            .or_else(|| super::transpile::resolve_timeto(db, room, dest))
+            .or(Some(0.2));
     }
+    if is_proc_command(command) && !super::transpile::transpilable(command) {
+        return None;
+    }
+    super::transpile::resolve_timeto(db, room, dest)
 }
 
 /// Non-NaN f64 ordering for the heap (timeto costs are plain numbers).
@@ -65,6 +72,18 @@ impl Ord for Cost {
 }
 
 pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra {
+    dijkstra_filtered(db, source, target, &|_, _| true)
+}
+
+/// `dijkstra` with an edge admittance filter — the walk executor uses it to
+/// exclude edges that failed repeatedly this session (go2's "changing
+/// timeto to nil" restart behavior).
+pub fn dijkstra_filtered(
+    db: &MapDb,
+    source: u32,
+    target: Option<PathTarget>,
+    admit: &dyn Fn(u32, u32) -> bool,
+) -> Dijkstra {
     let mut result = Dijkstra::default();
     if db.room(source).is_none() {
         return result;
@@ -98,6 +117,9 @@ pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra
             if visited.get(&adjacent).copied().unwrap_or(false) {
                 continue;
             }
+            if !admit(room_id, adjacent) {
+                continue;
+            }
             let Some(weight) = edge_cost(db, room, adjacent, command) else {
                 continue;
             };
@@ -121,7 +143,17 @@ pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra
 /// including the destination. `None` when unreachable (or when already
 /// there, matching Lich).
 pub fn path_to(db: &MapDb, source: u32, destination: u32) -> Option<Vec<u32>> {
-    let search = dijkstra(db, source, Some(PathTarget::Room(destination)));
+    path_to_filtered(db, source, destination, &|_, _| true)
+}
+
+/// `path_to` with an edge admittance filter (see `dijkstra_filtered`).
+pub fn path_to_filtered(
+    db: &MapDb,
+    source: u32,
+    destination: u32,
+    admit: &dyn Fn(u32, u32) -> bool,
+) -> Option<Vec<u32>> {
+    let search = dijkstra_filtered(db, source, Some(PathTarget::Room(destination)), admit);
     search.previous.get(&destination)?;
     let mut path = vec![destination];
     loop {

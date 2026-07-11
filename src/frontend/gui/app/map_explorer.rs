@@ -136,7 +136,11 @@ impl VellumGuiApp {
             self.app_core.map.request_location(&loc);
         }
         if let Some(id) = out.walk_to {
-            self.dispatch_raw_command(format!(";go2 {id}"));
+            if self.app_core.config.go2.native_map_clicks {
+                self.app_core.start_travel(id);
+            } else {
+                self.dispatch_raw_command(format!(";go2 {id}"));
+            }
         }
         if let Some(edit) = out.override_edit {
             self.app_core.map.apply_override_edit(edit);
@@ -357,7 +361,7 @@ impl VellumGuiApp {
                     ui.label(format!("uid: {uid}"));
                 }
                 ui.separator();
-                if ui.button("Walk here  (;go2)").clicked() {
+                if ui.button("Walk here").clicked() {
                     out.walk_to = Some(selected);
                 }
                 if ui.button("Center view").clicked() {

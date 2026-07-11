@@ -97,6 +97,8 @@ pub struct AppCore {
     pub map: crate::core::map_service::MapService,
     /// Downloads released mapdbs from GitHub (Settings > Map).
     pub map_updater: crate::core::mapdb_update::MapDbUpdater,
+    /// Native go2: the walk executor and its outbound command queue.
+    pub travel: crate::core::travel::TravelService,
 
     pub nav_room_id: Option<String>,
 
@@ -235,6 +237,7 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(
                 crate::core::mapdb_update::download_dir(&map_base),
             ),
+            travel: Default::default(),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -325,6 +328,131 @@ impl AppCore {
         self.map.poll();
         if self.map_updater.poll() {
             self.refresh_map_source();
+        }
+        self.tick_travel();
+    }
+
+    /// Advance the walk executor against the latest world state. Called
+    /// after every processed network line and once per frontend frame (the
+    /// frame tick covers time-based waits like roundtime when the game is
+    /// quiet).
+    pub fn tick_travel(&mut self) {
+        if !self.travel.is_traveling() {
+            return;
+        }
+        let Some(db) = self.map.mapdb().cloned() else {
+            return;
+        };
+        // Active spell numbers for scripted-edge checkspell branches.
+        let active_spells: Vec<u16> = self
+            .game_state
+            .effects
+            .get("ActiveSpells")
+            .map(|content| {
+                content
+                    .effects
+                    .iter()
+                    .filter_map(|e| e.id.trim().parse::<u16>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ctx = crate::core::travel::TravelContext {
+            db: &db,
+            current_room: self.map.current_room_id,
+            dead: self.game_state.status.dead,
+            muckled: self.game_state.status.stunned || self.game_state.status.webbed,
+            standing: self.game_state.status.standing,
+            sitting: self.game_state.status.sitting,
+            kneeling: self.game_state.status.kneeling,
+            active_spells: &active_spells,
+            rt_remaining: self.game_state.roundtime_remaining() as f64,
+            now_ms: self.travel.now_ms(),
+        };
+        let events = self.travel.tick(ctx);
+        for event in events {
+            match event {
+                crate::core::travel::TravelEvent::Status(text) => {
+                    self.add_system_message(&format!("[go2] {text}"));
+                }
+                crate::core::travel::TravelEvent::Arrived {
+                    destination,
+                    seconds,
+                } => {
+                    self.add_system_message(&format!(
+                        "[go2] arrived at room {destination} — travel time {}",
+                        crate::core::travel::format_eta(seconds)
+                    ));
+                }
+                crate::core::travel::TravelEvent::Failed(reason) => {
+                    self.add_system_message(&format!("[go2] {reason}"));
+                }
+                crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
+            }
+        }
+    }
+
+    /// Commands automation wants sent to the game; frontends drain this
+    /// through the same path as typed commands.
+    pub fn take_outbound(&mut self) -> Vec<String> {
+        self.travel.take_outbound()
+    }
+
+    /// Plan and begin a trip to a mapdb room id.
+    pub fn start_travel(&mut self, destination: u32) {
+        let Some(db) = self.map.mapdb().cloned() else {
+            self.add_system_message(
+                "[go2] map database not loaded — configure it in Settings > Map",
+            );
+            return;
+        };
+        let Some(current) = self.map.current_room_id else {
+            self.add_system_message(
+                "[go2] your current room hasn't resolved against the mapdb yet (see .room)",
+            );
+            return;
+        };
+        if current == destination {
+            self.add_system_message("[go2] you're already here...");
+            return;
+        }
+        if db.room(destination).is_none() {
+            self.add_system_message(&format!("[go2] room {destination} is not in the mapdb"));
+            return;
+        }
+        match crate::core::travel::TravelTask::start(
+            &db,
+            current,
+            destination,
+            self.travel.now_ms(),
+        ) {
+            Ok(task) => {
+                let eta = task.eta_seconds(&db, current);
+                let title = db
+                    .room(destination)
+                    .and_then(|r| r.title.first().cloned())
+                    .unwrap_or_default();
+                self.add_system_message(&format!(
+                    "[go2] → {title} ({destination}): {} rooms, ETA {}",
+                    task.rooms_total(),
+                    crate::core::travel::format_eta(eta)
+                ));
+                self.travel.last_start_room = Some(current);
+                self.travel.set_task(task);
+                // Fire the first move now instead of on the next frame.
+                self.tick_travel();
+            }
+            Err(reason) => {
+                self.add_system_message(&format!("[go2] {reason}"));
+            }
+        }
+    }
+
+    /// Cancel the active trip (`.go2 stop`, Esc).
+    pub fn stop_travel(&mut self) {
+        if self.travel.stop() {
+            self.add_system_message("[go2] travel stopped.");
+        } else {
+            self.add_system_message("[go2] not traveling.");
         }
     }
 
@@ -1855,6 +1983,9 @@ impl AppCore {
         }
 
         self.sync_map_room();
+        // Walk executor reacts to whatever this line changed (room, RT,
+        // status); the per-frame tick covers pure time-based waits.
+        self.tick_travel();
 
         Ok(())
     }
@@ -2163,6 +2294,9 @@ impl AppCore {
         self.add_system_message("  .settings               - Open settings editor");
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
+        self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
+        self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
+        self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
         self.add_system_message("");
 
         // Layout commands

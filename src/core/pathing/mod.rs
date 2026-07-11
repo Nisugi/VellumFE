@@ -12,7 +12,11 @@
 //! - Urchin-hideout teleport nodes never route.
 
 pub mod dijkstra;
+pub mod edge;
+pub mod overrides;
+pub mod transpile;
 
 pub use dijkstra::{
-    dijkstra, estimate_time, find_nearest, find_nearest_by_tag, path_to, PathTarget,
+    dijkstra, dijkstra_filtered, estimate_time, find_nearest, find_nearest_by_tag, path_to,
+    path_to_filtered, PathTarget,
 };

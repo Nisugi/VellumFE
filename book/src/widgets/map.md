@@ -25,8 +25,9 @@ Or in-app: `.addwindow map`.
 
 The mini map follows your character: it recenters as you move and swaps
 sheets automatically when you go inside a building (interiors render as
-their own floor plan). Click a room to walk there via `;go2` — this needs
-a Lich connection with the go2 script available.
+their own floor plan). Click a room to walk there — natively via the
+built-in [travel engine](travel.md), no Lich needed (switchable to
+`;go2` pass-through in **Settings → Travel**).
 
 Right-click the window for a zoom control and **Open Map Explorer**.
 
@@ -53,7 +54,7 @@ map, not just where you're standing:
 - **Follow mode** — track your character as you move
 - **Outdoor / interiors sheets**, drag-pan, scroll-zoom
 - **Room inspection** — click a room to see its details
-- **Walk-to** — double-click a room to travel there (`;go2`)
+- **Walk-to** — double-click a room to travel there ([native travel](travel.md))
 - **Override editor** — an edit mode where you drag room groups (Alt-drag
   a single room) to tidy a layout; edits are saved as per-room override
   diffs that survive mapdb updates, and edges can be restyled (e.g.
