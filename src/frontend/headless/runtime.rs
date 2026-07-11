@@ -579,6 +579,14 @@ pub async fn async_run(
                 app_core.add_system_message("Logged out.");
                 app_core.set_remote_session_state(supervisor.status(SessionState::Idle));
             }
+            // Map/travel work in flight (mapdb download, walk executor RT
+            // waits): wake periodically so the post-select tick below runs
+            // even when the game is quiet. Guarded, so idle sessions stay
+            // dormant (phone battery).
+            _ = tokio::time::sleep(Duration::from_millis(250)),
+                if app_core.travel.is_traveling()
+                    || app_core.map_updater.in_flight()
+                    || app_core.map.has_pending() => {}
             // Reconnect timer fired: start a fresh attempt.
             _ = async {
                 match supervisor.reconnect_at {
@@ -629,6 +637,21 @@ pub async fn async_run(
                     .clone()
                     .or(supervisor.character.take());
                 app_core.set_remote_session_state(supervisor.status(SessionState::Connected));
+            }
+        }
+
+        // Map worker, mapdb updater, and walk executor tick once per batch;
+        // travel commands go out through the same path as typed ones.
+        app_core.poll_map();
+        for command in app_core.take_outbound() {
+            match app_core.send_command(command) {
+                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                    if let Some(conn) = supervisor.connection.as_ref() {
+                        let _ = conn.command_tx.send(out);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("travel command failed: {e}"),
             }
         }
 

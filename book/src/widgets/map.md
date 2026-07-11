@@ -78,6 +78,13 @@ Nothing downloads automatically — the Download button is an explicit
 action. Downloaded releases carry GemStone data, so DragonRealms sessions
 use the Lich folder.
 
+From any frontend — including the phone apps, which have no Settings >
+Map panel — `.mapdb download` fetches the latest release, `.mapdb` shows
+status, `.mapdb remove` deletes downloads, and `.mapdb repo <owner/repo>`
+changes the source. On mobile the map data feeds `.room` and
+[`.go2` travel](travel.md); the visual map itself is not in the phone UI
+yet.
+
 ## Configuration
 
 ```toml

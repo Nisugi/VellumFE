@@ -380,10 +380,12 @@ async fn async_run(
             }
         }
 
-        // Tick the walk executor (time-based waits like roundtime need a
-        // clock even when the game is quiet) and send whatever it queued
-        // through the same path as typed commands.
-        app_core.tick_travel();
+        // Drain the map worker + mapdb updater and tick the walk executor
+        // (time-based waits like roundtime need a clock even when the game
+        // is quiet), then send whatever travel queued through the same path
+        // as typed commands. Without the map poll, the mapdb load event is
+        // never received and .room/.go2/.mapdb are dead on the TUI.
+        app_core.poll_map();
         for command in app_core.take_outbound() {
             match app_core.send_command(command) {
                 Ok(out) if !out.is_empty() && !out.starts_with("action:") => {

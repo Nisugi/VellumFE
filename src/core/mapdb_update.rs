@@ -104,6 +104,9 @@ pub struct MapDbUpdater {
     pub status: UpdateStatus,
     /// Newest downloaded tag, kept current across downloads and removals.
     pub installed: Option<String>,
+    /// Terminal status of the last run, consumed once via `take_finished`
+    /// so completion can be announced exactly once on any frontend.
+    finished: Option<UpdateStatus>,
 }
 
 impl MapDbUpdater {
@@ -114,6 +117,7 @@ impl MapDbUpdater {
             rx: None,
             status: UpdateStatus::Idle,
             installed,
+            finished: None,
         }
     }
 
@@ -162,6 +166,14 @@ impl MapDbUpdater {
                         self.installed = Some(tag.clone());
                         installed_new = true;
                     }
+                    if matches!(
+                        status,
+                        UpdateStatus::Updated { .. }
+                            | UpdateStatus::UpToDate { .. }
+                            | UpdateStatus::Failed(_)
+                    ) {
+                        self.finished = Some(status.clone());
+                    }
                     self.status = status;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -173,14 +185,21 @@ impl MapDbUpdater {
                         self.status,
                         UpdateStatus::Checking | UpdateStatus::Downloading { .. }
                     ) {
-                        self.status =
+                        let failed =
                             UpdateStatus::Failed("update worker exited unexpectedly".into());
+                        self.finished = Some(failed.clone());
+                        self.status = failed;
                     }
                     break;
                 }
             }
         }
         installed_new
+    }
+
+    /// The last run's terminal status, once.
+    pub fn take_finished(&mut self) -> Option<UpdateStatus> {
+        self.finished.take()
     }
 
     /// Delete every downloaded version (falling the map source back to the

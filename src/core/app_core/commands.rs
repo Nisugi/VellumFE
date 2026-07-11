@@ -292,6 +292,91 @@ impl AppCore {
         self.add_system_message(&summary);
     }
 
+    /// `.mapdb` — map data management from any frontend. Subcommands:
+    /// `status` (default), `download`, `remove`, `repo <owner/repo>`.
+    fn handle_mapdb(&mut self, args: &[String]) {
+        use crate::core::mapdb_update::UpdateStatus;
+        match args.first().map(String::as_str).unwrap_or("status") {
+            "status" => {
+                let db = match self.map.db_state() {
+                    crate::core::map_service::DbState::Loaded => self
+                        .map
+                        .mapdb()
+                        .map(|db| format!("loaded ({} rooms)", db.room_count()))
+                        .unwrap_or_else(|| "loaded".to_string()),
+                    state => format!("{state:?}"),
+                };
+                self.add_system_message(&format!("[map] database: {db}"));
+                let installed = self
+                    .map_updater
+                    .installed
+                    .clone()
+                    .unwrap_or_else(|| "none".to_string());
+                self.add_system_message(&format!(
+                    "[map] downloaded release: {installed} (repo: {})",
+                    self.config.map.mapdb_repo
+                ));
+                if let UpdateStatus::Downloading {
+                    tag,
+                    received,
+                    total,
+                } = &self.map_updater.status
+                {
+                    let progress = match total {
+                        Some(total) => format!(
+                            "{:.1} / {:.1} MB",
+                            *received as f64 / 1e6,
+                            *total as f64 / 1e6
+                        ),
+                        None => format!("{:.1} MB", *received as f64 / 1e6),
+                    };
+                    self.add_system_message(&format!("[map] downloading {tag}: {progress}"));
+                }
+            }
+            "download" | "update" => {
+                if self.map_updater.in_flight() {
+                    self.add_system_message("[map] a download is already running (.mapdb status)");
+                    return;
+                }
+                let repo = self.config.map.mapdb_repo.trim().to_owned();
+                if repo.is_empty() {
+                    self.add_system_message("[map] no repo configured (.mapdb repo <owner/repo>)");
+                    return;
+                }
+                self.add_system_message(&format!("[map] checking {repo} for the latest release..."));
+                self.start_mapdb_download(&repo);
+            }
+            "remove" => {
+                if self.map_updater.in_flight() {
+                    self.add_system_message("[map] can't remove while a download is running");
+                    return;
+                }
+                self.remove_downloaded_mapdb();
+                self.add_system_message(
+                    "[map] downloaded map data removed (Lich folder is the source again, if set)",
+                );
+            }
+            "repo" => {
+                let Some(repo) = args.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                    self.add_system_message("usage: .mapdb repo <owner/repo>");
+                    return;
+                };
+                self.config.map.mapdb_repo = repo.to_string();
+                match self.save_config() {
+                    Ok(()) => self.add_system_message(&format!(
+                        "[map] release repo set to {repo} (.mapdb download to fetch)"
+                    )),
+                    Err(e) => self.add_system_message(&format!("[map] save failed: {e}")),
+                }
+            }
+            other => {
+                self.add_system_message(&format!(
+                    "[map] unknown subcommand '{other}' — usage: .mapdb [status|download|remove|repo <owner/repo>]"
+                ));
+            }
+        }
+    }
+
     /// `.go2 <target>` — native map travel. Subcommands: `stop`, `status`,
     /// `save <name> [id]`, `targets`, `back`.
     fn handle_go2(&mut self, args: &[String]) {
@@ -431,6 +516,13 @@ impl AppCore {
             "go2" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 self.handle_go2(&args);
+            }
+
+            // Map data management from any frontend — on phones this is THE
+            // way to get map data (no Settings > Map panel there).
+            "mapdb" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.handle_mapdb(&args);
             }
 
             // Web frontend: reload macros.toml (+ the phone-edited local

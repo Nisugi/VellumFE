@@ -329,6 +329,18 @@ impl AppCore {
         if self.map_updater.poll() {
             self.refresh_map_source();
         }
+        // Announce download completion everywhere — on phones there is no
+        // settings panel to watch, only the game text.
+        if let Some(status) = self.map_updater.take_finished() {
+            use crate::core::mapdb_update::UpdateStatus;
+            let text = match status {
+                UpdateStatus::Updated { tag } => format!("map data {tag} installed"),
+                UpdateStatus::UpToDate { tag } => format!("map data already up to date ({tag})"),
+                UpdateStatus::Failed(e) => format!("map download failed: {e}"),
+                _ => "map update finished".to_string(),
+            };
+            self.add_system_message(&format!("[map] {text}"));
+        }
         self.tick_travel();
     }
 
@@ -2294,6 +2306,7 @@ impl AppCore {
         self.add_system_message("  .settings               - Open settings editor");
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
+        self.add_system_message("  .mapdb [download|remove|repo <r>] - Manage downloaded map data (status by default)");
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
