@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::mapdb::{Room, RoomTable};
+use crate::core::mapdb::{Room, RoomTable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

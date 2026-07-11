@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::mapdb::Room;
+use crate::core::mapdb::Room;
 use super::{generate_layout, Layout};
 
 /// Bump when the algorithms change so stale cached layouts regenerate.

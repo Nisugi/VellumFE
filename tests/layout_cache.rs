@@ -3,9 +3,8 @@
 
 use std::path::PathBuf;
 
-use vellum_fe::core::layout_engine::{
-    generate_layout, mapdb, rooms_content_hash, CacheOutcome, LayoutCache, Room,
-};
+use vellum_fe::core::layout_engine::{generate_layout, rooms_content_hash, CacheOutcome, LayoutCache};
+use vellum_fe::core::mapdb::{self, Room};
 
 fn load_rooms(file: &str) -> Vec<Room> {
     let path = format!(
@@ -175,12 +174,12 @@ fn real_lich_mapdb_end_to_end() {
         eprintln!("VELLUM_LICH_GAME_DIR not set; skipping");
         return;
     };
-    let path = vellum_fe::core::layout_engine::find_latest_mapdb(std::path::Path::new(&game_dir))
+    let path = vellum_fe::core::mapdb::find_latest_mapdb(std::path::Path::new(&game_dir))
         .expect("a map-<timestamp>.json in the game data dir");
     println!("newest mapdb: {}", path.display());
 
     let t0 = std::time::Instant::now();
-    let db = vellum_fe::core::layout_engine::MapDb::load(&path).expect("parse mapdb");
+    let db = vellum_fe::core::mapdb::MapDb::load(&path).expect("parse mapdb");
     println!(
         "parsed + indexed in {}ms ({} locations)",
         t0.elapsed().as_millis(),
@@ -211,7 +210,8 @@ fn real_lich_mapdb_end_to_end() {
 
 #[test]
 fn overrides_shift_groups_pin_rooms_and_skip_orphans() {
-    use vellum_fe::core::layout_engine::{overrides, LocationOverrides, RoomTable};
+    use vellum_fe::core::layout_engine::{overrides, LocationOverrides};
+    use vellum_fe::core::mapdb::RoomTable;
 
     let rooms = load_rooms("moonsedge");
     let mut owned = rooms.clone();
@@ -282,8 +282,9 @@ fn overrides_shift_groups_pin_rooms_and_skip_orphans() {
 #[test]
 fn classification_override_moves_a_group_between_sheets() {
     use vellum_fe::core::layout_engine::{
-        generate_layout_curated, overrides, LocationOverrides, RoomTable, SheetChoice,
+        generate_layout_curated, overrides, LocationOverrides, SheetChoice,
     };
+    use vellum_fe::core::mapdb::RoomTable;
 
     let mut rooms = load_rooms("moonsedge");
     let pristine = generate_layout(&mut rooms.clone());

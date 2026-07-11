@@ -11,7 +11,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use vellum_fe::core::layout_engine::{generate_layout, mapdb, Cell, Layout, LayoutStats, Room};
+use vellum_fe::core::layout_engine::{generate_layout, Cell, Layout, LayoutStats};
+use vellum_fe::core::mapdb::{self, Room};
 
 /// (fixture zone name, room-extract file stem)
 const ZONES: [(&str, &str); 7] = [

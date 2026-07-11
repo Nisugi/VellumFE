@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::mapdb::{Room, RoomTable};
+use crate::core::mapdb::{Room, RoomTable};
 use super::positioner::Group;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,11 +346,14 @@ mod tests {
             uid: vec![7_000_000 + id as i64],
             location: Some("Test".into()),
             title: vec![],
+            description: Vec::new(),
             wayto: wayto
                 .iter()
                 .map(|&(t, cmd)| (t, cmd.to_string()))
                 .collect::<BTreeMap<_, _>>(),
+            timeto: BTreeMap::new(),
             dirto: BTreeMap::new(),
+            tags: Vec::new(),
             paths: String::new(),
             climate: None,
             terrain: None,

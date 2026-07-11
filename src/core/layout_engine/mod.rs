@@ -12,7 +12,6 @@
 pub mod cache;
 pub mod classifier;
 pub mod direction;
-pub mod mapdb;
 pub mod overrides;
 pub mod packer;
 pub mod positioner;
@@ -22,9 +21,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::mapdb::{Room, RoomTable};
+
 pub use cache::{rooms_content_hash, CacheOutcome, LayoutCache};
 pub use classifier::Classification;
-pub use mapdb::{find_latest_mapdb, MapDb, Room, RoomTable};
 pub use overrides::{EdgeAction, EdgeOverride, LocationOverrides, MapOverrides, SheetChoice};
 pub use packer::PackInfo;
 pub use scene::{build_scene, MapScene, SceneEdgeKind, Sheet};

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::direction::DirectionMap;
-use super::mapdb::{Room, RoomTable};
+use crate::core::mapdb::{Room, RoomTable};
 use super::positioner::{Cell, Group, PackMethod};
 
 const GROUP_PADDING: i32 = 3; // cells between strip-placed groups

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::classifier::interior_clusters;
 use super::direction::DirectionMap;
-use super::mapdb::RoomTable;
+use crate::core::mapdb::RoomTable;
 use super::overrides::{group_anchor_key, EdgeAction, EdgeOverride};
 use super::positioner::Cell;
 use super::Layout;
@@ -452,16 +452,19 @@ mod tests {
     /// after `Connector` proved too blunt (it re-lays-out the zone).
     #[test]
     fn dash_override_restyles_without_moving_rooms() {
-        let mk = |id: u32, uid: i64, wayto: &[(u32, &str)]| super::super::mapdb::Room {
+        let mk = |id: u32, uid: i64, wayto: &[(u32, &str)]| crate::core::mapdb::Room {
             id,
             uid: vec![uid],
             location: Some("Test".into()),
             title: vec![format!("[Room {id}]")],
+            description: Vec::new(),
             wayto: wayto
                 .iter()
                 .map(|&(t, c)| (t, c.to_string()))
                 .collect(),
+            timeto: Default::default(),
             dirto: Default::default(),
+            tags: Vec::new(),
             paths: "Obvious paths: north, south".into(),
             climate: None,
             terrain: None,

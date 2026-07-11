@@ -1,13 +1,23 @@
-//! Mapdb room model for the layout engine.
+//! The mapdb Room model — full parse of Lich's room JSON.
 //!
-//! Rooms come from the Lich mapdb JSON array. Only the fields the layout
-//! pipeline reads are kept (docs/layout-engine-spec.md §2). `wayto`/`dirto`
-//! keys are parsed to numeric ids and stored in a BTreeMap so iteration is
-//! ascending-numeric, matching JS object key order for integer-like keys.
+//! Shared by the layout engine (which reads the spatial fields, spec §2) and
+//! the pathing engine (which reads `wayto`/`timeto`/`tags`). `wayto`/`dirto`/
+//! `timeto` keys are parsed to numeric ids and stored in BTreeMaps so
+//! iteration is ascending-numeric, matching JS object key order for
+//! integer-like keys.
 
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+
+/// A `timeto` edge weight: seconds, or an embedded-Ruby StringProc source
+/// (`";e …"`) that Lich evaluates at path time. VellumFE never executes
+/// Ruby — procs are matched by the transpiler or the edge is unroutable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimeTo {
+    Seconds(f64),
+    Proc(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct Room {
@@ -16,10 +26,17 @@ pub struct Room {
     pub uid: Vec<i64>,
     pub location: Option<String>,
     pub title: Vec<String>,
-    /// Movement commands keyed by destination room id.
+    pub description: Vec<String>,
+    /// Movement commands keyed by destination room id. Commands starting
+    /// with `";e "` are StringProc source (see `is_proc_command`).
     pub wayto: BTreeMap<u32, String>,
+    /// Edge costs in seconds keyed by destination room id. A wayto edge
+    /// without a timeto entry is NOT routable (Lich skips it in dijkstra).
+    pub timeto: BTreeMap<u32, TimeTo>,
     /// Hand-curated direction overrides keyed by destination room id.
     pub dirto: BTreeMap<u32, String>,
+    /// Search/routing tags ("bank", "furrier", …).
+    pub tags: Vec<String>,
     /// `"Obvious exits: …"` (indoor) / `"Obvious paths: …"` (outdoor).
     /// Arrays in the JSON are joined with `,` (JS `String(array)` semantics).
     pub paths: String,
@@ -30,10 +47,17 @@ pub struct Room {
     pub image_coords: Option<[f64; 4]>,
 }
 
+/// A wayto command that is embedded Ruby, not a typeable game command.
+pub fn is_proc_command(command: &str) -> bool {
+    command.starts_with(";e ") || command == ";e"
+}
+
 impl Room {
     /// Virtual mapdb rooms that model the urchin-guide teleport network
     /// (one per town, titled "[Town - Urchin Hideout]", waytos to half the
-    /// district). They are routing data, not places — never mapped.
+    /// district). They are routing data, not places — never mapped, and
+    /// excluded from v1 pathing (urchin guides cost silver and are off by
+    /// default).
     pub fn is_urchin_hideout(&self) -> bool {
         self.title
             .iter()
@@ -50,50 +74,51 @@ impl Room {
             .map(|a| a.iter().filter_map(Value::as_i64).collect())
             .unwrap_or_default();
 
-        let title = obj
-            .get("title")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let image_coords = obj
-            .get("image_coords")
-            .and_then(Value::as_array)
-            .and_then(|a| {
-                if a.len() == 4 {
-                    let mut coords = [0.0; 4];
-                    for (i, v) in a.iter().enumerate() {
-                        coords[i] = v.as_f64()?;
-                    }
-                    Some(coords)
-                } else {
-                    None
-                }
-            });
-
         Some(Room {
             id,
             uid,
             location: string_field(obj.get("location")),
-            title,
+            title: string_array(obj.get("title")),
+            description: string_array(obj.get("description")),
             wayto: id_keyed_strings(obj.get("wayto")),
+            timeto: id_keyed_timeto(obj.get("timeto")),
             dirto: id_keyed_strings(obj.get("dirto")),
+            tags: string_array(obj.get("tags")),
             paths: paths_string(obj.get("paths")),
             climate: string_field(obj.get("climate")),
             terrain: string_field(obj.get("terrain")),
             image: string_field(obj.get("image")),
-            image_coords,
+            image_coords: obj.get("image_coords").and_then(Value::as_array).and_then(
+                |a| {
+                    if a.len() == 4 {
+                        let mut coords = [0.0; 4];
+                        for (i, v) in a.iter().enumerate() {
+                            coords[i] = v.as_f64()?;
+                        }
+                        Some(coords)
+                    } else {
+                        None
+                    }
+                },
+            ),
         })
     }
 }
 
 fn string_field(value: Option<&Value>) -> Option<String> {
     value.and_then(Value::as_str).map(str::to_owned)
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `{ "1234": "north", ... }` → numeric-keyed map. Non-numeric keys and
@@ -104,6 +129,29 @@ fn id_keyed_strings(value: Option<&Value>) -> BTreeMap<u32, String> {
         for (key, val) in obj {
             if let (Ok(id), Some(s)) = (key.parse::<u32>(), val.as_str()) {
                 map.insert(id, s.to_owned());
+            }
+        }
+    }
+    map
+}
+
+/// `{ "1234": 0.2, "5678": ";e …" }` → numeric-keyed edge costs. Lich
+/// serializes StringProc costs as `";e …"` strings.
+fn id_keyed_timeto(value: Option<&Value>) -> BTreeMap<u32, TimeTo> {
+    let mut map = BTreeMap::new();
+    if let Some(Value::Object(obj)) = value {
+        for (key, val) in obj {
+            let Ok(id) = key.parse::<u32>() else { continue };
+            match val {
+                Value::Number(n) => {
+                    if let Some(seconds) = n.as_f64() {
+                        map.insert(id, TimeTo::Seconds(seconds));
+                    }
+                }
+                Value::String(s) => {
+                    map.insert(id, TimeTo::Proc(s.clone()));
+                }
+                _ => {}
             }
         }
     }
@@ -148,105 +196,8 @@ pub fn rooms_from_array(json: &str) -> serde_json::Result<Vec<Room>> {
     Ok(rooms)
 }
 
-/// The whole mapdb, indexed for layout generation: rooms grouped by location
-/// plus uid/id → location lookups (uids are the stable identity the game
-/// stream reports; ids are Lich's build-local numbering).
-pub struct MapDb {
-    locations: std::collections::BTreeMap<String, Vec<Room>>,
-    location_of_id: std::collections::HashMap<u32, String>,
-    location_of_uid: std::collections::HashMap<i64, String>,
-    room_id_of_uid: std::collections::HashMap<i64, u32>,
-}
-
-impl MapDb {
-    /// Parse a full mapdb JSON array (Lich's `data/<GAME>/map-<ts>.json`).
-    /// Rooms without a `location` cannot be laid out and are dropped.
-    pub fn load(path: &std::path::Path) -> std::io::Result<MapDb> {
-        let json = std::fs::read_to_string(path)?;
-        let db: Vec<Value> = serde_json::from_str(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        let mut locations: std::collections::BTreeMap<String, Vec<Room>> = Default::default();
-        let mut location_of_id = std::collections::HashMap::new();
-        let mut location_of_uid = std::collections::HashMap::new();
-        let mut room_id_of_uid = std::collections::HashMap::new();
-        for value in &db {
-            let Some(room) = Room::from_json(value) else {
-                continue;
-            };
-            if room.is_urchin_hideout() {
-                continue; // teleport routing node, not a mappable place
-            }
-            let Some(location) = room.location.clone() else {
-                continue;
-            };
-            location_of_id.insert(room.id, location.clone());
-            for &uid in &room.uid {
-                location_of_uid.insert(uid, location.clone());
-                room_id_of_uid.insert(uid, room.id);
-            }
-            locations.entry(location).or_default().push(room);
-        }
-        for rooms in locations.values_mut() {
-            rooms.sort_by_key(|r| r.id);
-        }
-        Ok(MapDb {
-            locations,
-            location_of_id,
-            location_of_uid,
-            room_id_of_uid,
-        })
-    }
-
-    pub fn locations(&self) -> impl Iterator<Item = &str> {
-        self.locations.keys().map(String::as_str)
-    }
-
-    /// Rooms of one location, in canonical ascending-id order.
-    pub fn rooms(&self, location: &str) -> Option<&[Room]> {
-        self.locations.get(location).map(Vec::as_slice)
-    }
-
-    pub fn location_of_uid(&self, uid: i64) -> Option<&str> {
-        self.location_of_uid.get(&uid).map(String::as_str)
-    }
-
-    pub fn location_of_room_id(&self, id: u32) -> Option<&str> {
-        self.location_of_id.get(&id).map(String::as_str)
-    }
-
-    /// The Lich room id carrying this game uid (`<nav rm='…'/>` reports uids;
-    /// layouts and `;go2` speak room ids).
-    pub fn room_id_of_uid(&self, uid: i64) -> Option<u32> {
-        self.room_id_of_uid.get(&uid).copied()
-    }
-}
-
-/// Newest `map-<timestamp>.json` in Lich's per-game data directory
-/// (`<lich>/data/GSIV` for prime, `GST` for test).
-pub fn find_latest_mapdb(game_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let mut best: Option<(u64, std::path::PathBuf)> = None;
-    for entry in std::fs::read_dir(game_data_dir).ok()? {
-        let path = entry.ok()?.path();
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name.to_owned(),
-            None => continue,
-        };
-        let Some(ts) = name
-            .strip_prefix("map-")
-            .and_then(|rest| rest.strip_suffix(".json"))
-            .and_then(|ts| ts.parse::<u64>().ok())
-        else {
-            continue;
-        };
-        if best.as_ref().map(|(t, _)| ts > *t).unwrap_or(true) {
-            best = Some((ts, path));
-        }
-    }
-    best.map(|(_, path)| path)
-}
-
-/// Room list plus an id → index lookup, the shape every pipeline stage takes.
+/// Room list plus an id → index lookup, the shape every layout pipeline
+/// stage takes.
 pub struct RoomTable<'a> {
     rooms: &'a [Room],
     by_id: std::collections::HashMap<u32, usize>,
@@ -293,5 +244,27 @@ mod tests {
             "wayto": {"3669": "out"}
         });
         assert!(!Room::from_json(&shop).unwrap().is_urchin_hideout());
+    }
+
+    #[test]
+    fn full_room_fields_parse() {
+        let room: Value = serde_json::json!({
+            "id": 3672,
+            "uid": [7150105],
+            "title": ["[First Elanith Bank, Teller]"],
+            "description": ["Guarded by an alert-looking..."],
+            "location": "Wehnimer's Landing",
+            "tags": ["bank", "deposit"],
+            "wayto": {"3669": "out", "9999": ";e fput 'go window'"},
+            "timeto": {"3669": 0.2, "9999": ";e Map.estimate_time_to(1)"},
+            "paths": "Obvious exits: out"
+        });
+        let room = Room::from_json(&room).unwrap();
+        assert_eq!(room.tags, vec!["bank", "deposit"]);
+        assert_eq!(room.description.len(), 1);
+        assert_eq!(room.timeto[&3669], TimeTo::Seconds(0.2));
+        assert!(matches!(room.timeto[&9999], TimeTo::Proc(_)));
+        assert!(!is_proc_command(&room.wayto[&3669]));
+        assert!(is_proc_command(&room.wayto[&9999]));
     }
 }
