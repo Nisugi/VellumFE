@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-ca9f5ded.js";
+            window.path_to_searchindex_js = "searchindex-6e538b1c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-9b682bd4.js"></script>
+        <script src="toc-a5192a6c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -553,6 +553,13 @@ per-window.</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit.</li>
 </ul>
+<h2 id="the-map"><a class="header" href="#the-map">The Map</a></h2>
+<p>The GUI renders a live <a href="#map-1">map</a> of your surroundings: a
+mini map widget that follows your character (click a room to walk there),
+and a <strong>Map Explorer</strong> native window for browsing any mapped location,
+with a drag-to-tidy override editor. Map data comes from your Lich install
+or a one-click download in <strong>Settings → Map</strong> — see the
+<a href="#map-1">Map page</a> for setup.</p>
 <h2 id="the-window-editor"><a class="header" href="#the-window-editor">The Window Editor</a></h2>
 <p>Right-click a window → <strong>Edit Window…</strong> (or <code>.editwindow</code>) to configure
 it in place. Beyond title, streams, and buffer size, the editor exposes:</p>
@@ -1044,6 +1051,15 @@ replace_enabled = true          # Apply text replacements
 redirect_enabled = true         # Route lines to other windows
 coloring_enabled = true         # Apply color highlighting
 </code></pre>
+<h2 id="map"><a class="header" href="#map">Map</a></h2>
+<p>Where the <a href="#map-1">map widget</a> finds its data (GUI):</p>
+<pre><code class="language-toml">[map]
+lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
+# mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
+mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings &gt; Map downloads
+</code></pre>
+<p>All three are editable in <strong>Settings → Map</strong> in the GUI. Downloaded map
+data outranks the Lich folder; an empty <code>mapdb_repo</code> disables downloads.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true
@@ -1790,6 +1806,7 @@ immediately.</p>
 <tr><td><a href="#status-indicators">indicator</a></td><td>Status conditions</td></tr>
 <tr><td><a href="#dashboard">dashboard</a></td><td>Multi-indicator panel</td></tr>
 <tr><td><a href="#room-window-1">room</a></td><td>Room name, description, exits</td></tr>
+<tr><td><a href="#map-1">map</a></td><td>Live location map (GUI only)</td></tr>
 <tr><td><a href="#injury-display">injury_doll</a></td><td>Body part injuries</td></tr>
 <tr><td><a href="#active-effects">active_effects</a></td><td>Buffs and debuffs</td></tr>
 <tr><td><a href="#targets">targets</a></td><td>Creatures in room</td></tr>
@@ -1838,7 +1855,7 @@ title = "Custom Title"
 <tr><td>Navigation</td><td>compass, room</td></tr>
 <tr><td>Entity</td><td>targets, players, items</td></tr>
 <tr><td>Lists</td><td>inventory, spells, container</td></tr>
-<tr><td>Other</td><td>injury_doll, active_effects, reserve, quickbar, hotkeybar</td></tr>
+<tr><td>Other</td><td>injury_doll, active_effects, reserve, quickbar, hotkeybar, map</td></tr>
 </tbody>
 </table>
 </div>
@@ -2562,6 +2579,75 @@ show_exits = false
 <li>Right-click for context menu</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="map-1"><a class="header" href="#map-1">Map</a></h1>
+<p>A live map of where you are — rooms as squares, exits as lines, your
+current room highlighted. VellumFE generates the layout itself from the
+Lich map database, so the map works anywhere the mapdb does, including
+mobile where there is no Lich install.</p>
+<p><strong>GUI only.</strong> The TUI shows a placeholder; run with <code>--frontend gui</code> (or
+use the mobile apps).</p>
+<h2 id="mini-map-widget"><a class="header" href="#mini-map-widget">Mini Map Widget</a></h2>
+<pre><code class="language-toml">[[windows]]
+name = "map"
+widget_type = "map"
+row = 0
+col = 0
+rows = 12
+cols = 40
+zoom = 16          # pixels per grid cell (optional)
+</code></pre>
+<p>Or in-app: <code>.addwindow map</code>.</p>
+<p>The mini map follows your character: it recenters as you move and swaps
+sheets automatically when you go inside a building (interiors render as
+their own floor plan). Click a room to walk there via <code>;go2</code> — this needs
+a Lich connection with the go2 script available.</p>
+<p>Right-click the window for a zoom control and <strong>Open Map Explorer</strong>.</p>
+<h2 id="map-explorer"><a class="header" href="#map-explorer">Map Explorer</a></h2>
+<p>A separate native OS window (like detached tabs) for browsing the whole
+map, not just where you’re standing:</p>
+<ul>
+<li><strong>Location picker</strong> with filtering — jump to any mapped location</li>
+<li><strong>Follow mode</strong> — track your character as you move</li>
+<li><strong>Outdoor / interiors sheets</strong>, drag-pan, scroll-zoom</li>
+<li><strong>Room inspection</strong> — click a room to see its details</li>
+<li><strong>Walk-to</strong> — double-click a room to travel there (<code>;go2</code>)</li>
+<li><strong>Override editor</strong> — an edit mode where you drag room groups (Alt-drag
+a single room) to tidy a layout; edits are saved as per-room override
+diffs that survive mapdb updates, and edges can be restyled (e.g.
+dashed) without recomputing the layout</li>
+</ul>
+<h2 id="where-the-map-data-comes-from"><a class="header" href="#where-the-map-data-comes-from">Where the Map Data Comes From</a></h2>
+<p>The map needs a Lich-format map database. Sources, in priority order:</p>
+<ol>
+<li><strong>Explicit file</strong> — <code>mapdb_path</code> points at a specific <code>map-*.json</code></li>
+<li><strong>Downloaded release</strong> — the Download button in <strong>Settings → Map</strong>
+pulls the latest <code>mapdb.json</code> release asset from a GitHub repository
+(<code>mapdb_repo</code>, default <code>Nisugi/mapdb</code>). This is how mobile gets a map
+without Lich. The newest version plus one rollback are kept under
+<code>~/.vellum-fe/mapdb/</code>.</li>
+<li><strong>Lich install</strong> — <code>lich_dir</code> names the folder containing <code>data/</code>; the
+newest <code>data/&lt;GAME&gt;/map-&lt;timestamp&gt;.json</code> for the connected game is
+used (per-game: GSIV, GST, GSPlat, DR, …).</li>
+</ol>
+<p>Nothing downloads automatically — the Download button is an explicit
+action. Downloaded releases carry GemStone data, so DragonRealms sessions
+use the Lich folder.</p>
+<h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
+<pre><code class="language-toml">[map]
+lich_dir = "C:/Lich5"            # Lich install (folder containing data/)
+# mapdb_path = "C:/maps/map.json"  # explicit file; overrides everything
+mapdb_repo = "Nisugi/mapdb"      # GitHub repo for the Download button
+</code></pre>
+<p>All three are editable in <strong>Settings → Map</strong> in the GUI, which also shows
+the downloaded version and offers <strong>Download map data</strong> / delete-downloaded
+actions.</p>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>Layouts are generated in the background the first time you enter a
+location and cached on disk — instant thereafter.</li>
+<li>The map draws in your theme’s colors (light/dark aware).</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="injury-display"><a class="header" href="#injury-display">Injury Display</a></h1>
 <p>Shows body part injuries as a visual “paper doll”.</p>
 <h2 id="basic-usage-9"><a class="header" href="#basic-usage-9">Basic Usage</a></h2>
@@ -2697,7 +2783,7 @@ text is used</li>
 (Ascension bosses and mini-bosses) render in <code>boss_color</code>, and creatures
 flagged “challenging” in <code>challenging_color</code>. The current-target color
 always wins.</p>
-<h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
+<h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
 <p>Configure via <code>config.toml</code>:</p>
 <pre><code class="language-toml">[target_list]
 status_position = "end"         # "end" or "start"
@@ -2887,7 +2973,7 @@ menu).</p>
 <li>Click an item to interact</li>
 <li>Right-click for the context menu</li>
 </ul>
-<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<h2 id="notes-1"><a class="header" href="#notes-1">Notes</a></h2>
 <ul>
 <li>No scrollback: the content is replaced on each update, like inventory.</li>
 <li>The streams field is editable in the window editor, but the default
@@ -3577,7 +3663,7 @@ injury2 = "doll/head_i2.png"
 injury3 = "doll/head_i3.png"
 scar1 = "doll/head_s1.png"
 </code></pre>
-<h2 id="notes-1"><a class="header" href="#notes-1">Notes</a></h2>
+<h2 id="notes-2"><a class="header" href="#notes-2">Notes</a></h2>
 <ul>
 <li>Absolute image paths are allowed on purpose, so a skin can point at art
 from another install (e.g. your local Wrayth graphics) without copying.</li>
@@ -3815,7 +3901,7 @@ password” option stores the password in your OS’s secure credential store
 (keyring), never in a file. Storing a password in <code>config.toml</code>’s
 <code>[connection]</code> section also works but is plain text; if you store nothing,
 VellumFE prompts at startup.</p>
-<h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
+<h2 id="configuration-4"><a class="header" href="#configuration-4">Configuration</a></h2>
 <p><strong>Where are config files stored?</strong>
 <code>~/.vellum-fe/</code> on every platform (Windows: <code>C:\Users\you\.vellum-fe\</code>).
 Override with <code>--data-dir</code> or the <code>VELLUM_FE_DIR</code> environment variable.

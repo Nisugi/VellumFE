@@ -37,6 +37,7 @@
   - [Indicators](./widgets/indicators.md)
   - [Dashboard](./widgets/dashboard.md)
   - [Room Window](./widgets/room-window.md)
+  - [Map](./widgets/map.md)
   - [Injury Display](./widgets/injury-doll.md)
   - [Active Effects](./widgets/active-effects.md)
   - [Targets](./widgets/targets.md)

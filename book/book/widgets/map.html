@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Hotbars - VellumFE User Guide</title>
+        <title>Map - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,73 +177,84 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="hotbars"><a class="header" href="#hotbars">Hotbars</a></h1>
-<p>Bars of clickable command buttons — VellumFE’s take on barbar-style action
-bars. Buttons send a game command on click (or hotkey), can overlay a
-countdown, and can restyle themselves while a condition holds (hidden,
-stunned, low health, a spell about to drop…).</p>
-<p>Bars are defined once in <a href="../configuration/hotbars-toml.html">hotbars.toml</a>
-and displayed by <code>hotkeybar</code> windows in a layout. Several windows can show
-the same bar, and one layout can show several bars.</p>
-<h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
-<p>Prefer the built-in editor: <code>.hotbars</code> (TUI and GUI) creates and edits bars
-without touching TOML. Then add a window for the bar:</p>
+                        <h1 id="map"><a class="header" href="#map">Map</a></h1>
+<p>A live map of where you are — rooms as squares, exits as lines, your
+current room highlighted. VellumFE generates the layout itself from the
+Lich map database, so the map works anywhere the mapdb does, including
+mobile where there is no Lich install.</p>
+<p><strong>GUI only.</strong> The TUI shows a placeholder; run with <code>--frontend gui</code> (or
+use the mobile apps).</p>
+<h2 id="mini-map-widget"><a class="header" href="#mini-map-widget">Mini Map Widget</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "actions"
-widget_type = "hotkeybar"
-row = 38
+name = "map"
+widget_type = "map"
+row = 0
 col = 0
-rows = 1
-cols = 60
-bar = "default"              # bar name from hotbars.toml
-orientation = "horizontal"   # or "vertical" (one button per row)
+rows = 12
+cols = 40
+zoom = 16          # pixels per grid cell (optional)
 </code></pre>
-<p>Or in-app: <code>.addwindow hotkeybar</code>.</p>
-<h2 id="display"><a class="header" href="#display">Display</a></h2>
-<pre><code>┌─ Actions ──────────────────────────────────────┐
-│ [Look] [Hidden] [Defensive] [Offensive] [Heal] │
-└────────────────────────────────────────────────┘
-</code></pre>
+<p>Or in-app: <code>.addwindow map</code>.</p>
+<p>The mini map follows your character: it recenters as you move and swaps
+sheets automatically when you go inside a building (interiors render as
+their own floor plan). Click a room to walk there via <code>;go2</code> — this needs
+a Lich connection with the go2 script available.</p>
+<p>Right-click the window for a zoom control and <strong>Open Map Explorer</strong>.</p>
+<h2 id="map-explorer"><a class="header" href="#map-explorer">Map Explorer</a></h2>
+<p>A separate native OS window (like detached tabs) for browsing the whole
+map, not just where you’re standing:</p>
 <ul>
-<li>Buttons show their <code>label</code>, restyled (color, relabel, dim) while a
-state condition matches — e.g. the Hide button turns green and reads
-“Hidden” while you’re hidden, or dims during roundtime.</li>
-<li>Buttons with a countdown source show remaining seconds
-(<code>Heal  12s</code>).</li>
-<li>In the GUI, hovering shows the tooltip and hotkey.</li>
+<li><strong>Location picker</strong> with filtering — jump to any mapped location</li>
+<li><strong>Follow mode</strong> — track your character as you move</li>
+<li><strong>Outdoor / interiors sheets</strong>, drag-pan, scroll-zoom</li>
+<li><strong>Room inspection</strong> — click a room to see its details</li>
+<li><strong>Walk-to</strong> — double-click a room to travel there (<code>;go2</code>)</li>
+<li><strong>Override editor</strong> — an edit mode where you drag room groups (Alt-drag
+a single room) to tidy a layout; edits are saved as per-room override
+diffs that survive mapdb updates, and edges can be restyled (e.g.
+dashed) without recomputing the layout</li>
 </ul>
-<h2 id="hotkeys"><a class="header" href="#hotkeys">Hotkeys</a></h2>
-<p>Each button can bind a key combo (<code>keybinds.toml</code> syntax, e.g. <code>alt+h</code>,
-<code>f5</code>). Hotkeys register automatically while a window shows the bar;
-existing <code>keybinds.toml</code> bindings win on conflict.</p>
-<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Command</th><th>Purpose</th></tr>
-</thead>
-<tbody>
-<tr><td><code>.hotbars</code> / <code>.hotbar</code></td><td>Open the hotbar editor</td></tr>
-<tr><td><code>.reload hotbars</code></td><td>Reload hotbars.toml from disk</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="per-character-bars"><a class="header" href="#per-character-bars">Per-Character Bars</a></h2>
-<p>The global <code>~/.vellum-fe/global/hotbars.toml</code> applies to all characters. A
-per-character <code>~/.vellum-fe/profiles/&lt;name&gt;/hotbars.toml</code> can define bars
-too — a character bar with the same name replaces the global one entirely.</p>
-<p>See <a href="../configuration/hotbars-toml.html">hotbars.toml</a> for the full button
-and condition schema.</p>
+<h2 id="where-the-map-data-comes-from"><a class="header" href="#where-the-map-data-comes-from">Where the Map Data Comes From</a></h2>
+<p>The map needs a Lich-format map database. Sources, in priority order:</p>
+<ol>
+<li><strong>Explicit file</strong> — <code>mapdb_path</code> points at a specific <code>map-*.json</code></li>
+<li><strong>Downloaded release</strong> — the Download button in <strong>Settings → Map</strong>
+pulls the latest <code>mapdb.json</code> release asset from a GitHub repository
+(<code>mapdb_repo</code>, default <code>Nisugi/mapdb</code>). This is how mobile gets a map
+without Lich. The newest version plus one rollback are kept under
+<code>~/.vellum-fe/mapdb/</code>.</li>
+<li><strong>Lich install</strong> — <code>lich_dir</code> names the folder containing <code>data/</code>; the
+newest <code>data/&lt;GAME&gt;/map-&lt;timestamp&gt;.json</code> for the connected game is
+used (per-game: GSIV, GST, GSPlat, DR, …).</li>
+</ol>
+<p>Nothing downloads automatically — the Download button is an explicit
+action. Downloaded releases carry GemStone data, so DragonRealms sessions
+use the Lich folder.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<pre><code class="language-toml">[map]
+lich_dir = "C:/Lich5"            # Lich install (folder containing data/)
+# mapdb_path = "C:/maps/map.json"  # explicit file; overrides everything
+mapdb_repo = "Nisugi/mapdb"      # GitHub repo for the Download button
+</code></pre>
+<p>All three are editable in <strong>Settings → Map</strong> in the GUI, which also shows
+the downloaded version and offers <strong>Download map data</strong> / delete-downloaded
+actions.</p>
+<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
+<ul>
+<li>Layouts are generated in the background the first time you enter a
+location and cached on disk — instant thereafter.</li>
+<li>The map draws in your theme’s colors (light/dark aware).</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../widgets/containers.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../widgets/room-window.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../customization/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../widgets/injury-doll.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -253,11 +264,11 @@ and condition schema.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../widgets/containers.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../widgets/room-window.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../customization/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../widgets/injury-doll.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

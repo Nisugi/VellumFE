@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-ca9f5ded.js";
+            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-9b682bd4.js"></script>
+        <script src="../toc-a5192a6c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -262,6 +262,15 @@ replace_enabled = true          # Apply text replacements
 redirect_enabled = true         # Route lines to other windows
 coloring_enabled = true         # Apply color highlighting
 </code></pre>
+<h2 id="map"><a class="header" href="#map">Map</a></h2>
+<p>Where the <a href="../widgets/map.html">map widget</a> finds its data (GUI):</p>
+<pre><code class="language-toml">[map]
+lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
+# mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
+mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings &gt; Map downloads
+</code></pre>
+<p>All three are editable in <strong>Settings → Map</strong> in the GUI. Downloaded map
+data outranks the Lich folder; an empty <code>mapdb_repo</code> disables downloads.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true

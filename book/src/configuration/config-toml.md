@@ -98,6 +98,20 @@ redirect_enabled = true         # Route lines to other windows
 coloring_enabled = true         # Apply color highlighting
 ```
 
+## Map
+
+Where the [map widget](../widgets/map.md) finds its data (GUI):
+
+```toml
+[map]
+lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
+# mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
+mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings > Map downloads
+```
+
+All three are editable in **Settings → Map** in the GUI. Downloaded map
+data outranks the Lich folder; an empty `mapdb_repo` disables downloads.
+
 ## Sound
 
 ```toml

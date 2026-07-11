@@ -44,6 +44,15 @@ center, and right sidebar. Toggle zones from the top toolbar.
 - Windows can be **detached** into separate OS windows (restored across
   sessions), or locked together into tab groups that move as a unit.
 
+## The Map
+
+The GUI renders a live [map](../widgets/map.md) of your surroundings: a
+mini map widget that follows your character (click a room to walk there),
+and a **Map Explorer** native window for browsing any mapped location,
+with a drag-to-tidy override editor. Map data comes from your Lich install
+or a one-click download in **Settings → Map** — see the
+[Map page](../widgets/map.md) for setup.
+
 ## The Window Editor
 
 Right-click a window → **Edit Window…** (or `.editwindow`) to configure
