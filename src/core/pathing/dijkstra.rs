@@ -40,10 +40,17 @@ pub struct Dijkstra {
 /// follows, settings gates default off, negative costs — which would
 /// corrupt the search — are rejected).
 fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
-    if is_proc_command(command) && !super::transpile::transpilable(command) {
+    if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
         return None;
     }
-    if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
+    // Curated overrides make an edge walkable regardless of its script.
+    if let Some(ov) = super::overrides::edge_override(room.id, dest) {
+        return ov
+            .cost
+            .or_else(|| super::transpile::resolve_timeto(db, room, dest))
+            .or(Some(0.2));
+    }
+    if is_proc_command(command) && !super::transpile::transpilable(command) {
         return None;
     }
     super::transpile::resolve_timeto(db, room, dest)

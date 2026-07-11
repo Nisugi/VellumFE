@@ -2294,6 +2294,9 @@ impl AppCore {
         self.add_system_message("  .settings               - Open settings editor");
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
+        self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
+        self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
+        self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
         self.add_system_message("");
 
         // Layout commands

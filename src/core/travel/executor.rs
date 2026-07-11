@@ -375,6 +375,11 @@ impl TravelTask {
             };
             return;
         }
+        // Curated override beats whatever the mapdb says about this edge.
+        if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
+            self.tick_script(ov.actions.clone(), 0, None, next, current, ctx, events);
+            return;
+        }
         if crate::core::mapdb::is_proc_command(&command) {
             // Scripted edge: run its transpiled actions. The pathfinder only
             // admits transpilable procs, so a miss here means the graph and

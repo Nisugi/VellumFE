@@ -13,6 +13,7 @@
 
 pub mod dijkstra;
 pub mod edge;
+pub mod overrides;
 pub mod transpile;
 
 pub use dijkstra::{

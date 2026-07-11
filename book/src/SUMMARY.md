@@ -38,6 +38,7 @@
   - [Dashboard](./widgets/dashboard.md)
   - [Room Window](./widgets/room-window.md)
   - [Map](./widgets/map.md)
+  - [Travel (.go2)](./widgets/travel.md)
   - [Injury Display](./widgets/injury-doll.md)
   - [Active Effects](./widgets/active-effects.md)
   - [Targets](./widgets/targets.md)
