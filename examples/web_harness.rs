@@ -9,7 +9,7 @@
 //! AppCore::apply_macro_save. Cmd/Macro events are logged to stdout.
 
 use vellum_fe::config::{MacroButton, MacrosConfig};
-use vellum_fe::core::remote::{RemoteEvent, RemoteSink};
+use vellum_fe::core::remote::{RemoteEvent, RemoteSessionInfo, RemoteSink, SessionState};
 use vellum_fe::data::widget::{StyledLine, TextSegment};
 use vellum_fe::frontend::web::server;
 
@@ -21,7 +21,11 @@ async fn main() {
 
     // --login: act like the headless (mobile) runtime with no session, so
     // the login overlay (and its Remote tab shell plumbing) can be driven.
-    if std::env::args().any(|a| a == "--login") {
+    // SessionConnect walks the scripted state machine (authenticating →
+    // connecting → connected); typing "drop" simulates a mid-session drop
+    // (reconnecting → connected); SessionDisconnect returns to idle.
+    let login_mode = std::env::args().any(|a| a == "--login");
+    if login_mode {
         sink.set_session_control(true);
     }
 
@@ -84,8 +88,34 @@ async fn main() {
         let _ = server::serve_listener_with_token(listener, handles, TOKEN.to_string()).await;
     });
 
+    let session = |state, character: &Option<String>| RemoteSessionInfo {
+        state,
+        character: character.clone(),
+        ..Default::default()
+    };
+
     while let Some(event) = event_rx.recv().await {
         match event {
+            RemoteEvent::Command(text) if login_mode && text == "drop" => {
+                println!("EVENT cmd: {text:?} (scripted drop → reconnect)");
+                let character = Some("Harness".to_string());
+                sink.set_session_state(session(SessionState::Reconnecting, &character));
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                sink.set_session_state(session(SessionState::Connected, &character));
+            }
+            RemoteEvent::SessionConnect { character, .. } if login_mode => {
+                println!("EVENT session_connect: character={character:?}");
+                let character = character.or_else(|| Some("Harness".to_string()));
+                for state in [SessionState::Authenticating, SessionState::Connecting] {
+                    sink.set_session_state(session(state, &character));
+                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                }
+                sink.set_session_state(session(SessionState::Connected, &character));
+            }
+            RemoteEvent::SessionDisconnect if login_mode => {
+                println!("EVENT session_disconnect → idle");
+                sink.set_session_state(RemoteSessionInfo::default());
+            }
             RemoteEvent::Command(text) => println!("EVENT cmd: {text:?}"),
             RemoteEvent::Macro { id } => println!("EVENT macro tap: {id:?}"),
             RemoteEvent::MacroSave {

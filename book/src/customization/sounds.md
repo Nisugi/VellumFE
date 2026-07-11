@@ -39,9 +39,9 @@ startup_music = true      # Play music on launch
 ```
 
 `startup_music` plays the classic login theme when a TUI or GUI session
-starts. The mobile apps play it too, the first time the login screen
-appears — a **Stop / Don't play again** bar sits right on the login card,
-and it can be turned back on under **⚙ Settings → Login music**.
+starts. The mobile apps play it too, once the game connection comes up —
+a **Stop / Don't play again** bar appears while it plays, and it can be
+turned back on under **⚙ Settings → Login music**.
 
 ## Disabling Sounds
 
