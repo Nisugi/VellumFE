@@ -65,6 +65,18 @@ impl Ord for Cost {
 }
 
 pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra {
+    dijkstra_filtered(db, source, target, &|_, _| true)
+}
+
+/// `dijkstra` with an edge admittance filter — the walk executor uses it to
+/// exclude edges that failed repeatedly this session (go2's "changing
+/// timeto to nil" restart behavior).
+pub fn dijkstra_filtered(
+    db: &MapDb,
+    source: u32,
+    target: Option<PathTarget>,
+    admit: &dyn Fn(u32, u32) -> bool,
+) -> Dijkstra {
     let mut result = Dijkstra::default();
     if db.room(source).is_none() {
         return result;
@@ -98,6 +110,9 @@ pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra
             if visited.get(&adjacent).copied().unwrap_or(false) {
                 continue;
             }
+            if !admit(room_id, adjacent) {
+                continue;
+            }
             let Some(weight) = edge_cost(db, room, adjacent, command) else {
                 continue;
             };
@@ -121,7 +136,17 @@ pub fn dijkstra(db: &MapDb, source: u32, target: Option<PathTarget>) -> Dijkstra
 /// including the destination. `None` when unreachable (or when already
 /// there, matching Lich).
 pub fn path_to(db: &MapDb, source: u32, destination: u32) -> Option<Vec<u32>> {
-    let search = dijkstra(db, source, Some(PathTarget::Room(destination)));
+    path_to_filtered(db, source, destination, &|_, _| true)
+}
+
+/// `path_to` with an edge admittance filter (see `dijkstra_filtered`).
+pub fn path_to_filtered(
+    db: &MapDb,
+    source: u32,
+    destination: u32,
+    admit: &dyn Fn(u32, u32) -> bool,
+) -> Option<Vec<u32>> {
+    let search = dijkstra_filtered(db, source, Some(PathTarget::Room(destination)), admit);
     search.previous.get(&destination)?;
     let mut path = vec![destination];
     loop {

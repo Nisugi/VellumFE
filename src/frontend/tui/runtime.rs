@@ -387,6 +387,23 @@ async fn async_run(
             }
         }
 
+        // Tick the walk executor (time-based waits like roundtime need a
+        // clock even when the game is quiet) and send whatever it queued
+        // through the same path as typed commands.
+        app_core.tick_travel();
+        for command in app_core.take_outbound() {
+            match app_core.send_command(command) {
+                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                    app_core
+                        .perf_stats
+                        .record_bytes_sent((out.len() + 1) as u64);
+                    let _ = command_tx.send(out);
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("travel command failed: {e}"),
+            }
+        }
+
         // Poll for frontend events (keyboard, mouse, resize)
         let events = frontend.poll_events()?;
         app_core

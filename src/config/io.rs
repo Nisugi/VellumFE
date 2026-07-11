@@ -582,6 +582,7 @@ impl Default for Config {
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default
             map: MapConfig::default(),
+            go2: Go2Config::default(),
             macros: MacrosConfig::default(), // Loaded from macros.toml
             macros_local: MacrosConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config

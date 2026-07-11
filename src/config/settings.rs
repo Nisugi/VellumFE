@@ -560,6 +560,28 @@ impl Default for WebConfig {
     }
 }
 
+/// Native travel (`.go2`) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Go2Config {
+    /// Saved travel targets: name → mapdb room id (`.go2 save <name>`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub saved: std::collections::BTreeMap<String, u32>,
+    /// Mini map / explorer clicks travel natively instead of sending `;go2`
+    /// to Lich. Native works everywhere (mobile!); Lich's go2 knows silvers,
+    /// day passes, and other special travel that native v1 does not.
+    #[serde(default = "default_true")]
+    pub native_map_clicks: bool,
+}
+
+impl Default for Go2Config {
+    fn default() -> Self {
+        Self {
+            saved: Default::default(),
+            native_map_clicks: true,
+        }
+    }
+}
+
 /// Testing-phase default for `MapConfig::mapdb_repo`; flip to
 /// `elanthia-online/mapdb` when the Cartographer pipeline launches upstream.
 pub const DEFAULT_MAPDB_REPO: &str = "Nisugi/mapdb";
