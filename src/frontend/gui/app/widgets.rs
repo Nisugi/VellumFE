@@ -153,11 +153,28 @@ impl VellumGuiApp {
         search_match: bool,
         font_id: &egui::FontId,
     ) -> egui::TextFormat {
+        Self::segment_text_format_ex(segment, visuals, search_match, false, font_id)
+    }
+
+    /// As segment_text_format, with the link fallback color when `is_link`.
+    fn segment_text_format_ex(
+        segment: &TextSegment,
+        visuals: &egui::Visuals,
+        search_match: bool,
+        is_link: bool,
+        font_id: &egui::FontId,
+    ) -> egui::TextFormat {
         let color = segment
             .fg
             .as_deref()
             .and_then(parse_hex_color)
-            .unwrap_or_else(|| visuals.text_color());
+            .unwrap_or_else(|| {
+                if is_link {
+                    visuals.hyperlink_color
+                } else {
+                    visuals.text_color()
+                }
+            });
         let background = if search_match {
             visuals.selection.bg_fill
         } else {
@@ -369,6 +386,226 @@ impl VellumGuiApp {
             Color32::TRANSPARENT,
             egui::Stroke::NONE,
         );
+    }
+
+    /// One text line composed into a single layout job, with the char ranges
+    /// (not bytes) of its clickable links. One galley per line keeps hit
+    /// testing, selection painting, and height measurement all on the same
+    /// geometry.
+    fn build_line_job(
+        line: &StyledLine,
+        visuals: &egui::Visuals,
+        search_query: Option<&str>,
+        font_id: &egui::FontId,
+        wrap_width: f32,
+        timestamps: Option<crate::config::TimestampPosition>,
+    ) -> GuiLineJob {
+        let mut job = egui::text::LayoutJob {
+            wrap: egui::text::TextWrapping {
+                max_width: wrap_width,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut links = Vec::new();
+        let mut chars = 0usize;
+
+        let ts_run = timestamps.and_then(|position| {
+            line.timestamp
+                .and_then(|ts| Self::format_line_timestamp(ts, position))
+                .map(|text| (text, position))
+        });
+        let ts_format = egui::text::TextFormat {
+            font_id: font_id.clone(),
+            color: visuals.weak_text_color(),
+            ..Default::default()
+        };
+        if let Some((text, crate::config::TimestampPosition::Start)) = &ts_run {
+            chars += text.chars().count();
+            job.append(text, 0.0, ts_format.clone());
+        }
+
+        for segment in &line.segments {
+            if segment.text.is_empty() {
+                continue;
+            }
+            let search_match = Self::segment_matches_query(segment, search_query);
+            if let Some(link_data) = &segment.link_data {
+                // Links keep whole-segment search highlighting, matching the
+                // old one-widget-per-link rendering.
+                let count = segment.text.chars().count();
+                links.push((chars..chars + count, link_data.clone()));
+                chars += count;
+                job.append(
+                    &segment.text,
+                    0.0,
+                    Self::segment_text_format_ex(segment, visuals, search_match, true, font_id),
+                );
+            } else if search_match {
+                let query = search_query.unwrap_or_default();
+                for (piece, is_match) in Self::split_search_runs(&segment.text, query) {
+                    chars += piece.chars().count();
+                    job.append(
+                        piece,
+                        0.0,
+                        Self::segment_text_format_ex(segment, visuals, is_match, false, font_id),
+                    );
+                }
+            } else {
+                chars += segment.text.chars().count();
+                job.append(
+                    &segment.text,
+                    0.0,
+                    Self::segment_text_format_ex(segment, visuals, false, false, font_id),
+                );
+            }
+        }
+
+        if let Some((text, crate::config::TimestampPosition::End)) = &ts_run {
+            job.append(text, 0.0, ts_format);
+        }
+
+        GuiLineJob { job, links }
+    }
+
+    /// The plain text a line renders as (timestamps included when shown).
+    /// Must compose the same string as build_line_job so char offsets from
+    /// galley hit tests slice it correctly.
+    fn compose_line_text(
+        line: &StyledLine,
+        timestamps: Option<crate::config::TimestampPosition>,
+    ) -> String {
+        let ts_run = timestamps.and_then(|position| {
+            line.timestamp
+                .and_then(|ts| Self::format_line_timestamp(ts, position))
+                .map(|text| (text, position))
+        });
+        let mut out = String::new();
+        if let Some((text, crate::config::TimestampPosition::Start)) = &ts_run {
+            out.push_str(text);
+        }
+        for segment in &line.segments {
+            out.push_str(&segment.text);
+        }
+        if let Some((text, crate::config::TimestampPosition::End)) = &ts_run {
+            out.push_str(text);
+        }
+        out
+    }
+
+    fn buffer_selection_data_id() -> egui::Id {
+        egui::Id::new("vellum_buffer_text_selection")
+    }
+
+    fn buffer_selection(ctx: &egui::Context) -> Option<GuiBufferSelection> {
+        ctx.data(|data| data.get_temp(Self::buffer_selection_data_id()))
+    }
+
+    fn store_buffer_selection(ctx: &egui::Context, selection: Option<GuiBufferSelection>) {
+        ctx.data_mut(|data| match selection {
+            Some(selection) => {
+                data.insert_temp(Self::buffer_selection_data_id(), selection);
+            }
+            None => {
+                data.remove::<GuiBufferSelection>(Self::buffer_selection_data_id());
+            }
+        });
+    }
+
+    /// Resolve a line uid back to an index in the current buffer. Uids that
+    /// were trimmed off the front clamp to the first line; anything past the
+    /// end clamps to the last.
+    fn resolve_line_uid(base_uid: u64, len: usize, uid: u64) -> usize {
+        let rel = uid.wrapping_sub(base_uid);
+        if (rel as usize) < len && rel <= usize::MAX as u64 {
+            rel as usize
+        } else if rel > u64::MAX / 2 {
+            0
+        } else {
+            len.saturating_sub(1)
+        }
+    }
+
+    /// Selection endpoints as ordered (line index, char) pairs.
+    fn ordered_selection_endpoints(
+        selection: &GuiBufferSelection,
+        base_uid: u64,
+        len: usize,
+    ) -> ((usize, usize), (usize, usize)) {
+        let a = (
+            Self::resolve_line_uid(base_uid, len, selection.anchor.0),
+            selection.anchor.1,
+        );
+        let h = (
+            Self::resolve_line_uid(base_uid, len, selection.head.0),
+            selection.head.1,
+        );
+        if a <= h { (a, h) } else { (h, a) }
+    }
+
+    /// Slice a line's text by char offsets (`None` = line start/end).
+    fn slice_line_by_chars(text: &str, from: Option<usize>, to: Option<usize>) -> &str {
+        let char_to_byte = |c: usize| {
+            text.char_indices()
+                .nth(c)
+                .map(|(byte, _)| byte)
+                .unwrap_or(text.len())
+        };
+        let b0 = from.map(char_to_byte).unwrap_or(0);
+        let b1 = to.map(char_to_byte).unwrap_or(text.len());
+        &text[b0.min(b1)..b0.max(b1)]
+    }
+
+    /// Assemble the copy text for a selection, walking the buffer directly so
+    /// lines outside the rendered viewport are included.
+    fn buffer_selection_copy_text(
+        content: &TextContent,
+        selection: &GuiBufferSelection,
+        base_uid: u64,
+        timestamps: Option<crate::config::TimestampPosition>,
+    ) -> String {
+        let len = content.lines.len();
+        if len == 0 {
+            return String::new();
+        }
+        let ((l0, c0), (l1, c1)) =
+            Self::ordered_selection_endpoints(selection, base_uid, len);
+        let mut out = String::new();
+        for index in l0..=l1 {
+            let Some(line) = content.lines.get(index) else {
+                continue;
+            };
+            let text = Self::compose_line_text(line, timestamps);
+            let from = (index == l0).then_some(c0);
+            let to = (index == l1).then_some(c1);
+            if index > l0 {
+                out.push('\n');
+            }
+            out.push_str(Self::slice_line_by_chars(&text, from, to));
+        }
+        out
+    }
+
+    /// Char range of the word around `at` for double-click selection.
+    fn word_char_range(text: &str, at: usize) -> (usize, usize) {
+        let chars: Vec<char> = text.chars().collect();
+        if chars.is_empty() {
+            return (0, 0);
+        }
+        let at = at.min(chars.len() - 1);
+        let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '\'';
+        if !is_word(chars[at]) {
+            return (at, at + 1);
+        }
+        let mut start = at;
+        while start > 0 && is_word(chars[start - 1]) {
+            start -= 1;
+        }
+        let mut end = at + 1;
+        while end < chars.len() && is_word(chars[end]) {
+            end += 1;
+        }
+        (start, end)
     }
 
     /// WCAG relative luminance (0 = black, 1 = white).
@@ -1608,10 +1845,12 @@ impl VellumGuiApp {
                 let response = ui
                     .add_sized(
                         [text_width, row_height],
-                        egui::Label::new(display_text)
-                            .truncate()
-                            .sense(egui::Sense::click_and_drag())
-                            .selectable(!Self::link_drag_blocks_selection(ui)),
+                        egui::Label::new(
+                            RichText::new(display_text).color(ui.visuals().hyperlink_color),
+                        )
+                        .truncate()
+                        .sense(egui::Sense::click_and_drag())
+                        .selectable(!Self::link_drag_blocks_selection(ui)),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 // Drag source only: releases over hand windows resolve at the
@@ -2706,27 +2945,13 @@ impl VellumGuiApp {
         visuals: &egui::Visuals,
         wrap_width: f32,
         font_id: &egui::FontId,
+        timestamps: Option<crate::config::TimestampPosition>,
     ) -> f32 {
-        let mut job = egui::text::LayoutJob {
-            wrap: egui::text::TextWrapping {
-                max_width: wrap_width,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        for segment in &line.segments {
-            if segment.text.is_empty() {
-                continue;
-            }
-            job.append(
-                &segment.text,
-                0.0,
-                Self::segment_text_format(segment, visuals, false, font_id),
-            );
-        }
+        // Same job builder as rendering, so measured heights match rendered
+        // heights exactly (timestamps included).
+        let job = Self::build_line_job(line, visuals, None, font_id, wrap_width, timestamps).job;
         if job.is_empty() {
-            // Blank line: renders as an empty row; estimate one text row and
-            // let the on-render correction settle the exact value.
+            // Blank line: renders as one empty text row.
             return ctx.fonts_mut(|fonts| fonts.row_height(font_id));
         }
         ctx.fonts_mut(|fonts| fonts.layout_job(job)).size().y
@@ -2745,6 +2970,7 @@ impl VellumGuiApp {
         visuals: &egui::Visuals,
         font_id: &egui::FontId,
     ) {
+        let timestamps = content.show_timestamps.then_some(content.timestamp_position);
         let width_changed =
             (cache.wrap_width - wrap_width).abs() > 0.5 || cache.font_id != *font_id;
         let delta = content.generation.wrapping_sub(cache.generation) as usize;
@@ -2760,7 +2986,7 @@ impl VellumGuiApp {
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
                     cache.heights.push(Self::measure_line_height(
-                        ctx, line, visuals, wrap_width, font_id,
+                        ctx, line, visuals, wrap_width, font_id, timestamps,
                     ));
                 }
             }
@@ -2769,7 +2995,7 @@ impl VellumGuiApp {
             cache.heights.reserve(rendered_count);
             for line in content.lines.iter().skip(start) {
                 cache.heights.push(Self::measure_line_height(
-                    ctx, line, visuals, wrap_width, font_id,
+                    ctx, line, visuals, wrap_width, font_id, timestamps,
                 ));
             }
         }
@@ -2808,12 +3034,12 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show_viewport(ui, |ui, viewport| {
+                let is_touch = ui.input(|i| i.has_touch_screen());
                 // Blank space between and below lines must not start a
                 // window-body drag; claim drags across the viewport before
-                // any labels so the labels (and per-line fillers) still win
-                // where they overlap. Touch screens skip this so
-                // drag-to-scroll keeps working.
-                if !ui.input(|i| i.has_touch_screen()) {
+                // the line widgets so those still win where they overlap.
+                // Touch screens skip this so drag-to-scroll keeps working.
+                if !is_touch {
                     ui.interact(
                         ui.clip_rect(),
                         ui.id().with("text_blank_drag"),
@@ -2830,6 +3056,14 @@ impl VellumGuiApp {
                     f32::INFINITY
                 };
                 let spacing_y = ui.spacing().item_spacing.y;
+                let timestamps = content.show_timestamps.then_some(content.timestamp_position);
+                let base_uid = content
+                    .generation
+                    .wrapping_sub(content.lines.len() as u64);
+                // Top of line 0 in ui coords; the height cache turns this
+                // into every line's y-band, on or off screen.
+                let content_left = ui.max_rect().left();
+                let content_top = ui.cursor().min.y;
 
                 // The cache lives in egui temp data so renderers stay
                 // stateless; the Arc dance keeps ctx.fonts_mut() callable
@@ -2852,6 +3086,107 @@ impl VellumGuiApp {
                     &visuals,
                     font_id,
                 );
+
+                // ---- Buffer-anchored selection: window-level updates ----
+                let clip = ui.clip_rect();
+                let mut selection = Self::buffer_selection(&ctx);
+                let pointer = ctx.pointer_latest_pos();
+                let press_pos = ui.input(|i| i.pointer.interact_pos());
+                let primary_down =
+                    ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+                let any_pressed = ui.input(|i| i.pointer.any_pressed());
+                let owns_selection = selection
+                    .as_ref()
+                    .is_some_and(|sel| sel.scroll_id == scroll_id);
+
+                // Pressing outside this window, or Escape, drops our selection.
+                if owns_selection {
+                    let pressed_outside = any_pressed
+                        && !press_pos.is_some_and(|pos| clip.contains(pos));
+                    if pressed_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        selection = None;
+                        Self::store_buffer_selection(&ctx, None);
+                    }
+                }
+
+                // Continue a selection drag: the height cache maps the
+                // pointer to a line even past the viewport edges, and the
+                // view auto-scrolls toward the pointer while it is outside.
+                if let Some(sel) = &mut selection {
+                    if sel.scroll_id == scroll_id && sel.dragging {
+                        if !primary_down {
+                            sel.dragging = false;
+                            Self::store_buffer_selection(&ctx, selection.clone());
+                        } else if let Some(pos) = pointer {
+                            let mut slot = rendered_count - 1;
+                            let mut slot_top = content_top;
+                            let mut y = content_top;
+                            for (i, h) in cache.heights.iter().enumerate() {
+                                if pos.y < y + h + spacing_y || i == rendered_count - 1 {
+                                    slot = i;
+                                    slot_top = y;
+                                    break;
+                                }
+                                y += h + spacing_y;
+                            }
+                            let line_index = start + slot;
+                            let line_job = Self::build_line_job(
+                                &content.lines[line_index],
+                                &visuals,
+                                search_query,
+                                font_id,
+                                wrap_width,
+                                timestamps,
+                            );
+                            let galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
+                            let local =
+                                egui::Vec2::new(pos.x - content_left, pos.y - slot_top);
+                            sel.head = (
+                                base_uid.wrapping_add(line_index as u64),
+                                galley.cursor_from_pos(local).index.0,
+                            );
+                            Self::store_buffer_selection(&ctx, selection.clone());
+                            ctx.set_cursor_icon(egui::CursorIcon::Text);
+
+                            let overshoot_up = clip.top() - pos.y;
+                            let overshoot_down = pos.y - clip.bottom();
+                            let overshoot = overshoot_up.max(overshoot_down);
+                            if overshoot > 0.0 {
+                                let speed = (overshoot * 0.3).clamp(2.0, 40.0);
+                                let direction = if overshoot_up > 0.0 { 1.0 } else { -1.0 };
+                                ui.scroll_with_delta(Vec2::new(0.0, direction * speed));
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
+                }
+
+                // Ctrl+C / Ctrl+X copy the selected range straight from the
+                // buffer, so lines scrolled out of view are included.
+                if ui.input(|i| {
+                    i.events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut))
+                }) {
+                    if let Some(sel) = &selection {
+                        if sel.scroll_id == scroll_id && sel.anchor != sel.head {
+                            let text = Self::buffer_selection_copy_text(
+                                content, sel, base_uid, timestamps,
+                            );
+                            if !text.is_empty() {
+                                ctx.copy_text(text);
+                            }
+                        }
+                    }
+                }
+
+                // Ordered (line index, char) endpoints for highlight painting.
+                let paint_range = selection
+                    .as_ref()
+                    .filter(|sel| sel.scroll_id == scroll_id && sel.anchor != sel.head)
+                    .map(|sel| {
+                        Self::ordered_selection_endpoints(sel, base_uid, content.lines.len())
+                    });
 
                 // Visible index range from cumulative strides (height +
                 // vertical item spacing). Only those lines become widgets;
@@ -2885,6 +3220,7 @@ impl VellumGuiApp {
                     // last skipped line's own spacing.
                     ui.allocate_space(Vec2::new(1.0, top_space - spacing_y));
                 }
+                let mut press_claimed_by_line = false;
                 for (offset, line) in content
                     .lines
                     .iter()
@@ -2892,44 +3228,209 @@ impl VellumGuiApp {
                     .take(last_visible.saturating_sub(first_visible))
                     .enumerate()
                 {
-                    let before = ui.cursor().min.y;
-                    // Selections are anchored to widget ids, so give each
-                    // line an id derived from its position in the full
-                    // stream (generation counts every append, trims
-                    // included). The anchor then follows the text when the
-                    // visible slice shifts instead of sticking to whatever
-                    // line lands in the same screen row.
-                    let line_uid = content
-                        .generation
-                        .wrapping_sub(content.lines.len() as u64)
-                        .wrapping_add((start + first_visible + offset) as u64);
-                    if let Some(link) = ui
-                        .push_id(line_uid, |ui| {
-                            Self::render_styled_line(
-                                ui,
-                                line,
-                                &visuals,
-                                search_query,
-                                font_id,
-                                wrap,
-                                content.show_timestamps.then_some(content.timestamp_position),
-                            )
-                        })
-                        .inner
-                    {
-                        clicked_link = Some(link);
-                    }
-                    // Self-correct the estimate with the rendered height so
-                    // spacers stay aligned with reality (see
-                    // measure_line_height on why link lines can differ).
-                    let actual = ui.cursor().min.y - before - spacing_y;
                     let slot = first_visible + offset;
-                    if actual.is_finite()
-                        && actual >= 0.0
-                        && (cache.heights[slot] - actual).abs() > 0.5
-                    {
-                        cache.heights[slot] = actual;
+                    let line_index = start + slot;
+                    let uid = base_uid.wrapping_add(line_index as u64);
+
+                    let line_job = Self::build_line_job(
+                        line,
+                        &visuals,
+                        search_query,
+                        font_id,
+                        wrap_width,
+                        timestamps,
+                    );
+                    let links = line_job.links;
+                    let mut galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
+                    let galley_size = galley.size();
+                    let height = if galley_size.y > 0.0 {
+                        galley_size.y
+                    } else {
+                        ctx.fonts_mut(|fonts| fonts.row_height(font_id))
+                    };
+                    // Full-width rows: the blank tail past the text belongs
+                    // to the line, so clicks there select from that line and
+                    // never fall through to the window body.
+                    let width = if wrap {
+                        ui.available_width().max(1.0)
+                    } else {
+                        galley_size.x.max(ui.available_width().max(1.0))
+                    };
+                    let sense = if is_touch {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::click_and_drag()
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::new(width, height), sense);
+                    let galley_pos = rect.left_top();
+                    if (cache.heights[slot] - height).abs() > 0.5 {
+                        cache.heights[slot] = height;
                     }
+
+                    let char_at =
+                        |pos: Pos2| galley.cursor_from_pos(pos - galley_pos).index.0;
+                    let link_at = |pos: Pos2| {
+                        let c = char_at(pos);
+                        links
+                            .iter()
+                            .find(|(range, _)| range.contains(&c))
+                            .map(|(_, link)| link)
+                    };
+
+                    let hovered_link = if response.hovered() {
+                        pointer.and_then(|pos| link_at(pos).cloned())
+                    } else {
+                        None
+                    };
+                    if response.hovered() {
+                        ctx.set_cursor_icon(if hovered_link.is_some() {
+                            egui::CursorIcon::PointingHand
+                        } else {
+                            egui::CursorIcon::Text
+                        });
+                    }
+
+                    // Press: anchor a new selection (or extend with Shift),
+                    // unless this press starts a modifier item-drag on a link.
+                    if response.is_pointer_button_down_on() && any_pressed {
+                        press_claimed_by_line = true;
+                        if let Some(pos) = press_pos {
+                            let starts_item_drag = Self::link_drag_modifier_down(ui)
+                                && link_at(pos).is_some_and(Self::link_is_draggable);
+                            if !starts_item_drag && !is_touch {
+                                let c = char_at(pos);
+                                let extend = ui.input(|i| i.modifiers.shift);
+                                match (&mut selection, extend) {
+                                    (Some(sel), true) if sel.scroll_id == scroll_id => {
+                                        sel.head = (uid, c);
+                                        sel.dragging = true;
+                                    }
+                                    _ => {
+                                        selection = Some(GuiBufferSelection {
+                                            scroll_id: scroll_id.to_string(),
+                                            anchor: (uid, c),
+                                            head: (uid, c),
+                                            dragging: true,
+                                        });
+                                    }
+                                }
+                                Self::store_buffer_selection(&ctx, selection.clone());
+                            }
+                        }
+                    }
+
+                    // Double-click selects the word, triple-click the line.
+                    if response.double_clicked() {
+                        if let Some(pos) = pointer {
+                            let (word_start, word_end) =
+                                Self::word_char_range(galley.text(), char_at(pos));
+                            selection = Some(GuiBufferSelection {
+                                scroll_id: scroll_id.to_string(),
+                                anchor: (uid, word_start),
+                                head: (uid, word_end),
+                                dragging: false,
+                            });
+                            Self::store_buffer_selection(&ctx, selection.clone());
+                        }
+                    } else if response.triple_clicked() {
+                        selection = Some(GuiBufferSelection {
+                            scroll_id: scroll_id.to_string(),
+                            anchor: (uid, 0),
+                            head: (uid, galley.end().index.0),
+                            dragging: false,
+                        });
+                        Self::store_buffer_selection(&ctx, selection.clone());
+                    }
+
+                    // Plain click on a link fires it.
+                    if response.clicked() && clicked_link.is_none() {
+                        let click_pos = response
+                            .interact_pointer_pos()
+                            .or(pointer)
+                            .unwrap_or(Pos2::ZERO);
+                        if let Some(link) = link_at(click_pos) {
+                            clicked_link = Some(GuiLinkClick {
+                                link_data: link.clone(),
+                                click_pos: Self::click_pos_to_grid(click_pos),
+                            });
+                        }
+                    }
+
+                    // Modifier+drag on a draggable link starts an item drag;
+                    // releasing one link onto another emits a drop action.
+                    if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
+                        if response.is_pointer_button_down_on()
+                            && Self::link_drag_modifier_down(ui)
+                            && rect.contains(origin)
+                        {
+                            if let Some(link) =
+                                link_at(origin).filter(|link| Self::link_is_draggable(link))
+                            {
+                                response.dnd_set_drag_payload(link.clone());
+                            }
+                        }
+                    }
+                    // Only consult (and thereby consume) the drag payload when
+                    // the release lands on an actual link; a release on the
+                    // blank part of a row must leave the payload for the
+                    // window-level fallback that resolves body drops
+                    // ("_drag #id drop" on the main window, hands, etc.).
+                    if let Some(target) = pointer.and_then(link_at) {
+                        if let Some(dragged) = response.dnd_release_payload::<LinkData>() {
+                            if dragged.exist_id != target.exist_id && clicked_link.is_none() {
+                                clicked_link = Some(GuiLinkClick {
+                                    link_data: LinkData {
+                                        exist_id: Self::LINK_DROP_SENTINEL.to_string(),
+                                        noun: format!(
+                                            "{}|{}",
+                                            dragged.exist_id, target.exist_id
+                                        ),
+                                        text: String::new(),
+                                        coord: None,
+                                    },
+                                    click_pos: (0, 0),
+                                });
+                            }
+                        }
+                    }
+
+                    if ui.is_rect_visible(rect) {
+                        if let Some(((line0, char0), (line1, char1))) = &paint_range {
+                            if *line0 <= line_index && line_index <= *line1 {
+                                let from = if line_index == *line0 { *char0 } else { 0 };
+                                let to = if line_index == *line1 {
+                                    *char1
+                                } else {
+                                    galley.end().index.0
+                                };
+                                let range = egui::text_selection::CCursorRange::two(
+                                    egui::text::CCursor::new(from),
+                                    egui::text::CCursor::new(to),
+                                );
+                                egui::text_selection::visuals::paint_text_selection(
+                                    &mut galley,
+                                    ui.visuals(),
+                                    &range,
+                                    None,
+                                );
+                            }
+                        }
+                        ui.painter()
+                            .galley(galley_pos, galley, visuals.text_color());
+                    }
+                }
+                // A press on the blank area below the last line clears the
+                // selection (presses on lines were handled above; presses
+                // outside the viewport were handled before the loop).
+                if any_pressed
+                    && !press_claimed_by_line
+                    && press_pos.is_some_and(|pos| clip.contains(pos))
+                    && selection
+                        .as_ref()
+                        .is_some_and(|sel| sel.scroll_id == scroll_id)
+                {
+                    Self::store_buffer_selection(&ctx, None);
                 }
                 let bottom_space: f32 = cache.heights[last_visible..]
                     .iter()
@@ -3178,6 +3679,28 @@ impl VellumGuiApp {
     }
 }
 
+/// One rendered line: its composed layout job plus the char ranges of its
+/// clickable links within that composed text.
+pub(super) struct GuiLineJob {
+    job: egui::text::LayoutJob,
+    links: Vec<(std::ops::Range<usize>, LinkData)>,
+}
+
+/// Buffer-anchored text selection for virtualized text windows. Endpoints
+/// address (line uid, char index) in the stream itself — uid resolves back
+/// to a buffer index through the window's generation counter — so the
+/// selection survives scrolling, stick-to-bottom shifts, and buffer trims,
+/// and Ctrl+C can copy lines that are no longer on screen.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct GuiBufferSelection {
+    scroll_id: String,
+    /// Where the selection started (press point).
+    anchor: (u64, usize),
+    /// The moving end; follows the pointer while dragging.
+    head: (u64, usize),
+    dragging: bool,
+}
+
 /// Per-window cache of estimated line heights driving text virtualization.
 /// Keyed in egui temp data by scroll id; tracks the rendered slice (the last
 /// `MAX_RENDERED_LINES` of the buffer) at a specific wrap width/generation.
@@ -3203,7 +3726,7 @@ pub(super) fn parse_hex_color(input: &str) -> Option<Color32> {
 
 #[cfg(test)]
 mod tests {
-    use super::VellumGuiApp;
+    use super::{GuiBufferSelection, VellumGuiApp};
 
     #[test]
     fn countdown_remaining_clamps_to_zero_when_elapsed() {
@@ -3270,6 +3793,194 @@ mod tests {
     fn split_search_runs_adjacent_matches() {
         let runs = VellumGuiApp::split_search_runs("aaa", "a");
         assert_eq!(runs, vec![("a", true), ("a", true), ("a", true)]);
+    }
+
+    #[test]
+    fn word_char_range_expands_around_word_chars() {
+        assert_eq!(VellumGuiApp::word_char_range("you say hello", 5), (4, 7));
+        // Punctuation selects just itself.
+        assert_eq!(VellumGuiApp::word_char_range("a, b", 1), (1, 2));
+        // Clamps past-the-end to the last char.
+        assert_eq!(VellumGuiApp::word_char_range("word", 99), (0, 4));
+        assert_eq!(VellumGuiApp::word_char_range("", 0), (0, 0));
+        // Char (not byte) indexing with multibyte text.
+        assert_eq!(VellumGuiApp::word_char_range("éléphant rose", 2), (0, 8));
+    }
+
+    #[test]
+    fn slice_line_by_chars_uses_char_offsets() {
+        assert_eq!(
+            VellumGuiApp::slice_line_by_chars("hello world", Some(6), None),
+            "world"
+        );
+        assert_eq!(
+            VellumGuiApp::slice_line_by_chars("hello world", None, Some(5)),
+            "hello"
+        );
+        // Multibyte chars: offsets count chars, not bytes.
+        assert_eq!(
+            VellumGuiApp::slice_line_by_chars("éé abc", Some(3), Some(6)),
+            "abc"
+        );
+        // Reversed offsets are reordered, out-of-range clamps to the end.
+        assert_eq!(
+            VellumGuiApp::slice_line_by_chars("abc", Some(99), Some(1)),
+            "bc"
+        );
+    }
+
+    #[test]
+    fn resolve_line_uid_clamps_trimmed_and_overrun() {
+        // base 100, 10 lines: uids 100..110 are live.
+        assert_eq!(VellumGuiApp::resolve_line_uid(100, 10, 105), 5);
+        // Trimmed off the front (uid below base) clamps to the first line.
+        assert_eq!(VellumGuiApp::resolve_line_uid(100, 10, 95), 0);
+        // Past the end clamps to the last line.
+        assert_eq!(VellumGuiApp::resolve_line_uid(100, 10, 500), 9);
+        // Wrapping base (fresh buffer populated without generation bumps).
+        let base = 0u64.wrapping_sub(3);
+        assert_eq!(VellumGuiApp::resolve_line_uid(base, 5, base.wrapping_add(4)), 4);
+    }
+
+    #[test]
+    fn ordered_selection_endpoints_orders_reversed_drags() {
+        let selection = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (107, 4),
+            head: (103, 2),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::ordered_selection_endpoints(&selection, 100, 10),
+            ((3, 2), (7, 4))
+        );
+        // Same line, chars reversed.
+        let selection = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (105, 9),
+            head: (105, 2),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::ordered_selection_endpoints(&selection, 100, 10),
+            ((5, 2), (5, 9))
+        );
+    }
+
+    #[test]
+    fn buffer_selection_copy_text_spans_lines_and_slices_endpoints() {
+        use crate::data::StyledLine;
+        let mut content = crate::data::TextContent::new("Test", 100);
+        content.add_line(StyledLine::from_text("first line"));
+        content.add_line(StyledLine::from_text("second line"));
+        content.add_line(StyledLine::from_text("third line"));
+        let base = content.generation.wrapping_sub(content.lines.len() as u64);
+
+        // From "line" on the first line through "third" on the last.
+        let selection = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (base, 6),
+            head: (base.wrapping_add(2), 5),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::buffer_selection_copy_text(&content, &selection, base, None),
+            "line\nsecond line\nthird"
+        );
+
+        // Reversed drag yields the same text.
+        let reversed = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (base.wrapping_add(2), 5),
+            head: (base, 6),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::buffer_selection_copy_text(&content, &reversed, base, None),
+            "line\nsecond line\nthird"
+        );
+
+        // Single-line slice.
+        let single = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (base.wrapping_add(1), 7),
+            head: (base.wrapping_add(1), 11),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::buffer_selection_copy_text(&content, &single, base, None),
+            "line"
+        );
+    }
+
+    #[test]
+    fn buffer_selection_copy_text_survives_front_trim() {
+        use crate::data::StyledLine;
+        let mut content = crate::data::TextContent::new("Test", 3);
+        for i in 0..5 {
+            content.add_line(StyledLine::from_text(format!("line {}", i)));
+        }
+        // Buffer now holds lines 2..5; generation is 5.
+        let base = content.generation.wrapping_sub(content.lines.len() as u64);
+        // Anchor on a line that has been trimmed away clamps to the first
+        // remaining line.
+        let selection = GuiBufferSelection {
+            scroll_id: "main".into(),
+            anchor: (0, 0),
+            head: (base.wrapping_add(1), 6),
+            dragging: false,
+        };
+        assert_eq!(
+            VellumGuiApp::buffer_selection_copy_text(&content, &selection, base, None),
+            "line 2\nline 3"
+        );
+    }
+
+    #[test]
+    fn build_line_job_records_link_char_ranges() {
+        use crate::data::{LinkData, StyledLine, TextSegment};
+        let line = StyledLine {
+            segments: vec![
+                TextSegment::plain("héllo "),
+                TextSegment {
+                    text: "an orc".into(),
+                    link_data: Some(LinkData {
+                        exist_id: "123".into(),
+                        noun: "orc".into(),
+                        text: "an orc".into(),
+                        coord: None,
+                    }),
+                    ..Default::default()
+                },
+                TextSegment::plain(" lunges!"),
+            ],
+            stream: "main".into(),
+            timestamp: None,
+        };
+        let visuals = eframe::egui::Visuals::default();
+        let font_id = eframe::egui::FontId::monospace(14.0);
+        let built =
+            VellumGuiApp::build_line_job(&line, &visuals, None, &font_id, f32::INFINITY, None);
+        assert_eq!(built.job.text, "héllo an orc lunges!");
+        assert_eq!(built.links.len(), 1);
+        // Char (not byte) range: "héllo " is 6 chars.
+        assert_eq!(built.links[0].0, 6..12);
+        assert_eq!(built.links[0].1.exist_id, "123");
+    }
+
+    #[test]
+    fn compose_line_text_matches_job_text() {
+        use crate::data::{StyledLine, TextSegment};
+        let line = StyledLine {
+            segments: vec![TextSegment::plain("a"), TextSegment::plain("bc")],
+            stream: "main".into(),
+            timestamp: None,
+        };
+        let visuals = eframe::egui::Visuals::default();
+        let font_id = eframe::egui::FontId::monospace(14.0);
+        let built =
+            VellumGuiApp::build_line_job(&line, &visuals, None, &font_id, f32::INFINITY, None);
+        assert_eq!(VellumGuiApp::compose_line_text(&line, None), built.job.text);
     }
 
     #[test]

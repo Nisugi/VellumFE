@@ -1003,9 +1003,14 @@ impl VellumGuiApp {
             .unwrap_or(false);
 
         let mut clicked = None;
+        // Each member's screen rect, recorded so window-level drag-and-drop
+        // can resolve drops to the member under the pointer instead of the
+        // whole group window (e.g. left vs right hand in a hand group).
+        let mut member_rects: Vec<(String, Rect)> = Vec::with_capacity(members.len());
         if horizontal {
             ui.columns(members.len(), |columns| {
                 for (column, member) in columns.iter_mut().zip(members.iter()) {
+                    member_rects.push((member.window_name.clone(), column.max_rect()));
                     column.push_id(&member.id.key, |ui| {
                         if let Some(click) = Self::render_window_content(
                             &self.app_core,
@@ -1026,7 +1031,7 @@ impl VellumGuiApp {
                 .max(24.0);
             let width = ui.available_width().max(1.0);
             for member in &members {
-                ui.push_id(&member.id.key, |ui| {
+                let block = ui.push_id(&member.id.key, |ui| {
                     ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                         ui.set_min_size(Vec2::new(width, each_height));
                         ui.set_max_height(each_height);
@@ -1038,11 +1043,21 @@ impl VellumGuiApp {
                         ) {
                             clicked = Some(click);
                         }
-                    });
+                    })
                 });
+                member_rects.push((member.window_name.clone(), block.inner.response.rect));
             }
         }
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(Self::group_member_rects_id(&tab.id.key), member_rects);
+        });
         clicked
+    }
+
+    /// egui temp-data key for a group leader's per-member screen rects,
+    /// refreshed every frame the group renders.
+    fn group_member_rects_id(leader: &TabKey) -> egui::Id {
+        egui::Id::new("gui_group_member_rects").with(leader)
     }
 
     /// Handle `action:setskin:<name>` from dot-commands or menus. "none"
@@ -2885,6 +2900,18 @@ impl VellumGuiApp {
             if !entry.rect.contains(pointer_pos) {
                 continue;
             }
+            // Grouped windows resolve to the member under the pointer
+            // (a hand group is one window but two drop targets).
+            if self.group_for_tab(&entry.tab_key).is_some() {
+                let member_rects: Option<Vec<(String, Rect)>> = ctx
+                    .data(|data| data.get_temp(Self::group_member_rects_id(&entry.tab_key)));
+                if let Some(member) = member_rects.iter().flatten().find_map(|(name, rect)| {
+                    rect.contains(pointer_pos).then_some(name.as_str())
+                }) {
+                    target = Some(self.drag_drop_target_for_window(member));
+                    break;
+                }
+            }
             let Some(window_name) = self
                 .available_tabs
                 .get(&entry.tab_key)
@@ -2892,33 +2919,38 @@ impl VellumGuiApp {
             else {
                 continue;
             };
-            let Some(window) = self.app_core.ui_state.windows.get(&window_name) else {
-                continue;
-            };
-            let name_lower = window_name.to_ascii_lowercase();
-            target = Some(match &window.content {
-                WindowContent::Hand { .. } if name_lower.contains("left") => "left".to_string(),
-                WindowContent::Hand { .. } if name_lower.contains("right") => "right".to_string(),
-                WindowContent::Inventory(_) => "wear".to_string(),
-                WindowContent::Container { container_title } => {
-                    match self
-                        .app_core
-                        .game_state
-                        .container_cache
-                        .find_by_title(container_title)
-                    {
-                        Some(container) => format!("#{}", container.id),
-                        None => "drop".to_string(),
-                    }
-                }
-                _ => "drop".to_string(),
-            });
+            target = Some(self.drag_drop_target_for_window(&window_name));
             break;
         }
 
         let target = target.unwrap_or_else(|| "drop".to_string());
         let command = format!("_drag #{} {}", payload.exist_id, target);
         self.dispatch_raw_command(command);
+    }
+
+    /// The `_drag` protocol target a drop on this window's body maps to.
+    fn drag_drop_target_for_window(&self, window_name: &str) -> String {
+        let Some(window) = self.app_core.ui_state.windows.get(window_name) else {
+            return "drop".to_string();
+        };
+        let name_lower = window_name.to_ascii_lowercase();
+        match &window.content {
+            WindowContent::Hand { .. } if name_lower.contains("left") => "left".to_string(),
+            WindowContent::Hand { .. } if name_lower.contains("right") => "right".to_string(),
+            WindowContent::Inventory(_) => "wear".to_string(),
+            WindowContent::Container { container_title } => {
+                match self
+                    .app_core
+                    .game_state
+                    .container_cache
+                    .find_by_title(container_title)
+                {
+                    Some(container) => format!("#{}", container.id),
+                    None => "drop".to_string(),
+                }
+            }
+            _ => "drop".to_string(),
+        }
     }
 
     /// Add a window from a layout template (menu `__ADD__<template>` path).
