@@ -17,6 +17,7 @@ command `quit` also saves your settings on the way out.)
 | `.menu` | | Open the main menu |
 | `.settings` | | Open the settings editor |
 | `.reload [what]` | | Reload config from disk: `highlights`, `keybinds`, `hotbars`, `settings`, `colors`, `layout`, or everything |
+| `.room` | | Show how the current room resolved against the map database (stream ids, mapdb room/location, routable exits, tags) — for debugging the map and pathing |
 
 ## Windows & Layout
 
