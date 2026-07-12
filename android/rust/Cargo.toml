@@ -1,6 +1,6 @@
 [package]
 name = "vellum-android"
-version = "0.3.0-beta.7"
+version = "0.3.0-beta.8"
 edition = "2021"
 publish = false
 description = "JNI embedding of the VellumFE headless runtime for the Android shell"
