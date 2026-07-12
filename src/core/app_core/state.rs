@@ -109,6 +109,9 @@ pub struct AppCore {
     /// Map revision as of the last remote flush; lets poll_map push a
     /// freshly generated layout to phones without waiting for game text.
     last_remote_map_revision: u64,
+    /// Browse requests waiting on async layout generation:
+    /// (client_id, request_id, location).
+    pending_map_views: Vec<(u64, u64, String)>,
 
     pub nav_room_id: Option<String>,
 
@@ -250,6 +253,7 @@ impl AppCore {
             travel: Default::default(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
+            pending_map_views: Vec::new(),
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -354,6 +358,8 @@ impl AppCore {
             self.add_system_message(&format!("[map] {text}"));
         }
         self.tick_travel();
+        // Browse replies waiting on the layout worker.
+        self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
         // to reach phones; the flush is diff-based so this is cheap.
         if self.message_processor.remote.is_some()
@@ -1135,10 +1141,9 @@ impl AppCore {
         crate::core::remote::RemoteMapSceneRef,
         crate::core::remote::RemoteMapState,
     ) {
-        use crate::core::layout_engine::{Sheet, SceneEdgeKind};
+        use crate::core::layout_engine::Sheet;
         use crate::core::remote::{
-            RemoteGhostEdge, RemoteGhostNode, RemoteMapEdge, RemoteMapLabel, RemoteMapRoom,
-            RemoteMapScene, RemoteMapSceneRef, RemoteMapState,
+            RemoteGhostEdge, RemoteGhostNode, RemoteMapSceneRef, RemoteMapState,
         };
 
         let map = &self.map;
@@ -1171,6 +1176,16 @@ impl AppCore {
         state.room = current;
         state.cell = ghost_cell.or(center).map(|c| [c.x, c.y]);
         state.in_ghost = ghost_cell.is_some();
+        state.travel = self.travel.task().and_then(|task| {
+            let db = map.mapdb()?;
+            let from = current?;
+            Some(crate::core::remote::RemoteTravelStatus {
+                dest: task.destination,
+                done: task.rooms_total().saturating_sub(task.rooms_remaining()),
+                total: task.rooms_total(),
+                eta: crate::core::travel::format_eta(task.eta_seconds(db, from)),
+            })
+        });
         if let Some(overlay) = &overlay {
             let current_ghost = map.current_ghost;
             state.ghosts = overlay
@@ -1207,62 +1222,73 @@ impl AppCore {
             }
         }
 
-        let pass =
-            |group: usize| filter.as_ref().map_or(true, |set| set.contains(&group));
-        let sheet_scene = scene.sheet(sheet);
-        let wire = RemoteMapScene {
-            location: scene.location.clone(),
-            sheet: match sheet {
-                Sheet::Outdoor => "outdoor".to_string(),
-                Sheet::Interiors => "interiors".to_string(),
-            },
-            rooms: sheet_scene
-                .rooms
-                .iter()
-                .filter(|r| pass(r.group))
-                .map(|r| RemoteMapRoom {
-                    i: r.id,
-                    x: r.cell.x,
-                    y: r.cell.y,
-                    e: r.entrance,
-                })
-                .collect(),
-            edges: sheet_scene
-                .edges
-                .iter()
-                .filter(|e| pass(e.group))
-                .map(|e| {
-                    let stub = e.kind == SceneEdgeKind::Stub;
-                    RemoteMapEdge {
-                        x1: e.a.x,
-                        y1: e.a.y,
-                        x2: e.b.x,
-                        y2: e.b.y,
-                        k: match e.kind {
-                            SceneEdgeKind::Directional => 0,
-                            SceneEdgeKind::Connector => 1,
-                            SceneEdgeKind::Stub => 2,
-                        },
-                        l: e.label.clone(),
-                        ar: stub.then_some(e.a_room),
-                        br: stub.then_some(e.b_room),
-                    }
-                })
-                .collect(),
-            labels: sheet_scene
-                .labels
-                .iter()
-                .filter(|l| pass(l.group))
-                .map(|l| RemoteMapLabel {
-                    x: l.cell.x,
-                    y: l.cell.y,
-                    t: l.text.clone(),
-                })
-                .collect(),
-        };
-        let wire = std::sync::Arc::new(wire);
+        let wire = std::sync::Arc::new(wire_map_scene(scene, sheet, filter.as_ref()));
         self.remote_map_cache = Some((key, wire.clone()));
         (RemoteMapSceneRef(Some(wire)), state)
+    }
+
+    /// Location list for a phone's map picker.
+    pub fn handle_remote_map_locations(&mut self, client_id: u64, request_id: u64) {
+        let locations: Vec<String> = self
+            .map
+            .mapdb()
+            .map(|db| db.locations().map(str::to_owned).collect())
+            .unwrap_or_default();
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_map_locations(client_id, request_id, locations);
+        }
+    }
+
+    /// A phone wants to browse another location's map. Layout generation is
+    /// async: reply now when the scene is cached, otherwise queue and let
+    /// `poll_map` answer when the worker finishes.
+    pub fn handle_remote_map_view(&mut self, client_id: u64, request_id: u64, location: String) {
+        let known = self
+            .map
+            .mapdb()
+            .map(|db| db.rooms(&location).is_some())
+            .unwrap_or(false);
+        if !known {
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_map_browse(
+                    client_id,
+                    request_id,
+                    location.clone(),
+                    None,
+                    Some(format!("'{location}' is not in the map database")),
+                );
+            }
+            return;
+        }
+        self.map.request_location(&location);
+        self.pending_map_views.push((client_id, request_id, location));
+        self.service_pending_map_views();
+    }
+
+    /// Answer browse requests whose layouts have finished generating.
+    fn service_pending_map_views(&mut self) {
+        if self.pending_map_views.is_empty() {
+            return;
+        }
+        let mut still_pending = Vec::new();
+        for (client_id, request_id, location) in std::mem::take(&mut self.pending_map_views) {
+            let Some(scene) = self.map.scene_for(&location) else {
+                still_pending.push((client_id, request_id, location));
+                continue;
+            };
+            // Browse the outdoor sheet; interior-only locations fall back
+            // to their interiors shelf.
+            let sheet = if scene.outdoor.rooms.is_empty() {
+                crate::core::layout_engine::Sheet::Interiors
+            } else {
+                crate::core::layout_engine::Sheet::Outdoor
+            };
+            let wire = std::sync::Arc::new(wire_map_scene(scene, sheet, None));
+            if let Some(remote) = self.message_processor.remote.as_mut() {
+                remote.push_map_browse(client_id, request_id, location, Some(wire), None);
+            }
+        }
+        self.pending_map_views = still_pending;
     }
 
     /// Poll TTS events from callback channel and handle them
@@ -5017,6 +5043,71 @@ impl AppCore {
             .unwrap_or_else(|| name.to_string())
     }
 
+}
+
+/// Project one sheet of a generated scene into the phone wire format,
+/// optionally filtered to a building's groups (the current-view push) or
+/// unfiltered (location browsing).
+fn wire_map_scene(
+    scene: &crate::core::layout_engine::MapScene,
+    sheet: crate::core::layout_engine::Sheet,
+    filter: Option<&std::collections::HashSet<usize>>,
+) -> crate::core::remote::RemoteMapScene {
+    use crate::core::layout_engine::{SceneEdgeKind, Sheet};
+    use crate::core::remote::{RemoteMapEdge, RemoteMapLabel, RemoteMapRoom, RemoteMapScene};
+
+    let pass = |group: usize| filter.map_or(true, |set| set.contains(&group));
+    let sheet_scene = scene.sheet(sheet);
+    RemoteMapScene {
+        location: scene.location.clone(),
+        sheet: match sheet {
+            Sheet::Outdoor => "outdoor".to_string(),
+            Sheet::Interiors => "interiors".to_string(),
+        },
+        rooms: sheet_scene
+            .rooms
+            .iter()
+            .filter(|r| pass(r.group))
+            .map(|r| RemoteMapRoom {
+                i: r.id,
+                x: r.cell.x,
+                y: r.cell.y,
+                e: r.entrance,
+            })
+            .collect(),
+        edges: sheet_scene
+            .edges
+            .iter()
+            .filter(|e| pass(e.group))
+            .map(|e| {
+                let stub = e.kind == SceneEdgeKind::Stub;
+                RemoteMapEdge {
+                    x1: e.a.x,
+                    y1: e.a.y,
+                    x2: e.b.x,
+                    y2: e.b.y,
+                    k: match e.kind {
+                        SceneEdgeKind::Directional => 0,
+                        SceneEdgeKind::Connector => 1,
+                        SceneEdgeKind::Stub => 2,
+                    },
+                    l: e.label.clone(),
+                    ar: stub.then_some(e.a_room),
+                    br: stub.then_some(e.b_room),
+                }
+            })
+            .collect(),
+        labels: sheet_scene
+            .labels
+            .iter()
+            .filter(|l| pass(l.group))
+            .map(|l| RemoteMapLabel {
+                x: l.cell.x,
+                y: l.cell.y,
+                t: l.text.clone(),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]

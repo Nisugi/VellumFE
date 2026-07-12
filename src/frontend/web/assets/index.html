@@ -263,10 +263,11 @@
   <div id="map-overlay" hidden>
     <div id="map-card">
       <div id="map-titlebar">
-        <span id="map-title">Map</span>
+        <button id="map-title" type="button"
+                title="Browse another location">Map &#9662;</button>
         <span id="map-tools">
-          <button id="map-follow" type="button" class="map-tool"
-                  aria-label="Follow character" title="Follow character">&#8982;</button>
+          <button id="map-stop" type="button" hidden>&#9632; Stop</button>
+          <button id="map-follow" type="button">Following</button>
           <button id="map-close" type="button" aria-label="Close">&#10005;</button>
         </span>
       </div>
@@ -274,6 +275,12 @@
         <canvas id="map-canvas"></canvas>
         <p id="map-empty" hidden>Waiting for a mapped room&hellip;<br>
            <small>No map data? Run <code>.mapdb download</code> first.</small></p>
+        <div id="map-picker" hidden>
+          <input id="map-picker-filter" type="text" placeholder="filter locations&hellip;"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div id="map-picker-list"></div>
+          <p id="map-picker-status" hidden></p>
+        </div>
       </div>
       <p id="map-hint">Tap a room to walk there &middot; drag to pan &middot; pinch to zoom</p>
     </div>

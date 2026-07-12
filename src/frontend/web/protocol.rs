@@ -259,6 +259,32 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         ),
         RemoteDelta::MapScene(scene) => encode("map_scene", last_seq, scene),
         RemoteDelta::MapState(state) => encode("map_state", last_seq, state),
+        // client_id stays server-side (ws task already filtered on it).
+        RemoteDelta::MapLocations {
+            request_id,
+            locations,
+            ..
+        } => encode(
+            "map_locations",
+            last_seq,
+            serde_json::json!({ "request_id": request_id, "locations": locations }),
+        ),
+        RemoteDelta::MapBrowse {
+            request_id,
+            location,
+            scene,
+            error,
+            ..
+        } => encode(
+            "map_browse",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "location": location,
+                "scene": scene,
+                "error": error,
+            }),
+        ),
         RemoteDelta::Colors {
             request_id,
             scope,
@@ -398,6 +424,10 @@ pub enum ClientMessage {
         group: Option<String>,
         label: String,
     },
+    /// The map location picker wants the list of mapped locations.
+    MapLocations { request_id: u64 },
+    /// Browse another location's map.
+    MapView { request_id: u64, location: String },
     /// Start a game session (headless runtime only). Either a saved profile
     /// name, or inline credentials optionally saved as a new profile.
     Connect {
@@ -622,6 +652,18 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 profile_name: opt_str(msg.d.get("profile_name")),
                 lich_host,
                 lich_port,
+            })
+        }
+        "map_locations" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            Some(ClientMessage::MapLocations { request_id })
+        }
+        "map_view" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let location = msg.d.get("location")?.as_str()?.to_string();
+            Some(ClientMessage::MapView {
+                request_id,
+                location,
             })
         }
         "disconnect" => Some(ClientMessage::Disconnect),

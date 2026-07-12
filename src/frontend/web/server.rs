@@ -626,6 +626,26 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::Macro { id })
             .is_ok(),
+        ClientMessage::MapLocations { request_id } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::MapLocations {
+                client_id,
+                request_id,
+            })
+            .is_ok(),
+        ClientMessage::MapView {
+            request_id,
+            location,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::MapView {
+                client_id,
+                request_id,
+                location,
+            })
+            .is_ok(),
         ClientMessage::MacroSave {
             group,
             label,
@@ -937,7 +957,9 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     if let RemoteDelta::Menu { client_id: target, .. }
                     | RemoteDelta::ConfigFile { client_id: target, .. }
                     | RemoteDelta::Highlights { client_id: target, .. }
-                    | RemoteDelta::Colors { client_id: target, .. } = &d
+                    | RemoteDelta::Colors { client_id: target, .. }
+                    | RemoteDelta::MapLocations { client_id: target, .. }
+                    | RemoteDelta::MapBrowse { client_id: target, .. } = &d
                     {
                         if *target != client_id {
                             continue;

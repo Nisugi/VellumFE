@@ -139,6 +139,13 @@ async fn main() {
             room: Some(102),
             cell: Some([2, 0]),
             in_ghost: false,
+            // Scripted trip in progress: exercises the banner + Stop button.
+            travel: Some(vellum_fe::core::remote::RemoteTravelStatus {
+                dest: 300,
+                done: 12,
+                total: 47,
+                eta: "1:04".into(),
+            }),
             ghosts: vec![RemoteGhostNode { x: 3, y: -1, cur: false }],
             ghost_edges: vec![RemoteGhostEdge {
                 x1: 3,
@@ -186,6 +193,72 @@ async fn main() {
             RemoteEvent::SessionDisconnect if login_mode => {
                 println!("EVENT session_disconnect → idle");
                 sink.set_session_state(RemoteSessionInfo::default());
+            }
+            RemoteEvent::MapLocations {
+                client_id,
+                request_id,
+            } => {
+                println!("EVENT map_locations");
+                sink.push_map_locations(
+                    client_id,
+                    request_id,
+                    vec![
+                        "Harness Town".into(),
+                        "Harness Docks".into(),
+                        "Empty Location".into(),
+                    ],
+                );
+            }
+            RemoteEvent::MapView {
+                client_id,
+                request_id,
+                location,
+            } => {
+                use vellum_fe::core::remote::{RemoteMapEdge, RemoteMapRoom, RemoteMapScene};
+                println!("EVENT map_view: {location:?}");
+                if location == "Harness Docks" {
+                    let rooms = (0..4i32)
+                        .map(|i| RemoteMapRoom {
+                            i: 500 + i as u32,
+                            x: i,
+                            y: i,
+                            e: false,
+                        })
+                        .collect();
+                    let edges = (1..4i32)
+                        .map(|i| RemoteMapEdge {
+                            x1: i - 1,
+                            y1: i - 1,
+                            x2: i,
+                            y2: i,
+                            k: 0,
+                            l: None,
+                            ar: None,
+                            br: None,
+                        })
+                        .collect();
+                    sink.push_map_browse(
+                        client_id,
+                        request_id,
+                        location.clone(),
+                        Some(std::sync::Arc::new(RemoteMapScene {
+                            location,
+                            sheet: "outdoor".into(),
+                            rooms,
+                            edges,
+                            labels: vec![],
+                        })),
+                        None,
+                    );
+                } else {
+                    sink.push_map_browse(
+                        client_id,
+                        request_id,
+                        location.clone(),
+                        None,
+                        Some(format!("'{location}' has no scripted scene")),
+                    );
+                }
             }
             RemoteEvent::Command(text) => println!("EVENT cmd: {text:?}"),
             RemoteEvent::Macro { id } => println!("EVENT macro tap: {id:?}"),

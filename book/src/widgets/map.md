@@ -90,8 +90,14 @@ The mobile web client has its own map: once map data is downloaded
 top bar. It opens a full-screen view of the same generated layout the
 desktop mini map shows — auto-following your character, switching to the
 building's floor plan indoors, ghost rooms included. Drag to pan (which
-pauses following until you tap the follow button), pinch to zoom, and
-tap a room to walk there with [native travel](travel.md).
+pauses following until you tap **Follow**), pinch to zoom, and tap a
+room to walk there with [native travel](travel.md).
+
+Tap the **location name** in the title bar to browse any other mapped
+location — filter the list, pick one, and tap a room there to travel
+across the world; **Return** brings the view back to where you're
+standing. While a trip is running the map shows its progress
+("→ 8966 · 12/47 rooms · ETA 1:04") and a **Stop** button.
 
 ## Configuration
 

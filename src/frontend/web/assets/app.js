@@ -767,6 +767,8 @@ function handleMessage(msg) {
     case "charinfo": setCharInfo(msg.d); break;
     case "map_scene": setMapScene(msg.d); break;
     case "map_state": setMapState(msg.d); break;
+    case "map_locations": handleMapLocations(msg.d); break;
+    case "map_browse": handleMapBrowse(msg.d); break;
     case "denied":
       // Wrong/missing token: stop reconnecting, ask for a pairing token.
       authDenied = true;
@@ -3286,52 +3288,167 @@ const mapBtn = document.getElementById("map-btn");
 const mapTitleEl = document.getElementById("map-title");
 const mapEmptyEl = document.getElementById("map-empty");
 const mapFollowBtn = document.getElementById("map-follow");
+const mapStopBtn = document.getElementById("map-stop");
+const mapPicker = document.getElementById("map-picker");
+const mapPickerFilter = document.getElementById("map-picker-filter");
+const mapPickerList = document.getElementById("map-picker-list");
+const mapPickerStatus = document.getElementById("map-picker-status");
 
 let mapScene = null;
-let mapRoomById = new Map();
 let mapState = {};
+/// Browsing another location: { location, scene } — the live scene keeps
+/// arriving underneath and is restored on Return.
+let mapBrowse = null;
 let mapCam = { x: 0, y: 0, ppc: 22 }; // center cell (fractional), px per cell
 let mapFollow = true;
 let mapRaf = 0;
+let mapRequestCounter = 0;
+let mapPendingRequest = 0;
+let mapLocations = [];
+
+function activeMapScene() {
+  return mapBrowse ? mapBrowse.scene : mapScene;
+}
+
+function renderMapTitle() {
+  if (mapBrowse) {
+    mapTitleEl.textContent = `${mapBrowse.location} ▾`;
+  } else if (mapScene) {
+    mapTitleEl.textContent =
+      mapScene.location +
+      (mapScene.sheet === "interiors" ? " · inside" : "") +
+      " ▾";
+  } else {
+    mapTitleEl.textContent = "Map ▾";
+  }
+  mapFollowBtn.textContent = mapBrowse ? "Return" : mapFollow ? "Following" : "Follow";
+  mapStopBtn.hidden = !(mapState.travel && !mapBrowse);
+}
 
 function setMapScene(scene) {
   mapScene = scene;
-  mapRoomById = new Map(scene.rooms.map((r) => [r.i, r]));
-  mapTitleEl.textContent =
-    scene.location + (scene.sheet === "interiors" ? " · inside" : "");
+  renderMapTitle();
   requestMapRender();
 }
 
 function setMapState(st) {
   mapState = st || {};
   mapBtn.hidden = !mapState.available;
-  if (mapFollow && Array.isArray(mapState.cell)) {
+  if (!mapBrowse && mapFollow && Array.isArray(mapState.cell)) {
     mapCam.x = mapState.cell[0];
     mapCam.y = mapState.cell[1];
   }
+  renderMapTitle();
   requestMapRender();
 }
 
 function setMapFollow(on) {
   mapFollow = on;
-  mapFollowBtn.classList.toggle("follow-on", on);
-  if (on && Array.isArray(mapState.cell)) {
+  mapFollowBtn.classList.toggle("follow-on", on && !mapBrowse);
+  if (on && !mapBrowse && Array.isArray(mapState.cell)) {
     mapCam.x = mapState.cell[0];
     mapCam.y = mapState.cell[1];
-    requestMapRender();
   }
+  renderMapTitle();
+  requestMapRender();
+}
+
+/// Leave browse mode: back to the live scene, following the character.
+function exitMapBrowse() {
+  mapBrowse = null;
+  mapPicker.hidden = true;
+  setMapFollow(true);
 }
 
 mapBtn.addEventListener("click", () => {
   mapOverlay.hidden = false;
   resizeMapCanvas();
+  renderMapTitle();
   requestMapRender();
 });
 document.getElementById("map-close").addEventListener("click", () => {
   mapOverlay.hidden = true;
+  mapPicker.hidden = true;
 });
-mapFollowBtn.addEventListener("click", () => setMapFollow(!mapFollow));
+mapFollowBtn.addEventListener("click", () => {
+  if (mapBrowse) exitMapBrowse();
+  else setMapFollow(!mapFollow);
+});
+mapStopBtn.addEventListener("click", () => sendCommand(".go2 stop"));
 setMapFollow(true);
+
+// ---- Location picker: browse any mapped location ---------------------------
+
+mapTitleEl.addEventListener("click", () => {
+  if (!mapPicker.hidden) {
+    mapPicker.hidden = true;
+    return;
+  }
+  mapPicker.hidden = false;
+  mapPickerFilter.value = "";
+  mapPickerStatus.hidden = true;
+  if (mapLocations.length) {
+    renderMapPickerList();
+  } else {
+    mapPickerList.replaceChildren();
+    mapPickerStatus.textContent = "Loading locations…";
+    mapPickerStatus.hidden = false;
+    mapPendingRequest = ++mapRequestCounter;
+    sendJson("map_locations", { request_id: mapPendingRequest });
+  }
+});
+
+mapPickerFilter.addEventListener("input", renderMapPickerList);
+
+function renderMapPickerList() {
+  const needle = mapPickerFilter.value.trim().toLowerCase();
+  const shown = mapLocations.filter((l) => !needle || l.toLowerCase().includes(needle));
+  mapPickerList.replaceChildren();
+  for (const location of shown.slice(0, 200)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = location;
+    btn.addEventListener("click", () => {
+      mapPickerStatus.textContent = `Loading ${location}…`;
+      mapPickerStatus.hidden = false;
+      mapPendingRequest = ++mapRequestCounter;
+      sendJson("map_view", { request_id: mapPendingRequest, location });
+    });
+    mapPickerList.appendChild(btn);
+  }
+}
+
+function handleMapLocations(d) {
+  if (d.request_id !== mapPendingRequest) return;
+  mapLocations = d.locations || [];
+  mapPickerStatus.hidden = true;
+  renderMapPickerList();
+}
+
+function handleMapBrowse(d) {
+  if (d.request_id !== mapPendingRequest) return;
+  if (d.error || !d.scene) {
+    mapPickerStatus.textContent = d.error || "No map for that location";
+    mapPickerStatus.hidden = false;
+    return;
+  }
+  mapBrowse = { location: d.location, scene: d.scene };
+  mapPicker.hidden = true;
+  setMapFollow(false);
+  // Center on the browsed layout.
+  const rooms = d.scene.rooms;
+  if (rooms.length) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const r of rooms) {
+      minX = Math.min(minX, r.x); maxX = Math.max(maxX, r.x);
+      minY = Math.min(minY, r.y); maxY = Math.max(maxY, r.y);
+    }
+    mapCam.x = (minX + maxX) / 2;
+    mapCam.y = (minY + maxY) / 2;
+  }
+  renderMapTitle();
+  requestMapRender();
+}
 
 function resizeMapCanvas() {
   const rect = mapCanvas.parentElement.getBoundingClientRect();
@@ -3366,7 +3483,8 @@ function renderMap() {
   const h = mapCanvas.height / dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const hasRooms = mapScene && mapScene.rooms.length > 0;
+  const scene = activeMapScene();
+  const hasRooms = scene && scene.rooms.length > 0;
   mapEmptyEl.hidden = hasRooms;
   if (!hasRooms) return;
 
@@ -3385,7 +3503,7 @@ function renderMap() {
 
   // Edges under rooms.
   ctx.lineWidth = 1.2;
-  for (const e of mapScene.edges) {
+  for (const e of scene.edges) {
     const x1 = sx(e.x1), y1 = sy(e.y1), x2 = sx(e.x2), y2 = sy(e.y2);
     if (!onScreen(x1, y1) && !onScreen(x2, y2)) continue;
     if (e.k === 0) {
@@ -3450,7 +3568,7 @@ function renderMap() {
     ctx.font = `${Math.min(14, Math.max(9, ppc * 0.5))}px sans-serif`;
     ctx.textAlign = "left";
     ctx.textBaseline = "bottom";
-    for (const l of mapScene.labels) {
+    for (const l of scene.labels) {
       const x = sx(l.x), y = sy(l.y);
       if (!onScreen(x, y)) continue;
       ctx.fillText(l.t, x - roomSize / 2, y - roomSize);
@@ -3458,11 +3576,11 @@ function renderMap() {
   }
 
   // Rooms.
-  for (const r of mapScene.rooms) {
+  for (const r of scene.rooms) {
     const x = sx(r.x), y = sy(r.y);
     if (!onScreen(x, y)) continue;
     const half = roomSize / 2;
-    const isCurrent = !mapState.in_ghost && mapState.room === r.i;
+    const isCurrent = !mapBrowse && !mapState.in_ghost && mapState.room === r.i;
     if (isCurrent) {
       ctx.fillStyle = gold;
       ctx.globalAlpha = 0.35;
@@ -3494,7 +3612,8 @@ function renderMap() {
   }
 
   // Ghost sketches: dashed and dim, unmistakable from mapped truth.
-  if (mapState.ghosts && mapState.ghosts.length) {
+  // Live view only - a browsed location has no session sketches.
+  if (!mapBrowse && mapState.ghosts && mapState.ghosts.length) {
     ctx.globalAlpha = 0.65;
     ctx.strokeStyle = dim;
     ctx.setLineDash([Math.max(2, ppc * 0.12), Math.max(1.5, ppc * 0.08)]);
@@ -3528,6 +3647,25 @@ function renderMap() {
     }
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+  }
+
+  // Travel progress banner while .go2 walks (live view only).
+  if (mapState.travel && !mapBrowse) {
+    const t = mapState.travel;
+    const label = `→ ${t.dest} · ${t.done}/${t.total} rooms · ETA ${t.eta}`;
+    ctx.font = "12px sans-serif";
+    const pad = 6;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = panel;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(4, 4, tw + pad * 2, 22);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = dim;
+    ctx.strokeRect(4, 4, tw + pad * 2, 22);
+    ctx.fillStyle = fg;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 4 + pad, 15);
   }
 }
 
@@ -3601,7 +3739,9 @@ function mapPointerEnd(ev) {
   const wasTap = mapPointers.size === 1 && !mapMoved;
   mapPointers.delete(ev.pointerId);
   if (mapPointers.size < 2) mapPinchStart = 0;
-  if (!wasTap || ev.type !== "pointerup" || !mapScene) return;
+  if (!wasTap || ev.type !== "pointerup") return;
+  const scene = activeMapScene();
+  if (!scene) return;
   // Tap: walk to the nearest room within a finger of the touch point.
   const rect = mapCanvas.getBoundingClientRect();
   const px = ev.clientX - rect.left;
@@ -3610,7 +3750,7 @@ function mapPointerEnd(ev) {
   const cy = mapCam.y + (py - rect.height / 2) / mapCam.ppc;
   let best = null;
   let bestDist = Infinity;
-  for (const r of mapScene.rooms) {
+  for (const r of scene.rooms) {
     const d = Math.hypot(r.x - cx, r.y - cy);
     if (d < bestDist) {
       bestDist = d;

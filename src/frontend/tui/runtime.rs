@@ -578,6 +578,19 @@ async fn async_run(
                     } => {
                         app_core.handle_remote_colors_put(client_id, request_id, scope, colors);
                     }
+                    crate::core::remote::RemoteEvent::MapLocations {
+                        client_id,
+                        request_id,
+                    } => {
+                        app_core.handle_remote_map_locations(client_id, request_id);
+                    }
+                    crate::core::remote::RemoteEvent::MapView {
+                        client_id,
+                        request_id,
+                        location,
+                    } => {
+                        app_core.handle_remote_map_view(client_id, request_id, location);
+                    }
                     crate::core::remote::RemoteEvent::HighlightDelete {
                         client_id,
                         request_id,

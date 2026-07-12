@@ -257,6 +257,21 @@ pub enum RemoteDelta {
     MapScene(Arc<RemoteMapScene>),
     /// Map position/ghost state changed (usually every room change).
     MapState(RemoteMapState),
+    /// Reply to one client's map-locations request (the location picker).
+    MapLocations {
+        client_id: u64,
+        request_id: u64,
+        locations: Vec<String>,
+    },
+    /// Reply to one client's browse request: another location's scene (or
+    /// why not). Sent when the layout is ready — generation is async.
+    MapBrowse {
+        client_id: u64,
+        request_id: u64,
+        location: String,
+        scene: Option<Arc<RemoteMapScene>>,
+        error: Option<String>,
+    },
     /// Reply to one client's config get/put (addressed like `Menu`).
     /// `content` is set for reads; `error` for validation/IO failures;
     /// `saved` for successful writes.
@@ -297,6 +312,15 @@ pub enum RemoteDelta {
 pub enum RemoteEvent {
     /// A command typed on a remote client.
     Command(String),
+    /// The map location picker wants the list of mapped locations.
+    MapLocations { client_id: u64, request_id: u64 },
+    /// Browse another location's map (reply arrives once its layout is
+    /// generated — that can be a moment after the request).
+    MapView {
+        client_id: u64,
+        request_id: u64,
+        location: String,
+    },
     /// A link tapped on a remote client. The main loop resolves it exactly
     /// like a local click (AppCore::resolve_link_activation): `<d>` tags
     /// and coord links become direct commands; plain links become a
@@ -568,9 +592,23 @@ pub struct RemoteGhostEdge {
     pub l: Option<String>,
 }
 
+/// Active-trip progress shown on the phone map while `.go2` walks.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteTravelStatus {
+    /// Destination room id.
+    pub dest: u32,
+    pub done: usize,
+    pub total: usize,
+    /// Pre-formatted "1:04" ETA.
+    pub eta: String,
+}
+
 /// Small per-step map state: where the character is on the current scene.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct RemoteMapState {
+    /// Set while the walk executor is traveling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub travel: Option<RemoteTravelStatus>,
     /// Map data loaded and a room resolved — the client shows/hides its
     /// map button on this.
     pub available: bool,
@@ -802,6 +840,33 @@ impl RemoteSink {
         let macros = Arc::new(RemoteMacros::from_config(config));
         self.macros_tx.send_replace(macros.clone());
         let _ = self.delta_tx.send(RemoteDelta::Macros(macros));
+    }
+
+    /// Reply to one client's map-locations request.
+    pub fn push_map_locations(&mut self, client_id: u64, request_id: u64, locations: Vec<String>) {
+        let _ = self.delta_tx.send(RemoteDelta::MapLocations {
+            client_id,
+            request_id,
+            locations,
+        });
+    }
+
+    /// Reply to one client's map-browse request.
+    pub fn push_map_browse(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        location: String,
+        scene: Option<Arc<RemoteMapScene>>,
+        error: Option<String>,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::MapBrowse {
+            client_id,
+            request_id,
+            location,
+            scene,
+            error,
+        });
     }
 
     /// Record a finalized (highlighted, unwrapped) line and broadcast it.
