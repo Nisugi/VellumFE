@@ -117,6 +117,9 @@ struct SnapshotPayload {
     targets: Vec<RemoteTarget>,
     char_info: RemoteCharInfo,
     session: RemoteSessionInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    map_scene: Option<Arc<crate::core::remote::RemoteMapScene>>,
+    map_state: crate::core::remote::RemoteMapState,
     text: Vec<SnapshotLine>,
 }
 
@@ -170,6 +173,8 @@ pub fn snapshot(
         targets: state.targets.clone(),
         char_info: state.char_info.clone(),
         session: state.session.clone(),
+        map_scene: state.map_scene.0.clone(),
+        map_state: state.map_state.clone(),
         text: lines
             .into_iter()
             .map(|l| SnapshotLine {
@@ -252,6 +257,8 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             last_seq,
             serde_json::json!({ "file": file, "volume": volume }),
         ),
+        RemoteDelta::MapScene(scene) => encode("map_scene", last_seq, scene),
+        RemoteDelta::MapState(state) => encode("map_state", last_seq, state),
         RemoteDelta::Colors {
             request_id,
             scope,

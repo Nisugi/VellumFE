@@ -81,9 +81,17 @@ use the Lich folder.
 From any frontend — including the phone apps, which have no Settings >
 Map panel — `.mapdb download` fetches the latest release, `.mapdb` shows
 status, `.mapdb remove` deletes downloads, and `.mapdb repo <owner/repo>`
-changes the source. On mobile the map data feeds `.room` and
-[`.go2` travel](travel.md); the visual map itself is not in the phone UI
-yet.
+changes the source.
+
+## On the Phone
+
+The mobile web client has its own map: once map data is downloaded
+(`.mapdb download`) and your room resolves, a map button appears in the
+top bar. It opens a full-screen view of the same generated layout the
+desktop mini map shows — auto-following your character, switching to the
+building's floor plan indoors, ghost rooms included. Drag to pan (which
+pauses following until you tap the follow button), pinch to zoom, and
+tap a room to walk there with [native travel](travel.md).
 
 ## Configuration
 
