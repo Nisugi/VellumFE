@@ -252,6 +252,11 @@ pub enum RemoteDelta {
     /// and play it locally (the Android build has no native audio; the
     /// phone's browser engine is the sound device).
     Sound { file: String, volume: Option<f32> },
+    /// The drawable map scene changed (location/sheet/building or a layout
+    /// regeneration). Arc-shared with the snapshot watch.
+    MapScene(Arc<RemoteMapScene>),
+    /// Map position/ghost state changed (usually every room change).
+    MapState(RemoteMapState),
     /// Reply to one client's config get/put (addressed like `Menu`).
     /// `content` is set for reads; `error` for validation/IO failures;
     /// `saved` for successful writes.
@@ -434,6 +439,11 @@ pub struct RemoteStateSnapshot {
     /// Session status + session-control capability. Overlaid by the sink in
     /// `flush_state` (the sink owns it, not GameState).
     pub session: RemoteSessionInfo,
+    /// Drawable map scene (overlaid by AppCore::flush_remote_state — the
+    /// map lives on AppCore, not GameState). Pointer-compared.
+    pub map_scene: RemoteMapSceneRef,
+    /// Per-step map position/ghost state, paired with `map_scene`.
+    pub map_state: RemoteMapState,
 }
 
 /// A targetable creature in the room, for the status drawer's tap-to-
@@ -464,6 +474,124 @@ pub struct RemoteCharInfo {
     pub bounty: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub society: Vec<String>,
+}
+
+/// One drawable room on the phone map. Short field names on purpose — a
+/// town's outdoor sheet is a few thousand of these per scene push.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMapRoom {
+    /// mapdb room id (tap-to-travel target).
+    pub i: u32,
+    pub x: i32,
+    pub y: i32,
+    /// Entrance (door marker).
+    #[serde(skip_serializing_if = "is_false")]
+    pub e: bool,
+}
+
+/// One drawn edge. `k`: 0 = solid directional, 1 = dashed connector,
+/// 2 = stub (draw short dashed arrows at both ends, labeled with the
+/// partner room ids `ar`/`br`, instead of a long line).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMapEdge {
+    pub x1: i32,
+    pub y1: i32,
+    pub x2: i32,
+    pub y2: i32,
+    pub k: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub l: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ar: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub br: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMapLabel {
+    pub x: i32,
+    pub y: i32,
+    pub t: String,
+}
+
+/// The drawable slice of the map the phone shows — exactly what the desktop
+/// mini map draws: one sheet, filtered to the current building when
+/// indoors. Sent once per view change, not per step.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteMapScene {
+    pub location: String,
+    /// "outdoor" | "interiors"
+    pub sheet: String,
+    pub rooms: Vec<RemoteMapRoom>,
+    pub edges: Vec<RemoteMapEdge>,
+    pub labels: Vec<RemoteMapLabel>,
+}
+
+/// Scene handle with pointer-identity equality: scenes are large, and the
+/// per-batch snapshot diff must not deep-compare thousands of rooms.
+#[derive(Clone, Debug, Default)]
+pub struct RemoteMapSceneRef(pub Option<Arc<RemoteMapScene>>);
+
+impl PartialEq for RemoteMapSceneRef {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Serialize for RemoteMapSceneRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+/// Ghost-room sketch node/edge (session-only unmapped interiors), placed
+/// on the same cell grid as the scene.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteGhostNode {
+    pub x: i32,
+    pub y: i32,
+    #[serde(skip_serializing_if = "is_false")]
+    pub cur: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteGhostEdge {
+    pub x1: i32,
+    pub y1: i32,
+    pub x2: i32,
+    pub y2: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub l: Option<String>,
+}
+
+/// Small per-step map state: where the character is on the current scene.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteMapState {
+    /// Map data loaded and a room resolved — the client shows/hides its
+    /// map button on this.
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// Current mapdb room id (the highlight ring).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room: Option<u32>,
+    /// Centering cell (the ghost's cell while in an unmapped room).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell: Option<[i32; 2]>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub in_ghost: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ghosts: Vec<RemoteGhostNode>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ghost_edges: Vec<RemoteGhostEdge>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Category display order for effects sent to clients.
@@ -543,6 +671,9 @@ impl RemoteStateSnapshot {
                 info
             },
             session: RemoteSessionInfo::default(),
+            // Overlaid by AppCore::flush_remote_state (the map lives there).
+            map_scene: RemoteMapSceneRef::default(),
+            map_state: RemoteMapState::default(),
         }
     }
 }
@@ -833,6 +964,18 @@ impl RemoteSink {
                 .delta_tx
                 .send(RemoteDelta::CharInfo(snap.char_info.clone()));
         }
+        // Scene before state, so a client never holds a position for a
+        // scene it hasn't received.
+        if snap.map_scene != self.last.map_scene {
+            if let Some(scene) = &snap.map_scene.0 {
+                let _ = self.delta_tx.send(RemoteDelta::MapScene(scene.clone()));
+            }
+        }
+        if snap.map_state != self.last.map_state {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::MapState(snap.map_state.clone()));
+        }
         // Send on RT/CT end changes AND on every prompt (server_time
         // tick). The per-prompt resend matters: a <roundTime> can be
         // flushed before its paired prompt is parsed, so the first delta
@@ -911,6 +1054,44 @@ mod tests {
 
         // Watch holds the latest state for snapshots.
         assert_eq!(handles.state_rx.borrow().vitals.health, 50);
+    }
+
+    #[test]
+    fn flush_state_sends_map_deltas_by_pointer_identity() {
+        let (mut sink, handles, _event_rx) = RemoteSink::new(100);
+        let mut rx = handles.delta_tx.subscribe();
+
+        let scene = Arc::new(RemoteMapScene {
+            location: "Town".into(),
+            sheet: "outdoor".into(),
+            rooms: vec![RemoteMapRoom { i: 1, x: 0, y: 0, e: false }],
+            edges: vec![],
+            labels: vec![],
+        });
+        let mut snap = RemoteStateSnapshot::default();
+        snap.map_scene = RemoteMapSceneRef(Some(scene.clone()));
+        snap.map_state = RemoteMapState {
+            available: true,
+            room: Some(1),
+            cell: Some([0, 0]),
+            ..Default::default()
+        };
+        sink.flush_state(snap.clone());
+        assert!(matches!(rx.try_recv(), Ok(RemoteDelta::MapScene(_))));
+        assert!(matches!(rx.try_recv(), Ok(RemoteDelta::MapState(_))));
+        assert!(rx.try_recv().is_err());
+
+        // Same Arc + same state: nothing re-sent (the pointer compare must
+        // not deep-compare thousands of rooms every batch).
+        sink.flush_state(snap.clone());
+        assert!(rx.try_recv().is_err());
+
+        // Position moves, scene stays: only map_state goes out.
+        snap.map_state.room = Some(2);
+        snap.map_state.cell = Some([1, 0]);
+        sink.flush_state(snap);
+        assert!(matches!(rx.try_recv(), Ok(RemoteDelta::MapState(_))));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

@@ -72,6 +72,11 @@ port.
   sheet; a mini **compass** floats over the text pane (exits light up,
   tap to move). It starts bottom-right; hold it about half a second to
   lift and drag it anywhere — the spot is remembered per device.
+- **Map** — a map button appears in the top bar once map data is
+  available (`.mapdb download`); it opens a full-screen canvas map that
+  follows your character. Tap a room to walk there with native `.go2`,
+  drag to pan, pinch to zoom. See the [Map](../widgets/map.md) and
+  [Travel](../widgets/travel.md) chapters.
 - **Side drawers** — swipe from the screen edges (or tap the handles):
   the left drawer is a vertical **macro tray**; the right is a **status
   panel** with the injury doll, injuries list, hands, character sheet

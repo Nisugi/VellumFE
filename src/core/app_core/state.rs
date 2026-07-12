@@ -99,6 +99,16 @@ pub struct AppCore {
     pub map_updater: crate::core::mapdb_update::MapDbUpdater,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
+    /// Cache for the wire-format map scene sent to web clients, keyed by
+    /// (scene Arc pointer, sheet, building cluster) so a rebuild only
+    /// happens when the drawn view actually changes.
+    remote_map_cache: Option<(
+        (usize, crate::core::layout_engine::Sheet, Option<usize>),
+        std::sync::Arc<crate::core::remote::RemoteMapScene>,
+    )>,
+    /// Map revision as of the last remote flush; lets poll_map push a
+    /// freshly generated layout to phones without waiting for game text.
+    last_remote_map_revision: u64,
 
     pub nav_room_id: Option<String>,
 
@@ -238,6 +248,8 @@ impl AppCore {
                 crate::core::mapdb_update::download_dir(&map_base),
             ),
             travel: Default::default(),
+            remote_map_cache: None,
+            last_remote_map_revision: 0,
             layout: layout.clone(),
             baseline_layout: Some(layout),
             game_state: GameState::new(),
@@ -342,6 +354,14 @@ impl AppCore {
             self.add_system_message(&format!("[map] {text}"));
         }
         self.tick_travel();
+        // A layout that finished generating between game lines still needs
+        // to reach phones; the flush is diff-based so this is cheap.
+        if self.message_processor.remote.is_some()
+            && self.map.revision != self.last_remote_map_revision
+        {
+            self.last_remote_map_revision = self.map.revision;
+            self.flush_remote_state();
+        }
     }
 
     /// Advance the walk executor against the latest world state. Called
@@ -1096,9 +1116,153 @@ impl AppCore {
                 .clone()
                 .or_else(|| self.config.character.clone());
         }
+        // The map lives on AppCore, not GameState: overlay the drawable
+        // scene + position for the phone's map view.
+        let (map_scene, map_state) = self.build_remote_map();
+        snap.map_scene = map_scene;
+        snap.map_state = map_state;
         if let Some(remote) = self.message_processor.remote.as_mut() {
             remote.flush_state(snap);
         }
+    }
+
+    /// The phone map's wire data: the same sheet + building filter the
+    /// desktop mini map draws, cached until the drawn view changes, plus
+    /// the small per-step position/ghost state.
+    fn build_remote_map(
+        &mut self,
+    ) -> (
+        crate::core::remote::RemoteMapSceneRef,
+        crate::core::remote::RemoteMapState,
+    ) {
+        use crate::core::layout_engine::{Sheet, SceneEdgeKind};
+        use crate::core::remote::{
+            RemoteGhostEdge, RemoteGhostNode, RemoteMapEdge, RemoteMapLabel, RemoteMapRoom,
+            RemoteMapScene, RemoteMapSceneRef, RemoteMapState,
+        };
+
+        let map = &self.map;
+        let mut state = RemoteMapState::default();
+        let Some(scene) = map.current_scene() else {
+            self.remote_map_cache = None;
+            return (RemoteMapSceneRef::default(), state);
+        };
+
+        let current = map.current_room_id;
+        let (sheet, center, filter) = match current.and_then(|id| scene.room(id)) {
+            Some((sheet, room)) => (
+                sheet,
+                Some(room.cell),
+                (sheet == Sheet::Interiors).then(|| scene.cluster_groups(room.group)),
+            ),
+            None => (Sheet::Outdoor, None, None),
+        };
+
+        // Ghost sketch overlay (session-only unmapped interiors).
+        let overlay = (!map.ghosts().is_empty()).then(|| {
+            crate::core::ghost_rooms::build_overlay(map.ghosts(), scene, sheet, filter.as_ref())
+        });
+        let ghost_cell = map
+            .current_ghost
+            .and_then(|uid| overlay.as_ref()?.cell_of(uid));
+
+        state.available = true;
+        state.location = map.current_location.clone();
+        state.room = current;
+        state.cell = ghost_cell.or(center).map(|c| [c.x, c.y]);
+        state.in_ghost = ghost_cell.is_some();
+        if let Some(overlay) = &overlay {
+            let current_ghost = map.current_ghost;
+            state.ghosts = overlay
+                .nodes
+                .iter()
+                .map(|n| RemoteGhostNode {
+                    x: n.cell.x,
+                    y: n.cell.y,
+                    cur: current_ghost == Some(n.uid),
+                })
+                .collect();
+            state.ghost_edges = overlay
+                .edges
+                .iter()
+                .map(|e| RemoteGhostEdge {
+                    x1: e.a.x,
+                    y1: e.a.y,
+                    x2: e.b.x,
+                    y2: e.b.y,
+                    l: e.label.clone(),
+                })
+                .collect();
+        }
+
+        // Scene: rebuild only when the drawn view changes (location/sheet/
+        // building or a layout regeneration — the Arc pointer covers all).
+        let cluster_key = filter
+            .as_ref()
+            .map(|set| set.iter().min().copied().unwrap_or(0));
+        let key = (std::sync::Arc::as_ptr(scene) as usize, sheet, cluster_key);
+        if let Some((cached_key, cached)) = &self.remote_map_cache {
+            if *cached_key == key {
+                return (RemoteMapSceneRef(Some(cached.clone())), state);
+            }
+        }
+
+        let pass =
+            |group: usize| filter.as_ref().map_or(true, |set| set.contains(&group));
+        let sheet_scene = scene.sheet(sheet);
+        let wire = RemoteMapScene {
+            location: scene.location.clone(),
+            sheet: match sheet {
+                Sheet::Outdoor => "outdoor".to_string(),
+                Sheet::Interiors => "interiors".to_string(),
+            },
+            rooms: sheet_scene
+                .rooms
+                .iter()
+                .filter(|r| pass(r.group))
+                .map(|r| RemoteMapRoom {
+                    i: r.id,
+                    x: r.cell.x,
+                    y: r.cell.y,
+                    e: r.entrance,
+                })
+                .collect(),
+            edges: sheet_scene
+                .edges
+                .iter()
+                .filter(|e| pass(e.group))
+                .map(|e| {
+                    let stub = e.kind == SceneEdgeKind::Stub;
+                    RemoteMapEdge {
+                        x1: e.a.x,
+                        y1: e.a.y,
+                        x2: e.b.x,
+                        y2: e.b.y,
+                        k: match e.kind {
+                            SceneEdgeKind::Directional => 0,
+                            SceneEdgeKind::Connector => 1,
+                            SceneEdgeKind::Stub => 2,
+                        },
+                        l: e.label.clone(),
+                        ar: stub.then_some(e.a_room),
+                        br: stub.then_some(e.b_room),
+                    }
+                })
+                .collect(),
+            labels: sheet_scene
+                .labels
+                .iter()
+                .filter(|l| pass(l.group))
+                .map(|l| RemoteMapLabel {
+                    x: l.cell.x,
+                    y: l.cell.y,
+                    t: l.text.clone(),
+                })
+                .collect(),
+        };
+        let wire = std::sync::Arc::new(wire);
+        self.remote_map_cache = Some((key, wire.clone()));
+        (RemoteMapSceneRef(Some(wire)), state)
     }
 
     /// Poll TTS events from callback channel and handle them
