@@ -313,7 +313,11 @@ impl MapService {
         lich_id: Option<u32>,
         snapshot: crate::core::ghost_rooms::RoomSnapshot,
     ) {
-        if nav_uid == self.last_uid && lich_id == self.last_lich_id {
+        // A report with no usable id at all can't be deduped by identity —
+        // consecutive uid-less rooms look identical here, so every report
+        // must reach the content-matching fallback in resolve_current_room.
+        let identity_less = nav_uid.is_none() && !lich_id.is_some_and(|id| id != 0);
+        if !identity_less && nav_uid == self.last_uid && lich_id == self.last_lich_id {
             // Same room; exits/title often arrive a line after the nav tag,
             // so keep the current ghost's sketch fresh.
             if let Some(uid) = self.current_ghost {
@@ -350,10 +354,18 @@ impl MapService {
             .or(self.last_lich_id.filter(|&id| id != 0));
         let Some(room_id) = resolved else {
             // Unmapped. With a usable uid, sketch a ghost room hanging off
-            // the held room; without one the room has no identity — just
-            // hold, so stepping into an unmapped shop keeps the street
-            // outside on screen.
+            // the held room; without one the room has no wire identity —
+            // try matching what it looks like (title/description/exits),
+            // the way Lich resolves rooms for FEs that never see a uid.
+            // Failing that, hold: stepping into an unmapped shop keeps the
+            // street outside on screen.
             let Some(uid) = self.last_uid.filter(|&u| u != 0) else {
+                if let Some(room_id) = self.match_room_by_content(&db, &snapshot) {
+                    if self.current_ghost.take().is_some() {
+                        self.revision += 1;
+                    }
+                    self.apply_resolved_room(&db, room_id);
+                }
                 return;
             };
             let from = match self.current_ghost {
@@ -376,6 +388,12 @@ impl MapService {
         if self.current_ghost.take().is_some() {
             self.revision += 1;
         }
+        self.apply_resolved_room(&db, room_id);
+    }
+
+    /// Commit a resolved room id: update current room/location and kick off
+    /// the location's layout if it isn't built yet.
+    fn apply_resolved_room(&mut self, db: &crate::core::mapdb::MapDb, room_id: u32) {
         let location = db.location_of_room_id(room_id).map(str::to_owned);
 
         if Some(room_id) != self.current_room_id || location != self.current_location {
@@ -386,6 +404,96 @@ impl MapService {
         if let Some(location) = location {
             self.request_location(&location);
         }
+    }
+
+    /// Match a room that arrived with no usable uid or Lich id by its
+    /// content: title first (the candidate pool), then description (mapdb
+    /// descriptions were captured verbatim from the game), then the obvious
+    /// exits, then adjacency to the room we were just in. Returns a match
+    /// only when it is unambiguous — resolving to the wrong room would walk
+    /// the map away from the player, holding is strictly safer.
+    fn match_room_by_content(
+        &self,
+        db: &crate::core::mapdb::MapDb,
+        snapshot: &crate::core::ghost_rooms::RoomSnapshot,
+    ) -> Option<u32> {
+        let title = snapshot.title.as_deref().map(str::trim).filter(|t| !t.is_empty())?;
+        let mut candidates: Vec<u32> = db.room_ids_with_title(title).to_vec();
+        if candidates.is_empty() {
+            return None;
+        }
+
+        if let Some(desc) = snapshot
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            let filtered: Vec<u32> = candidates
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    db.room(id)
+                        .is_some_and(|r| r.description.iter().any(|d| d.trim() == desc))
+                })
+                .collect();
+            // An empty filter result means the description didn't match any
+            // candidate (dynamic inserts, stale mapdb capture) — keep the
+            // pool rather than concluding "nowhere".
+            if !filtered.is_empty() {
+                candidates = filtered;
+            }
+        }
+
+        if candidates.len() > 1 && !snapshot.exits.is_empty() {
+            let mut exits: Vec<String> =
+                snapshot.exits.iter().map(|e| e.to_ascii_lowercase()).collect();
+            exits.sort();
+            let filtered: Vec<u32> = candidates
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    db.room(id).is_some_and(|r| {
+                        let mut room_exits: Vec<String> = r
+                            .paths
+                            .split_once(':')
+                            .map(|(_, rest)| rest)
+                            .unwrap_or("")
+                            .split(',')
+                            .map(|e| e.trim().to_ascii_lowercase())
+                            .filter(|e| !e.is_empty() && e != "none")
+                            .collect();
+                        room_exits.sort();
+                        room_exits == exits
+                    })
+                })
+                .collect();
+            if !filtered.is_empty() {
+                candidates = filtered;
+            }
+        }
+
+        if candidates.len() == 1 {
+            return candidates.pop();
+        }
+
+        // Identity-less rooms are re-reported as their pieces arrive across
+        // several lines — if where we already are still matches, stay put
+        // rather than sliding to an identical-looking neighbor.
+        if let Some(current) = self.current_room_id {
+            if candidates.contains(&current) {
+                return Some(current);
+            }
+        }
+
+        // Still ambiguous ("[A Dark Tunnel]" twenty times over): the room we
+        // just walked out of usually has an edge to the one we're now in.
+        let prev_room = self.current_room_id.and_then(|id| db.room(id))?;
+        let mut adjacent = candidates
+            .into_iter()
+            .filter(|id| prev_room.wayto.contains_key(id));
+        let first = adjacent.next();
+        first.filter(|_| adjacent.next().is_none())
     }
 
     /// The session's ghost-room sketches (unmapped interiors).
@@ -714,6 +822,7 @@ mod tests {
             RoomSnapshot {
                 title: Some("[Shop, Front]".into()),
                 exits: vec![],
+                ..Default::default()
             },
         );
         assert_eq!(svc.current_ghost, Some(633107));
@@ -729,6 +838,7 @@ mod tests {
             RoomSnapshot {
                 title: Some("[Shop, Front]".into()),
                 exits: vec!["out".into()],
+                ..Default::default()
             },
         );
         assert_eq!(svc.ghosts().get(633107).unwrap().exits, vec!["out"]);
@@ -741,6 +851,7 @@ mod tests {
             RoomSnapshot {
                 title: Some("[Shop, Back]".into()),
                 exits: vec![],
+                ..Default::default()
             },
         );
         assert_eq!(svc.current_ghost, Some(633108));
@@ -751,5 +862,100 @@ mod tests {
         assert_eq!(svc.current_ghost, None);
         assert_eq!(svc.current_room_id, Some(369));
         assert_eq!(svc.ghosts().len(), 2);
+    }
+
+    /// Rooms that arrive with no uid and no Lich id (interfaces that never
+    /// see one) resolve by content — title, description, exits, adjacency —
+    /// and only when unambiguous. A wrong room is worse than holding.
+    #[test]
+    fn uidless_rooms_resolve_by_content_when_unambiguous() {
+        use crate::core::ghost_rooms::RoomSnapshot;
+        let tmp = std::env::temp_dir();
+        let db_path = tmp.join("vellum-map-svc-content-test.json");
+        std::fs::write(
+            &db_path,
+            r#"[
+                {"id": 10, "uid": [111], "location": "Zul Logoth",
+                 "title": ["[A Dark Tunnel]"], "description": ["Rough-hewn walls."],
+                 "wayto": {"11": "north"}, "timeto": {"11": 0.2},
+                 "paths": "Obvious exits: north, south"},
+                {"id": 11, "uid": [222], "location": "Zul Logoth",
+                 "title": ["[A Dark Tunnel]"], "description": ["Rough-hewn walls."],
+                 "wayto": {"10": "south", "12": "north"}, "timeto": {"10": 0.2, "12": 0.2},
+                 "paths": "Obvious exits: north, south"},
+                {"id": 12, "uid": [333], "location": "Zul Logoth",
+                 "title": ["[Gem Shop]"], "description": ["Gems glitter on every shelf."],
+                 "wayto": {"11": "out"}, "timeto": {"11": 0.2},
+                 "paths": "Obvious exits: out"}
+            ]"#,
+        )
+        .unwrap();
+        let mut svc = MapService::new(
+            tmp.join("vellum-map-svc-content-cache"),
+            tmp.join("vellum-map-svc-content-overrides.json"),
+        );
+        svc.mapdb = Some(Arc::new(MapDb::load(&db_path).unwrap()));
+
+        // Ambiguous title, no prior position: hold, never guess.
+        svc.note_room(
+            None,
+            None,
+            RoomSnapshot {
+                title: Some("[A Dark Tunnel]".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(svc.current_room_id, None);
+
+        // A unique title resolves outright — this must not be swallowed by
+        // the (None, None) == (None, None) identity dedup.
+        svc.note_room(
+            None,
+            None,
+            RoomSnapshot {
+                title: Some("[Gem Shop]".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(svc.current_room_id, Some(12));
+        assert_eq!(svc.current_location.as_deref(), Some("Zul Logoth"));
+
+        // Ambiguous title disambiguated by adjacency: from the shop the only
+        // reachable tunnel is 11.
+        svc.note_room(
+            None,
+            None,
+            RoomSnapshot {
+                title: Some("[A Dark Tunnel]".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(svc.current_room_id, Some(11));
+
+        // The same room re-reported (exits arrive a line later): stay put,
+        // don't slide to the identical-looking neighbor 10.
+        svc.note_room(
+            None,
+            None,
+            RoomSnapshot {
+                title: Some("[A Dark Tunnel]".into()),
+                exits: vec!["north".into(), "south".into()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(svc.current_room_id, Some(11));
+
+        // A wrong description keeps the pool instead of matching nowhere,
+        // and the current room still wins the tie.
+        svc.note_room(
+            None,
+            None,
+            RoomSnapshot {
+                title: Some("[A Dark Tunnel]".into()),
+                description: Some("Not in the mapdb at all.".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(svc.current_room_id, Some(11));
     }
 }

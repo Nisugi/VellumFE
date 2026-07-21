@@ -523,9 +523,29 @@ impl AppCore {
             .lich_room_id
             .as_deref()
             .and_then(|s| s.trim().parse::<u32>().ok());
+        // Plain-text "room desc" for the uid-less content fallback; lines
+        // are joined with a space to mirror the single-string mapdb form.
+        let description = self
+            .room_components
+            .get("room desc")
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|segments| {
+                        segments
+                            .iter()
+                            .map(|seg| seg.text.as_str())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let snapshot = crate::core::ghost_rooms::RoomSnapshot {
             title: self.game_state.room_name.clone(),
             exits: self.game_state.exits.clone(),
+            description,
         };
         self.map.note_room(uid, lich_id, snapshot);
     }

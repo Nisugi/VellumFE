@@ -24,6 +24,9 @@ use crate::core::layout_engine::{MapScene, Sheet};
 pub struct RoomSnapshot {
     pub title: Option<String>,
     pub exits: Vec<String>,
+    /// Plain-text room description ("room desc" component). Ghost sketches
+    /// don't use it; the uid-less room fallback matches on it.
+    pub description: Option<String>,
 }
 
 /// Where the character came from when a ghost was entered.
@@ -305,6 +308,7 @@ mod tests {
         RoomSnapshot {
             title: Some(title.to_string()),
             exits: exits.iter().map(|s| s.to_string()).collect(),
+            description: None,
         }
     }
 

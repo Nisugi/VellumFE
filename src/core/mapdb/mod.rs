@@ -37,6 +37,10 @@ pub struct MapDb {
     ids_of_uid: HashMap<i64, Vec<u32>>,
     /// tag → mappable+unplaced room ids ("bank" → every bank teller).
     ids_of_tag: HashMap<String, Vec<u32>>,
+    /// title → mappable room ids carrying it. Titles repeat heavily
+    /// ("[A Dark Tunnel]"); consumed only by the uid-less current-room
+    /// fallback, which must disambiguate before trusting a hit.
+    ids_of_title: HashMap<String, Vec<u32>>,
 }
 
 impl MapDb {
@@ -55,6 +59,7 @@ impl MapDb {
         let mut slots = HashMap::new();
         let mut ids_of_uid: HashMap<i64, Vec<u32>> = HashMap::new();
         let mut ids_of_tag: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut ids_of_title: HashMap<String, Vec<u32>> = HashMap::new();
 
         for value in &db {
             let Some(room) = Room::from_json(value) else {
@@ -75,6 +80,12 @@ impl MapDb {
             if mappable {
                 let location = room.location.clone().expect("checked above");
                 let id = room.id;
+                for title in &room.title {
+                    let ids = ids_of_title.entry(title.clone()).or_default();
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
                 let rooms = locations.entry(location.clone()).or_default();
                 rooms.push(room);
                 slots.insert(
@@ -110,6 +121,7 @@ impl MapDb {
             slots,
             ids_of_uid,
             ids_of_tag,
+            ids_of_title,
         })
     }
 
@@ -142,6 +154,12 @@ impl MapDb {
     /// Ids of every room tagged `tag` (`.go2 bank` targets).
     pub fn room_ids_with_tag(&self, tag: &str) -> &[u32] {
         self.ids_of_tag.get(tag).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Ids of every *mappable* room whose title list contains `title`
+    /// verbatim. The uid-less current-room fallback's candidate pool.
+    pub fn room_ids_with_title(&self, title: &str) -> &[u32] {
+        self.ids_of_title.get(title).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// The *mappable* Lich room id carrying this game uid (`<nav rm='…'/>`
