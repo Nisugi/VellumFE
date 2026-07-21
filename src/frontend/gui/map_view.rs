@@ -436,7 +436,7 @@ pub fn paint_ghosts(
         );
         if response.hovered() {
             let title = node.title.as_deref().unwrap_or("unknown room");
-            response.on_hover_text(format!("{title} — unmapped (session sketch)"));
+            response.on_hover_text(format!("{title} - unmapped (session sketch)"));
         }
     }
 }

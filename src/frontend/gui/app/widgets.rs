@@ -1479,7 +1479,7 @@ impl VellumGuiApp {
             if let Some(db) = map.mapdb() {
                 let done = task.rooms_total().saturating_sub(task.rooms_remaining());
                 let label = format!(
-                    "→ {} · {}/{} rooms · ETA {}",
+                    "-> {} | {}/{} rooms | ETA {}",
                     task.destination,
                     done,
                     task.rooms_total(),
@@ -2742,7 +2742,7 @@ impl VellumGuiApp {
                         let hover = if time.is_empty() {
                             effect.text.clone()
                         } else {
-                            format!("{} — {}", effect.text, time)
+                            format!("{} - {}", effect.text, time)
                         };
                         response.on_hover_text(hover);
                     }

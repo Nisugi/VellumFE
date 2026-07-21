@@ -216,7 +216,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
             .clone()
             .or_else(|| crate::config::profiles::load_password(&saved.account))
             .ok_or_else(|| {
-                format!("No saved password for '{name}' — enter it and connect again")
+                format!("No saved password for '{name}' - enter it and connect again")
             })?;
         return Ok(ResolvedConnect::Direct(DirectConnectConfig {
             account: saved.account.clone(),
@@ -514,7 +514,7 @@ pub async fn async_run(
                             supervisor.unattended_losses
                         );
                         app_core.add_system_message(
-                            "Session looked idle — not reconnecting. Log in from the app to continue.",
+                            "Session looked idle - not reconnecting. Log in from the app to continue.",
                         );
                         let mut info = supervisor.status(SessionState::Disconnected);
                         info.error = Some("Idle session ended".to_string());
@@ -553,7 +553,7 @@ pub async fn async_run(
                 if stalled {
                     tracing::warn!("No game data within 45s of starting the connection; recycling");
                     app_core.add_system_message(
-                        "Login is not responding — retrying...",
+                        "Login is not responding - retrying...",
                     );
                     if let Some(conn) = supervisor.connection.as_ref() {
                         conn.task.abort();
@@ -683,7 +683,7 @@ pub async fn async_run(
                 connect @ SessionRequest::Connect { .. } => {
                     if supervisor.connection.is_some() {
                         app_core.add_system_message(
-                            "Already connected — disconnect before starting a new session.",
+                            "Already connected - disconnect before starting a new session.",
                         );
                         continue;
                     }
@@ -770,7 +770,7 @@ fn dispatch_command(
                     is_quit
                 }
                 None => {
-                    app_core.add_system_message("Not connected — command not sent.");
+                    app_core.add_system_message("Not connected - command not sent.");
                     false
                 }
             }
