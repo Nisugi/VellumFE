@@ -171,9 +171,11 @@ impl TravelTask {
         destination: u32,
         now_ms: u64,
     ) -> Result<TravelTask, String> {
-        let path = pathing::path_to(db, from, destination).ok_or_else(|| {
-            format!("no route from room {from} to {destination} (see .room for how this room resolved)")
-        })?;
+        let path = pathing::path_to(db, from, destination)
+            .or_else(|| Self::plan_via_maze(db, from, destination))
+            .ok_or_else(|| {
+                format!("no route from room {from} to {destination} (see .room for how this room resolved)")
+            })?;
         Ok(TravelTask {
             destination,
             path,
@@ -185,6 +187,32 @@ impl TravelTask {
             started_ms: now_ms,
             muckle_announced: false,
         })
+    }
+
+    /// Destinations inside or behind a curated maze usually have no graph
+    /// route (the maze's edges are scramble junk that often doesn't reach
+    /// the far side at all). Plan to the maze's entrance instead and end
+    /// the path on its start room — the boundary interception takes over
+    /// there, and the far side re-paths normally after the walk.
+    fn plan_via_maze(db: &MapDb, from: u32, destination: u32) -> Option<Vec<u32>> {
+        for maze in super::mazes::all() {
+            let behind = maze.rooms.contains(&destination)
+                || destination == maze.inside
+                || pathing::path_to(db, maze.inside, destination).is_some();
+            if !behind {
+                continue;
+            }
+            let to_entrance = if from == maze.entrance {
+                Some(Vec::new())
+            } else {
+                pathing::path_to(db, from, maze.entrance)
+            };
+            if let Some(mut path) = to_entrance {
+                path.push(maze.start);
+                return Some(path);
+            }
+        }
+        None
     }
 
     /// Estimated seconds for the remaining route (display only).
@@ -1072,9 +1100,11 @@ mod tests {
 
     /// Synthetic map around the shipped Ranger Guild maze definition (its
     /// room ids are real so the static maze table matches): town 100 →
-    /// entrance 20886 → maze (15606 → 19415) → guild side 30870. The route
-    /// commands are modeled as real edges so the Sim's command→room mapping
-    /// walks them.
+    /// entrance 20886 → maze (15606 → 19415) → guild side 30870. Like the
+    /// real data, the maze/guild edges carry NO timeto — the graph cannot
+    /// route to 30870, so planning must fall back to the maze entrance.
+    /// The route commands are still wayto edges so the Sim's command→room
+    /// mapping walks them.
     fn maze_db() -> MapDb {
         MapDb::from_json(
             r#"[
@@ -1089,15 +1119,15 @@ mod tests {
                 {"id": 15606, "uid": [279901], "location": "T",
                  "title": ["[Jungle Approach]"],
                  "wayto": {"19415": "go clearing"},
-                 "timeto": {"19415": 0.2}, "paths": "Obvious paths: north"},
+                 "timeto": {}, "paths": "Obvious paths: north"},
                 {"id": 19415, "uid": [279999], "location": "T",
                  "title": ["[Jungle Approach]"],
                  "wayto": {"30870": "west"},
-                 "timeto": {"30870": 0.2}, "paths": "Obvious paths: west"},
+                 "timeto": {}, "paths": "Obvious paths: west"},
                 {"id": 30870, "uid": [279004], "location": "T",
                  "title": ["[Teak Tree Grove]"],
                  "wayto": {"19415": "east"},
-                 "timeto": {"19415": 0.2}, "paths": "Obvious exits: east"}
+                 "timeto": {}, "paths": "Obvious exits: east"}
             ]"#,
         )
         .unwrap()

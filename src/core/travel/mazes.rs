@@ -28,6 +28,9 @@ pub struct MazeDef {
     pub start: u32,
     /// Room just outside the maze where the pathcode NPC stands.
     pub entrance: u32,
+    /// Far-side anchor the route lands at; destinations reachable from it
+    /// are "behind" the maze for planning purposes.
+    pub inside: u32,
     /// Command that makes the NPC reveal the character's route.
     pub ask: String,
 }
@@ -46,6 +49,7 @@ struct MazeEntry {
     rooms: Vec<u32>,
     start: u32,
     entrance: u32,
+    inside: u32,
     ask: String,
 }
 
@@ -75,6 +79,7 @@ fn parse_table(source: &str, origin: &str, table: &mut Vec<MazeDef>) {
             rooms: entry.rooms.into_iter().collect(),
             start: entry.start,
             entrance: entry.entrance,
+            inside: entry.inside,
             ask: entry.ask,
         };
         // User entries replace shipped ones by name.
@@ -147,6 +152,7 @@ mod tests {
             .expect("pilot entry ships");
         assert_eq!(ranger.start, 15606);
         assert_eq!(ranger.entrance, 20886);
+        assert_eq!(ranger.inside, 30870);
         assert!(ranger.rooms.contains(&20894));
         assert!(ranger.rooms.contains(&19415), "the uid-less clearing is in");
         assert!(!ranger.rooms.contains(&20886), "the NPC room is outside");

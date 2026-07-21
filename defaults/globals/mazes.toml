@@ -9,6 +9,9 @@
 #   rooms    - mapdb room ids inside the maze (movement scrambles here)
 #   start    - room the route is walked from
 #   entrance - room just outside where the pathcode NPC stands
+#   inside   - far-side anchor room the route lands at; destinations
+#              reachable from it are "behind" this maze, so planning
+#              routes to the entrance when no direct path exists
 #   ask      - command that makes the NPC reveal your personal route
 
 [[maze]]
@@ -17,4 +20,5 @@ type = "pathcode"
 rooms = [15606, 19415, 20889, 20890, 20891, 20892, 20893, 20894, 20997, 20998]
 start = 15606
 entrance = 20886
+inside = 30870
 ask = "ask beyor about path"
