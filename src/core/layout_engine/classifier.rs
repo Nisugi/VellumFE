@@ -44,6 +44,29 @@ pub fn classify(groups: &[Group], lookup: &RoomTable) -> Classification {
 
     // Propagate interiority to a fixed point: rooms behind a second door
     // inside a building form their own component with no `out` of their own.
+    //
+    // Propagation exists to fill in for components with NO paths/exits
+    // signal of their own — it must never overrule a decisive outdoor
+    // majority. Player-shop boutique streets are the canonical case: 17
+    // rooms all printing "Obvious paths", reachable only through the shops
+    // they serve, are still streets.
+    let mut decisive_outdoor: HashSet<usize> = HashSet::new();
+    for group in groups {
+        let mut indoor = 0usize;
+        let mut outdoor = 0usize;
+        for &room_id in &group.room_ids {
+            if let Some(room) = lookup.get(room_id) {
+                match room_sense(room) {
+                    Sense::Indoor => indoor += 1,
+                    Sense::Outdoor => outdoor += 1,
+                    Sense::Unknown => {}
+                }
+            }
+        }
+        if outdoor > indoor {
+            decisive_outdoor.insert(group.index);
+        }
+    }
     let mut neighbor_sets: HashMap<usize, HashSet<usize>> = HashMap::new();
     for group in groups {
         let mut neighbors = HashSet::new();
@@ -65,7 +88,7 @@ pub fn classify(groups: &[Group], lookup: &RoomTable) -> Classification {
     while changed {
         changed = false;
         for group in groups {
-            if interior.contains(&group.index) {
+            if interior.contains(&group.index) || decisive_outdoor.contains(&group.index) {
                 continue;
             }
             let neighbors = &neighbor_sets[&group.index];

@@ -331,8 +331,17 @@ fn optimize_component(
             let mut current_cost = 0i64;
             for e in edges {
                 let other = positions[&e.other];
-                current_cost +=
-                    (other.x - current.x).abs().max((other.y - current.y).abs()) as i64;
+                let dx = other.x - current.x;
+                let dy = other.y - current.y;
+                // A sign-violated edge dwarfs any length: repairing a
+                // direction is always worth stretching for. Without this, a
+                // BFS grid-rip can strand a room on the wrong side of a
+                // neighbor and the length-only cost keeps it there (the
+                // repaired position is one cell longer, so it "loses").
+                if dx.signum() != e.sx || dy.signum() != e.sy {
+                    current_cost += 1000;
+                }
+                current_cost += dx.abs().max(dy.abs()) as i64;
             }
 
             // Candidates: the ideal cell beside each neighbor ± 1 ring, plus
