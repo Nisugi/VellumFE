@@ -10,7 +10,9 @@ VellumFE project.
 
 **Nothing.** VellumFE contains no analytics, telemetry, advertising, or
 tracking of any kind. The app makes no network connections other than the
-ones you explicitly initiate to play the game.
+ones you explicitly initiate: connecting to the game (directly or via Lich),
+and — only when you run `.mapdb download` or use the equivalent settings
+button — fetching map data from GitHub.
 
 ## Your login credentials
 

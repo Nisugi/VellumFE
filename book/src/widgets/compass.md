@@ -10,32 +10,35 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 ```
 
 ## Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `style` | string | `"arrows"` | Display style |
+| `active_color` | string | green | Color for available exits |
+| `inactive_color` | string | dark gray | Color for unavailable directions |
 
 ## Size Requirements
 
-- Minimum: 3 rows × 7 columns
-- Recommended: 3×7 or 5×9
+- The direction grid itself is 3 rows × 7 columns
+- The built-in template defaults to 5 rows × 9 columns (room for a border)
+  with a 3×7 minimum
 
 ## Display
 
 ```
-  N
-W ◆ E
-  S
+↑ ↖ ▲ ↗
+  ◀ o ▶
+↓ ↙ ▼ ↘
 ```
 
-- Available exits shown with arrows
-- Unavailable directions dimmed
-- Supports all 10 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out
+- Available exits shown as colored arrows; unavailable directions dimmed
+- The center `o` is the **out** direction
+- Up (`↑`) and down (`↓`) render in the left column
+- Supports all 11 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out
 
 ## Example
 
@@ -45,8 +48,8 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 show_border = true
 border_style = "rounded"
 ```

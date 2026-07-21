@@ -44,7 +44,7 @@ category = "Players"
 | `squelch` | bool | **Hide matching lines entirely** |
 | `silent_prompt` | bool | Suppress the prompt after squelched lines |
 | `redirect_to` | string | Send matching lines to this window |
-| `redirect_mode` | string | `"only"` (move) or `"copy"` (show in both) |
+| `redirect_mode` | string | `"redirect_only"` (move, default) or `"redirect_copy"` (show in both) |
 | `replace` | string | Replace matched text (supports `$1`, `$2` capture groups) |
 | `stream` | string | Only apply to lines from this stream (e.g. `"thoughts"`) |
 | `window` | string | With `replace`: only replace in this window |
@@ -86,7 +86,7 @@ Route matching lines to another window:
 [loot_lines]
 pattern = "^You gather"
 redirect_to = "loot"
-redirect_mode = "copy"    # also keep it in the original window
+redirect_mode = "redirect_copy"    # also keep it in the original window
 ```
 
 ## Text Replacement

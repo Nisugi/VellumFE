@@ -45,10 +45,13 @@ description = "My tweaked dark theme"
 window_background = "#1a1b26"
 text_primary = "#c0caf5"
 link_color = "Link"        # palette name from colors.toml
-# ... any fields you omit fall back to defaults
+# ... every color field must be present — a file with missing
+# fields is skipped when themes are loaded
 ```
 
-The easiest way to author one is `.edittheme` on a built-in you like, then
+Hand-written theme files must define **all** color fields; there is no
+per-field fallback. The easiest (and recommended) way to author one is
+`.edittheme` on a built-in you like — it writes a complete file — then
 save under a new name.
 
 ## Themes vs. colors.toml

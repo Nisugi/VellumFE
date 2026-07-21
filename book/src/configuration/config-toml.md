@@ -120,6 +120,7 @@ enabled = true
 volume = 0.7                    # 0.0 to 1.0
 cooldown_ms = 500               # Min time between repeated sounds
 startup_music = true
+startup_music_delay_ms = 0      # Delay before the login theme starts
 ```
 
 ## Text-to-Speech

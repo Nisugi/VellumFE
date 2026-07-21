@@ -31,7 +31,7 @@ streams = ["combat"]
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `buffer_size` | integer | 5000 | Lines per tab |
+| `buffer_size` | integer | 1000 | Lines per tab (the built-in chat templates set 5000) |
 
 ### Tab Properties
 

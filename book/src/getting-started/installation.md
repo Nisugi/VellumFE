@@ -6,9 +6,9 @@ Download the latest release from [GitHub Releases](https://github.com/Nisugi/Vel
 
 | Platform | File |
 |----------|------|
-| Windows | `vellum-fe-windows.zip` |
-| macOS | `vellum-fe-macos.tar.gz` |
-| Linux | `vellum-fe-linux.tar.gz` |
+| Windows | `vellum-fe-windows-x86_64.zip` |
+| macOS | `vellum-fe-macos-universal.zip` (or `-arm64` / `-x64` for a specific chip) |
+| Linux | `vellum-fe-linux-x86_64.tar.gz` |
 | Android | `vellum-fe-android-arm64.apk` |
 | iOS | TestFlight (beta) — not a release download; see [iOS App](../frontends/ios.md) |
 
@@ -39,7 +39,7 @@ behavior, and everything else about playing on the phone.
 
 ## Building from Source
 
-Requires [Rust](https://rustup.rs/) 1.70+.
+Requires a recent stable [Rust](https://rustup.rs/) toolchain (CI builds with the latest stable).
 
 ```bash
 git clone https://github.com/Nisugi/VellumFE.git
@@ -62,7 +62,7 @@ only requires Perl, which virtually every distro ships by default.
 vellum-fe --version
 ```
 
-Should display the version number (e.g., `vellum-fe 0.3.0-beta.6`).
+Should display the version number (e.g., `vellum-fe 0.3.0-beta.8`).
 
 ## Configuration Directory
 

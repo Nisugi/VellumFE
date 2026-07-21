@@ -1,14 +1,19 @@
 # Hands
 
-Display items held in left and right hands.
+Display items held in the left and right hands (and the prepared spell).
+
+Which hand a widget shows is determined by its **window name**: `left` (or
+`left_hand`), `right` (or `right_hand`), and `spell` (or `spell_hand`). The
+easiest way to add them is the built-in `left`, `right`, and `spell`
+templates via `.addwindow` or the Add Window menu.
 
 ## Basic Usage
 
 ```toml
 [[windows]]
-name = "right_hand"
+name = "right"
 widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
@@ -19,60 +24,36 @@ cols = 25
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `hand` | string | required | `"left"` or `"right"` |
+| `icon` | string | from template | Prefix icon (e.g. `"L:"`, `"R:"`, `"S:"`) |
+| `icon_color` | string | window color | Icon color |
+| `text_color` | string | window color | Item text color override |
 
-## Examples
+## Example: Side by Side
 
-### Right Hand
 ```toml
 [[windows]]
 name = "right"
 widget_type = "hand"
-hand = "right"
-rows = 1
-cols = 30
-title = "R:"
-```
-
-### Left Hand
-```toml
-[[windows]]
-name = "left"
-widget_type = "hand"
-hand = "left"
-rows = 1
-cols = 30
-title = "L:"
-```
-
-### Side by Side
-
-```toml
-[[windows]]
-name = "right_hand"
-widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
 cols = 25
 show_border = false
-title = "R:"
 
 [[windows]]
-name = "left_hand"
+name = "left"
 widget_type = "hand"
-hand = "left"
+icon = "L:"
 row = 0
 col = 25
 rows = 1
 cols = 25
 show_border = false
-title = "L:"
 ```
 
 ## Interaction
 
-- Click item name to interact
-- Right-click for context menu
-- Shows "Empty" when nothing held
+- Click the item name to interact
+- Right-click for a context menu
+- When nothing is held, only the icon (e.g. `R:`) is shown

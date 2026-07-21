@@ -58,7 +58,7 @@ category = "Squelch"
 [loot_lines]
 pattern = "^You gather"
 redirect_to = "loot"
-redirect_mode = "copy"    # "only" to move instead of copy
+redirect_mode = "redirect_copy"    # "redirect_only" (the default) to move instead of copy
 ```
 
 ## Rewrite Text

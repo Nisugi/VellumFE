@@ -41,11 +41,12 @@ cols = 120
 |----------|------|---------|-------------|
 | `visible` | bool | `true` | Show window |
 | `show_border` | bool | `true` | Draw border |
-| `border_style` | string | `"single"` | `single`, `double`, `rounded`, `thick` |
+| `border_style` | string | `"single"` | `single`, `double`, `rounded`, `thick`, `quadrant_inside`, `quadrant_outside` |
 | `border_color` | string | `"#808080"` | Border color |
-| `border_sides` | string | `"all"` | Which sides: `all`, `none`, `top`, `bottom`, `left`, `right`, or combinations |
+| `border_sides` | array | all sides | Which sides to draw, e.g. `["top", "bottom"]`; `[]` for none |
 | `title` | string | - | Custom title |
 | `show_title` | bool | `true` | Show title in border |
+| `title_position` | string | `"top-left"` | Where the title sits on the border |
 | `buffer_size` | integer | 1000 | Lines to keep (text windows) |
 | `background_color` | string | - | Background color |
 | `text_color` | string | - | Default text color |
@@ -100,9 +101,9 @@ streams = ["thoughts"]
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"                 # health, mana, stamina, spirit, encumbrance
-bar_color = "#00FF00"
-show_percentage = true
+id = "health"                   # health, mana, stamina, spirit, concentration, pbarStance
+color = "#00FF00"
+numbers_only = false            # true: show only current/max numbers
 ```
 
 ### Countdowns
@@ -166,7 +167,7 @@ streams = ["thoughts"]
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 30
 col = 100
 rows = 1

@@ -33,13 +33,14 @@ buffer_size = 10000
 | `main` | Primary game output |
 | `speech` | Player dialogue |
 | `thoughts` | ESP/telepathy |
-| `combat` | Combat messages |
 | `death` | Death messages |
 | `familiar` | Familiar messages |
-| `group` | Group information |
 | `logons` | Login/logout |
 | `society` | Society messages |
 | `bounty` | Bounty information |
+| `loot` | Loot messages |
+| `announcements` | Announcements |
+| `ambients` | Ambient messages |
 
 ### Custom Streams
 

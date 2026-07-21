@@ -116,7 +116,7 @@ cols = 30
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 25
 col = 100
 rows = 1

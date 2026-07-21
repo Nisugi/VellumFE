@@ -8,7 +8,7 @@ Display character vitals as visual bars.
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
@@ -19,22 +19,28 @@ cols = 20
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `stat` | string | required | Stat to display |
-| `bar_color` | string | auto | Bar fill color |
-| `show_percentage` | bool | true | Show % value |
-| `show_label` | bool | true | Show stat name |
+| `id` | string | required | Progress feed to display (the game's `progressBar` id, case-sensitive) |
+| `label` | string | auto | Label text override |
+| `color` | string | auto | Bar fill color |
+| `numbers_only` | bool | false | Show only `current/max` numbers (no label) |
+| `current_only` | bool | false | Show only the current value (no label, no max) |
 
-## Available Stats
+## Common Feed Ids
 
-| Stat | Description |
+Built-in templates exist for these ids (via `.addwindow` or the Add Window
+menu):
+
+| Id | Description |
 |------|-------------|
 | `health` | Hit points |
 | `mana` | Mana points |
 | `stamina` | Stamina points |
 | `spirit` | Spirit points |
-| `encumbrance` | Carry weight |
-| `mind` | Mental state (DR) |
 | `concentration` | Concentration (DR) |
+| `pbarStance` | Stance (the `stance` template) |
+
+`id` is not a closed list — it matches whatever `progressBar` ids the game
+sends. (Encumbrance and mind state are separate widgets, not progress ids.)
 
 ## Examples
 
@@ -43,10 +49,10 @@ cols = 20
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 rows = 1
 cols = 15
-show_label = false
+numbers_only = true
 ```
 
 ### Colored Mana Bar
@@ -54,8 +60,8 @@ show_label = false
 [[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
-bar_color = "#4169E1"
+id = "mana"
+color = "#4169E1"
 rows = 1
 cols = 20
 ```
@@ -66,35 +72,37 @@ cols = 20
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
 cols = 25
-bar_color = "#FF4040"
+color = "#FF4040"
 
 [[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
+id = "mana"
 row = 1
 col = 0
 rows = 1
 cols = 25
-bar_color = "#4169E1"
+color = "#4169E1"
 
 [[windows]]
 name = "stamina"
 widget_type = "progress"
-stat = "stamina"
+id = "stamina"
 row = 2
 col = 0
 rows = 1
 cols = 25
-bar_color = "#32CD32"
+color = "#32CD32"
 ```
 
 ## Color Behavior
 
-Without `bar_color`, bars change color based on value:
-- Green (high) → Yellow (medium) → Red (low)
+Each bar renders in a single solid color: the configured `color` if set,
+otherwise a per-id default (dark red for health, dark blue for mana, orange
+for stamina, gray for spirit, green as the generic fallback). Bars do not
+change color based on the current value.

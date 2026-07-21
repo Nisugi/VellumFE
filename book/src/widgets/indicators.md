@@ -1,14 +1,14 @@
 # Status Indicators
 
-Display character status conditions (kneeling, hidden, webbed, etc).
+Display character status conditions (poisoned, stunned, webbed, etc).
 
 ## Basic Usage
 
 ```toml
 [[windows]]
-name = "status"
+name = "poisoned"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "POISONED"
 row = 0
 col = 0
 rows = 1
@@ -19,25 +19,35 @@ cols = 3
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `id` | string | required | Status to track |
-| `active_color` | string | auto | Color when active |
-| `inactive_color` | string | `"gray"` | Color when inactive |
+| `indicator_id` | string | required | Status to track (see below) |
+| `icon` | string | none | Glyph/text shown when active |
+| `active_color` | string | `#00ff00` | Color when active |
+| `inactive_color` | string | `#555555` | Color when inactive |
 
 ## Available Statuses
 
+Built-in templates exist for `poisoned`, `bleeding`, `diseased`, `stunned`,
+and `webbed` — add them via `.addwindow` or the Add Window menu.
+
+The full set of recognized indicator ids:
+
 | ID | Description |
 |----|-------------|
-| `kneeling` | Kneeling position |
-| `sitting` | Sitting position |
-| `prone` | Lying down |
-| `stunned` | Stunned |
-| `webbed` | Webbed |
-| `hidden` | Hidden |
-| `invisible` | Invisible |
-| `dead` | Dead |
-| `bleeding` | Bleeding |
-| `poisoned` | Poisoned |
-| `diseased` | Diseased |
+| `STANDING` | Standing position |
+| `KNEELING` | Kneeling position |
+| `SITTING` | Sitting position |
+| `PRONE` | Lying down |
+| `DEAD` | Dead |
+| `STUNNED` | Stunned |
+| `BLEEDING` | Bleeding |
+| `HIDDEN` | Hidden |
+| `INVISIBLE` | Invisible |
+| `WEBBED` | Webbed |
+| `POISONED` | Poisoned |
+| `DISEASED` | Diseased |
+| `JOINED` | Grouped/joined |
+
+Ids without a built-in template can be added as custom indicator windows.
 
 ## Examples
 
@@ -46,7 +56,7 @@ cols = 3
 [[windows]]
 name = "hidden_indicator"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "HIDDEN"
 rows = 1
 cols = 3
 active_color = "#00FF00"
@@ -56,27 +66,27 @@ active_color = "#00FF00"
 
 ```toml
 [[windows]]
-name = "kneel"
+name = "stun"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "STUNNED"
 row = 0
 col = 0
 rows = 1
 cols = 3
 
 [[windows]]
-name = "hide"
+name = "web"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "WEBBED"
 row = 0
 col = 3
 rows = 1
 cols = 3
 
 [[windows]]
-name = "stun"
+name = "bleed"
 widget_type = "indicator"
-id = "stunned"
+indicator_id = "BLEEDING"
 row = 0
 col = 6
 rows = 1
@@ -85,6 +95,7 @@ cols = 3
 
 ## Display
 
-- Shows abbreviated status code (3 chars)
-- Active: colored, Inactive: dimmed
-- Example: `KNE` (kneeling), `HID` (hidden)
+- **Active**: shows the widget's icon/title (the built-in templates use
+  glyph icons), centered, in `active_color`
+- **Inactive**: renders nothing — the indicator is invisible until the
+  status is active

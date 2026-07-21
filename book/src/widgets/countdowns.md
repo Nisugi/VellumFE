@@ -21,7 +21,9 @@ cols = 15
 |----------|------|---------|-------------|
 | `id` | string | required | Timer type |
 | `label` | string | auto | Custom label |
-| `bar_color` | string | auto | Bar color |
+| `color` | string | auto | Bar color |
+| `background_color` | string | auto | Background color |
+| `icon` | char | auto | Icon shown next to the timer |
 
 ## Timer Types
 
@@ -41,7 +43,7 @@ widget_type = "countdown"
 id = "roundtime"
 rows = 1
 cols = 20
-bar_color = "#FFD700"
+color = "#FFD700"
 ```
 
 ### Cast Time
@@ -52,7 +54,7 @@ widget_type = "countdown"
 id = "casttime"
 rows = 1
 cols = 15
-bar_color = "#9370DB"
+color = "#9370DB"
 ```
 
 ### Stun Timer
@@ -63,7 +65,7 @@ widget_type = "countdown"
 id = "stuntime"
 rows = 1
 cols = 15
-bar_color = "#FF4500"
+color = "#FF4500"
 ```
 
 ## Display

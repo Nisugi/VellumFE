@@ -8,13 +8,15 @@ Container windows are created dynamically when you look in a container.
 
 ## Enabling Containers
 
-Enable container windows via command:
+Enable container discovery mode via command:
 
 ```
 .containers
 ```
 
-Or via menu: `.menu` → Config → Toggle Containers
+The client confirms with "Container discovery ON/OFF". While on, LOOK IN a
+container to create a window for it. `.hidecontainers [title]` closes
+container windows again.
 
 ## Behavior
 

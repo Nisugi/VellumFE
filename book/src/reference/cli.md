@@ -25,7 +25,7 @@ Run with **no arguments** to open [the Launcher](../getting-started/launcher.md)
 | `-c, --config <FILE>` | Use a specific config.toml |
 | `--data-dir <DIR>` | Data directory (default `~/.vellum-fe`; also `VELLUM_FE_DIR` env var) |
 | `--web-port <PORT>` | Enable the [mobile web server](../frontends/web.md) on this port |
-| `--color-mode <direct\|slot>` | Override color rendering mode |
+| `--color-mode <direct\|slot\|indexed>` | Override color rendering mode |
 | `--setup-palette` | Load the terminal palette at startup (use with `--color-mode slot`) |
 | `--nosound` | Disable the sound system entirely |
 

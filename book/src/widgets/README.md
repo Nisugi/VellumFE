@@ -41,7 +41,7 @@ rows = 10                       # Height
 cols = 40                       # Width
 visible = true                  # Show/hide
 show_border = true
-border_style = "single"         # single, double, rounded, thick
+border_style = "single"         # single, double, rounded, thick, quadrant_inside, quadrant_outside
 border_color = "#808080"
 title = "Custom Title"
 ```
@@ -60,8 +60,10 @@ Widgets are organized into categories in the Add Window menu:
 | Category | Widgets |
 |----------|---------|
 | Text Windows | text, tabbedtext |
-| Status | progress, countdown, hand, indicator, dashboard |
-| Navigation | compass, room |
-| Entity | targets, players, items |
-| Lists | inventory, spells, container |
-| Other | injury_doll, active_effects, reserve, quickbar, hotkeybar, map |
+| Progress Bars | progress |
+| Countdowns | countdown |
+| Hands | hand |
+| Status | indicator, dashboard |
+| Entities | targets, players, items |
+| Active Effects | active_effects |
+| Other | compass, room, map, injury_doll, inventory, spells, reserve, container, hotkeybar, and the rest |

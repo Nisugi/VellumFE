@@ -18,7 +18,7 @@ cols = 50
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `show_name` | bool | true | Show room name |
+| `show_name` | bool | false | Show room name inline in the content (the name always appears as the border title) |
 | `show_desc` | bool | true | Show description |
 | `show_objs` | bool | true | Show objects/creatures |
 | `show_players` | bool | true | Show other players |
