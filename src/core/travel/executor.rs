@@ -114,9 +114,17 @@ enum MazePhase {
     AwaitCode { sent_ms: u64 },
     /// Moving from the NPC entrance to the route's start room.
     ToStart { sent_ms: u64 },
-    /// Sending route commands, paced by RT plus a fixed gap.
-    Walk { wait_until: u64 },
-    /// Route exhausted; waiting to see where we ended up.
+    /// Sending route commands. Paced by the room CHANGING after each send
+    /// (every maze move lands somewhere, even mid-scramble), with the timer
+    /// only as a fallback — so the walk runs at type-ahead speed.
+    Walk {
+        wait_until: u64,
+        /// Room the last command was sent from; a different current room
+        /// means it landed.
+        sent_from: Option<u32>,
+    },
+    /// Route exhausted; judging the landing room (early on room data, timer
+    /// as fallback).
     Verify { until: u64 },
     /// `search` sent after a failed walk; waiting to re-orient.
     PostSearch { until: u64 },
@@ -426,7 +434,10 @@ impl TravelTask {
         events: &mut Vec<TravelEvent>,
     ) -> MazePhase {
         if current == maze.start {
-            return MazePhase::Walk { wait_until: 0 };
+            return MazePhase::Walk {
+                wait_until: 0,
+                sent_from: None,
+            };
         }
         // entrance → start via the mapdb edge (a real, unscrambled edge).
         match ctx
@@ -440,7 +451,10 @@ impl TravelTask {
             }
             None => {
                 // Shouldn't happen with sane maze data; walk from here.
-                MazePhase::Walk { wait_until: 0 }
+                MazePhase::Walk {
+                    wait_until: 0,
+                    sent_from: None,
+                }
             }
         }
     }
@@ -504,7 +518,10 @@ impl TravelTask {
             }
             MazePhase::ToStart { sent_ms } => {
                 if current == maze.start {
-                    phase = MazePhase::Walk { wait_until: 0 };
+                    phase = MazePhase::Walk {
+                        wait_until: 0,
+                        sent_from: None,
+                    };
                 } else if ctx.now_ms.saturating_sub(*sent_ms) > STEP_TIMEOUT_MS {
                     events.push(TravelEvent::Failed(format!(
                         "couldn't reach the {} maze start room - travel aborted",
@@ -513,15 +530,23 @@ impl TravelTask {
                     return;
                 }
             }
-            MazePhase::Walk { wait_until } => {
-                if ctx.rt_remaining > 0.0 || ctx.now_ms < *wait_until {
-                    // paced
+            MazePhase::Walk {
+                wait_until,
+                sent_from,
+            } => {
+                let landed = sent_from.map_or(true, |from| current != from);
+                if ctx.rt_remaining > 0.0 || (!landed && ctx.now_ms < *wait_until) {
+                    // waiting on RT, or the last move hasn't visibly landed
                 } else if let Some(cmd) = route.get(i) {
                     events.push(TravelEvent::Send(cmd.clone()));
                     i += 1;
                     phase = MazePhase::Walk {
                         wait_until: ctx.now_ms + MAZE_STEP_GAP_MS,
+                        sent_from: Some(current),
                     };
+                } else if landed {
+                    // Final move landed: judge it immediately.
+                    phase = MazePhase::Verify { until: ctx.now_ms };
                 } else {
                     phase = MazePhase::Verify {
                         until: ctx.now_ms + MAZE_SETTLE_MS,
@@ -575,7 +600,10 @@ impl TravelTask {
             MazePhase::PostSearch { until } => {
                 if ctx.now_ms >= *until {
                     if current == maze.start {
-                        phase = MazePhase::Walk { wait_until: 0 };
+                        phase = MazePhase::Walk {
+                            wait_until: 0,
+                            sent_from: None,
+                        };
                     } else if current == maze.entrance {
                         phase = self.maze_entry_phase(maze, current, ctx, events);
                     } else {
