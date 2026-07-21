@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-21T14:36:53.196Z",
+  "generated": "2026-07-21T14:45:57.980Z",
   "note": "Statistical targets; small drift from iteration order is fine, large drift is a logic bug.",
   "zones": {
     "Moonsedge": {
@@ -20,7 +20,7 @@
         "connector": 2
       },
       "primaryImage": "imt-Moonsedge-1770317665.png",
-      "jsMs": 16
+      "jsMs": 18
     },
     "the Atoll": {
       "rooms": 60,
@@ -29,7 +29,7 @@
       "outdoorRooms": 52,
       "interiorComponents": 4,
       "interiorRooms": 8,
-      "directionViolations": 2,
+      "directionViolations": 0,
       "entranceRooms": 4,
       "cellOverlaps": 0,
       "interGroupConnectors": 5,
@@ -40,7 +40,7 @@
         "connector": 4
       },
       "primaryImage": "kf-atoll-1652294074.jpg",
-      "jsMs": 3
+      "jsMs": 9
     },
     "Mist Harbor": {
       "rooms": 1691,
@@ -49,7 +49,7 @@
       "outdoorRooms": 508,
       "interiorComponents": 661,
       "interiorRooms": 1183,
-      "directionViolations": 38,
+      "directionViolations": 36,
       "entranceRooms": 135,
       "cellOverlaps": 0,
       "interGroupConnectors": 189,
@@ -62,7 +62,7 @@
         "image": 4
       },
       "primaryImage": "fest-Iyo_Glade-1657378562.png",
-      "jsMs": 437
+      "jsMs": 438
     },
     "Icemule Trace": {
       "rooms": 1354,
@@ -71,7 +71,7 @@
       "outdoorRooms": 449,
       "interiorComponents": 450,
       "interiorRooms": 905,
-      "directionViolations": 5,
+      "directionViolations": 1,
       "entranceRooms": 128,
       "cellOverlaps": 0,
       "interGroupConnectors": 66,
@@ -84,7 +84,7 @@
         "seed": 9
       },
       "primaryImage": "imt-icemule-1474811966.png",
-      "jsMs": 197
+      "jsMs": 203
     },
     "Wehnimer's Landing": {
       "rooms": 3227,
@@ -93,7 +93,7 @@
       "outdoorRooms": 823,
       "interiorComponents": 1372,
       "interiorRooms": 2404,
-      "directionViolations": 39,
+      "directionViolations": 7,
       "entranceRooms": 167,
       "cellOverlaps": 0,
       "interGroupConnectors": 113,
@@ -106,7 +106,7 @@
         "image": 13
       },
       "primaryImage": "wl-wehnimers-1264234799.png",
-      "jsMs": 1275
+      "jsMs": 1279
     },
     "Solhaven": {
       "rooms": 1276,
@@ -115,7 +115,7 @@
       "outdoorRooms": 302,
       "interiorComponents": 496,
       "interiorRooms": 974,
-      "directionViolations": 30,
+      "directionViolations": 14,
       "entranceRooms": 87,
       "cellOverlaps": 0,
       "interGroupConnectors": 40,
@@ -128,7 +128,7 @@
         "connector": 54
       },
       "primaryImage": "en-vo-homes-1264234799.png",
-      "jsMs": 198
+      "jsMs": 181
     },
     "Ta'Illistim": {
       "rooms": 1163,
@@ -137,7 +137,7 @@
       "outdoorRooms": 362,
       "interiorComponents": 435,
       "interiorRooms": 801,
-      "directionViolations": 32,
+      "directionViolations": 2,
       "entranceRooms": 146,
       "cellOverlaps": 0,
       "interGroupConnectors": 69,
@@ -150,7 +150,7 @@
         "seed": 9
       },
       "primaryImage": "en-ta_illistim-new.jpg",
-      "jsMs": 157
+      "jsMs": 151
     }
   }
 }

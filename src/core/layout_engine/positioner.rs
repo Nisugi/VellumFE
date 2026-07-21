@@ -416,6 +416,133 @@ fn optimize_component(
         }
     }
 
+    // Grid rips can strand a welded RUN of rooms sideways: every single
+    // room's legal cell is then blocked until its neighbor moves first, so
+    // the single-room hill-climb above can never repair it. Re-weld: for
+    // each violated compass edge, place the wrong-side room at its ideal
+    // cell beside its neighbor, then cascade — any neighbor whose edge turns
+    // sign-wrong is pulled to ITS ideal cell in turn (the chain moves
+    // non-rigidly). A repair commits only when nothing collides and the
+    // total violation count strictly drops, so the loop terminates.
+    {
+        fn violated_at(r: Cell, o: Cell, sx: i32, sy: i32) -> bool {
+            (o.x - r.x).signum() != sx || (o.y - r.y).signum() != sy
+        }
+        let mut occupied_by: HashMap<Cell, u32> =
+            positions.iter().map(|(&id, &p)| (p, id)).collect();
+
+        let attempt_reweld = |anchor_id: u32,
+                              edge: EdgeSign,
+                              positions: &mut HashMap<u32, Cell>,
+                              occupied_by: &mut HashMap<Cell, u32>,
+                              adjacency: &HashMap<u32, Vec<EdgeSign>>,
+                              room_order: &[u32]|
+         -> bool {
+            let mut moved: HashMap<u32, Cell> = HashMap::new();
+            let anchor_pos = positions[&anchor_id];
+            moved.insert(
+                edge.other,
+                Cell {
+                    x: anchor_pos.x + edge.sx,
+                    y: anchor_pos.y + edge.sy,
+                },
+            );
+            let mut queue = std::collections::VecDeque::from([edge.other]);
+            while let Some(r) = queue.pop_front() {
+                let r_pos = moved[&r];
+                for e in adjacency.get(&r).map(Vec::as_slice).unwrap_or(&[]) {
+                    let o_pos = moved.get(&e.other).copied().unwrap_or(positions[&e.other]);
+                    if !violated_at(r_pos, o_pos, e.sx, e.sy) {
+                        continue; // fine as-is (stretch allowed)
+                    }
+                    if moved.contains_key(&e.other) || e.other == anchor_id {
+                        return false; // moved-and-still-wrong, or would drag the anchor
+                    }
+                    let ideal = Cell {
+                        x: r_pos.x + e.sx,
+                        y: r_pos.y + e.sy,
+                    };
+                    moved.insert(e.other, ideal);
+                    queue.push_back(e.other);
+                }
+            }
+            // Collisions: targets must be unique and free of every unmoved room.
+            let mut targets: HashSet<Cell> = HashSet::new();
+            for &p in moved.values() {
+                if !targets.insert(p) {
+                    return false;
+                }
+                if let Some(&holder) = occupied_by.get(&p) {
+                    if !moved.contains_key(&holder) {
+                        return false;
+                    }
+                }
+            }
+            // Net effect on every edge touching a moved room; untouched edges
+            // are unchanged, so strictly-fewer here is strictly fewer overall.
+            let mut before = 0usize;
+            let mut after = 0usize;
+            for &room_id in room_order {
+                for e in adjacency.get(&room_id).map(Vec::as_slice).unwrap_or(&[]) {
+                    if !moved.contains_key(&room_id) && !moved.contains_key(&e.other) {
+                        continue;
+                    }
+                    let cur_r = positions[&room_id];
+                    let cur_o = positions[&e.other];
+                    if violated_at(cur_r, cur_o, e.sx, e.sy) {
+                        before += 1;
+                    }
+                    let new_r = moved.get(&room_id).copied().unwrap_or(cur_r);
+                    let new_o = moved.get(&e.other).copied().unwrap_or(cur_o);
+                    if violated_at(new_r, new_o, e.sx, e.sy) {
+                        after += 1;
+                    }
+                }
+            }
+            if after >= before {
+                return false;
+            }
+            // Commit in two phases so rooms can move into vacated cells.
+            for &id in moved.keys() {
+                occupied_by.remove(&positions[&id]);
+            }
+            for (&id, &p) in &moved {
+                positions.insert(id, p);
+                occupied_by.insert(p, id);
+            }
+            true
+        };
+
+        let mut repaired = true;
+        let mut rounds = 0;
+        while repaired && rounds < 8 {
+            repaired = false;
+            rounds += 1;
+            let mut violated: Vec<(u32, EdgeSign)> = Vec::new();
+            for &room_id in room_order {
+                for e in adjacency.get(&room_id).map(Vec::as_slice).unwrap_or(&[]) {
+                    if violated_at(positions[&room_id], positions[&e.other], e.sx, e.sy) {
+                        violated.push((room_id, *e));
+                    }
+                }
+            }
+            violated.sort_by_key(|(from, e)| (*from, e.other));
+            for (anchor_id, edge) in violated {
+                if attempt_reweld(
+                    anchor_id,
+                    edge,
+                    positions,
+                    &mut occupied_by,
+                    &adjacency,
+                    room_order,
+                ) {
+                    repaired = true;
+                    break; // positions changed: rescan
+                }
+            }
+        }
+    }
+
     compact_component(positions);
 }
 
