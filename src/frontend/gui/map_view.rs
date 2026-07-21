@@ -86,6 +86,9 @@ fn paint_deferred_labels(
     style: &MapStyle,
     is_free: impl Fn(Rect) -> bool,
 ) {
+    // Labels also avoid each other (short adjacent connectors would stack
+    // their labels otherwise); the first candidate + chip is the fallback.
+    let mut placed: Vec<Rect> = Vec::new();
     for label in labels {
         let galley = painter.layout_no_wrap(
             label.text,
@@ -95,11 +98,12 @@ fn paint_deferred_labels(
         let mut rect = label.align.anchor_size(label.candidates[0], galley.size());
         for candidate in &label.candidates {
             let r = label.align.anchor_size(*candidate, galley.size());
-            if is_free(r) {
+            if is_free(r) && !placed.iter().any(|p| p.intersects(r)) {
                 rect = r;
                 break;
             }
         }
+        placed.push(rect);
         painter.rect_filled(rect.expand(2.0), 3.0, style.label_bg);
         painter.galley(rect.min, galley, style.label);
     }
@@ -167,9 +171,11 @@ pub fn paint_sheet(
                     ppc * 0.25,
                     ppc * 0.18,
                 ));
-                // Declutter: labels only when zoomed in and the passage is
-                // long enough that the text doesn't sit on the rooms.
-                if show_connector_labels && chebyshev_px(a, b) >= ppc * 1.9 {
+                // Labels whenever zoomed in enough to read them — short
+                // passages included ("go arch" between adjacent bank rooms);
+                // the deferred placement hunts for empty space around the
+                // line, so the old minimum-length gate is unnecessary.
+                if show_connector_labels {
                     if let Some(label) = &edge.label {
                         // Slide along the line, then perpendicular of the
                         // midpoint, hunting for a room-free spot.
