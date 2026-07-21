@@ -172,35 +172,34 @@ impl VellumGuiApp {
                         ui.separator();
                         let filter = ex.filter.to_lowercase();
                         if let Some(db) = map.mapdb() {
-                            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                                for location in db.locations() {
-                                    if !filter.is_empty()
-                                        && !location.to_lowercase().contains(&filter)
-                                    {
-                                        continue;
-                                    }
-                                    let is_current = ex.location.as_deref() == Some(location);
-                                    if ui.selectable_label(is_current, location).clicked() {
-                                        if !is_current {
-                                            ex.location = Some(location.to_owned());
-                                            ex.follow = false;
-                                            ex.selected = None;
-                                            ex.centered = false;
-                                            ex.sheet = Sheet::Outdoor;
-                                            out.request_location = Some(location.to_owned());
+                            egui::ScrollArea::vertical()
+                                .max_height(320.0)
+                                .show(ui, |ui| {
+                                    for location in db.locations() {
+                                        if !filter.is_empty()
+                                            && !location.to_lowercase().contains(&filter)
+                                        {
+                                            continue;
                                         }
-                                        ui.close();
+                                        let is_current = ex.location.as_deref() == Some(location);
+                                        if ui.selectable_label(is_current, location).clicked() {
+                                            if !is_current {
+                                                ex.location = Some(location.to_owned());
+                                                ex.follow = false;
+                                                ex.selected = None;
+                                                ex.centered = false;
+                                                ex.sheet = Sheet::Outdoor;
+                                                out.request_location = Some(location.to_owned());
+                                            }
+                                            ui.close();
+                                        }
                                     }
-                                }
-                            });
+                                });
                         }
                     });
 
                 ui.separator();
-                let scene = ex
-                    .location
-                    .as_deref()
-                    .and_then(|loc| map.scene_for(loc));
+                let scene = ex.location.as_deref().and_then(|loc| map.scene_for(loc));
                 let has_interiors = scene
                     .map(|s| !s.interiors.rooms.is_empty())
                     .unwrap_or(false);
@@ -230,16 +229,17 @@ impl VellumGuiApp {
                 {
                     ex.last_revision = 0; // force a resync next frame
                 }
-                if ui.button("Center").on_hover_text("Center on the character (or the map)").clicked() {
+                if ui
+                    .button("Center")
+                    .on_hover_text("Center on the character (or the map)")
+                    .clicked()
+                {
                     ex.centered = false;
                     if let Some(id) = map.current_room_id {
-                        if let Some((sheet, room)) =
-                            map.current_scene().and_then(|s| s.room(id))
-                        {
+                        if let Some((sheet, room)) = map.current_scene().and_then(|s| s.room(id)) {
                             if map.current_location == ex.location {
                                 ex.sheet = sheet;
-                                ex.center =
-                                    Pos2::new(room.cell.x as f32, room.cell.y as f32);
+                                ex.center = Pos2::new(room.cell.x as f32, room.cell.y as f32);
                                 ex.centered = true;
                             }
                         }
@@ -256,16 +256,15 @@ impl VellumGuiApp {
                 ui.label(format!("{:.0} px/cell", ex.px_per_cell));
 
                 ui.separator();
-                ui.toggle_value(&mut ex.edit_mode, "Edit")
-                    .on_hover_text("Drag a group to move it (Alt: single room); edits save as overrides");
+                ui.toggle_value(&mut ex.edit_mode, "Edit").on_hover_text(
+                    "Drag a group to move it (Alt: single room); edits save as overrides",
+                );
                 if ex.edit_mode {
                     let count = ex
                         .location
                         .as_deref()
                         .and_then(|loc| map.overrides_for(loc))
-                        .map(|ov| {
-                            ov.group_offsets.len() + ov.room_pins.len() + ov.names.len()
-                        })
+                        .map(|ov| ov.group_offsets.len() + ov.room_pins.len() + ov.names.len())
                         .unwrap_or(0);
                     if count > 0 {
                         if ui
@@ -281,8 +280,9 @@ impl VellumGuiApp {
                     }
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    match map.db_state() {
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| match map.db_state() {
                         DbState::NotLoaded => {
                             ui.label(
                                 egui::RichText::new(
@@ -310,14 +310,13 @@ impl VellumGuiApp {
                                 } else if let Some(scene) = map.scene_for(loc) {
                                     ui.label(format!(
                                         "{} rooms",
-                                        scene.outdoor.rooms.len()
-                                            + scene.interiors.rooms.len()
+                                        scene.outdoor.rooms.len() + scene.interiors.rooms.len()
                                     ));
                                 }
                             }
                         }
-                    }
-                });
+                    },
+                );
             });
         });
     }
@@ -365,42 +364,73 @@ impl VellumGuiApp {
                     out.walk_to = Some(selected);
                 }
                 if ui.button("Center view").clicked() {
-                    ex.center =
-                        Pos2::new(scene_room.cell.x as f32, scene_room.cell.y as f32);
+                    ex.center = Pos2::new(scene_room.cell.x as f32, scene_room.cell.y as f32);
                 }
-                // Session observations read as part of the room's info — the
-                // mapdb stays pristine underneath, but what you learned this
-                // session is presented as if the map knows it (the same feel
-                // as Lich's in-memory map edits). Wiped on exit.
-                if let Some(ev) = scene_room.uid.and_then(|uid| app_core.evidence.get(uid)) {
-                    ui.separator();
-                    ui.label(egui::RichText::new("Observed this session").strong());
-                    if let Some(sense) = &ev.sense {
-                        let mut climate_terrain: Vec<String> = Vec::new();
-                        if let Some(c) = &sense.data.climate {
-                            climate_terrain.push(format!("{c} climate"));
-                        }
-                        if let Some(t) = &sense.data.terrain {
-                            climate_terrain.push(format!("{t} terrain"));
-                        }
-                        if !climate_terrain.is_empty() {
-                            ui.label(climate_terrain.join(", "));
-                        }
-                        if !sense.data.wildlife.is_empty() {
-                            ui.label(format!("Wildlife: {}", sense.data.wildlife.join(", ")));
-                        }
-                        if let Some(overhead) = &sense.data.overhead {
-                            ui.label(format!("Overhead: {overhead}"));
-                        }
-                        if !sense.data.structures.is_empty() {
-                            ui.label(format!(
-                                "Structures: {}",
-                                sense.data.structures.join("; ")
-                            ));
-                        }
+                // Room knowledge in collapsible sections: the mapdb record
+                // composited with this session's observations (forage sense,
+                // ranger sense). Session data reads as part of the room — the
+                // mapdb stays pristine underneath, Lich-in-memory-edit feel —
+                // and evidence is wiped on exit. Section open/closed state is
+                // remembered by egui across selections.
+                ui.separator();
+                let evidence = scene_room.uid.and_then(|uid| app_core.evidence.get(uid));
+                if let Some(room) = room {
+                    if !room.description.is_empty() {
+                        ui.collapsing("Description", |ui| {
+                            for d in &room.description {
+                                ui.label(d);
+                            }
+                        });
                     }
-                    if let Some(forage) = &ev.forage {
-                        ui.label(format!("Forageables: {}", forage.items.join(", ")));
+                }
+                let sense = evidence.and_then(|ev| ev.sense.as_ref());
+                // Sense words win the display over mapdb fields — fresher.
+                let climate = sense
+                    .and_then(|s| s.data.climate.as_deref())
+                    .or_else(|| room.and_then(|r| r.climate.as_deref()));
+                let terrain = sense
+                    .and_then(|s| s.data.terrain.as_deref())
+                    .or_else(|| room.and_then(|r| r.terrain.as_deref()));
+                let has_environment = climate.is_some()
+                    || terrain.is_some()
+                    || sense.is_some_and(|s| {
+                        !s.data.wildlife.is_empty()
+                            || s.data.overhead.is_some()
+                            || !s.data.structures.is_empty()
+                    });
+                if has_environment {
+                    ui.collapsing("Environment", |ui| {
+                        if let Some(c) = climate {
+                            ui.label(format!("Climate: {c}"));
+                        }
+                        if let Some(t) = terrain {
+                            ui.label(format!("Terrain: {t}"));
+                        }
+                        if let Some(s) = sense {
+                            if !s.data.wildlife.is_empty() {
+                                ui.label(format!("Wildlife: {}", s.data.wildlife.join(", ")));
+                            }
+                            if let Some(o) = &s.data.overhead {
+                                ui.label(format!("Overhead: {o}"));
+                            }
+                            if !s.data.structures.is_empty() {
+                                ui.label(format!("Structures: {}", s.data.structures.join("; ")));
+                            }
+                        }
+                    });
+                }
+                if let Some(forage) = evidence.and_then(|ev| ev.forage.as_ref()) {
+                    ui.collapsing("Forageables", |ui| {
+                        for item in &forage.items {
+                            ui.label(item);
+                        }
+                    });
+                }
+                if let Some(room) = room {
+                    if !room.tags.is_empty() {
+                        ui.collapsing("Tags", |ui| {
+                            ui.label(room.tags.join(", "));
+                        });
                     }
                 }
                 if ex.edit_mode {
@@ -477,57 +507,70 @@ impl VellumGuiApp {
                 }
                 if let Some(room) = room {
                     ui.separator();
-                    ui.label(egui::RichText::new("Exits").strong());
                     let rooms_slice = ex
                         .location
                         .as_deref()
                         .and_then(|loc| map.mapdb().map(|db| (db, loc)))
                         .and_then(|(db, loc)| db.rooms(loc));
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (target, cmd) in &room.wayto {
-                            if !ex.edit_mode {
-                                ui.label(format!("{cmd} \u{2192} {target}"));
-                                continue;
-                            }
-                            // Edge action editor, keyed by the room-key pair.
-                            let target_key = rooms_slice
-                                .and_then(|rooms| {
-                                    rooms
-                                        .binary_search_by_key(target, |r| r.id)
-                                        .ok()
-                                        .map(|i| &rooms[i])
-                                })
-                                .map(|r| r.uid.first().copied().unwrap_or(r.id as i64));
-                            let Some(target_key) = target_key else {
-                                ui.label(format!("{cmd} \u{2192} {target}"));
-                                continue;
-                            };
-                            let my_key = scene_room.uid.unwrap_or(selected as i64);
-                            let (ka, kb) = (my_key.min(target_key), my_key.max(target_key));
-                            let current_action = ex
-                                .location
-                                .as_deref()
-                                .and_then(|loc| map.overrides_for(loc))
-                                .and_then(|ov| {
-                                    ov.edges
-                                        .iter()
-                                        .find(|e| (e.a, e.b) == (ka, kb))
-                                        .map(|e| e.action)
-                                });
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{cmd} \u{2192} {target}"));
-                                let text = match current_action {
-                                    None => "auto".to_string(),
-                                    Some(EdgeAction::Hide) => "hidden".to_string(),
-                                    Some(EdgeAction::Dash) => "dashed".to_string(),
-                                    Some(EdgeAction::Connector) => "passage".to_string(),
-                                    Some(EdgeAction::Direction(d)) => d.name().to_string(),
-                                };
-                                egui::ComboBox::from_id_salt(("map_edge", ka, kb, *target))
-                                    .selected_text(text)
-                                    .width(90.0)
-                                    .show_ui(ui, |ui| {
-                                        let mut pick =
+                    egui::CollapsingHeader::new("Exits")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(260.0)
+                                .show(ui, |ui| {
+                                    for (target, cmd) in &room.wayto {
+                                        if !ex.edit_mode {
+                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            continue;
+                                        }
+                                        // Edge action editor, keyed by the room-key pair.
+                                        let target_key = rooms_slice
+                                            .and_then(|rooms| {
+                                                rooms
+                                                    .binary_search_by_key(target, |r| r.id)
+                                                    .ok()
+                                                    .map(|i| &rooms[i])
+                                            })
+                                            .map(|r| r.uid.first().copied().unwrap_or(r.id as i64));
+                                        let Some(target_key) = target_key else {
+                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            continue;
+                                        };
+                                        let my_key = scene_room.uid.unwrap_or(selected as i64);
+                                        let (ka, kb) =
+                                            (my_key.min(target_key), my_key.max(target_key));
+                                        let current_action = ex
+                                            .location
+                                            .as_deref()
+                                            .and_then(|loc| map.overrides_for(loc))
+                                            .and_then(|ov| {
+                                                ov.edges
+                                                    .iter()
+                                                    .find(|e| (e.a, e.b) == (ka, kb))
+                                                    .map(|e| e.action)
+                                            });
+                                        ui.horizontal(|ui| {
+                                            ui.label(format!("{cmd} \u{2192} {target}"));
+                                            let text = match current_action {
+                                                None => "auto".to_string(),
+                                                Some(EdgeAction::Hide) => "hidden".to_string(),
+                                                Some(EdgeAction::Dash) => "dashed".to_string(),
+                                                Some(EdgeAction::Connector) => {
+                                                    "passage".to_string()
+                                                }
+                                                Some(EdgeAction::Direction(d)) => {
+                                                    d.name().to_string()
+                                                }
+                                            };
+                                            egui::ComboBox::from_id_salt((
+                                                "map_edge", ka, kb, *target,
+                                            ))
+                                            .selected_text(text)
+                                            .width(90.0)
+                                            .show_ui(
+                                                ui,
+                                                |ui| {
+                                                    let mut pick =
                                             |ui: &mut egui::Ui,
                                              label: &str,
                                              hint: &str,
@@ -556,27 +599,27 @@ impl VellumGuiApp {
                                                         });
                                                 }
                                             };
-                                        pick(ui, "auto", "", None);
-                                        pick(
-                                            ui,
-                                            "hidden",
-                                            "Don't draw this edge (looks only)",
-                                            Some(EdgeAction::Hide),
-                                        );
-                                        pick(
-                                            ui,
-                                            "dashed",
-                                            "Draw dashed, keep the layout (looks only)",
-                                            Some(EdgeAction::Dash),
-                                        );
-                                        pick(
+                                                    pick(ui, "auto", "", None);
+                                                    pick(
+                                                        ui,
+                                                        "hidden",
+                                                        "Don't draw this edge (looks only)",
+                                                        Some(EdgeAction::Hide),
+                                                    );
+                                                    pick(
+                                                        ui,
+                                                        "dashed",
+                                                        "Draw dashed, keep the layout (looks only)",
+                                                        Some(EdgeAction::Dash),
+                                                    );
+                                                    pick(
                                             ui,
                                             "passage",
                                             "No direction: un-weld the rooms and re-layout",
                                             Some(EdgeAction::Connector),
                                         );
-                                        ui.separator();
-                                        for dir in [
+                                                    ui.separator();
+                                                    for dir in [
                                             crate::core::layout_engine::direction::Dir::North,
                                             crate::core::layout_engine::direction::Dir::Northeast,
                                             crate::core::layout_engine::direction::Dir::East,
@@ -595,10 +638,12 @@ impl VellumGuiApp {
                                                 Some(EdgeAction::Direction(dir)),
                                             );
                                         }
-                                    });
-                            });
-                        }
-                    });
+                                                },
+                                            );
+                                        });
+                                    }
+                                });
+                        });
                 }
                 ui.separator();
                 if ui.button("Close").clicked() {
@@ -615,8 +660,7 @@ impl VellumGuiApp {
     ) {
         let map = &app_core.map;
         egui::CentralPanel::default().show(ui, |ui| {
-            let Some(scene) = ex.location.as_deref().and_then(|loc| map.scene_for(loc))
-            else {
+            let Some(scene) = ex.location.as_deref().and_then(|loc| map.scene_for(loc)) else {
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("No map yet").weak());
                 });
@@ -682,8 +726,14 @@ impl VellumGuiApp {
                     x: (drag.accum.x / ex.px_per_cell).round() as i32,
                     y: (drag.accum.y / ex.px_per_cell).round() as i32,
                 };
-                let mut min = Cell { x: i32::MAX, y: i32::MAX };
-                let mut max = Cell { x: i32::MIN, y: i32::MIN };
+                let mut min = Cell {
+                    x: i32::MAX,
+                    y: i32::MAX,
+                };
+                let mut max = Cell {
+                    x: i32::MIN,
+                    y: i32::MIN,
+                };
                 for room in &sheet.rooms {
                     if room.group != drag.group {
                         continue;
@@ -732,19 +782,15 @@ impl VellumGuiApp {
                         let location = ex.location.clone().unwrap_or_default();
                         out.override_edit = Some(match drag.room {
                             Some(id) => {
-                                let key = scene
-                                    .room(id)
-                                    .and_then(|(_, r)| r.uid)
-                                    .unwrap_or(id as i64);
+                                let key =
+                                    scene.room(id).and_then(|(_, r)| r.uid).unwrap_or(id as i64);
                                 let group_off = scene
                                     .group_offsets
                                     .get(&drag.group)
                                     .copied()
                                     .unwrap_or_default();
-                                let final_cell = scene
-                                    .room(id)
-                                    .map(|(_, r)| r.cell)
-                                    .unwrap_or_default();
+                                let final_cell =
+                                    scene.room(id).map(|(_, r)| r.cell).unwrap_or_default();
                                 OverrideEdit::RoomPin {
                                     location,
                                     key,
@@ -769,8 +815,7 @@ impl VellumGuiApp {
             }
             // Scroll / pinch to zoom, anchored at the pointer.
             if response.hovered() {
-                let (scroll, pinch) =
-                    ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+                let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
                 let factor = pinch * (1.0 + scroll * 0.0015);
                 if (factor - 1.0).abs() > f32::EPSILON {
                     let old_ppc = ex.px_per_cell;
@@ -800,28 +845,30 @@ impl VellumGuiApp {
             // While standing in a ghost, the ring and compass belong to the
             // sketch, not the held anchor room (mirrors the mini map).
             let in_ghost = browsing_here
-                && map
-                    .current_ghost
-                    .is_some_and(|uid| {
-                        ghost_overlay.as_ref().is_some_and(|o| o.cell_of(uid).is_some())
-                    });
+                && map.current_ghost.is_some_and(|uid| {
+                    ghost_overlay
+                        .as_ref()
+                        .is_some_and(|o| o.cell_of(uid).is_some())
+                });
             let current = if browsing_here && !in_ghost {
                 map.current_room_id
             } else {
                 None
             };
-            let exits = (current.is_some())
-                .then(|| app_core.game_state.compass_dirs.as_slice());
-            let result = map_view::paint_sheet(
-                ui, rect, sheet, camera, current, exits, true, None, &style,
-            );
+            let exits = (current.is_some()).then(|| app_core.game_state.compass_dirs.as_slice());
+            let result =
+                map_view::paint_sheet(ui, rect, sheet, camera, current, exits, true, None, &style);
             if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
                 map_view::paint_ghosts(
                     ui,
                     rect,
                     overlay,
                     camera,
-                    if browsing_here { map.current_ghost } else { None },
+                    if browsing_here {
+                        map.current_ghost
+                    } else {
+                        None
+                    },
                     if in_ghost {
                         Some(app_core.game_state.compass_dirs.as_slice())
                     } else {
@@ -838,9 +885,7 @@ impl VellumGuiApp {
             }
 
             // Selection ring over the paint.
-            if let Some((sheet_kind, room)) =
-                ex.selected.and_then(|id| scene.room(id))
-            {
+            if let Some((sheet_kind, room)) = ex.selected.and_then(|id| scene.room(id)) {
                 if sheet_kind == ex.sheet {
                     let center = rect.center()
                         + Vec2::new(
