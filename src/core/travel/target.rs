@@ -77,7 +77,7 @@ pub fn resolve(
                 None => Resolved::NotFound(format!("no reachable '{tag}' from here")),
             },
             None => Resolved::NotFound(
-                "current room unknown — can't pick the nearest tagged room (see .room)".into(),
+                "current room unknown - can't pick the nearest tagged room (see .room)".into(),
             ),
         };
     }

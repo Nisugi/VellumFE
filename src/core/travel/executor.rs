@@ -168,7 +168,7 @@ impl TravelTask {
         let mut events = Vec::new();
 
         if ctx.dead {
-            events.push(TravelEvent::Failed("you're dead — travel aborted".into()));
+            events.push(TravelEvent::Failed("you're dead - travel aborted".into()));
             return events;
         }
         let Some(current) = ctx.current_room else {
@@ -192,7 +192,7 @@ impl TravelTask {
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STAND_TIMEOUT_MS {
                     if attempts >= MAX_STAND_ATTEMPTS {
                         events.push(TravelEvent::Failed(
-                            "can't stand up — travel aborted".into(),
+                            "can't stand up - travel aborted".into(),
                         ));
                     } else if ctx.rt_remaining <= 0.0 {
                         events.push(TravelEvent::Send("stand".into()));
@@ -218,7 +218,7 @@ impl TravelTask {
                 }
                 if current != from {
                     events.push(TravelEvent::Status(format!(
-                        "off the planned route (room {current}) — re-pathing"
+                        "off the planned route (room {current}) - re-pathing"
                     )));
                     self.repath(ctx.db, current, &mut events);
                     return events;
@@ -240,7 +240,7 @@ impl TravelTask {
                     // Somewhere unexpected but mapped (fled, teleported,
                     // moved by hand mid-trip): re-path from here.
                     events.push(TravelEvent::Status(format!(
-                        "off the planned route (room {current}) — re-pathing"
+                        "off the planned route (room {current}) - re-pathing"
                     )));
                     self.repath(ctx.db, current, &mut events);
                     return events;
@@ -249,7 +249,7 @@ impl TravelTask {
                     if self.edge_retries >= MAX_EDGE_RETRIES {
                         // go2: "changing Room[..].timeto[..] to nil" + restart.
                         events.push(TravelEvent::Status(format!(
-                            "move {from} → {expected} keeps failing — disabling that edge for this session and re-pathing"
+                            "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
                         )));
                         self.banned.insert((from, expected));
                         self.repath(ctx.db, current, &mut events);
@@ -339,7 +339,7 @@ impl TravelTask {
         if ctx.muckled {
             if !self.muckle_announced {
                 events.push(TravelEvent::Status(
-                    "stunned/webbed — waiting until you can move".into(),
+                    "stunned/webbed - waiting until you can move".into(),
                 ));
                 self.muckle_announced = true;
             }
@@ -390,7 +390,7 @@ impl TravelTask {
                 }
                 None => {
                     events.push(TravelEvent::Status(format!(
-                        "edge {current} → {next} uses an unsupported script — disabling it and re-pathing"
+                        "edge {current} -> {next} uses an unsupported script - disabling it and re-pathing"
                     )));
                     self.banned.insert((current, next));
                     self.repath(ctx.db, current, events);
@@ -410,7 +410,7 @@ impl TravelTask {
         self.restarts += 1;
         if self.restarts > MAX_RESTARTS {
             events.push(TravelEvent::Failed(
-                "too many restarts — travel aborted".into(),
+                "too many restarts - travel aborted".into(),
             ));
             return;
         }
@@ -425,7 +425,7 @@ impl TravelTask {
             }
             None => {
                 events.push(TravelEvent::Failed(format!(
-                    "no remaining route from room {current} to {} — travel aborted",
+                    "no remaining route from room {current} to {} - travel aborted",
                     self.destination
                 )));
             }

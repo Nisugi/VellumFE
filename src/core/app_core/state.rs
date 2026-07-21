@@ -422,7 +422,7 @@ impl AppCore {
                     seconds,
                 } => {
                     self.add_system_message(&format!(
-                        "[go2] arrived at room {destination} — travel time {}",
+                        "[go2] arrived at room {destination} - travel time {}",
                         crate::core::travel::format_eta(seconds)
                     ));
                 }
@@ -444,7 +444,7 @@ impl AppCore {
     pub fn start_travel(&mut self, destination: u32) {
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
-                "[go2] map database not loaded — configure it in Settings > Map",
+                "[go2] map database not loaded - configure it in Settings > Map",
             );
             return;
         };
@@ -475,7 +475,7 @@ impl AppCore {
                     .and_then(|r| r.title.first().cloned())
                     .unwrap_or_default();
                 self.add_system_message(&format!(
-                    "[go2] → {title} ({destination}): {} rooms, ETA {}",
+                    "[go2] -> {title} ({destination}): {} rooms, ETA {}",
                     task.rooms_total(),
                     crate::core::travel::format_eta(eta)
                 ));

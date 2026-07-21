@@ -266,7 +266,7 @@ impl AppCore {
         if let Some(db) = self.map.mapdb() {
             if let Some(room) = db.room(room_id) {
                 if let Some(title) = room.title.first() {
-                    summary.push_str(&format!(" — {title}"));
+                    summary.push_str(&format!(" - {title}"));
                 }
                 let routable = room
                     .wayto
@@ -280,12 +280,12 @@ impl AppCore {
                     })
                     .count();
                 summary.push_str(&format!(
-                    " · {} wayto edges ({} routable)",
+                    " | {} wayto edges ({} routable)",
                     room.wayto.len(),
                     routable
                 ));
                 if !room.tags.is_empty() {
-                    summary.push_str(&format!(" · tags: {}", room.tags.join(", ")));
+                    summary.push_str(&format!(" | tags: {}", room.tags.join(", ")));
                 }
             }
         }
@@ -371,7 +371,7 @@ impl AppCore {
             }
             other => {
                 self.add_system_message(&format!(
-                    "[map] unknown subcommand '{other}' — usage: .mapdb [status|download|remove|repo <owner/repo>]"
+                    "[map] unknown subcommand '{other}' - usage: .mapdb [status|download|remove|repo <owner/repo>]"
                 ));
             }
         }
@@ -385,7 +385,7 @@ impl AppCore {
         match first {
             "" => {
                 self.add_system_message(
-                    "usage: .go2 <room id | uid | tag | saved name | text> — also: .go2 stop / status / save <name> [id] / targets / back",
+                    "usage: .go2 <room id | uid | tag | saved name | text> - also: .go2 stop / status / save <name> [id] / targets / back",
                 );
             }
             "stop" => self.stop_travel(),
@@ -395,14 +395,14 @@ impl AppCore {
                     (Some(task), Some(db), Some(current)) => {
                         let done = task.rooms_total() - task.rooms_remaining();
                         format!(
-                            "[go2] → room {}: {}/{} rooms, ETA {}",
+                            "[go2] -> room {}: {}/{} rooms, ETA {}",
                             task.destination,
                             done,
                             task.rooms_total(),
                             crate::core::travel::format_eta(task.eta_seconds(db, current))
                         )
                     }
-                    (Some(task), _, _) => format!("[go2] → room {} (resolving...)", task.destination),
+                    (Some(task), _, _) => format!("[go2] -> room {} (resolving...)", task.destination),
                     _ => "[go2] not traveling.".to_string(),
                 };
                 self.add_system_message(&status);
@@ -413,7 +413,7 @@ impl AppCore {
                     return;
                 };
                 if name.parse::<u32>().is_ok() || name.eq_ignore_ascii_case("back") {
-                    self.add_system_message("[go2] that name would shadow a room id or keyword — pick another");
+                    self.add_system_message("[go2] that name would shadow a room id or keyword - pick another");
                     return;
                 }
                 let id = match args.get(2) {
@@ -428,14 +428,14 @@ impl AppCore {
                 };
                 let Some(id) = id else {
                     self.add_system_message(
-                        "[go2] current room unknown — give an explicit id: .go2 save <name> <id>",
+                        "[go2] current room unknown - give an explicit id: .go2 save <name> <id>",
                     );
                     return;
                 };
                 self.config.go2.saved.insert(name.to_lowercase(), id);
                 match self.save_config() {
                     Ok(()) => self.add_system_message(&format!(
-                        "[go2] saved '{}' → room {id} (travel there with .go2 {})",
+                        "[go2] saved '{}' -> room {id} (travel there with .go2 {})",
                         name.to_lowercase(),
                         name.to_lowercase()
                     )),
@@ -451,7 +451,7 @@ impl AppCore {
                         .go2
                         .saved
                         .iter()
-                        .map(|(name, id)| format!("{name} → {id}"))
+                        .map(|(name, id)| format!("{name} -> {id}"))
                         .collect();
                     self.add_system_message(&format!("[go2] saved targets: {}", list.join(", ")));
                 }
@@ -459,7 +459,7 @@ impl AppCore {
             _ => {
                 let Some(db) = self.map.mapdb().cloned() else {
                     self.add_system_message(
-                        "[go2] map database not loaded — configure it in Settings > Map",
+                        "[go2] map database not loaded - configure it in Settings > Map",
                     );
                     return;
                 };
@@ -475,7 +475,7 @@ impl AppCore {
                     Resolved::Room(id) => self.start_travel(id),
                     Resolved::Ambiguous(matches) => {
                         self.add_system_message(&format!(
-                            "[go2] several rooms match '{input}' — pick one with .go2 <id>:"
+                            "[go2] several rooms match '{input}' - pick one with .go2 <id>:"
                         ));
                         for (id, title) in matches {
                             self.add_system_message(&format!("  {id}  {title}"));
