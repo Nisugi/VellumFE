@@ -31,6 +31,26 @@ A move that keeps failing gets that edge disabled for the session and
 the route recomputed — same for ending up somewhere unexpected (fleeing,
 being teleported, walking by hand mid-trip).
 
+## Mazes
+
+Some regions scramble movement — walking their mapdb edges is
+meaningless (and draws as a spiderweb on the map, so their rooms are left
+off it). These are declared in `defaults/globals/mazes.toml`, and the
+walker uses a per-maze strategy instead of stepping edges.
+
+The pilot is the **Mist Harbor Ranger Guild** jungle approach, a
+*pathcode* maze: each character has a personal route, revealed by the
+Master Tracker at the entrance. When a trip crosses it, the walker goes
+to the entrance, asks the Tracker automatically if no route is stored
+(the response — "Your route is: go clearing, west, ..." — is captured
+and saved per character), then walks your code. A wrong turn follows the
+Tracker's own advice: `search` to re-orient, start the route again, with
+a bounded retry before giving up. Asking the Tracker by hand also
+captures your route — the next `.go2` through just works.
+
+A `~/.vellum-fe/mazes.toml` can add or replace maze definitions by name
+(same shipped-plus-user pattern as travel overrides).
+
 ## What it can't do (yet)
 
 Lich's go2 has a decade of special cases; native v1 deliberately walks

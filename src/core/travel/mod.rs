@@ -10,6 +10,7 @@
 //! path (so travel moves echo like anything the user types).
 
 pub mod executor;
+pub mod mazes;
 pub mod target;
 
 use std::collections::VecDeque;

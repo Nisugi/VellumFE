@@ -571,6 +571,11 @@ pub struct Go2Config {
     /// day passes, and other special travel that native v1 does not.
     #[serde(default = "default_true")]
     pub native_map_clicks: bool,
+    /// Personal maze routes, keyed by maze name (see defaults/globals/
+    /// mazes.toml). Captured automatically from the maze NPC's response
+    /// ("Your route is: ...") — never hand-edited.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub pathcodes: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Go2Config {
@@ -578,6 +583,7 @@ impl Default for Go2Config {
         Self {
             saved: Default::default(),
             native_map_clicks: true,
+            pathcodes: Default::default(),
         }
     }
 }

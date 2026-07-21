@@ -114,6 +114,11 @@ pub struct MessageProcessor {
     /// uid — the processor has no room context, same split as sounds.
     pub pending_evidence: Vec<super::evidence::Observation>,
 
+    /// A maze route heard from a pathcode NPC ("Your route is: ...").
+    /// AppCore attributes it to the maze whose entrance we're standing at
+    /// and persists it under that maze's name.
+    pub pending_pathcode: Option<Vec<String>>,
+
     /// Saved dialog positions for persistence across sessions
     pub saved_dialog_positions: SavedDialogPositions,
 
@@ -208,6 +213,7 @@ impl MessageProcessor {
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
             pending_evidence: Vec::new(),
+            pending_pathcode: None,
             saved_dialog_positions,
             bounty_buffer: None,
             society_buffer: Vec::new(),
@@ -2459,7 +2465,7 @@ impl MessageProcessor {
         }
 
         // Mapping evidence capture (forage sense / ranger sense responses on
-        // the main stream). Cheap: two prefix checks per line.
+        // the main stream). Cheap: a few substring checks per line.
         if self.current_stream == "main" {
             if let Some(items) = crate::core::evidence::parse_forage_line(&full_text) {
                 self.pending_evidence
@@ -2467,6 +2473,10 @@ impl MessageProcessor {
             } else if let Some(data) = crate::core::evidence::parse_sense_line(&full_text) {
                 self.pending_evidence
                     .push(crate::core::evidence::Observation::Sense(data));
+            } else if let Some(route) =
+                crate::core::travel::mazes::parse_pathcode_line(&full_text)
+            {
+                self.pending_pathcode = Some(route);
             }
         }
 

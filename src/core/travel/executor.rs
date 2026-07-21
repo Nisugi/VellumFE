@@ -38,6 +38,9 @@ pub struct TravelContext<'a> {
     /// Roundtime remaining in seconds (0 when free).
     pub rt_remaining: f64,
     pub now_ms: u64,
+    /// Personal maze routes by maze name (config.go2.pathcodes) — the maze
+    /// strategy reads these; capture writes them outside the executor.
+    pub pathcodes: &'a std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl TravelContext<'_> {
@@ -88,6 +91,35 @@ enum Step {
         from: u32,
         sent_ms: u64,
     },
+    /// Walking a curated maze by personal pathcode (movement inside is
+    /// scrambled; edges are never stepped normally). See travel::mazes.
+    Maze {
+        maze_name: String,
+        phase: MazePhase,
+        route: Vec<String>,
+        /// Next route command to send.
+        i: usize,
+        /// Recovery cycles used (search-and-restart).
+        attempts: u32,
+        /// The trip's destination is itself inside the maze: finish at the
+        /// far side instead of re-pathing back into the scramble.
+        dest_inside: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum MazePhase {
+    /// The ask command was sent; waiting for the capture layer to store the
+    /// spoken route.
+    AwaitCode { sent_ms: u64 },
+    /// Moving from the NPC entrance to the route's start room.
+    ToStart { sent_ms: u64 },
+    /// Sending route commands, paced by RT plus a fixed gap.
+    Walk { wait_until: u64 },
+    /// Route exhausted; waiting to see where we ended up.
+    Verify { until: u64 },
+    /// `search` sent after a failed walk; waiting to re-orient.
+    PostSearch { until: u64 },
 }
 
 /// How long a move may take before it counts as failed. Generous: RT from
@@ -100,6 +132,15 @@ const MAX_STAND_ATTEMPTS: u32 = 5;
 const MAX_EDGE_RETRIES: u32 = 2;
 /// Re-path budget — a trip that restarts this often is going nowhere.
 const MAX_RESTARTS: u32 = 10;
+/// How long the maze NPC gets to speak a route before the walk gives up.
+const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
+/// Gap between maze route commands beyond waiting out RT.
+const MAZE_STEP_GAP_MS: u64 = 1_400;
+/// Settle time after the last route command (or a `search`) before the
+/// landing room is judged.
+const MAZE_SETTLE_MS: u64 = 2_500;
+/// Search-and-restart cycles before the maze walk is abandoned.
+const MAZE_MAX_ATTEMPTS: u32 = 3;
 
 #[derive(Debug)]
 pub struct TravelTask {
@@ -185,6 +226,26 @@ impl TravelTask {
 
         match self.step.clone() {
             Step::Prepare => self.tick_prepare(current, ctx, &mut events),
+            Step::Maze {
+                maze_name,
+                phase,
+                route,
+                i,
+                attempts,
+                dest_inside,
+            } => {
+                self.tick_maze(
+                    maze_name,
+                    phase,
+                    route,
+                    i,
+                    attempts,
+                    dest_inside,
+                    current,
+                    ctx,
+                    &mut events,
+                );
+            }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
                     self.step = Step::Prepare;
@@ -273,6 +334,236 @@ impl TravelTask {
         self.step = Step::Prepare;
     }
 
+    /// Enter maze mode at its boundary. With a stored pathcode the walk
+    /// starts immediately; without one the NPC is asked and the capture
+    /// layer fills the store (polled by AwaitCode).
+    fn begin_maze(
+        &mut self,
+        maze: &super::mazes::MazeDef,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        if current != maze.entrance && current != maze.start {
+            // Approaching from an unsupported side (e.g. leaving the guild
+            // outward). v1 walks inbound only.
+            events.push(TravelEvent::Failed(format!(
+                "the route crosses the {} maze from a side the walker doesn't support yet - walk it manually",
+                maze.name
+            )));
+            return;
+        }
+        let dest_inside = maze.rooms.contains(&self.destination);
+        if dest_inside {
+            events.push(TravelEvent::Status(format!(
+                "destination is inside the {} maze - walking the pathcode through it",
+                maze.name
+            )));
+        }
+        let (phase, route) = match ctx.pathcodes.get(&maze.name) {
+            Some(route) => {
+                events.push(TravelEvent::Status(format!(
+                    "{} maze - walking your pathcode ({} steps)",
+                    maze.name,
+                    route.len()
+                )));
+                (self.maze_entry_phase(maze, current, ctx, events), route.clone())
+            }
+            None => {
+                events.push(TravelEvent::Status(format!(
+                    "{} maze - no pathcode stored; asking",
+                    maze.name
+                )));
+                events.push(TravelEvent::Send(maze.ask.clone()));
+                (MazePhase::AwaitCode { sent_ms: ctx.now_ms }, Vec::new())
+            }
+        };
+        self.step = Step::Maze {
+            maze_name: maze.name.clone(),
+            phase,
+            route,
+            i: 0,
+            attempts: 0,
+            dest_inside,
+        };
+    }
+
+    /// The phase that gets a known route moving: step from the entrance to
+    /// the start room first when needed, else walk immediately.
+    fn maze_entry_phase(
+        &mut self,
+        maze: &super::mazes::MazeDef,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) -> MazePhase {
+        if current == maze.start {
+            return MazePhase::Walk { wait_until: 0 };
+        }
+        // entrance → start via the mapdb edge (a real, unscrambled edge).
+        match ctx
+            .db
+            .room(maze.entrance)
+            .and_then(|r| r.wayto.get(&maze.start).cloned())
+        {
+            Some(cmd) => {
+                events.push(TravelEvent::Send(cmd));
+                MazePhase::ToStart { sent_ms: ctx.now_ms }
+            }
+            None => {
+                // Shouldn't happen with sane maze data; walk from here.
+                MazePhase::Walk { wait_until: 0 }
+            }
+        }
+    }
+
+    /// Maze state machine tick. Movement inside is scrambled, so route
+    /// commands are paced (RT + a fixed gap) without per-step verification;
+    /// only the final room is checked. Recovery follows the NPC's own
+    /// protocol: `search` to re-orient, then restart the route.
+    #[allow(clippy::too_many_arguments)]
+    fn tick_maze(
+        &mut self,
+        maze_name: String,
+        phase: MazePhase,
+        route: Vec<String>,
+        i: usize,
+        attempts: u32,
+        dest_inside: bool,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let Some(maze) = super::mazes::all().iter().find(|m| m.name == maze_name) else {
+            events.push(TravelEvent::Failed(format!(
+                "maze '{maze_name}' vanished from the definitions - travel aborted"
+            )));
+            return;
+        };
+        if ctx.muckled {
+            if !self.muckle_announced {
+                events.push(TravelEvent::Status(
+                    "stunned/webbed - waiting until you can move".into(),
+                ));
+                self.muckle_announced = true;
+            }
+            self.step = Step::Maze { maze_name, phase, route, i, attempts, dest_inside };
+            return;
+        }
+        self.muckle_announced = false;
+
+        let mut phase = phase;
+        let mut route = route;
+        let mut i = i;
+        let mut attempts = attempts;
+
+        match &phase {
+            MazePhase::AwaitCode { sent_ms } => {
+                if let Some(stored) = ctx.pathcodes.get(&maze.name) {
+                    route = stored.clone();
+                    events.push(TravelEvent::Status(format!(
+                        "pathcode captured - walking ({} steps)",
+                        route.len()
+                    )));
+                    phase = self.maze_entry_phase(maze, current, ctx, events);
+                } else if ctx.now_ms.saturating_sub(*sent_ms) > MAZE_ASK_TIMEOUT_MS {
+                    events.push(TravelEvent::Failed(format!(
+                        "no pathcode heard from the {} NPC - ask manually, then rerun .go2",
+                        maze.name
+                    )));
+                    return;
+                }
+            }
+            MazePhase::ToStart { sent_ms } => {
+                if current == maze.start {
+                    phase = MazePhase::Walk { wait_until: 0 };
+                } else if ctx.now_ms.saturating_sub(*sent_ms) > STEP_TIMEOUT_MS {
+                    events.push(TravelEvent::Failed(format!(
+                        "couldn't reach the {} maze start room - travel aborted",
+                        maze.name
+                    )));
+                    return;
+                }
+            }
+            MazePhase::Walk { wait_until } => {
+                if ctx.rt_remaining > 0.0 || ctx.now_ms < *wait_until {
+                    // paced
+                } else if let Some(cmd) = route.get(i) {
+                    events.push(TravelEvent::Send(cmd.clone()));
+                    i += 1;
+                    phase = MazePhase::Walk {
+                        wait_until: ctx.now_ms + MAZE_STEP_GAP_MS,
+                    };
+                } else {
+                    phase = MazePhase::Verify {
+                        until: ctx.now_ms + MAZE_SETTLE_MS,
+                    };
+                }
+            }
+            MazePhase::Verify { until } => {
+                if ctx.now_ms >= *until {
+                    if !maze.rooms.contains(&current) && current != maze.entrance {
+                        // Through. Either this WAS the goal, or normal
+                        // routing resumes from the far side.
+                        if dest_inside || current == self.destination {
+                            events.push(TravelEvent::Status(format!(
+                                "through the {} maze",
+                                maze.name
+                            )));
+                            events.push(TravelEvent::Arrived {
+                                destination: current,
+                                seconds: (ctx.now_ms - self.started_ms) as f64 / 1000.0,
+                            });
+                        } else {
+                            events.push(TravelEvent::Status(format!(
+                                "through the {} maze - continuing",
+                                maze.name
+                            )));
+                            self.repath(ctx.db, current, events);
+                        }
+                        return;
+                    }
+                    // Still inside (or bounced to the entrance): recover per
+                    // the NPC - search to re-orient, then start again.
+                    attempts += 1;
+                    if attempts > MAZE_MAX_ATTEMPTS {
+                        events.push(TravelEvent::Failed(format!(
+                            "couldn't get through the {} maze - return to the entrance and try again",
+                            maze.name
+                        )));
+                        return;
+                    }
+                    events.push(TravelEvent::Status(format!(
+                        "wrong turn in the {} maze - searching to re-orient (attempt {attempts})",
+                        maze.name
+                    )));
+                    events.push(TravelEvent::Send("search".into()));
+                    i = 0;
+                    phase = MazePhase::PostSearch {
+                        until: ctx.now_ms + MAZE_SETTLE_MS,
+                    };
+                }
+            }
+            MazePhase::PostSearch { until } => {
+                if ctx.now_ms >= *until {
+                    if current == maze.start {
+                        phase = MazePhase::Walk { wait_until: 0 };
+                    } else if current == maze.entrance {
+                        phase = self.maze_entry_phase(maze, current, ctx, events);
+                    } else {
+                        // Still lost somewhere inside: search again (counted
+                        // by the same attempts budget via Verify).
+                        phase = MazePhase::Verify {
+                            until: ctx.now_ms + MAZE_SETTLE_MS,
+                        };
+                    }
+                }
+            }
+        }
+
+        self.step = Step::Maze { maze_name, phase, route, i, attempts, dest_inside };
+    }
+
     /// Run a transpiled edge script until it blocks (RT wait, sleep) or
     /// finishes (→ arrival watching).
     #[allow(clippy::too_many_arguments)]
@@ -352,6 +643,15 @@ impl TravelTask {
             self.repath(ctx.db, current, events);
             return;
         };
+        // Curated maze boundary: the planned edges inside are junk (movement
+        // scrambles), so the plan is abandoned at the threshold and the
+        // maze's pathcode strategy takes over.
+        if let Some(maze) = super::mazes::maze_containing(next) {
+            if !maze.rooms.contains(&current) {
+                self.begin_maze(maze, current, ctx, events);
+                return;
+            }
+        }
         let Some(command) = ctx
             .db
             .room(current)
@@ -482,6 +782,7 @@ mod tests {
         spells: Vec<u16>,
         rt: f64,
         now: u64,
+        pathcodes: std::collections::BTreeMap<String, Vec<String>>,
     }
 
     impl Sim {
@@ -496,6 +797,7 @@ mod tests {
                 spells: Vec::new(),
                 rt: 0.0,
                 now: 0,
+                pathcodes: Default::default(),
             }
         }
 
@@ -511,6 +813,7 @@ mod tests {
                 active_spells: &self.spells,
                 rt_remaining: self.rt,
                 now_ms: self.now,
+                pathcodes: &self.pathcodes,
             }
         }
     }
@@ -765,5 +1068,94 @@ mod tests {
                 seconds: 1.5
             }]
         );
+    }
+
+    /// Synthetic map around the shipped Ranger Guild maze definition (its
+    /// room ids are real so the static maze table matches): town 100 →
+    /// entrance 20886 → maze (15606 → 19415) → guild side 30870. The route
+    /// commands are modeled as real edges so the Sim's command→room mapping
+    /// walks them.
+    fn maze_db() -> MapDb {
+        MapDb::from_json(
+            r#"[
+                {"id": 100, "uid": [9100], "location": "T",
+                 "title": ["[Town]"], "wayto": {"20886": "south"},
+                 "timeto": {"20886": 0.2}, "paths": "Obvious paths: south"},
+                {"id": 20886, "uid": [279900], "location": "T",
+                 "title": ["[Entry Path]"],
+                 "wayto": {"100": "out", "15606": "north"},
+                 "timeto": {"100": 0.2, "15606": 0.2},
+                 "paths": "Obvious paths: north, out"},
+                {"id": 15606, "uid": [279901], "location": "T",
+                 "title": ["[Jungle Approach]"],
+                 "wayto": {"19415": "go clearing"},
+                 "timeto": {"19415": 0.2}, "paths": "Obvious paths: north"},
+                {"id": 19415, "uid": [279999], "location": "T",
+                 "title": ["[Jungle Approach]"],
+                 "wayto": {"30870": "west"},
+                 "timeto": {"30870": 0.2}, "paths": "Obvious paths: west"},
+                {"id": 30870, "uid": [279004], "location": "T",
+                 "title": ["[Teak Tree Grove]"],
+                 "wayto": {"19415": "east"},
+                 "timeto": {"19415": 0.2}, "paths": "Obvious exits: east"}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn maze_walks_the_stored_pathcode_and_arrives() {
+        let db = maze_db();
+        let mut task = TravelTask::start(&db, 100, 30870, 0).unwrap();
+        let mut sim = Sim::new(100);
+        sim.pathcodes.insert(
+            "ranger-guild-mist-harbor".into(),
+            vec!["go clearing".into(), "west".into()],
+        );
+        let log = walk_to_completion(&db, &mut task, &mut sim);
+
+        let sends: Vec<&str> = log
+            .iter()
+            .filter_map(|e| match e {
+                TravelEvent::Send(c) => Some(c.as_str()),
+                _ => None,
+            })
+            .collect();
+        // Normal walk to the entrance, then entrance→start, then the code.
+        assert_eq!(sends, ["south", "north", "go clearing", "west"]);
+        assert!(
+            log.iter().any(|e| matches!(
+                e,
+                TravelEvent::Arrived { destination: 30870, .. }
+            )),
+            "maze walk reaches the guild side: {log:?}"
+        );
+        // The junk maze edges were never re-pathed through.
+        assert!(!log.iter().any(|e| matches!(
+            e,
+            TravelEvent::Status(s) if s.contains("re-pathing")
+        )));
+    }
+
+    #[test]
+    fn maze_without_pathcode_asks_then_times_out_cleanly() {
+        let db = maze_db();
+        let mut task = TravelTask::start(&db, 100, 30870, 0).unwrap();
+        let mut sim = Sim::new(100);
+        let log = walk_to_completion(&db, &mut task, &mut sim);
+
+        assert!(
+            log.iter().any(|e| matches!(
+                e,
+                TravelEvent::Send(c) if c == "ask beyor about path"
+            )),
+            "the NPC gets asked automatically: {log:?}"
+        );
+        // No capture layer in this harness, so the wait must end in a clear
+        // failure rather than hanging or thrashing.
+        assert!(log.iter().any(|e| matches!(
+            e,
+            TravelEvent::Failed(s) if s.contains("no pathcode heard")
+        )));
     }
 }

@@ -211,6 +211,27 @@ impl MapService {
                             let Some(rooms) = db.rooms(&location) else {
                                 continue;
                             };
+                            // Curated maze rooms never lay out: their edges
+                            // are movement-scramble junk that draws as a
+                            // spiderweb. Filtering here changes the content
+                            // hash, so caches regenerate on their own when
+                            // maze definitions change.
+                            let maze_free: Vec<crate::core::mapdb::Room>;
+                            let rooms: &[crate::core::mapdb::Room] = if rooms
+                                .iter()
+                                .any(|r| crate::core::travel::mazes::maze_containing(r.id).is_some())
+                            {
+                                maze_free = rooms
+                                    .iter()
+                                    .filter(|r| {
+                                        crate::core::travel::mazes::maze_containing(r.id).is_none()
+                                    })
+                                    .cloned()
+                                    .collect();
+                                &maze_free
+                            } else {
+                                rooms
+                            };
                             let (mut layout, _) = cache.get_or_generate(
                                 &location,
                                 rooms,

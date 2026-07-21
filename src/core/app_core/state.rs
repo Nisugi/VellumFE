@@ -410,6 +410,7 @@ impl AppCore {
             active_spells: &active_spells,
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
+            pathcodes: &self.config.go2.pathcodes,
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -2180,6 +2181,28 @@ impl AppCore {
                 }
             }
 
+            // A pathcode NPC spoke a route: persist it for the maze whose
+            // entrance we're standing at (works mid-.go2 or asked by hand).
+            if let Some(route) = self.message_processor.pending_pathcode.take() {
+                let maze = self
+                    .map
+                    .current_room_id
+                    .and_then(crate::core::travel::mazes::maze_at_entrance);
+                if let Some(maze) = maze {
+                    let steps = route.len();
+                    self.config.go2.pathcodes.insert(maze.name.clone(), route);
+                    if let Err(e) = self.save_config() {
+                        tracing::warn!("pathcode save failed: {e}");
+                    }
+                    self.add_system_message(&format!(
+                        "[go2] pathcode for {} captured ({steps} steps)",
+                        maze.name
+                    ));
+                } else {
+                    tracing::debug!("pathcode heard away from any maze entrance; ignored");
+                }
+            }
+
             // Transfer bounty buffer to GameState if any
             if let Some((raw_text, compact_lines)) = self.message_processor.take_bounty_buffer() {
                 self.game_state.bounty.update(raw_text, compact_lines);
@@ -2233,6 +2256,28 @@ impl AppCore {
                             self.game_state.game_time,
                         );
                     }
+                }
+            }
+
+            // A pathcode NPC spoke a route: persist it for the maze whose
+            // entrance we're standing at (works mid-.go2 or asked by hand).
+            if let Some(route) = self.message_processor.pending_pathcode.take() {
+                let maze = self
+                    .map
+                    .current_room_id
+                    .and_then(crate::core::travel::mazes::maze_at_entrance);
+                if let Some(maze) = maze {
+                    let steps = route.len();
+                    self.config.go2.pathcodes.insert(maze.name.clone(), route);
+                    if let Err(e) = self.save_config() {
+                        tracing::warn!("pathcode save failed: {e}");
+                    }
+                    self.add_system_message(&format!(
+                        "[go2] pathcode for {} captured ({steps} steps)",
+                        maze.name
+                    ));
+                } else {
+                    tracing::debug!("pathcode heard away from any maze entrance; ignored");
                 }
             }
 
