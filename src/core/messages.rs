@@ -404,6 +404,15 @@ impl MessageProcessor {
                 *room_window_dirty = true;
                 tracing::debug!("Room ID updated: {}", id);
             }
+            ParsedElement::RoomMeta { attrs } => {
+                self.chunk_has_silent_updates = true;
+                if game_state
+                    .room_meta
+                    .update_from_attrs(attrs.iter().map(|(n, v)| (n.as_str(), v.as_str())))
+                {
+                    tracing::debug!("roommeta update: {:?}", game_state.room_meta);
+                }
+            }
             ParsedElement::StreamPush { id } => {
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
                 self.note_seen_stream(id, None);
@@ -1010,6 +1019,8 @@ impl MessageProcessor {
                 }
 
                 // Update GS4 experience state for expr dialog elements
+                // (the exact-exp attributes on the mindState bar arrive as a
+                // separate MindStateExp element right after this one)
                 match id.as_str() {
                     "mindState" => {
                         game_state.gs4_experience.update_mind_state(*value, text.clone());
@@ -1022,6 +1033,28 @@ impl MessageProcessor {
                     }
                     _ => {}
                 }
+            }
+            ParsedElement::MindStateExp {
+                field_exp,
+                max_field_exp,
+                exp,
+                ascension_exp,
+                until_next,
+                fashlonae,
+                lumnis,
+                rpa,
+            } => {
+                self.chunk_has_silent_updates = true;
+                game_state.gs4_experience.update_exp_attrs(
+                    *field_exp,
+                    *max_field_exp,
+                    *exp,
+                    *ascension_exp,
+                    *until_next,
+                    *fashlonae,
+                    *lumnis,
+                    *rpa,
+                );
             }
             ParsedElement::Label { id, value } => {
                 self.chunk_has_silent_updates = true;

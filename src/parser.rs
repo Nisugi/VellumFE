@@ -127,6 +127,29 @@ pub enum ParsedElement {
         id: String,
         attrs: Vec<(String, String)>,
     },
+    /// `<roommeta climate="3" terrain="7" .../>` - self-closing room
+    /// metadata snapshot (numeric codes). Attributes are passed raw so the
+    /// core layer owns the field mapping, like CreatureStatus.
+    RoomMeta {
+        attrs: Vec<(String, String)>,
+    },
+    /// Exact-experience attributes riding on `<progressBar id='mindState'>`,
+    /// emitted alongside the ProgressBar element for every mindState bar.
+    /// The exp numbers are sticky (None = not sent this update); the
+    /// event-bonus flags are a snapshot - absent means the bonus ended and
+    /// stored state must clear, which is why this fires even with no attrs.
+    MindStateExp {
+        field_exp: Option<u64>,
+        max_field_exp: Option<u64>,
+        exp: Option<u64>,
+        ascension_exp: Option<u64>,
+        until_next: Option<u64>,
+        /// Fash'lonae orb: 1 = redeemed (inactive), 2 = active
+        fashlonae: Option<u8>,
+        lumnis: Option<u8>,
+        /// RPA bonus multiplier; can be fractional (e.g. 1.5)
+        rpa: Option<f32>,
+    },
     StreamPop,
     ClearStream {
         id: String,
@@ -687,6 +710,9 @@ impl XmlParser {
         // which are captured whole; this arm catches any sent standalone)
         else if tag.starts_with("<crtrStatus ") {
             self.handle_crtr_status(tag, elements);
+        }
+        else if tag.starts_with("<roommeta ") {
+            self.handle_roommeta(tag, elements);
         }
         // Debug: catch any dropdown-related tags we might be missing
         // (case-sensitive checks - avoids a per-tag to_lowercase allocation)
@@ -1807,12 +1833,35 @@ impl XmlParser {
         // Also handle formats like "defensive (100%)" (label + current) and label-only strings.
         let (value, max) = parse_progress_numbers(&text, percentage);
 
+        let is_mind_state = id == "mindState";
         elements.push(ParsedElement::ProgressBar {
             id,
             value,
             max,
             text,
         });
+
+        // The mindState bar also carries exact experience numbers and
+        // event-bonus flags. Emitted unconditionally for mindState because
+        // the bonus flags are snapshot-semantics: a bar without them means
+        // the bonus ended.
+        if is_mind_state {
+            // Single attribute scan; exact-name lookup (extract_attribute's
+            // substring probe would confuse "exp" with "field_exp")
+            let attrs = Self::extract_all_attributes(tag);
+            let get = |name: &str| attrs.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+            let num = |name: &str| get(name).and_then(|v| v.parse::<u64>().ok());
+            elements.push(ParsedElement::MindStateExp {
+                field_exp: num("field_exp"),
+                max_field_exp: num("max_field_exp"),
+                exp: num("exp"),
+                ascension_exp: num("ascension_exp"),
+                until_next: num("until_next"),
+                fashlonae: get("fashlonae").and_then(|v| v.parse::<u8>().ok()),
+                lumnis: get("lumnis").and_then(|v| v.parse::<u8>().ok()),
+                rpa: get("rpa").and_then(|v| v.parse::<f32>().ok()),
+            });
+        }
     }
 
     }
@@ -2389,9 +2438,14 @@ impl XmlParser {
             return None;
         }
         for i in 0..=bytes.len() - probe_len {
+            // Attribute names always follow whitespace (and can never start
+            // the tag); without the boundary check "exp=" would match inside
+            // "field_exp='340'".
             if bytes[i..i + name.len()] == *name
                 && bytes[i + name.len()] == b'='
                 && bytes[i + name.len() + 1] == quote
+                && i > 0
+                && bytes[i - 1].is_ascii_whitespace()
             {
                 return Some(i + probe_len);
             }
@@ -2452,6 +2506,15 @@ impl XmlParser {
                 .filter(|(name, _)| name != "exist")
                 .collect();
             elements.push(ParsedElement::CreatureStatus { id, attrs });
+        }
+    }
+
+    fn handle_roommeta(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <roommeta climate="3" terrain="7" weather="0" .../> - self-closing
+        // numeric-code room metadata; only known fields are sent each time
+        let attrs = Self::extract_all_attributes(tag);
+        if !attrs.is_empty() {
+            elements.push(ParsedElement::RoomMeta { attrs });
         }
     }
 
@@ -3762,6 +3825,112 @@ mod tests {
                 ("MiniBoss".to_string(), "0".to_string()),
             ]
         );
+    }
+
+    // ==================== roommeta / mindState exp Parsing ====================
+
+    #[test]
+    fn test_roommeta_standalone_tag() {
+        let mut parser = XmlParser::new();
+        let elements =
+            parser.parse_line(r#"<roommeta climate="3" terrain="7" water="1" sanctuary="0"/>"#);
+
+        let metas: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::RoomMeta { .. }))
+            .collect();
+        assert_eq!(metas.len(), 1);
+        let ParsedElement::RoomMeta { attrs } = metas[0] else {
+            unreachable!()
+        };
+        assert_eq!(
+            attrs,
+            &vec![
+                ("climate".to_string(), "3".to_string()),
+                ("terrain".to_string(), "7".to_string()),
+                ("water".to_string(), "1".to_string()),
+                ("sanctuary".to_string(), "0".to_string()),
+            ]
+        );
+
+        // The tag must not leak into the text stream
+        assert!(!elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::Text { content, .. } if !content.trim().is_empty())));
+    }
+
+    #[test]
+    fn test_mindstate_progressbar_exp_attrs() {
+        let mut parser = XmlParser::new();
+        let elements = parser.parse_line(
+            "<progressBar id='mindState' value='34' text='muddled' field_exp='340' max_field_exp='1000' exp='1234567' ascension_exp='150000' until_next='4321' lumnis='1' rpa='1.5'/>",
+        );
+
+        let ParsedElement::MindStateExp {
+            field_exp,
+            max_field_exp,
+            exp,
+            ascension_exp,
+            until_next,
+            fashlonae,
+            lumnis,
+            rpa,
+        } = elements
+            .iter()
+            .find(|e| matches!(e, ParsedElement::MindStateExp { .. }))
+            .expect("MindStateExp element")
+        else {
+            unreachable!()
+        };
+        assert_eq!(*field_exp, Some(340));
+        assert_eq!(*max_field_exp, Some(1000));
+        assert_eq!(*exp, Some(1_234_567));
+        assert_eq!(*ascension_exp, Some(150_000));
+        assert_eq!(*until_next, Some(4321));
+        assert_eq!(*fashlonae, None);
+        assert_eq!(*lumnis, Some(1));
+        assert_eq!(*rpa, Some(1.5));
+
+        // The plain ProgressBar element still comes through unchanged
+        assert!(elements.iter().any(|e| matches!(
+            e,
+            ParsedElement::ProgressBar { id, text, .. } if id == "mindState" && text == "muddled"
+        )));
+    }
+
+    #[test]
+    fn test_mindstate_progressbar_without_exp_attrs_still_emits_snapshot() {
+        let mut parser = XmlParser::new();
+        let elements =
+            parser.parse_line("<progressBar id='mindState' value='0' text='clear as a bell'/>");
+
+        // Emitted with all None so the core can clear snapshot-semantics
+        // bonus flags when the game omits them
+        let ParsedElement::MindStateExp {
+            field_exp,
+            lumnis,
+            rpa,
+            ..
+        } = elements
+            .iter()
+            .find(|e| matches!(e, ParsedElement::MindStateExp { .. }))
+            .expect("MindStateExp element")
+        else {
+            unreachable!()
+        };
+        assert_eq!(*field_exp, None);
+        assert_eq!(*lumnis, None);
+        assert_eq!(*rpa, None);
+    }
+
+    #[test]
+    fn test_non_mindstate_progressbar_emits_no_exp_element() {
+        let mut parser = XmlParser::new();
+        let elements =
+            parser.parse_line("<progressBar id='health' value='100' text='health 175/175'/>");
+        assert!(!elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::MindStateExp { .. })));
     }
 
     // ==================== Component Parsing ====================

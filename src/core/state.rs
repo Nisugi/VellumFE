@@ -123,6 +123,9 @@ pub struct GameState {
     /// Bumped whenever room_players is rewritten
     pub room_players_generation: u64,
 
+    /// Room metadata codes from the `<roommeta>` tag
+    pub room_meta: RoomMetaState,
+
     /// Container cache for bag/container contents
     pub container_cache: ContainerCache,
 
@@ -583,6 +586,63 @@ impl DRExperienceState {
     }
 }
 
+/// Room metadata from the self-closing `<roommeta .../>` tag - numeric
+/// codes describing the current room. The game only sends the attributes
+/// it knows for a room, so fields update independently and `None` means
+/// "never received", not zero (mirrors lich-5's xmlparser).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RoomMetaState {
+    pub climate: Option<u32>,
+    pub terrain: Option<u32>,
+    pub weather: Option<u32>,
+    pub bonfire: Option<u32>,
+    pub inside: Option<u32>,
+    pub water: Option<u32>,
+    pub sanctuary: Option<u32>,
+    pub realm: Option<u32>,
+    /// Generation counter for change detection
+    pub generation: u64,
+}
+
+impl RoomMetaState {
+    /// Applies raw `<roommeta>` attributes. Only fields present in the tag
+    /// are updated; unknown names are ignored so new server fields degrade
+    /// gracefully. Returns true if anything changed.
+    pub fn update_from_attrs<'a>(
+        &mut self,
+        attrs: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> bool {
+        let mut changed = false;
+        for (name, value) in attrs {
+            let Ok(code) = value.parse::<u32>() else {
+                continue;
+            };
+            let field = match name {
+                "climate" => &mut self.climate,
+                "terrain" => &mut self.terrain,
+                "weather" => &mut self.weather,
+                "bonfire" => &mut self.bonfire,
+                "inside" => &mut self.inside,
+                "water" => &mut self.water,
+                "sanctuary" => &mut self.sanctuary,
+                "realm" => &mut self.realm,
+                _ => {
+                    tracing::debug!("Unknown roommeta field: {}", name);
+                    continue;
+                }
+            };
+            if *field != Some(code) {
+                *field = Some(code);
+                changed = true;
+            }
+        }
+        if changed {
+            self.generation += 1;
+        }
+        changed
+    }
+}
+
 /// GS4 Experience dialog state (from `<openDialog id='expr'>`)
 /// Composite of: yourLvl label + mindState progress + nextLvlPB progress
 #[derive(Clone, Debug, Default)]
@@ -597,6 +657,23 @@ pub struct GS4ExperienceState {
     pub next_level_value: u32,
     /// Experience to next level text (e.g., "43904921 experience")
     pub next_level_text: String,
+    /// Exact field (unabsorbed) experience, from mindState bar attributes.
+    /// All the exact numbers below are None until the game first sends them.
+    pub field_exp: Option<u64>,
+    /// Field experience capacity
+    pub max_field_exp: Option<u64>,
+    /// Total absorbed experience
+    pub exp: Option<u64>,
+    /// Total ascension experience
+    pub ascension_exp: Option<u64>,
+    /// Experience remaining until next level
+    pub until_next: Option<u64>,
+    /// Fash'lonae orb: 1 = redeemed (inactive), 2 = active; None = no orb
+    pub fashlonae: Option<u8>,
+    /// Lumnis bonus; only present while active
+    pub lumnis: Option<u8>,
+    /// RPA bonus multiplier (can be fractional); only present while active
+    pub rpa: Option<f32>,
     /// Generation counter for change detection
     pub generation: u64,
 }
@@ -637,6 +714,53 @@ impl GS4ExperienceState {
         }
     }
 
+    /// Applies the exact-experience attributes carried on a mindState
+    /// progress bar. The exp numbers are sticky (absent = unchanged); the
+    /// event-bonus flags are a snapshot (absent = bonus over, clear).
+    /// Returns true if anything changed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_exp_attrs(
+        &mut self,
+        field_exp: Option<u64>,
+        max_field_exp: Option<u64>,
+        exp: Option<u64>,
+        ascension_exp: Option<u64>,
+        until_next: Option<u64>,
+        fashlonae: Option<u8>,
+        lumnis: Option<u8>,
+        rpa: Option<f32>,
+    ) -> bool {
+        let mut changed = false;
+        for (field, incoming) in [
+            (&mut self.field_exp, field_exp),
+            (&mut self.max_field_exp, max_field_exp),
+            (&mut self.exp, exp),
+            (&mut self.ascension_exp, ascension_exp),
+            (&mut self.until_next, until_next),
+        ] {
+            if incoming.is_some() && *field != incoming {
+                *field = incoming;
+                changed = true;
+            }
+        }
+        if self.fashlonae != fashlonae {
+            self.fashlonae = fashlonae;
+            changed = true;
+        }
+        if self.lumnis != lumnis {
+            self.lumnis = lumnis;
+            changed = true;
+        }
+        if self.rpa != rpa {
+            self.rpa = rpa;
+            changed = true;
+        }
+        if changed {
+            self.generation += 1;
+        }
+        changed
+    }
+
     /// Clear all values (on disconnect/login)
     pub fn clear(&mut self) {
         self.level_text.clear();
@@ -644,6 +768,14 @@ impl GS4ExperienceState {
         self.mind_state_text.clear();
         self.next_level_value = 0;
         self.next_level_text.clear();
+        self.field_exp = None;
+        self.max_field_exp = None;
+        self.exp = None;
+        self.ascension_exp = None;
+        self.until_next = None;
+        self.fashlonae = None;
+        self.lumnis = None;
+        self.rpa = None;
         self.generation += 1;
     }
 }
@@ -883,6 +1015,7 @@ impl GameState {
             room_objects_generation: 0,
             room_players: Vec::new(),
             room_players_generation: 0,
+            room_meta: RoomMetaState::default(),
             container_cache: ContainerCache::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
@@ -1440,5 +1573,76 @@ mod tests {
         let debug_str = format!("{:?}", vitals);
         assert!(debug_str.contains("Vitals"));
         assert!(debug_str.contains("health"));
+    }
+
+    // ========== RoomMetaState tests ==========
+
+    #[test]
+    fn test_roommeta_updates_are_sticky_per_field() {
+        let mut meta = RoomMetaState::default();
+
+        assert!(meta.update_from_attrs([("climate", "3"), ("terrain", "7")]));
+        assert_eq!(meta.climate, Some(3));
+        assert_eq!(meta.terrain, Some(7));
+        let gen_after_first = meta.generation;
+
+        // A later tag carrying only weather must not disturb earlier fields
+        assert!(meta.update_from_attrs([("weather", "2")]));
+        assert_eq!(meta.climate, Some(3));
+        assert_eq!(meta.terrain, Some(7));
+        assert_eq!(meta.weather, Some(2));
+        assert!(meta.generation > gen_after_first);
+
+        // Re-sending identical values is not a change
+        let gen_before_repeat = meta.generation;
+        assert!(!meta.update_from_attrs([("weather", "2")]));
+        assert_eq!(meta.generation, gen_before_repeat);
+    }
+
+    #[test]
+    fn test_roommeta_ignores_unknown_and_non_numeric() {
+        let mut meta = RoomMetaState::default();
+        assert!(!meta.update_from_attrs([("newfangled", "1"), ("climate", "temperate")]));
+        assert_eq!(meta, RoomMetaState::default());
+    }
+
+    // ========== GS4ExperienceState exp-attrs tests ==========
+
+    #[test]
+    fn test_mindstate_exp_sticky_numbers_snapshot_bonuses() {
+        let mut exp = GS4ExperienceState::default();
+
+        assert!(exp.update_exp_attrs(
+            Some(340),
+            Some(1000),
+            Some(1_234_567),
+            Some(150_000),
+            Some(4321),
+            Some(2),
+            Some(1),
+            Some(1.5),
+        ));
+        assert_eq!(exp.field_exp, Some(340));
+        assert_eq!(exp.rpa, Some(1.5));
+
+        // A bare mindState bar (all attrs absent): the exp numbers are
+        // sticky and survive, the event bonuses are snapshot and clear
+        assert!(exp.update_exp_attrs(None, None, None, None, None, None, None, None));
+        assert_eq!(exp.field_exp, Some(340));
+        assert_eq!(exp.max_field_exp, Some(1000));
+        assert_eq!(exp.exp, Some(1_234_567));
+        assert_eq!(exp.ascension_exp, Some(150_000));
+        assert_eq!(exp.until_next, Some(4321));
+        assert_eq!(exp.fashlonae, None);
+        assert_eq!(exp.lumnis, None);
+        assert_eq!(exp.rpa, None);
+
+        // Nothing left to clear: identical update is not a change
+        assert!(!exp.update_exp_attrs(None, None, None, None, None, None, None, None));
+
+        // clear() resets the exact numbers too
+        exp.clear();
+        assert_eq!(exp.field_exp, None);
+        assert_eq!(exp.exp, None);
     }
 }
