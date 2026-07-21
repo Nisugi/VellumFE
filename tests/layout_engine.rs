@@ -405,14 +405,14 @@ fn room_placement_audit() {
         println!("  total violations in group: {}", group.violations.len());
         if std::env::var("AUDIT_FULL_GROUP").is_ok() {
             let table = mapdb::RoomTable::new(&rooms);
-            let mut members: Vec<u32> = group.room_ids.clone();
-            members.sort();
-            for id in members {
+            // room_ids is BFS placement order - print it as such, so cell
+            // conflicts can be reconstructed step by step.
+            for (order, &id) in group.room_ids.iter().enumerate() {
                 let title = table
                     .get(id)
                     .and_then(|r| r.title.first().cloned())
                     .unwrap_or_default();
-                println!("    {id} {:?} {title}", group.final_cell(id));
+                println!("    #{order:<3} {id} {:?} {title}", group.final_cell(id));
             }
         }
     }
