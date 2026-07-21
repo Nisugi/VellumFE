@@ -28,6 +28,7 @@ use std::path::PathBuf;
 
 #[derive(ClapParser)]
 #[command(name = "vellum-fe")]
+#[command(version)]
 #[command(about = "Multi-frontend GemStone IV client", long_about = None)]
 struct Cli {
     /// Configuration file path
@@ -77,7 +78,7 @@ struct Cli {
 
     /// Game world for direct connections
     /// GemStone IV: prime, platinum, shattered, test
-    /// DragonRealms: dr, drplatinum, drfallen, drtest
+    /// DragonRealms: dr, dr-platinum, dr-fallen, dr-test
     #[arg(long, value_enum, requires = "direct")]
     game: Option<DirectGameArg>,
 
@@ -100,7 +101,7 @@ struct Cli {
     #[arg(long)]
     key: Option<String>,
 
-    /// Color rendering mode: direct (true color RGB) or slot (256-color palette)
+    /// Color rendering mode: direct (true color RGB), slot (256-color custom palette), or indexed (256-color standard palette)
     #[arg(long, value_enum)]
     color_mode: Option<config::ColorMode>,
 
