@@ -109,6 +109,11 @@ pub struct MessageProcessor {
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
 
+    /// Mapping observations parsed off the main stream (forage sense, ranger
+    /// sense). AppCore drains these and attributes them to the current room
+    /// uid — the processor has no room context, same split as sounds.
+    pub pending_evidence: Vec<super::evidence::Observation>,
+
     /// Saved dialog positions for persistence across sessions
     pub saved_dialog_positions: SavedDialogPositions,
 
@@ -202,6 +207,7 @@ impl MessageProcessor {
             newly_registered_container: None,
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
+            pending_evidence: Vec::new(),
             saved_dialog_positions,
             bounty_buffer: None,
             society_buffer: Vec::new(),
@@ -2450,6 +2456,18 @@ impl MessageProcessor {
             );
             self.current_segments.clear();
             return; // Discard line completely
+        }
+
+        // Mapping evidence capture (forage sense / ranger sense responses on
+        // the main stream). Cheap: two prefix checks per line.
+        if self.current_stream == "main" {
+            if let Some(items) = crate::core::evidence::parse_forage_line(&full_text) {
+                self.pending_evidence
+                    .push(crate::core::evidence::Observation::Forage(items));
+            } else if let Some(data) = crate::core::evidence::parse_sense_line(&full_text) {
+                self.pending_evidence
+                    .push(crate::core::evidence::Observation::Sense(data));
+            }
         }
 
         // Check for redirect match (after squelch, as squelch takes precedence)

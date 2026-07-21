@@ -113,6 +113,10 @@ pub struct AppCore {
     /// (client_id, request_id, location).
     pending_map_views: Vec<(u64, u64, String)>,
 
+    /// Session-only mapping observations (forage sense, ranger sense),
+    /// keyed by room uid. Dies on relog by design — see core::evidence.
+    pub evidence: crate::core::evidence::EvidenceStore,
+
     pub nav_room_id: Option<String>,
 
     /// Lich room ID extracted from room display
@@ -273,6 +277,7 @@ impl AppCore {
             show_perf_stats: false,
             sound_player,
             tts_manager,
+            evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
             room_subtitle: None,
@@ -2156,6 +2161,25 @@ impl AppCore {
                 self.game_state.queue_sound(sound);
             }
 
+            // Attribute mapping observations to the current room uid
+            if !self.message_processor.pending_evidence.is_empty() {
+                let uid = self
+                    .nav_room_id
+                    .as_deref()
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                    .filter(|&u| u != 0);
+                for obs in self.message_processor.pending_evidence.drain(..) {
+                    if let Some(uid) = uid {
+                        self.evidence.record(
+                            uid,
+                            self.game_state.room_name.clone(),
+                            obs,
+                            self.game_state.game_time,
+                        );
+                    }
+                }
+            }
+
             // Transfer bounty buffer to GameState if any
             if let Some((raw_text, compact_lines)) = self.message_processor.take_bounty_buffer() {
                 self.game_state.bounty.update(raw_text, compact_lines);
@@ -2191,6 +2215,25 @@ impl AppCore {
             // Transfer pending sounds from MessageProcessor to GameState
             for sound in self.message_processor.pending_sounds.drain(..) {
                 self.game_state.queue_sound(sound);
+            }
+
+            // Attribute mapping observations to the current room uid
+            if !self.message_processor.pending_evidence.is_empty() {
+                let uid = self
+                    .nav_room_id
+                    .as_deref()
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                    .filter(|&u| u != 0);
+                for obs in self.message_processor.pending_evidence.drain(..) {
+                    if let Some(uid) = uid {
+                        self.evidence.record(
+                            uid,
+                            self.game_state.room_name.clone(),
+                            obs,
+                            self.game_state.game_time,
+                        );
+                    }
+                }
             }
 
             // Transfer bounty buffer to GameState if any

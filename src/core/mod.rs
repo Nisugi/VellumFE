@@ -6,6 +6,7 @@
 
 pub mod app_core;
 pub mod bounty_parser;
+pub mod evidence;
 pub mod ghost_rooms;
 pub mod highlight_engine;
 pub mod hotbar;
