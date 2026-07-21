@@ -754,7 +754,22 @@ impl VellumGuiApp {
                 px_per_cell: ex.px_per_cell,
             };
             let style = MapStyle::from_visuals(ui.visuals());
-            let current = if map.current_location == ex.location {
+            let browsing_here = map.current_location == ex.location;
+            // Session ghost sketches: anchored clusters land on whichever
+            // sheet their anchor room is drawn on (no group filter — the
+            // explorer shows everything).
+            let ghost_overlay = (!map.ghosts().is_empty()).then(|| {
+                crate::core::ghost_rooms::build_overlay(map.ghosts(), scene, ex.sheet, None)
+            });
+            // While standing in a ghost, the ring and compass belong to the
+            // sketch, not the held anchor room (mirrors the mini map).
+            let in_ghost = browsing_here
+                && map
+                    .current_ghost
+                    .is_some_and(|uid| {
+                        ghost_overlay.as_ref().is_some_and(|o| o.cell_of(uid).is_some())
+                    });
+            let current = if browsing_here && !in_ghost {
                 map.current_room_id
             } else {
                 None
@@ -764,6 +779,21 @@ impl VellumGuiApp {
             let result = map_view::paint_sheet(
                 ui, rect, sheet, camera, current, exits, true, None, &style,
             );
+            if let Some(overlay) = ghost_overlay.as_ref().filter(|o| !o.is_empty()) {
+                map_view::paint_ghosts(
+                    ui,
+                    rect,
+                    overlay,
+                    camera,
+                    if browsing_here { map.current_ghost } else { None },
+                    if in_ghost {
+                        Some(app_core.game_state.compass_dirs.as_slice())
+                    } else {
+                        None
+                    },
+                    &style,
+                );
+            }
 
             if let Some(id) = result.double_clicked_room {
                 out.walk_to = Some(id);
