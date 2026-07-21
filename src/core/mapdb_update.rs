@@ -18,6 +18,10 @@ use std::time::Duration;
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 /// The release asset the Cartographer pipeline attaches.
 const ASSET_NAME: &str = "mapdb.json";
+/// Optional community map-overrides asset riding the same release; saved as
+/// `overrides-<tag>.json` beside the mapdb and loaded read-only underneath
+/// the user's personal overrides.
+const OVERRIDES_ASSET_NAME: &str = "overrides.json";
 /// Newest plus one rollback version.
 const KEEP_VERSIONS: usize = 2;
 
@@ -208,7 +212,8 @@ impl MapDbUpdater {
         if self.rx.is_some() {
             return;
         }
-        for (_, path) in downloaded_versions(&self.dir) {
+        for (tag, path) in downloaded_versions(&self.dir) {
+            let _ = std::fs::remove_file(path.with_file_name(format!("overrides-{tag}.json")));
             let _ = std::fs::remove_file(path);
         }
         self.installed = None;
@@ -285,8 +290,51 @@ fn check_and_download(
         .find(|a| a.name == ASSET_NAME)
         .ok_or_else(|| format!("release {} has no {ASSET_NAME} asset", release.tag_name))?;
     download_asset(&agent, asset, &tag, dir, notify)?;
+    // Community overrides are optional and small; a release without them (or
+    // a failed fetch) never fails the mapdb install.
+    if let Some(overrides_asset) = release
+        .assets
+        .iter()
+        .find(|a| a.name == OVERRIDES_ASSET_NAME)
+    {
+        let path = dir.join(format!("overrides-{tag}.json"));
+        if let Err(e) = download_small(&agent, &overrides_asset.browser_download_url, &path) {
+            tracing::warn!("community overrides download failed for {tag}: {e}");
+        }
+    }
     prune(dir);
     Ok(UpdateStatus::Updated { tag })
+}
+
+/// Fetch a small asset straight to disk (no progress reporting), capped so a
+/// hostile release can't fill the drive.
+fn download_small(agent: &ureq::Agent, url: &str, path: &Path) -> Result<(), String> {
+    let resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("download failed: {e}"))?;
+    let mut body = Vec::new();
+    resp.into_reader()
+        .take(16 * 1024 * 1024)
+        .read_to_end(&mut body)
+        .map_err(|e| format!("read failed: {e}"))?;
+    std::fs::write(path, body).map_err(|e| format!("write {} failed: {e}", path.display()))
+}
+
+/// The community overrides file paired with a mapdb path, when one exists:
+/// `overrides-<tag>.json` beside a downloaded `mapdb-<tag>.json`, or a
+/// hand-placed `overrides.json` sibling for explicit/Lich-folder files.
+pub fn community_overrides_for(db_path: &Path) -> Option<PathBuf> {
+    let name = db_path.file_name()?.to_str()?;
+    let mut candidates = Vec::new();
+    if let Some(tag) = name
+        .strip_prefix("mapdb-")
+        .and_then(|rest| rest.strip_suffix(".json"))
+    {
+        candidates.push(db_path.with_file_name(format!("overrides-{tag}.json")));
+    }
+    candidates.push(db_path.with_file_name("overrides.json"));
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 fn download_asset(
@@ -377,8 +425,9 @@ fn download_asset(
 fn prune(dir: &Path) {
     let versions = downloaded_versions(dir);
     if versions.len() > KEEP_VERSIONS {
-        for (_, path) in &versions[..versions.len() - KEEP_VERSIONS] {
+        for (tag, path) in &versions[..versions.len() - KEEP_VERSIONS] {
             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path.with_file_name(format!("overrides-{tag}.json")));
         }
     }
 }
@@ -400,6 +449,36 @@ mod tests {
     fn tags_are_flattened_to_safe_filenames() {
         assert_eq!(safe_tag("v0.4.0"), "v0.4.0");
         assert_eq!(safe_tag("release/2026-07"), "release-2026-07");
+    }
+
+    #[test]
+    fn community_overrides_pair_with_their_mapdb_and_prune_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("mapdb-v0.3.0.json");
+        std::fs::write(&db, "[]").unwrap();
+        assert_eq!(community_overrides_for(&db), None);
+
+        // The tagged sibling pairs with a downloaded db.
+        let tagged = dir.path().join("overrides-v0.3.0.json");
+        std::fs::write(&tagged, "{}").unwrap();
+        assert_eq!(community_overrides_for(&db), Some(tagged));
+
+        // Explicit/Lich-folder files fall back to a plain sibling.
+        let lich_db = dir.path().join("map-1234.json");
+        std::fs::write(&lich_db, "[]").unwrap();
+        assert_eq!(community_overrides_for(&lich_db), None);
+        let plain = dir.path().join("overrides.json");
+        std::fs::write(&plain, "{}").unwrap();
+        assert_eq!(community_overrides_for(&lich_db), Some(plain));
+
+        // Pruning an old mapdb takes its overrides with it.
+        for tag in ["v0.9.0", "v0.10.0"] {
+            std::fs::write(dir.path().join(format!("mapdb-{tag}.json")), "[]").unwrap();
+        }
+        prune(dir.path());
+        assert!(!dir.path().join("mapdb-v0.3.0.json").exists());
+        assert!(!dir.path().join("overrides-v0.3.0.json").exists());
+        assert!(dir.path().join("mapdb-v0.10.0.json").exists());
     }
 
     #[test]

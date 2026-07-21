@@ -163,6 +163,11 @@ pub struct MapService {
 
     overrides: MapOverrides,
     overrides_path: PathBuf,
+    /// Community-curated overrides shipped with the mapdb release
+    /// (`overrides-<tag>.json` beside the downloaded db). Read-only: the
+    /// personal `overrides` layer merges on top at generation time, and
+    /// editor actions only ever touch the personal file.
+    community_overrides: MapOverrides,
 
     /// Session-only sketches of unmapped rooms (see `core::ghost_rooms`).
     ghosts: crate::core::ghost_rooms::GhostStore,
@@ -246,6 +251,7 @@ impl MapService {
             pending: Default::default(),
             overrides: loaded_overrides,
             overrides_path,
+            community_overrides: MapOverrides::default(),
             ghosts: Default::default(),
             current_ghost: None,
             last_command: None,
@@ -299,6 +305,12 @@ impl MapService {
         self.scenes.clear();
         self.pending.clear();
         self.revision += 1;
+        // Community overrides travel with the db they were curated against.
+        self.community_overrides =
+            match crate::core::mapdb_update::community_overrides_for(&path) {
+                Some(p) => overrides::load(&p),
+                None => MapOverrides::default(),
+            };
         let _ = self.job_tx.send(MapJob::LoadDb(path));
     }
 
@@ -514,12 +526,11 @@ impl MapService {
             return;
         }
         self.pending.insert(location.to_owned());
-        let location_overrides = self
-            .overrides
-            .locations
-            .get(location)
-            .cloned()
-            .unwrap_or_default();
+        // Community layer under the personal one; editor writes stay personal.
+        let location_overrides = overrides::merge_location(
+            self.community_overrides.locations.get(location),
+            self.overrides.locations.get(location),
+        );
         let _ = self.job_tx.send(MapJob::Generate {
             location: location.to_owned(),
             db,

@@ -57,6 +57,49 @@ pub struct MapOverrides {
     pub locations: HashMap<String, LocationOverrides>,
 }
 
+/// Layer a personal overrides section on top of a community base, at use
+/// time — the personal file on disk never absorbs community data. Personal
+/// wins per key, except group offsets which ADD: both layers are deltas
+/// from the clean layout, so dragging composes with the community placement
+/// and a personal net-zero re-exposes it.
+pub fn merge_location(
+    community: Option<&LocationOverrides>,
+    personal: Option<&LocationOverrides>,
+) -> LocationOverrides {
+    let mut merged = community.cloned().unwrap_or_default();
+    let Some(personal) = personal else {
+        return merged;
+    };
+    for (&anchor, &delta) in &personal.group_offsets {
+        let cur = merged.group_offsets.entry(anchor).or_default();
+        cur.x += delta.x;
+        cur.y += delta.y;
+        if cur.x == 0 && cur.y == 0 {
+            merged.group_offsets.remove(&anchor);
+        }
+    }
+    for (&k, &v) in &personal.room_pins {
+        merged.room_pins.insert(k, v);
+    }
+    for (&k, v) in &personal.names {
+        merged.names.insert(k, v.clone());
+    }
+    for edge in &personal.edges {
+        match merged
+            .edges
+            .iter_mut()
+            .find(|e| (e.a, e.b) == (edge.a, edge.b))
+        {
+            Some(existing) => *existing = *edge,
+            None => merged.edges.push(*edge),
+        }
+    }
+    for (&k, &v) in &personal.sheets {
+        merged.sheets.insert(k, v);
+    }
+    merged
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LocationOverrides {
     /// Group offset delta (cells), keyed by the group's anchor
@@ -226,6 +269,57 @@ pub fn save(path: &Path, overrides: &MapOverrides) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_layers_personal_over_community() {
+        let mut community = LocationOverrides::default();
+        community.group_offsets.insert(100, Cell { x: 2, y: 0 });
+        community.room_pins.insert(200, Cell { x: 1, y: 1 });
+        community.names.insert(100, "Community Name".into());
+        community.edges.push(EdgeOverride {
+            a: 1,
+            b: 2,
+            action: EdgeAction::Hide,
+        });
+        community.sheets.insert(100, SheetChoice::Outdoor);
+
+        let mut personal = LocationOverrides::default();
+        // Offsets add (both are deltas from the clean layout).
+        personal.group_offsets.insert(100, Cell { x: -1, y: 3 });
+        // Everything else: personal wins per key.
+        personal.room_pins.insert(200, Cell { x: 5, y: 5 });
+        personal.edges.push(EdgeOverride {
+            a: 1,
+            b: 2,
+            action: EdgeAction::Dash,
+        });
+        personal.edges.push(EdgeOverride {
+            a: 3,
+            b: 4,
+            action: EdgeAction::Connector,
+        });
+
+        let merged = merge_location(Some(&community), Some(&personal));
+        assert_eq!(merged.group_offsets[&100], Cell { x: 1, y: 3 });
+        assert_eq!(merged.room_pins[&200], Cell { x: 5, y: 5 });
+        assert_eq!(merged.names[&100], "Community Name");
+        assert_eq!(merged.edges.len(), 2);
+        assert_eq!(
+            merged.edges.iter().find(|e| (e.a, e.b) == (1, 2)).unwrap().action,
+            EdgeAction::Dash
+        );
+        assert_eq!(merged.sheets[&100], SheetChoice::Outdoor);
+
+        // A personal offset that cancels the community one removes the entry.
+        let mut cancel = LocationOverrides::default();
+        cancel.group_offsets.insert(100, Cell { x: -2, y: 0 });
+        let merged = merge_location(Some(&community), Some(&cancel));
+        assert!(!merged.group_offsets.contains_key(&100));
+
+        // No community layer: personal passes through unchanged.
+        let merged = merge_location(None, Some(&personal));
+        assert_eq!(merged.group_offsets[&100], Cell { x: -1, y: 3 });
+    }
 
     #[test]
     fn empty_overrides_are_a_noop_shape() {
