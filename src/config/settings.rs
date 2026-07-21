@@ -606,6 +606,12 @@ pub struct MapConfig {
     /// Downloaded data outranks `lich_dir`. Empty disables downloads.
     #[serde(default = "default_mapdb_repo")]
     pub mapdb_repo: String,
+    /// Cartography mode: sketch unmapped rooms as ghost overlays on the map.
+    /// Off for everyday play — the mapdb is the truth on screen; unmapped
+    /// interiors simply hold the map. Ghost *capture* always runs (the
+    /// evidence feeds future mapdb submissions); this only gates rendering.
+    #[serde(default)]
+    pub mapping_mode: bool,
 }
 
 impl Default for MapConfig {
@@ -614,6 +620,7 @@ impl Default for MapConfig {
             lich_dir: None,
             mapdb_path: None,
             mapdb_repo: default_mapdb_repo(),
+            mapping_mode: false,
         }
     }
 }

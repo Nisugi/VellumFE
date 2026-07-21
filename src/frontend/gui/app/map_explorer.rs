@@ -757,10 +757,11 @@ impl VellumGuiApp {
             let browsing_here = map.current_location == ex.location;
             // Session ghost sketches: anchored clusters land on whichever
             // sheet their anchor room is drawn on (no group filter — the
-            // explorer shows everything).
-            let ghost_overlay = (!map.ghosts().is_empty()).then(|| {
-                crate::core::ghost_rooms::build_overlay(map.ghosts(), scene, ex.sheet, None)
-            });
+            // explorer shows everything). Cartography mode only.
+            let ghost_overlay = (app_core.config.map.mapping_mode && !map.ghosts().is_empty())
+                .then(|| {
+                    crate::core::ghost_rooms::build_overlay(map.ghosts(), scene, ex.sheet, None)
+                });
             // While standing in a ghost, the ring and compass belong to the
             // sketch, not the held anchor room (mirrors the mini map).
             let in_ghost = browsing_here

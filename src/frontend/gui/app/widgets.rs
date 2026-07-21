@@ -1413,7 +1413,8 @@ impl VellumGuiApp {
 
         // Unmapped interiors: session ghost sketches hang off their anchor
         // room; standing in one moves the camera and the current ring to it.
-        let ghost_overlay = (!map.ghosts().is_empty()).then(|| {
+        // Rendered only in cartography mode — everyday play shows mapdb truth.
+        let ghost_overlay = (app_core.config.map.mapping_mode && !map.ghosts().is_empty()).then(|| {
             crate::core::ghost_rooms::build_overlay(
                 map.ghosts(),
                 scene,

@@ -1183,8 +1183,9 @@ impl AppCore {
             None => (Sheet::Outdoor, None, None),
         };
 
-        // Ghost sketch overlay (session-only unmapped interiors).
-        let overlay = (!map.ghosts().is_empty()).then(|| {
+        // Ghost sketch overlay (session-only unmapped interiors); rendered
+        // only in cartography mode — everyday play shows mapdb truth.
+        let overlay = (self.config.map.mapping_mode && !map.ghosts().is_empty()).then(|| {
             crate::core::ghost_rooms::build_overlay(map.ghosts(), scene, sheet, filter.as_ref())
         });
         let ghost_cell = map

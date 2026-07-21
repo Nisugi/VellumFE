@@ -27,6 +27,7 @@ pub(in super::super) struct SettingsEditorState {
     lich_dir: String,
     mapdb_path: String,
     mapdb_repo: String,
+    mapping_mode: bool,
     go2_native_map_clicks: bool,
     sound_enabled: bool,
     sound_volume: f32,
@@ -62,6 +63,7 @@ impl SettingsEditorState {
             lich_dir: config.map.lich_dir.clone().unwrap_or_default(),
             mapdb_path: config.map.mapdb_path.clone().unwrap_or_default(),
             mapdb_repo: config.map.mapdb_repo.clone(),
+            mapping_mode: config.map.mapping_mode,
             go2_native_map_clicks: config.go2.native_map_clicks,
             buffer_size: config.ui.buffer_size,
             border_style: config.ui.border_style.clone(),
@@ -100,6 +102,7 @@ impl SettingsEditorState {
             path => Some(path.to_string()),
         };
         config.map.mapdb_repo = self.mapdb_repo.trim().to_string();
+        config.map.mapping_mode = self.mapping_mode;
         config.go2.native_map_clicks = self.go2_native_map_clicks;
         config.ui.buffer_size = self.buffer_size;
         config.ui.border_style = self.border_style.clone();
@@ -259,6 +262,16 @@ impl VellumGuiApp {
                             } else {
                                 ui.label(egui::RichText::new(status_text).weak());
                             }
+                            ui.separator();
+                            ui.checkbox(
+                                &mut state.mapping_mode,
+                                "Cartography mode (sketch unmapped rooms)",
+                            )
+                            .on_hover_text(
+                                "Draw dashed ghost sketches of unmapped rooms as you explore them. \
+                                 Off = the map shows only mapdb truth; unmapped interiors hold the \
+                                 last mapped room. Sketches are session-only either way.",
+                            );
                         });
 
                         ui.collapsing("Travel", |ui| {
