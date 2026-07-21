@@ -15,6 +15,15 @@ pub use model::{
     is_proc_command, rooms_for_location, rooms_from_array, Room, RoomTable, TimeTo,
 };
 
+/// Rooms carrying this tag are player-shop warrens — hundreds of
+/// near-identical rooms that dwarf their town on the map.
+const PLAYERSHOP_TAG: &str = "meta:playershop";
+/// Appended to the town's location to form the warren's own pseudo-location
+/// ("Mist Harbor (Player Shops)"). It gets its own browsable layout with the
+/// usual outdoor/interiors split, and the town map stays readable. Pathing
+/// is untouched — the graph keeps every edge; only map grouping changes.
+pub const PLAYERSHOP_LOCATION_SUFFIX: &str = " (Player Shops)";
+
 /// Where a room lives inside `MapDb`.
 #[derive(Debug, Clone)]
 enum Slot {
@@ -62,9 +71,16 @@ impl MapDb {
         let mut ids_of_title: HashMap<String, Vec<u32>> = HashMap::new();
 
         for value in &db {
-            let Some(room) = Room::from_json(value) else {
+            let Some(mut room) = Room::from_json(value) else {
                 continue;
             };
+            // Player-shop warrens split into their own pseudo-location so
+            // the town layout isn't dominated by them. Un-located tagged
+            // rooms stay unplaced as usual.
+            if room.location.is_some() && room.tags.iter().any(|t| t == PLAYERSHOP_TAG) {
+                let town = room.location.take().expect("checked above");
+                room.location = Some(format!("{town}{PLAYERSHOP_LOCATION_SUFFIX}"));
+            }
             for &uid in &room.uid {
                 let ids = ids_of_uid.entry(uid).or_default();
                 if !ids.contains(&room.id) {
@@ -254,5 +270,43 @@ mod tests {
         assert_eq!(db.ids_of_uid(731009), &[369, 50000]);
         assert_eq!(db.room_ids_with_tag("bank"), &[369]);
         assert_eq!(db.room_ids_with_tag("nope"), &[] as &[u32]);
+    }
+
+    #[test]
+    fn playershop_rooms_split_into_their_own_pseudo_location() {
+        let json = r#"[
+            {"id": 1, "uid": [100], "location": "Mist Harbor",
+             "title": ["[East Row, Fel Road]"],
+             "wayto": {"2": "go shop"}, "timeto": {"2": 0.2},
+             "paths": "Obvious paths: none"},
+            {"id": 2, "uid": [200], "location": "Mist Harbor",
+             "title": ["[Sivalis' General Store]"], "tags": ["meta:playershop"],
+             "wayto": {"1": "out", "3": "north"}, "timeto": {"1": 0.2, "3": 0.2},
+             "paths": "Obvious exits: out, north"},
+            {"id": 3, "uid": [300], "location": "Mist Harbor",
+             "title": ["[Ryain's General Store]"], "tags": ["meta:playershop"],
+             "wayto": {"2": "south"}, "timeto": {"2": 0.2},
+             "paths": "Obvious exits: south"},
+            {"id": 4, "uid": [400],
+             "title": ["[A Locationless Shop]"], "tags": ["meta:playershop"],
+             "wayto": {}, "paths": ""}
+        ]"#;
+        let db = MapDb::from_json(json).unwrap();
+        // The warren is its own location; the town keeps only untagged rooms.
+        assert_eq!(db.rooms("Mist Harbor").unwrap().len(), 1);
+        assert_eq!(
+            db.rooms("Mist Harbor (Player Shops)").unwrap().len(),
+            2,
+            "tagged rooms move to the pseudo-location"
+        );
+        assert_eq!(
+            db.location_of_room_id(2),
+            Some("Mist Harbor (Player Shops)")
+        );
+        // Pathing still sees every room and edge.
+        assert!(db.room(2).unwrap().wayto.contains_key(&1));
+        assert_eq!(db.room_ids_with_tag("meta:playershop"), &[2, 3, 4]);
+        // Un-located tagged rooms stay unplaced, not invented into a location.
+        assert_eq!(db.location_of_room_id(4), None);
     }
 }
