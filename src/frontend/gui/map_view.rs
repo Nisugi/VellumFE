@@ -45,6 +45,8 @@ pub struct MapStyle {
     pub directional: Stroke,
     pub connector: Stroke,
     pub label: Color32,
+    /// Chip painted behind label text so it stays readable over rooms.
+    pub label_bg: Color32,
     pub current_fill: Color32,
     pub current_ring: Stroke,
 }
@@ -60,9 +62,32 @@ impl MapStyle {
             directional: Stroke::new(1.5, visuals.widgets.noninteractive.fg_stroke.color),
             connector: Stroke::new(1.0, visuals.weak_text_color()),
             label: visuals.weak_text_color(),
+            label_bg: visuals.extreme_bg_color.gamma_multiply(0.75),
             current_fill: accent,
             current_ring: Stroke::new(2.0, visuals.strong_text_color()),
         }
+    }
+}
+
+/// A text label whose paint is deferred until after the rooms so it can't be
+/// buried under a room square; painted with a background chip.
+struct DeferredLabel {
+    pos: Pos2,
+    align: Align2,
+    text: String,
+    font_size: f32,
+}
+
+fn paint_deferred_labels(painter: &egui::Painter, labels: Vec<DeferredLabel>, style: &MapStyle) {
+    for label in labels {
+        let galley = painter.layout_no_wrap(
+            label.text,
+            FontId::proportional(label.font_size),
+            style.label,
+        );
+        let rect = label.align.anchor_size(label.pos, galley.size());
+        painter.rect_filled(rect.expand(2.0), 3.0, style.label_bg);
+        painter.galley(rect.min, galley, style.label);
     }
 }
 
@@ -101,6 +126,9 @@ pub fn paint_sheet(
     let show_labels = ppc >= 12.0;
     let show_connector_labels = ppc >= 14.0;
     let show_room_ids = ppc >= 20.0;
+    // Text painted after the rooms, so a label can never be buried under a
+    // room square (they used to paint in the edge pass, beneath everything).
+    let mut deferred_labels: Vec<DeferredLabel> = Vec::new();
 
     // --- Edges (under rooms) ---
     for edge in &sheet.edges {
@@ -129,13 +157,12 @@ pub fn paint_sheet(
                 // long enough that the text doesn't sit on the rooms.
                 if show_connector_labels && chebyshev_px(a, b) >= ppc * 1.9 {
                     if let Some(label) = &edge.label {
-                        painter.text(
-                            a.lerp(b, 0.5),
-                            Align2::CENTER_CENTER,
-                            label,
-                            FontId::proportional((ppc * 0.45).clamp(8.0, 13.0)),
-                            style.label,
-                        );
+                        deferred_labels.push(DeferredLabel {
+                            pos: a.lerp(b, 0.5),
+                            align: Align2::CENTER_CENTER,
+                            text: label.clone(),
+                            font_size: (ppc * 0.45).clamp(8.0, 13.0),
+                        });
                     }
                 }
             }
@@ -167,13 +194,12 @@ pub fn paint_sheet(
                         Stroke::NONE,
                     ));
                     if show_labels {
-                        painter.text(
-                            tip + toward * 2.0,
-                            Align2::CENTER_CENTER,
-                            partner.to_string(),
-                            FontId::proportional((ppc * 0.45).clamp(7.0, 12.0)),
-                            style.label,
-                        );
+                        deferred_labels.push(DeferredLabel {
+                            pos: tip + toward * 2.0,
+                            align: Align2::CENTER_CENTER,
+                            text: partner.to_string(),
+                            font_size: (ppc * 0.45).clamp(7.0, 12.0),
+                        });
                     }
                 }
             }
@@ -190,13 +216,12 @@ pub fn paint_sheet(
             if !visible(cx, cy) {
                 continue;
             }
-            painter.text(
-                to_screen(cx, cy) - Vec2::new(room_size / 2.0, room_size),
-                Align2::LEFT_BOTTOM,
-                &label.text,
-                FontId::proportional((ppc * 0.5).clamp(9.0, 14.0)),
-                style.label,
-            );
+            deferred_labels.push(DeferredLabel {
+                pos: to_screen(cx, cy) - Vec2::new(room_size / 2.0, room_size),
+                align: Align2::LEFT_BOTTOM,
+                text: label.text.clone(),
+                font_size: (ppc * 0.5).clamp(9.0, 14.0),
+            });
         }
     }
 
@@ -270,6 +295,9 @@ pub fn paint_sheet(
             }
         }
     }
+
+    // --- Labels, on top of everything (a buried label is decoration) ---
+    paint_deferred_labels(&painter, deferred_labels, style);
 
     result
 }

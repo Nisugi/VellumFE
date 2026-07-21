@@ -357,6 +357,67 @@ fn chebyshev_dist(a: Cell, b: Cell) -> i32 {
     (a.x - b.x).abs().max((a.y - b.y).abs())
 }
 
+/// Diagnostic: inspect how specific rooms were placed (group, cell, packing,
+/// violations). Zone and room ids via env: AUDIT_ZONE (file stem, default
+/// mist-harbor) and AUDIT_ROOMS (comma-separated ids).
+/// Run with: cargo test --test layout_engine room_placement_audit -- --ignored --nocapture
+#[test]
+#[ignore]
+fn room_placement_audit() {
+    let zone = std::env::var("AUDIT_ZONE").unwrap_or_else(|_| "mist-harbor".into());
+    let ids: Vec<u32> = std::env::var("AUDIT_ROOMS")
+        .unwrap_or_else(|_| "12271,12272".into())
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let mut rooms = load_rooms(&zone);
+    // Simulate the live playershop location split (MapDb::from_json strips
+    // tagged rooms out of the town's room set).
+    if std::env::var("AUDIT_EXCLUDE_PLAYERSHOPS").is_ok() {
+        rooms.retain(|r| !r.tags.iter().any(|t| t == "meta:playershop"));
+    }
+    let layout = generate_layout(&mut rooms);
+    for group in &layout.groups {
+        let hits: Vec<u32> = group
+            .room_ids
+            .iter()
+            .copied()
+            .filter(|id| ids.contains(id))
+            .collect();
+        if hits.is_empty() {
+            continue;
+        }
+        println!(
+            "group {} ({} rooms, packing {:?}, offset {:?}):",
+            group.index,
+            group.room_ids.len(),
+            group.packing,
+            group.base_offset
+        );
+        for id in hits {
+            println!("  room {id} at {:?}", group.final_cell(id));
+        }
+        for v in &group.violations {
+            if ids.contains(&v.from) || ids.contains(&v.to) {
+                println!("  VIOLATION: {v:?}");
+            }
+        }
+        println!("  total violations in group: {}", group.violations.len());
+        if std::env::var("AUDIT_FULL_GROUP").is_ok() {
+            let table = mapdb::RoomTable::new(&rooms);
+            let mut members: Vec<u32> = group.room_ids.clone();
+            members.sort();
+            for id in members {
+                let title = table
+                    .get(id)
+                    .and_then(|r| r.title.first().cloned())
+                    .unwrap_or_default();
+                println!("    {id} {:?} {title}", group.final_cell(id));
+            }
+        }
+    }
+}
+
 /// Diagnostic: print every zone's stats and generation time next to the
 /// reference fixture.
 /// Run with: cargo test --release --test layout_engine -- --ignored --nocapture
