@@ -64,6 +64,7 @@ Bind any of these in `[user]`:
 | `scroll_current_window_up_one` / `..._down_one` | Scroll by line |
 | `start_search` / `next_search_match` / `prev_search_match` / `clear_search` | In-window search |
 | `toggle_performance_stats` | Performance overlay |
+| `stop_travel` | Cancel the active `.go2` trip (while traveling, Esc does this by default) |
 | `tts_next` / `tts_previous` / `tts_next_unread` / `tts_stop` | Text-to-speech navigation |
 | `tts_mute_toggle` / `tts_increase_volume` / `tts_decrease_volume` / `tts_increase_rate` / `tts_decrease_rate` | TTS controls |
 

@@ -11,7 +11,7 @@ works everywhere the map does, including the mobile apps.
 .go2 town square       text search over room titles (a pick list if several match)
 .go2 home              a saved target
 .go2 back              where your last trip started
-.go2 stop              cancel the active trip
+.go2 stop              cancel the active trip (or just press Esc)
 .go2 status            progress and ETA
 .go2 save home         save the current room as "home" (.go2 save home 8966 for an explicit id)
 .go2 targets           list saved targets

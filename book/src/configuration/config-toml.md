@@ -107,10 +107,13 @@ Where the [map widget](../widgets/map.md) finds its data (GUI):
 lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
 # mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
 mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings > Map downloads
+mapping_mode = false               # Cartography mode: sketch unmapped rooms
 ```
 
-All three are editable in **Settings → Map** in the GUI. Downloaded map
-data outranks the Lich folder; an empty `mapdb_repo` disables downloads.
+All of these are editable in **Settings → Map** in the GUI. Downloaded
+map data outranks the Lich folder; an empty `mapdb_repo` disables
+downloads. `mapping_mode` gates ghost-room sketches — see
+[ghost rooms](../widgets/map.md#ghost-rooms-unmapped-interiors).
 
 ## Sound
 
