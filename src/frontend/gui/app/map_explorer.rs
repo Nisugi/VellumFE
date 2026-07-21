@@ -368,6 +368,41 @@ impl VellumGuiApp {
                     ex.center =
                         Pos2::new(scene_room.cell.x as f32, scene_room.cell.y as f32);
                 }
+                // Session observations read as part of the room's info — the
+                // mapdb stays pristine underneath, but what you learned this
+                // session is presented as if the map knows it (the same feel
+                // as Lich's in-memory map edits). Wiped on exit.
+                if let Some(ev) = scene_room.uid.and_then(|uid| app_core.evidence.get(uid)) {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Observed this session").strong());
+                    if let Some(sense) = &ev.sense {
+                        let mut climate_terrain: Vec<String> = Vec::new();
+                        if let Some(c) = &sense.data.climate {
+                            climate_terrain.push(format!("{c} climate"));
+                        }
+                        if let Some(t) = &sense.data.terrain {
+                            climate_terrain.push(format!("{t} terrain"));
+                        }
+                        if !climate_terrain.is_empty() {
+                            ui.label(climate_terrain.join(", "));
+                        }
+                        if !sense.data.wildlife.is_empty() {
+                            ui.label(format!("Wildlife: {}", sense.data.wildlife.join(", ")));
+                        }
+                        if let Some(overhead) = &sense.data.overhead {
+                            ui.label(format!("Overhead: {overhead}"));
+                        }
+                        if !sense.data.structures.is_empty() {
+                            ui.label(format!(
+                                "Structures: {}",
+                                sense.data.structures.join("; ")
+                            ));
+                        }
+                    }
+                    if let Some(forage) = &ev.forage {
+                        ui.label(format!("Forageables: {}", forage.items.join(", ")));
+                    }
+                }
                 if ex.edit_mode {
                     ui.separator();
                     ui.label(egui::RichText::new("Group").strong());
