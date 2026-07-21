@@ -2152,6 +2152,27 @@ impl VellumGuiApp {
         let mut consumed_keyboard_input = false;
 
         for key_press in key_presses {
+            // Esc cancels an active .go2 trip from anywhere in the GUI. Gated
+            // on the same text-capture modes as macro dispatch so an editor
+            // that owns the keyboard keeps its Esc semantics.
+            if key_press.key_event.code == crate::data::input::KeyCode::Esc
+                && key_press.key_event.modifiers == crate::data::input::KeyModifiers::NONE
+                && !suppress_macro_dispatch
+                && self.app_core.travel.is_traveling()
+            {
+                self.app_core.stop_travel();
+                consumed_keyboard_input = true;
+                ctx.input_mut(|input| {
+                    if let Some(logical_key) = key_press.logical_key {
+                        input.consume_key(key_press.modifiers, logical_key);
+                    }
+                    if let Some(physical_key) = key_press.physical_key {
+                        input.consume_key(key_press.modifiers, physical_key);
+                    }
+                });
+                continue;
+            }
+
             let target = Self::resolve_global_dispatch_target(
                 key_press.key_event,
                 &self.app_core.keybind_map,

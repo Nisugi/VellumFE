@@ -243,6 +243,11 @@ impl AppCore {
                 tracing::info!("Sound system toggled: {}", status);
             }
 
+            // Travel
+            KeyAction::StopTravel => {
+                self.stop_travel();
+            }
+
             // TTS (Text-to-Speech) actions - Accessibility
             KeyAction::TtsNext => {
                 if let Err(e) = self.tts_manager.speak_next() {

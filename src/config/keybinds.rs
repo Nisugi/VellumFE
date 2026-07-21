@@ -140,6 +140,9 @@ pub enum KeyAction {
     TogglePerformanceStats, // Show/hide performance overlay
     ToggleSounds,           // Enable/disable sound system
 
+    // Travel
+    StopTravel, // Cancel the active .go2 trip (Esc does this by default)
+
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
     TtsPrevious,       // Previous message (sequential, includes read)
@@ -520,6 +523,7 @@ impl KeyAction {
             "select_all" => Some(Self::SelectAll),
             "toggle_performance_stats" => Some(Self::TogglePerformanceStats),
             "toggle_sounds" => Some(Self::ToggleSounds),
+            "stop_travel" => Some(Self::StopTravel),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),
@@ -1677,6 +1681,10 @@ mod tests {
             Some(KeyAction::TtsNextUnread)
         );
         assert_eq!(KeyAction::from_str("tts_stop"), Some(KeyAction::TtsStop));
+        assert_eq!(
+            KeyAction::from_str("stop_travel"),
+            Some(KeyAction::StopTravel)
+        );
         assert_eq!(
             KeyAction::from_str("tts_mute_toggle"),
             Some(KeyAction::TtsMuteToggle)

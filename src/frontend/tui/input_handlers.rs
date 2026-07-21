@@ -122,6 +122,18 @@ impl super::TuiFrontend {
         use crate::data::input::KeyCode;
         use crate::data::window::WidgetType;
 
+        // Esc cancels an active .go2 trip. Reaching Normal mode means every
+        // higher-priority layer (popups, editors, menus) already declined the
+        // key, and the gate on is_traveling keeps Esc inert otherwise.
+        if matches!(code, KeyCode::Esc)
+            && modifiers == crate::data::input::KeyModifiers::NONE
+            && app_core.travel.is_traveling()
+        {
+            app_core.stop_travel();
+            app_core.needs_render = true;
+            return Ok(None);
+        }
+
         let focused_name = app_core.get_focused_window_name();
         if let Some(window) = app_core.ui_state.get_window(&focused_name) {
             if window.widget_type == WidgetType::Quickbar {
