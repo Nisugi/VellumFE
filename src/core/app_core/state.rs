@@ -349,6 +349,10 @@ impl AppCore {
     /// filters) into the live manager. Call at startup and after the
     /// settings editor saves.
     pub fn apply_tts_settings(&mut self) {
+        // The message processor gates enqueue on its own config copy;
+        // keep it in sync or runtime changes wait for a restart.
+        self.message_processor
+            .set_tts_config(self.config.tts.clone());
         let tts = &self.config.tts;
         self.tts_manager.set_enabled(tts.enabled);
         let _ = self.tts_manager.set_rate(tts.rate);

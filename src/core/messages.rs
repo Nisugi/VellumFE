@@ -3517,6 +3517,14 @@ impl MessageProcessor {
         self.tts_windows = windows;
     }
 
+    /// Refresh the processor's TTS config snapshot. The processor holds its
+    /// own Config copy from construction; without this, enabling TTS in the
+    /// settings editor wouldn't take effect until restart (enqueue_tts gates
+    /// on the stale copy).
+    pub fn set_tts_config(&mut self, tts: crate::config::TtsConfig) {
+        self.config.tts = tts;
+    }
+
     fn enqueue_tts(&self, tts_manager: &mut crate::tts::TtsManager, window_name: &str, line: &StyledLine) {
         // Early exit if TTS not enabled
         if !self.config.tts.enabled {

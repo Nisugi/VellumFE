@@ -299,13 +299,15 @@ impl AppCore {
         match args.first().map(String::as_str).unwrap_or("status") {
             "on" => {
                 self.config.tts.enabled = true;
-                self.tts_manager.set_enabled(true);
+                // Full apply: the manager AND the message processor's config
+                // snapshot (the enqueue gate) both need to hear about it.
+                self.apply_tts_settings();
                 let _ = self.save_config();
                 self.add_system_message("TTS enabled.");
             }
             "off" => {
                 self.config.tts.enabled = false;
-                self.tts_manager.set_enabled(false);
+                self.apply_tts_settings();
                 let _ = self.save_config();
                 self.add_system_message("TTS disabled.");
             }
