@@ -62,7 +62,7 @@ only requires Perl, which virtually every distro ships by default.
 vellum-fe --version
 ```
 
-Should display the version number (e.g., `vellum-fe 0.3.0-beta.8`).
+Should display the version number (e.g., `vellum-fe 0.3.0-beta.9`).
 
 ## Configuration Directory
 
