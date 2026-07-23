@@ -346,8 +346,13 @@ description = ""
 # ---- Status icons -----------------------------------------------------------
 # Indicator id -> sprite (ids are case-insensitive). Used by the dashboard
 # and single indicator widgets; ids you don't list keep the vector pictogram.
+# The hand widgets look up lefthand/righthand/spellhand here; without them
+# the [L]/[R]/[S] text markers stay.
 #
 # [icons]
+# lefthand = "icons/lefthand.png"
+# righthand = "icons/righthand.png"
+# spellhand = "icons/spellhand.png"
 # standing = "icons/standing.png"
 # kneeling = "icons/kneeling.png"
 # sitting = "icons/sitting.png"

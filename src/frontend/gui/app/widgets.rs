@@ -1829,6 +1829,7 @@ impl VellumGuiApp {
         hand_prefix: &str,
         item: &Option<String>,
         link: &Option<LinkData>,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -1842,6 +1843,14 @@ impl VellumGuiApp {
             "S" => "[S]",
             _ => "[?]",
         };
+        // Skin sprite for this hand (icons table: lefthand/righthand/spellhand);
+        // without one the bracket text stays.
+        let icon_id = match hand_prefix {
+            "L" => "lefthand",
+            "R" => "righthand",
+            _ => "spellhand",
+        };
+        let icon_sprite = skin_art.and_then(|art| art.icon(icon_id));
         // Keep hand rows compact and content-sized so they don't request full window width.
         let display_text = if item_text.chars().count() > 56 {
             let mut truncated: String = item_text.chars().take(53).collect();
@@ -1865,10 +1874,24 @@ impl VellumGuiApp {
         let mut clicked_link = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.add_sized(
-                [icon_width, row_height],
-                egui::Label::new(RichText::new(icon_text).monospace().strong()),
-            );
+            if let Some(sprite) = icon_sprite {
+                let (rect, _) = ui.allocate_exact_size(
+                    Vec2::new(icon_width, row_height),
+                    egui::Sense::hover(),
+                );
+                let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
+                crate::frontend::gui::skin::paint_sprite(
+                    ui.painter(),
+                    dest,
+                    &sprite,
+                    Color32::WHITE,
+                );
+            } else {
+                ui.add_sized(
+                    [icon_width, row_height],
+                    egui::Label::new(RichText::new(icon_text).monospace().strong()),
+                );
+            }
             ui.add_space(icon_gap);
             let text_width = (ui.available_width() - handle_gutter_width).max(1.0);
             if let Some(link_data) = item_link {
@@ -3685,7 +3708,13 @@ impl VellumGuiApp {
                 } else {
                     "S"
                 };
-                Self::render_hand_content(ui, hand_prefix, item, link)
+                Self::render_hand_content(
+                    ui,
+                    hand_prefix,
+                    item,
+                    link,
+                    settings.skin_art.as_deref(),
+                )
             }
             WindowContent::TabbedText(tabbed) => {
                 let mut clicked_link =
