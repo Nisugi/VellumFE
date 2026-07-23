@@ -1137,6 +1137,10 @@ html, body {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
+  /* Without this the nowrap title text sets the card's min-content width,
+     growing it past the viewport and pushing the titlebar buttons off
+     screen; with it the title's own ellipsis takes over. */
+  min-width: 0;
 }
 
 #map-titlebar {
