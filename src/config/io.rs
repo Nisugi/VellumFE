@@ -317,6 +317,12 @@ impl Config {
         // Active theme: character overrides global
         self.active_theme = character_config.active_theme;
 
+        // Active skin: character overrides global. Without this line the
+        // skin picked in-app never survived a restart — Config::save
+        // writes the whole config (skin included) to the profile file,
+        // and the merge silently dropped it on the next load.
+        self.active_skin = character_config.active_skin;
+
         // Streams config: character overrides global
         self.streams = character_config.streams;
 
@@ -325,6 +331,13 @@ impl Config {
 
         // Quickbars: character overrides global
         self.quickbars = character_config.quickbars;
+
+        // Web server, map discovery, go2 travel: character overrides
+        // global. Same restart-amnesia bug as active_skin — these are
+        // saved to the profile config but were dropped by the merge.
+        self.web = character_config.web;
+        self.map = character_config.map;
+        self.go2 = character_config.go2;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -511,6 +524,9 @@ impl Config {
             // Theme settings
             "active_theme" => dest.active_theme = src.active_theme.clone(),
 
+            // Skin settings
+            "active_skin" => dest.active_skin = src.active_skin.clone(),
+
             _ => {
                 tracing::warn!("Unknown setting key for copy: {}", key);
             }
@@ -592,5 +608,50 @@ impl Default for Config {
             active_theme: default_theme_name(),
             active_skin: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every serialized root field that Config::save writes into the
+    /// profile config must survive merge_with — fields missing from the
+    /// merge silently revert to global/defaults on the next load (this
+    /// bit active_skin, web, map, and go2 for real).
+    #[test]
+    fn merge_with_keeps_profile_root_fields() {
+        let mut character = Config::default();
+        character.active_theme = "custom".to_string();
+        character.active_skin = Some("parchment".to_string());
+        character.web.enabled = true;
+        character.go2.saved.insert("bank".to_string(), 1234);
+
+        let mut merged = Config::default();
+        merged.merge_with(character);
+
+        assert_eq!(merged.active_theme, "custom");
+        assert_eq!(merged.active_skin.as_deref(), Some("parchment"));
+        assert!(merged.web.enabled);
+        assert_eq!(merged.go2.saved.get("bank").copied(), Some(1234));
+    }
+
+    /// `.setskin none` writes a profile config without the key; the merge
+    /// must land on None, not resurrect a stale global value.
+    #[test]
+    fn merge_with_clears_skin_when_profile_has_none() {
+        let mut global = Config::default();
+        global.active_skin = Some("stale".to_string());
+        global.merge_with(Config::default());
+        assert_eq!(global.active_skin, None);
+    }
+
+    #[test]
+    fn copy_setting_routes_active_skin() {
+        let mut src = Config::default();
+        src.active_skin = Some("parchment".to_string());
+        let mut dest = Config::default();
+        Config::copy_setting(&mut dest, &src, "active_skin");
+        assert_eq!(dest.active_skin.as_deref(), Some("parchment"));
     }
 }
