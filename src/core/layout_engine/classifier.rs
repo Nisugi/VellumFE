@@ -188,6 +188,21 @@ pub fn apply_sheet_overrides(
     classification.entrance_room_ids = entrance_room_ids;
 }
 
+/// Recompute doorway markers from the current interior set — for callers
+/// that move groups between sheets after classification (the packer's
+/// try-inline pass), mirroring what `apply_sheet_overrides` does for
+/// curated flips.
+pub fn recompute_entrances(
+    classification: &mut Classification,
+    groups: &[Group],
+    lookup: &RoomTable,
+) {
+    let (entrances, entrance_room_ids) =
+        compute_entrances(groups, lookup, &classification.interior_groups);
+    classification.entrances = entrances;
+    classification.entrance_room_ids = entrance_room_ids;
+}
+
 #[derive(PartialEq)]
 enum Sense {
     Indoor,

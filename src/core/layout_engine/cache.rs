@@ -17,7 +17,9 @@ use super::{generate_layout, Layout};
 /// v5: classifier propagation respects decisive paths/exits majorities;
 ///     hill-climb penalizes sign-violated edges; chain re-weld pass
 ///     repairs rip-displaced runs.
-pub const ENGINE_VERSION: u32 = 5;
+/// v6: try-inline pass seats clean-fitting interior buildings on the
+///     outdoor sheet instead of the shelf.
+pub const ENGINE_VERSION: u32 = 6;
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

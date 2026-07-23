@@ -11,7 +11,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use vellum_fe::core::layout_engine::{generate_layout, Cell, Layout, LayoutStats};
+use vellum_fe::core::layout_engine::{
+    generate_layout, generate_layout_reference, Cell, Layout, LayoutStats,
+};
 use vellum_fe::core::mapdb::{self, Room};
 
 /// (fixture zone name, room-extract file stem)
@@ -88,9 +90,12 @@ fn placement_snapshot(layout: &Layout) -> Vec<(usize, u32, Cell)> {
     snap
 }
 
+/// Fixture parity runs the pipeline exactly as the JS reference does —
+/// without the try-inline pass, which is a deliberate divergence tested
+/// separately below.
 fn run_zone(file: &str) -> (Layout, LayoutStats, Vec<Room>) {
     let mut rooms = load_rooms(file);
-    let layout = generate_layout(&mut rooms);
+    let layout = generate_layout_reference(&mut rooms);
     let stats = LayoutStats::compute(&layout, &rooms);
     (layout, stats, rooms)
 }
@@ -140,6 +145,135 @@ fn layout_is_deterministic_across_runs() {
         placement_snapshot(&second_layout),
         "same mapdb bytes in must give the same layout out"
     );
+}
+
+// ---- Try-inline pass (deliberate divergence from the reference) ----
+//
+// Production layouts (`generate_layout`) seat clean-fitting interior
+// buildings on the outdoor sheet; the fixture parity above pins the shared
+// core, these pin the divergence.
+
+#[test]
+fn atoll_inlines_its_grottos() {
+    let mut rooms = load_rooms("the-atoll");
+    let layout = generate_layout(&mut rooms);
+    assert_hard_invariants(&layout, &rooms);
+    assert!(
+        !layout.inlined.is_empty(),
+        "the Atoll's grotto buildings should seat on the main sheet"
+    );
+    let outdoor: HashSet<usize> = layout.outdoor.iter().copied().collect();
+    for &idx in &layout.inlined {
+        assert!(outdoor.contains(&idx), "inlined group {idx} not on the outdoor sheet");
+        assert!(
+            !layout.interiors.contains(&idx),
+            "inlined group {idx} still on the shelf"
+        );
+        assert!(
+            !layout.classification.interior_groups.contains(&idx),
+            "inlined group {idx} still classified interior (stale door markers)"
+        );
+    }
+}
+
+/// Every inlined building must sit within doorway reach of the outdoor
+/// room it enters from — the whole point of the budget.
+#[test]
+fn inlined_buildings_sit_beside_their_doorways() {
+    let mut rooms = load_rooms("the-atoll");
+    let layout = generate_layout(&mut rooms);
+    let inlined: HashSet<usize> = layout.inlined.iter().copied().collect();
+    if inlined.is_empty() {
+        return; // covered by atoll_inlines_its_grottos
+    }
+    let mut cell_of: HashMap<u32, (usize, Cell)> = HashMap::new();
+    for &idx in &layout.outdoor {
+        let group = &layout.groups[idx];
+        for &id in &group.room_ids {
+            cell_of.insert(id, (idx, group.final_cell(id)));
+        }
+    }
+    let mut best_door: HashMap<usize, i32> = HashMap::new();
+    for room in &rooms {
+        let Some(&(ga, a)) = cell_of.get(&room.id) else {
+            continue;
+        };
+        for &target in room.wayto.keys() {
+            let Some(&(gb, b)) = cell_of.get(&target) else {
+                continue;
+            };
+            if ga == gb || inlined.contains(&ga) == inlined.contains(&gb) {
+                continue; // want doorways between an inlined and a plain outdoor group
+            }
+            let len = (a.x - b.x).abs().max((a.y - b.y).abs());
+            let key = if inlined.contains(&ga) { ga } else { gb };
+            let entry = best_door.entry(key).or_insert(i32::MAX);
+            *entry = (*entry).min(len);
+        }
+    }
+    for &idx in &layout.inlined {
+        let len = best_door.get(&idx).copied().unwrap_or(i32::MAX);
+        assert!(
+            len <= 8,
+            "inlined group {idx}: nearest doorway connector is {len} cells"
+        );
+    }
+}
+
+/// Towns keep their shelf wholesale: a location with many interior
+/// buildings never inlines, even where the ground looks open.
+#[test]
+fn towns_keep_their_interior_shelf() {
+    for file in ["wehnimers-landing", "icemule-trace", "solhaven", "ta-illistim"] {
+        let mut rooms = load_rooms(file);
+        let layout = generate_layout(&mut rooms);
+        assert_hard_invariants(&layout, &rooms);
+        assert!(
+            layout.inlined.is_empty(),
+            "{file}: town inlined {} buildings",
+            layout.inlined.len()
+        );
+    }
+}
+
+#[test]
+fn inline_pass_is_deterministic() {
+    let mut first_rooms = load_rooms("the-atoll");
+    let first = generate_layout(&mut first_rooms);
+    let mut second_rooms = load_rooms("the-atoll");
+    let second = generate_layout(&mut second_rooms);
+    assert_eq!(first.inlined, second.inlined);
+    assert_eq!(placement_snapshot(&first), placement_snapshot(&second));
+}
+
+/// A curated Interior flip pins the building to the shelf; the inline pass
+/// must not override explicit choice.
+#[test]
+fn curated_interior_flip_pins_the_building_to_the_shelf() {
+    use vellum_fe::core::layout_engine::overrides::group_anchor_key;
+    use vellum_fe::core::layout_engine::{
+        generate_layout_curated, LocationOverrides, SheetChoice,
+    };
+    use vellum_fe::core::mapdb::RoomTable;
+
+    let mut rooms = load_rooms("the-atoll");
+    let baseline = generate_layout(&mut rooms);
+    let &pinned = baseline
+        .inlined
+        .first()
+        .expect("atoll inlines at least one building");
+
+    let lookup = RoomTable::new(&rooms);
+    let anchor = group_anchor_key(&baseline.groups[pinned], &lookup);
+    let mut curated = LocationOverrides::default();
+    curated.sheets.insert(anchor, SheetChoice::Interior);
+
+    let layout = generate_layout_curated(&mut rooms, &curated);
+    assert!(
+        !layout.inlined.contains(&pinned),
+        "curated Interior flip must exempt the group from inlining"
+    );
+    assert!(layout.interiors.contains(&pinned));
 }
 
 /// Diagnostic for the deferred "edge-aware satellite placement" work: for

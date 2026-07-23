@@ -296,9 +296,18 @@ fn classification_override_moves_a_group_between_sheets() {
     curated.sheets.insert(anchor, SheetChoice::Outdoor);
     let flipped = generate_layout_curated(&mut rooms, &curated);
 
-    assert_eq!(
+    eprintln!(
+        "pristine: {} shelved / {} inlined; flipped: {} shelved / {} inlined",
+        pristine.interiors.len(),
+        pristine.inlined.len(),
         flipped.interiors.len(),
-        pristine.interiors.len() - 1,
+        flipped.inlined.len()
+    );
+    // The flipped group left the shelf. Exact shelf counts are NOT compared:
+    // the try-inline pass re-decides against the changed outdoor geometry,
+    // so other buildings may legitimately move between sheets too.
+    assert!(
+        !flipped.interiors.contains(&interior_idx),
         "forced-outdoor group must leave the interiors sheet"
     );
     assert!(

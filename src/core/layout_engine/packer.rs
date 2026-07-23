@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::classifier::Entrance;
 use super::direction::DirectionMap;
 use crate::core::mapdb::{Room, RoomTable};
 use super::positioner::{Cell, Group, PackMethod};
@@ -27,6 +28,27 @@ const CONNECTOR_COMMIT_CAP: i32 = 30; // committed connector max length
 const DIRECTIONAL_COMMIT_CAP: i32 = 8; // committed intra-group edge max length
 const BRIDGED_CONTACT_CAP: usize = 10; // contact pairs per excluded component
 const UID_DELTA_MISSING: u64 = u64::MAX;
+// Try-inline budget: an interior building joins the outdoor sheet only when
+// its best placement scores at or under this many points per doorway
+// (connector cells + crossing/courtyard penalties, so any crossing is an
+// automatic rejection), and no single doorway stretches past the cell cap.
+// Dense shop districts fail the budget and keep the shelf; a lone grotto
+// with open ground beside its entrance inlines.
+const INLINE_BUDGET_PER_DOOR: i64 = 6;
+const INLINE_DOOR_MAX_CELLS: i32 = 8;
+// Crowding gate: a building only inlines onto genuinely open ground. Count
+// distinct outdoor rooms within this Chebyshev ring of any seated cell
+// (doorway hosts excluded); more than the cap means the seat is inside
+// someone's neighborhood — a town block between streets — not open ground,
+// even when the exact cells are free.
+const INLINE_CROWD_RADIUS: i32 = 3;
+const INLINE_CROWD_MAX: usize = 8;
+// Location-scale gate: a place with many interior buildings is a town —
+// its shelf is organization, and even its geometrically open seats (edge
+// huts, dockside shops) stay shelved for a uniform town look. A place with
+// few buildings is a hunting ground whose shelf is a hiding place; those
+// buildings get the seat test.
+const INLINE_MAX_BUILDINGS: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
 struct Edge {
@@ -513,7 +535,7 @@ fn find_best_connector_offset(
     anchor_lines: &[AnchorLine],
     placed_segments: &[Segment],
     placed_boxes: &[BBox],
-) -> Option<Cell> {
+) -> Option<(Cell, i64)> {
     let reach = SEARCH_RADIUS + 4;
     let mut win_min_x = proposed.x;
     let mut win_max_x = proposed.x;
@@ -602,7 +624,7 @@ fn find_best_connector_offset(
         }
         for_ring(proposed, r, |cand| consider(cand, &mut best, &mut best_score));
     }
-    best
+    best.map(|cell| (cell, best_score))
 }
 
 /// Port of `ClusterPacker.packGroups`: place the packed subset (typically the
@@ -858,7 +880,7 @@ pub fn pack_groups(
             x: neighbor_cell.x - internal.x,
             y: neighbor_cell.y - internal.y,
         };
-        if let Some(offset) = find_best_connector_offset(
+        if let Some((offset, _)) = find_best_connector_offset(
             &groups[best.idx],
             proposed,
             &occupied,
@@ -940,6 +962,330 @@ pub fn pack_groups(
         methods,
         scale,
     }
+}
+
+/// Obstacles the packed outdoor sheet already presents: every final room
+/// cell, drawable segments (connectors ≤ 30 cells, intra-group directional
+/// edges ≤ 8, deduped by unordered pair), group bounding boxes, and the
+/// final cell of every outdoor room (doorway targets).
+fn outdoor_obstacles(
+    groups: &[Group],
+    outdoor: &[usize],
+    lookup: &RoomTable,
+    dirs: &DirectionMap,
+) -> (HashSet<Cell>, Vec<Segment>, Vec<BBox>, HashMap<u32, Cell>) {
+    let mut occupied: HashSet<Cell> = HashSet::new();
+    let mut cell_of: HashMap<u32, Cell> = HashMap::new();
+    let mut component_of: HashMap<u32, usize> = HashMap::new();
+    for &idx in outdoor {
+        for &id in &groups[idx].room_ids {
+            let c = groups[idx].final_cell(id);
+            occupied.insert(c);
+            cell_of.insert(id, c);
+            component_of.insert(id, idx);
+        }
+    }
+
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut seen: HashSet<(u32, u32)> = HashSet::new();
+    for &idx in outdoor {
+        for &room_id in &groups[idx].room_ids {
+            let Some(room) = lookup.get(room_id) else {
+                continue;
+            };
+            for &target_id in room.wayto.keys() {
+                let Some(&b) = cell_of.get(&target_id) else {
+                    continue;
+                };
+                let key = (room_id.min(target_id), room_id.max(target_id));
+                if seen.contains(&key) {
+                    continue;
+                }
+                let a = cell_of[&room_id];
+                let cap = if component_of[&target_id] == idx {
+                    // Directional check before the dedup mark, so an edge
+                    // stored one-way gets its chance from the other side.
+                    if dirs.get(room_id, target_id).is_none() {
+                        continue;
+                    }
+                    DIRECTIONAL_COMMIT_CAP
+                } else {
+                    CONNECTOR_COMMIT_CAP
+                };
+                seen.insert(key);
+                if chebyshev(a, b) > cap {
+                    continue;
+                }
+                segments.push(Segment {
+                    a,
+                    b,
+                    ra: room_id,
+                    rb: target_id,
+                });
+            }
+        }
+    }
+
+    let boxes: Vec<BBox> = outdoor
+        .iter()
+        .map(|&idx| {
+            let b = groups[idx].bounds();
+            let off = groups[idx].base_offset.expect("outdoor groups are packed");
+            BBox {
+                min_x: b.min_x + off.x,
+                max_x: b.max_x + off.x,
+                min_y: b.min_y + off.y,
+                max_y: b.max_y + off.y,
+            }
+        })
+        .collect();
+
+    (occupied, segments, boxes, cell_of)
+}
+
+/// Try-inline pass: interior buildings that seat cleanly beside their
+/// doorways join the outdoor sheet instead of the shelf, so a lone grotto
+/// stays discoverable on the main map. Each cluster is merged into one
+/// floor plan, seated by the same connector-aware scorer as pass 2, and
+/// accepted only within the inline budget: short doorway connectors, no
+/// crossings, essentially no courtyard intrusion. Whatever fails keeps
+/// today's shelf behavior. Placement is greedy best-score-first so
+/// contending buildings resolve deterministically; forced-shelf groups
+/// (curated Interior flips) pin their whole building to the shelf.
+///
+/// Returns the group indices that moved, ascending.
+#[allow(clippy::too_many_arguments)]
+pub fn inline_interior_clusters(
+    groups: &mut [Group],
+    outdoor: &[usize],
+    interiors: &[usize],
+    clusters: &HashMap<usize, usize>,
+    entrances: &HashMap<usize, Vec<Entrance>>,
+    forced_shelf: &HashSet<usize>,
+    lookup: &RoomTable,
+    dirs: &DirectionMap,
+) -> Vec<usize> {
+    if interiors.is_empty() || outdoor.is_empty() {
+        return Vec::new();
+    }
+    let (mut occupied, mut segments, mut boxes, outdoor_cell_of) =
+        outdoor_obstacles(groups, outdoor, lookup, dirs);
+
+    // Cluster membership in canonical order.
+    let mut members_of: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for &idx in interiors {
+        members_of
+            .entry(clusters.get(&idx).copied().unwrap_or(idx))
+            .or_default()
+            .push(idx);
+    }
+    // Town check counts every building, curated pins included.
+    if members_of.len() > INLINE_MAX_BUILDINGS {
+        return Vec::new();
+    }
+    members_of.retain(|_, members| members.iter().all(|m| !forced_shelf.contains(m)));
+
+    struct Candidate {
+        members: Vec<usize>,
+        local: HashMap<usize, Cell>,
+        merged: Group,
+        anchor_lines: Vec<AnchorLine>,
+        proposed: Cell,
+        /// Outdoor rooms hosting this building's doorways — exempt from the
+        /// crowding count (the building necessarily sits beside them).
+        hosts: HashSet<u32>,
+    }
+
+    // Outdoor room per final cell, kept current as buildings place, so the
+    // crowding gate sees earlier inlines as neighbors too.
+    let mut room_at: HashMap<Cell, u32> =
+        outdoor_cell_of.iter().map(|(&id, &c)| (c, id)).collect();
+    let crowded = |merged: &Group, offset: Cell, hosts: &HashSet<u32>,
+                   room_at: &HashMap<Cell, u32>| {
+        let mut nearby: HashSet<u32> = HashSet::new();
+        for p in merged.positions.values() {
+            for dx in -INLINE_CROWD_RADIUS..=INLINE_CROWD_RADIUS {
+                for dy in -INLINE_CROWD_RADIUS..=INLINE_CROWD_RADIUS {
+                    let c = Cell {
+                        x: p.x + offset.x + dx,
+                        y: p.y + offset.y + dy,
+                    };
+                    let Some(&id) = room_at.get(&c) else {
+                        continue;
+                    };
+                    if !hosts.contains(&id) && nearby.insert(id) && nearby.len() > INLINE_CROWD_MAX
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    };
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for (&cluster, members) in &mut members_of {
+        members.sort_unstable();
+        // Merged building frame, exactly as the shelf builds it.
+        let mut local: HashMap<usize, Cell> = HashMap::new();
+        if members.len() == 1 {
+            local.insert(members[0], Cell::default());
+        } else {
+            merge_cluster_members(groups, members, lookup, &mut local);
+        }
+        let mut positions: HashMap<u32, Cell> = HashMap::new();
+        let mut room_ids: Vec<u32> = Vec::new();
+        for &m in members.iter() {
+            let off = local[&m];
+            for &id in &groups[m].room_ids {
+                let p = groups[m].positions[&id];
+                positions.insert(
+                    id,
+                    Cell {
+                        x: p.x + off.x,
+                        y: p.y + off.y,
+                    },
+                );
+                room_ids.push(id);
+            }
+        }
+
+        // Doorways into this building, deduped by room pair.
+        let mut doors: Vec<Entrance> = Vec::new();
+        for &m in members.iter() {
+            for e in entrances.get(&m).map(Vec::as_slice).unwrap_or(&[]) {
+                if outdoor_cell_of.contains_key(&e.outdoor_room_id) && !doors.contains(e) {
+                    doors.push(*e);
+                }
+            }
+        }
+        if doors.is_empty() {
+            continue; // nothing to seat it against
+        }
+        let anchor_lines: Vec<AnchorLine> = doors
+            .iter()
+            .map(|e| AnchorLine {
+                internal: positions[&e.interior_room_id],
+                target: outdoor_cell_of[&e.outdoor_room_id],
+                room_id: e.interior_room_id,
+                other_room_id: e.outdoor_room_id,
+            })
+            .collect();
+
+        // Seat beside the most-trusted doorway (lowest uid delta, as pass 2).
+        let seat = doors
+            .iter()
+            .min_by_key(|e| {
+                uid_delta(
+                    lookup.get(e.interior_room_id),
+                    lookup.get(e.outdoor_room_id),
+                )
+            })
+            .expect("doors is non-empty");
+        let target = outdoor_cell_of[&seat.outdoor_room_id];
+        let internal = positions[&seat.interior_room_id];
+        let proposed = Cell {
+            x: target.x - internal.x,
+            y: target.y - internal.y,
+        };
+
+        candidates.push(Candidate {
+            members: members.clone(),
+            local,
+            merged: Group {
+                index: cluster,
+                room_ids,
+                positions,
+                violations: Vec::new(),
+                base_offset: None,
+                packing: None,
+                name: None,
+            },
+            anchor_lines,
+            proposed,
+            hosts: doors.iter().map(|e| e.outdoor_room_id).collect(),
+        });
+    }
+
+    // Greedy best-score-first; every placement changes the obstacles, so
+    // the survivors are re-scored each round. Ties keep the earlier
+    // candidate (ascending cluster id — deterministic).
+    let mut inlined: Vec<usize> = Vec::new();
+    loop {
+        let mut best: Option<(usize, Cell, i64)> = None;
+        for (ci, cand) in candidates.iter().enumerate() {
+            let Some((offset, score)) = find_best_connector_offset(
+                &cand.merged,
+                cand.proposed,
+                &occupied,
+                &cand.anchor_lines,
+                &segments,
+                &boxes,
+            ) else {
+                continue;
+            };
+            if score > cand.anchor_lines.len() as i64 * INLINE_BUDGET_PER_DOOR {
+                continue;
+            }
+            let doors_short = cand.anchor_lines.iter().all(|a| {
+                let endpoint = Cell {
+                    x: a.internal.x + offset.x,
+                    y: a.internal.y + offset.y,
+                };
+                chebyshev(endpoint, a.target) <= INLINE_DOOR_MAX_CELLS
+            });
+            if !doors_short {
+                continue;
+            }
+            if crowded(&cand.merged, offset, &cand.hosts, &room_at) {
+                continue;
+            }
+            if best.map(|(_, _, s)| score < s).unwrap_or(true) {
+                best = Some((ci, offset, score));
+            }
+        }
+        let Some((ci, offset, _)) = best else {
+            break;
+        };
+        let cand = candidates.remove(ci);
+        for &m in &cand.members {
+            let off = cand.local[&m];
+            groups[m].base_offset = Some(Cell {
+                x: offset.x + off.x,
+                y: offset.y + off.y,
+            });
+            groups[m].packing = Some(PackMethod::InteriorInline);
+        }
+        for (&id, p) in &cand.merged.positions {
+            let cell = Cell {
+                x: p.x + offset.x,
+                y: p.y + offset.y,
+            };
+            occupied.insert(cell);
+            room_at.insert(cell, id);
+        }
+        for a in &cand.anchor_lines {
+            let endpoint = Cell {
+                x: a.internal.x + offset.x,
+                y: a.internal.y + offset.y,
+            };
+            segments.push(Segment {
+                a: endpoint,
+                b: a.target,
+                ra: a.room_id,
+                rb: a.other_room_id,
+            });
+        }
+        let b = cand.merged.bounds();
+        boxes.push(BBox {
+            min_x: b.min_x + offset.x,
+            max_x: b.max_x + offset.x,
+            min_y: b.min_y + offset.y,
+            max_y: b.max_y + offset.y,
+        });
+        inlined.extend(cand.members.iter().copied());
+    }
+    inlined.sort_unstable();
+    inlined
 }
 
 /// Interiors sheet: wrapped shelf rows in an independent coordinate space.

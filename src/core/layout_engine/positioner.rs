@@ -33,6 +33,8 @@ pub enum PackMethod {
     Seed,
     Strip,
     InteriorShelf,
+    /// Interior building seated on the outdoor sheet by the try-inline pass.
+    InteriorInline,
 }
 
 impl PackMethod {
@@ -43,6 +45,7 @@ impl PackMethod {
             PackMethod::Seed => "seed",
             PackMethod::Strip => "strip",
             PackMethod::InteriorShelf => "interior-shelf",
+            PackMethod::InteriorInline => "interior-inline",
         }
     }
 }

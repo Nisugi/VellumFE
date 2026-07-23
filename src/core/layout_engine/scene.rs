@@ -357,57 +357,17 @@ pub fn build_scene(
         }
     }
 
-    // Interior labels: one per CLUSTER (one building, one label), named by
+    // Building labels: one per CLUSTER (one building, one label), named by
     // the majority group name among its members, anchored at the combined
     // bounds' top-left. The cluster id is its smallest member group index,
-    // so it always passes a cluster-set group filter.
-    {
-        let mut clusters: Vec<usize> = scene.group_cluster.values().copied().collect();
-        clusters.sort_unstable();
-        clusters.dedup();
-        for cluster in clusters {
-            let mut name_votes: Vec<(&str, usize)> = Vec::new();
-            let mut min = Cell {
-                x: i32::MAX,
-                y: i32::MAX,
-            };
-            for (&idx, &c) in &scene.group_cluster {
-                if c != cluster {
-                    continue;
-                }
-                let group = &layout.groups[idx];
-                let bounds = group.bounds();
-                let off = group.base_offset.unwrap_or_default();
-                min.x = min.x.min(bounds.min_x + off.x);
-                min.y = min.y.min(bounds.min_y + off.y);
-                if let Some(name) = group.name.as_deref() {
-                    match name_votes.iter_mut().find(|(n, _)| *n == name) {
-                        Some(entry) => entry.1 += 1,
-                        None => name_votes.push((name, 1)),
-                    }
-                }
-            }
-            let named_total: usize = name_votes.iter().map(|(_, c)| c).sum();
-            let mut best: Option<(&str, usize)> = None;
-            for (name, count) in name_votes {
-                if best.map(|(_, c)| count > c).unwrap_or(true) {
-                    best = Some((name, count));
-                }
-            }
-            // Only label when one name truly speaks for the building — a
-            // 300-shop district must not wear one shop's name.
-            let Some((name, count)) = best else {
-                continue;
-            };
-            if count * 2 <= named_total {
-                continue;
-            }
-            scene.interiors.labels.push(GroupLabel {
-                text: name.to_owned(),
-                cell: min,
-                group: cluster,
-            });
-        }
+    // so it always passes a cluster-set group filter. Shelved buildings
+    // label the interiors sheet; try-inlined buildings label the outdoor
+    // sheet the same way.
+    scene.interiors.labels = cluster_labels(&scene.group_cluster, &layout.groups);
+    let inlined_set: HashSet<usize> = layout.inlined.iter().copied().collect();
+    if !inlined_set.is_empty() {
+        let inlined_clusters = interior_clusters(&layout.groups, &inlined_set, lookup);
+        scene.outdoor.labels = cluster_labels(&inlined_clusters, &layout.groups);
     }
 
     for sheet in [&mut scene.outdoor, &mut scene.interiors] {
@@ -434,6 +394,61 @@ pub fn build_scene(
     }
 
     scene
+}
+
+/// One label per cluster: majority group name among the members, anchored
+/// at the combined bounds' top-left. Unlabeled when no name has a true
+/// majority — a 300-shop district must not wear one shop's name.
+fn cluster_labels(
+    cluster_map: &HashMap<usize, usize>,
+    groups: &[super::positioner::Group],
+) -> Vec<GroupLabel> {
+    let mut clusters: Vec<usize> = cluster_map.values().copied().collect();
+    clusters.sort_unstable();
+    clusters.dedup();
+    let mut labels = Vec::new();
+    for cluster in clusters {
+        let mut name_votes: Vec<(&str, usize)> = Vec::new();
+        let mut min = Cell {
+            x: i32::MAX,
+            y: i32::MAX,
+        };
+        for (&idx, &c) in cluster_map {
+            if c != cluster {
+                continue;
+            }
+            let group = &groups[idx];
+            let bounds = group.bounds();
+            let off = group.base_offset.unwrap_or_default();
+            min.x = min.x.min(bounds.min_x + off.x);
+            min.y = min.y.min(bounds.min_y + off.y);
+            if let Some(name) = group.name.as_deref() {
+                match name_votes.iter_mut().find(|(n, _)| *n == name) {
+                    Some(entry) => entry.1 += 1,
+                    None => name_votes.push((name, 1)),
+                }
+            }
+        }
+        let named_total: usize = name_votes.iter().map(|(_, c)| c).sum();
+        let mut best: Option<(&str, usize)> = None;
+        for (name, count) in name_votes {
+            if best.map(|(_, c)| count > c).unwrap_or(true) {
+                best = Some((name, count));
+            }
+        }
+        let Some((name, count)) = best else {
+            continue;
+        };
+        if count * 2 <= named_total {
+            continue;
+        }
+        labels.push(GroupLabel {
+            text: name.to_owned(),
+            cell: min,
+            group: cluster,
+        });
+    }
+    labels
 }
 
 fn push_edge(scene: &mut MapScene, sheet: Sheet, edge: SceneEdge) {

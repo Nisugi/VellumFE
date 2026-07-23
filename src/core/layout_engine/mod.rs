@@ -39,6 +39,11 @@ pub struct Layout {
     pub outdoor: Vec<usize>,
     /// Indices placed on the separate interiors shelf sheet.
     pub interiors: Vec<usize>,
+    /// Interior groups the try-inline pass seated on the outdoor sheet
+    /// (subset of `outdoor`); they keep their building names so the scene
+    /// can label them.
+    #[serde(default)]
+    pub inlined: Vec<usize>,
     pub classification: Classification,
     pub pack_info: PackInfo,
 }
@@ -50,12 +55,27 @@ pub fn generate_layout(rooms: &mut Vec<Room>) -> Layout {
     generate_layout_curated(rooms, &LocationOverrides::default())
 }
 
+/// The pipeline exactly as the JS reference runs it — no try-inline pass.
+/// Exists so the fixture parity tests keep validating the ported core
+/// against reference-exported numbers; production always inlines.
+pub fn generate_layout_reference(rooms: &mut Vec<Room>) -> Layout {
+    generate_layout_impl(rooms, &LocationOverrides::default(), false)
+}
+
 /// `generate_layout` with the generation-input override subset applied:
 /// forced/demoted edge directions patch the direction map before
 /// positioning, and classification flips move groups between sheets before
 /// packing. Position pins and names are NOT applied here (see
 /// `overrides::apply`) so cached layouts stay reusable across those edits.
 pub fn generate_layout_curated(rooms: &mut Vec<Room>, curated: &LocationOverrides) -> Layout {
+    generate_layout_impl(rooms, curated, true)
+}
+
+fn generate_layout_impl(
+    rooms: &mut Vec<Room>,
+    curated: &LocationOverrides,
+    inline_interiors: bool,
+) -> Layout {
     rooms.sort_by_key(|r| r.id);
     let lookup = RoomTable::new(rooms);
     let mut dirs = direction::DirectionMap::build(&lookup);
@@ -84,11 +104,49 @@ pub fn generate_layout_curated(rooms: &mut Vec<Room>, curated: &LocationOverride
     let pack_info = packer::pack_groups(&mut groups, &outdoor, &lookup, &dirs);
     let clusters =
         classifier::interior_clusters(&groups, &classification.interior_groups, &lookup);
+
+    // Try-inline pass: an interior building that seats cleanly beside its
+    // doorway — short connectors, no crossings, free ground — joins the
+    // outdoor sheet, so lone caves and grottos stay discoverable. Dense
+    // shop districts fail the budget and keep the shelf. Curated Interior
+    // flips are exempt: explicit choice wins.
+    let mut inlined: Vec<usize> = Vec::new();
+    if inline_interiors {
+        let forced_shelf: HashSet<usize> = groups
+            .iter()
+            .filter(|g| {
+                curated.sheets.get(&overrides::group_anchor_key(g, &lookup))
+                    == Some(&SheetChoice::Interior)
+            })
+            .map(|g| g.index)
+            .collect();
+        inlined = packer::inline_interior_clusters(
+            &mut groups,
+            &outdoor,
+            &interiors,
+            &clusters,
+            &classification.entrances,
+            &forced_shelf,
+            &lookup,
+            &dirs,
+        );
+        if !inlined.is_empty() {
+            let inlined_set: HashSet<usize> = inlined.iter().copied().collect();
+            interiors.retain(|idx| !inlined_set.contains(idx));
+            outdoor.extend(inlined.iter().copied());
+            for &idx in &inlined {
+                classification.interior_groups.remove(&idx);
+            }
+            classifier::recompute_entrances(&mut classification, &groups, &lookup);
+        }
+    }
+
     packer::pack_interior_shelf(&mut groups, &interiors, &clusters, &lookup);
 
     // Building names for interior groups (assigned after shelf packing so the
     // shelf order matches the reference, which sorts unnamed groups).
-    for &idx in &interiors {
+    // Inlined buildings keep theirs too — the scene labels them outdoors.
+    for &idx in interiors.iter().chain(&inlined) {
         groups[idx].name = classifier::building_name(&groups[idx], &lookup);
     }
 
@@ -96,6 +154,7 @@ pub fn generate_layout_curated(rooms: &mut Vec<Room>, curated: &LocationOverride
         groups,
         outdoor,
         interiors,
+        inlined,
         classification,
         pack_info,
     }
