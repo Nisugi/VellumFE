@@ -236,16 +236,22 @@ startup_music_delay_ms = 0  # Delay before startup music (0 = immediate)
 # ------------------------------------------------------------
 # Screen reader support via native TTS engines.
 # TTS operates independently of the sound system above.
-# Controls: Ctrl+Shift+N (next), Ctrl+Shift+P (previous),
-#           Ctrl+Shift+M (mute toggle)
+# Prefer the editors: Settings > Accessibility (GUI) or .tts (any frontend).
+# Queue controls: Ctrl+Alt+Left/Right (prev/next), Ctrl+Alt+Up (next unread),
+#                 Ctrl+Alt+Down (stop), F11 (mute) - see keybinds.toml
+# Per-window speech lives in each window's editor (tts_speak in layout.toml);
+# the three toggles below are the classic shortcuts for main/thoughts/speech.
 
 [tts]
 enabled = false        # Set to true to enable TTS
-rate = 1.0             # Speech rate: 0.5 (slow) to 2.0 (fast)
+rate = 1.0             # Speech rate: 0.5 (slow), 1.0 (normal) to 3.0 (engine max)
 volume = 1.0           # Volume: 0.0 (silent) to 1.0 (full)
 speak_thoughts = true  # Speak focused thoughts
 speak_speech = true    # Speak speech window
 speak_main = false     # Speak main window (can be overwhelming)
+# voice = "Microsoft Zira"   # Voice by name (.tts voices lists them)
+# gags = ["^You feel fully rested"]              # shown but never spoken
+# substitutions = [{ pattern = "Wehnimer's", replacement = "Wenimers" }]
 
 
 # ------------------------------------------------------------

@@ -2451,6 +2451,7 @@ impl WindowEditor {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
         };
 
         // Create window_def based on widget type
@@ -7546,6 +7547,7 @@ mod tests {
                 max_cols: None,
                 visible: true,
                 content_align: None,
+                tts_speak: false,
                 title_position: "top-left".to_string(),
             },
             data: SpacerWidgetData {},

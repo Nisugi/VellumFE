@@ -317,6 +317,8 @@ impl AppCore {
 
         app.apply_session_cache();
         app.apply_custom_quickbars();
+        app.refresh_tts_windows();
+        app.apply_tts_settings();
 
         if let Some((theme_id, _)) = app.apply_layout_theme(layout_theme.as_deref()) {
             app.add_system_message(&format!("Theme switched to: {}", theme_id));
@@ -327,6 +329,37 @@ impl AppCore {
         app.refresh_map_source();
 
         Ok(app)
+    }
+
+    /// Rebuild the message processor's set of TTS-opted windows from the
+    /// layout. Call after layout load and whenever a window's tts_speak
+    /// flag or name changes.
+    pub fn refresh_tts_windows(&mut self) {
+        let windows: std::collections::HashSet<String> = self
+            .layout
+            .windows
+            .iter()
+            .filter(|def| def.base().tts_speak)
+            .map(|def| def.name().to_string())
+            .collect();
+        self.message_processor.set_tts_windows(windows);
+    }
+
+    /// Push the config's TTS settings (enabled, rate, volume, voice,
+    /// filters) into the live manager. Call at startup and after the
+    /// settings editor saves.
+    pub fn apply_tts_settings(&mut self) {
+        let tts = &self.config.tts;
+        self.tts_manager.set_enabled(tts.enabled);
+        let _ = self.tts_manager.set_rate(tts.rate);
+        let _ = self.tts_manager.set_volume(tts.volume);
+        self.tts_manager.set_voice_by_name(tts.voice.clone());
+        let substitutions: Vec<(String, String)> = tts
+            .substitutions
+            .iter()
+            .map(|sub| (sub.pattern.clone(), sub.replacement.clone()))
+            .collect();
+        self.tts_manager.set_filters(&tts.gags, &substitutions);
     }
 
     /// Resolve the mapdb source from config and (re)start the load when it
@@ -1328,13 +1361,14 @@ impl AppCore {
                 Ok(event) => {
                     match event {
                         crate::tts::TtsEvent::UtteranceEnded => {
-                            tracing::debug!("Utterance ended");
+                            // Chains the next unread queue entry (auto-play).
+                            self.tts_manager.handle_utterance_ended();
                         }
                         crate::tts::TtsEvent::UtteranceStarted => {
                             tracing::debug!("Utterance started");
                         }
                         crate::tts::TtsEvent::UtteranceStopped => {
-                            tracing::debug!("Utterance stopped");
+                            self.tts_manager.handle_utterance_stopped();
                         }
                     }
                 }
@@ -3347,6 +3381,7 @@ impl AppCore {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
         };
 
         let window_def = match widget_type_str.to_lowercase().as_str() {
@@ -3495,6 +3530,7 @@ impl AppCore {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
         };
         self.layout.windows.insert(
             0,
@@ -5248,6 +5284,7 @@ mod tests {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
             title_position: "top-left".to_string(),
         }
     }

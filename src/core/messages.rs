@@ -40,6 +40,10 @@ pub struct MessageProcessor {
     /// If true, discard text because no window exists for current stream
     discard_current_stream: bool,
 
+    /// Windows whose layout def opts into TTS (`tts_speak`). Rebuilt by
+    /// `AppCore::refresh_tts_windows` on layout load and editor saves.
+    tts_windows: std::collections::HashSet<String>,
+
     /// Server time offset for countdown synchronization
     pub server_time_offset: i64,
 
@@ -190,6 +194,7 @@ impl MessageProcessor {
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
+            tts_windows: std::collections::HashSet::new(),
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
@@ -3507,19 +3512,26 @@ impl MessageProcessor {
     }
 
     /// Enqueue text for TTS if enabled and configured for this window
+    /// Replace the set of windows whose defs opt into TTS.
+    pub fn set_tts_windows(&mut self, windows: std::collections::HashSet<String>) {
+        self.tts_windows = windows;
+    }
+
     fn enqueue_tts(&self, tts_manager: &mut crate::tts::TtsManager, window_name: &str, line: &StyledLine) {
         // Early exit if TTS not enabled
         if !self.config.tts.enabled {
             return;
         }
 
-        // Check if this window should be spoken based on config
-        let should_speak = match window_name {
-            "thoughts" => self.config.tts.speak_thoughts,
-            "speech" => self.config.tts.speak_speech,
-            "main" => self.config.tts.speak_main,
-            _ => false, // Don't speak other windows by default
-        };
+        // Per-window opt-in from the layout def, with the classic config
+        // toggles kept for the three windows they always covered.
+        let should_speak = self.tts_windows.contains(window_name)
+            || match window_name {
+                "thoughts" => self.config.tts.speak_thoughts,
+                "speech" => self.config.tts.speak_speech,
+                "main" => self.config.tts.speak_main,
+                _ => false,
+            };
 
         if !should_speak {
             return;
@@ -3539,27 +3551,16 @@ impl MessageProcessor {
             return;
         }
 
-        // Determine priority based on window
-        let priority = match window_name {
-            "thoughts" => crate::tts::Priority::High, // Thoughts are important
-            "speech" => crate::tts::Priority::High,   // Whispers are important
-            "main" => crate::tts::Priority::Normal,   // Regular game text
-            _ => crate::tts::Priority::Normal,
-        };
-
-        // Enqueue speech entry
+        // Chronological queue: the manager auto-plays when idle and chains
+        // from the utterance-end callback - nothing to trigger here, and
+        // new lines never interrupt the one being spoken.
         tts_manager.enqueue(crate::tts::SpeechEntry {
             text,
             source_window: window_name.to_string(),
-            priority,
+            priority: crate::tts::Priority::Normal,
             spoken: false,
+            repeats: 1,
         });
-
-        // Auto-speak the next item in queue (if not currently speaking)
-        // This ensures new text gets spoken immediately
-        if let Err(e) = tts_manager.speak_next() {
-            tracing::warn!("Failed to speak TTS entry: {}", e);
-        }
     }
 
     /// Map stream ID to window name

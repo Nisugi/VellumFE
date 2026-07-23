@@ -403,6 +403,7 @@ impl AppCore {
                 max_cols: None,
                 visible: true,
                 content_align: None,
+                tts_speak: false,
             }
         };
 
