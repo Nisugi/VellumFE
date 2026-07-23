@@ -379,6 +379,9 @@ function appendText(seq, stream, line) {
   if (seq <= state.lastSeq) return; // duplicate (snapshot/delta overlap)
   state.lastSeq = seq;
   if (HIDDEN_STREAMS.has(stream)) return;
+  // Speak before display routing: enabled streams speak even while
+  // another stream is active (thoughts read out mid-hunt).
+  speakLine(stream, line);
   const buf = ensureStream(stream);
   buf.lines.push(line);
   if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
@@ -1167,6 +1170,202 @@ sessionBanner.addEventListener("click", () => {
   sheetNote("Or close this to keep trying.", true);
 });
 
+// ---- Speech (text-to-speech) ----------------------------------------------
+// Browser speechSynthesis reads incoming lines aloud — the phone's
+// accessibility story until native TTS bridges exist. Chronological and
+// non-interrupting by design: the browser queues utterances natively.
+// Prefs are per-device (localStorage), mirroring the desktop defaults
+// (thoughts on, main off).
+
+const SPEECH_PREFS_KEY = "vellum-speech";
+let speechPrefs = { enabled: false, rate: 1.0, voice: "", streams: {} };
+try {
+  const stored = JSON.parse(localStorage.getItem(SPEECH_PREFS_KEY) || "{}");
+  speechPrefs = { ...speechPrefs, ...stored };
+  speechPrefs.streams = { thoughts: true, ...(stored.streams || {}) };
+} catch { /* corrupted storage — defaults */ }
+
+function saveSpeechPrefs() {
+  try {
+    localStorage.setItem(SPEECH_PREFS_KEY, JSON.stringify(speechPrefs));
+  } catch { /* private mode */ }
+}
+
+function speechAvailable() {
+  return "speechSynthesis" in window;
+}
+
+// Utterances in flight/queued. Under a firehose we drop new lines past a
+// cap instead of drifting minutes behind the game.
+let speechQueued = 0;
+const SPEECH_QUEUE_CAP = 40;
+
+function speechVoiceByName(name) {
+  if (!name || !speechAvailable()) return null;
+  return speechSynthesis.getVoices().find((v) => v.name === name) || null;
+}
+
+function speakLine(stream, line) {
+  if (!speechPrefs.enabled || !speechAvailable()) return;
+  if (!speechPrefs.streams[stream]) return;
+  const text = (line.segments || [])
+    .map((seg) => seg.text || "")
+    .join("")
+    .trim();
+  if (text.length <= 1) return; // prompts and blanks
+  if (speechQueued >= SPEECH_QUEUE_CAP) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = Math.min(Math.max(speechPrefs.rate || 1.0, 0.5), 3.0);
+  const voice = speechVoiceByName(speechPrefs.voice);
+  if (voice) utterance.voice = voice;
+  speechQueued += 1;
+  const done = () => {
+    speechQueued = Math.max(0, speechQueued - 1);
+  };
+  utterance.onend = done;
+  utterance.onerror = done;
+  speechSynthesis.speak(utterance);
+}
+
+function stopSpeaking() {
+  if (!speechAvailable()) return;
+  speechSynthesis.cancel();
+  speechQueued = 0;
+}
+
+// Streams offered in the speech sheet: every visible chip stream seen this
+// session plus the well-known ones, so thoughts can be enabled before the
+// first thought arrives.
+function speechStreamChoices() {
+  const known = new Set(["main", "thoughts", "familiar", "death", "logons"]);
+  for (const stream of buffers.keys()) known.add(stream);
+  return [...known].filter((stream) => !HIDDEN_STREAMS.has(stream));
+}
+
+function openSpeechSheet() {
+  openSheet("Speech");
+  if (!speechAvailable()) {
+    sheetNote("Speech synthesis is not available in this browser.", true);
+    return;
+  }
+  renderSpeechSheet();
+}
+
+function renderSpeechSheet() {
+  sheetItems.replaceChildren();
+
+  // Toggle rows rebuild the sheet in place instead of closing it
+  // (sheetButton closes on pick, which would make toggling tedious).
+  const toggleRow = (label, checked, onToggle) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    btn.textContent = `${checked ? "☑" : "☐"} ${label}`;
+    btn.addEventListener("click", () => {
+      onToggle();
+      saveSpeechPrefs();
+      renderSpeechSheet();
+    });
+    sheetItems.appendChild(btn);
+  };
+
+  toggleRow("Speak incoming lines", speechPrefs.enabled, () => {
+    speechPrefs.enabled = !speechPrefs.enabled;
+    if (!speechPrefs.enabled) stopSpeaking();
+  });
+
+  // Rate slider, styled like the appearance sheet's opacity rows.
+  const rateRow = document.createElement("div");
+  rateRow.className = "alpha-row";
+  const rateLabel = document.createElement("label");
+  rateLabel.textContent = "Rate";
+  const rateSlider = document.createElement("input");
+  rateSlider.type = "range";
+  rateSlider.min = "0.5";
+  rateSlider.max = "3";
+  rateSlider.step = "0.1";
+  rateSlider.value = String(speechPrefs.rate || 1.0);
+  const rateValue = document.createElement("span");
+  rateValue.className = "alpha-value";
+  rateValue.textContent = `${rateSlider.value}x`;
+  rateSlider.addEventListener("input", () => {
+    speechPrefs.rate = Number(rateSlider.value);
+    rateValue.textContent = `${rateSlider.value}x`;
+    saveSpeechPrefs();
+  });
+  rateRow.append(rateLabel, rateSlider, rateValue);
+  sheetItems.appendChild(rateRow);
+
+  // Voice picker. Voice lists load async on some platforms (iOS); the
+  // voiceschanged hook below re-renders when they arrive.
+  const voices = speechSynthesis.getVoices();
+  if (voices.length) {
+    const voiceRow = document.createElement("div");
+    voiceRow.className = "alpha-row";
+    const voiceLabel = document.createElement("label");
+    voiceLabel.textContent = "Voice";
+    const voiceSelect = document.createElement("select");
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "(device default)";
+    voiceSelect.appendChild(defaultOption);
+    for (const voice of voices) {
+      const option = document.createElement("option");
+      option.value = voice.name;
+      option.textContent = voice.name;
+      voiceSelect.appendChild(option);
+    }
+    voiceSelect.value = speechVoiceByName(speechPrefs.voice) ? speechPrefs.voice : "";
+    voiceSelect.addEventListener("change", () => {
+      speechPrefs.voice = voiceSelect.value;
+      saveSpeechPrefs();
+    });
+    voiceRow.append(voiceLabel, voiceSelect);
+    sheetItems.appendChild(voiceRow);
+  }
+
+  const streamsHeading = document.createElement("div");
+  streamsHeading.className = "sheet-empty";
+  streamsHeading.textContent = "Streams to speak:";
+  sheetItems.appendChild(streamsHeading);
+  for (const stream of speechStreamChoices()) {
+    toggleRow(STREAM_LABELS[stream] || stream, !!speechPrefs.streams[stream], () => {
+      speechPrefs.streams[stream] = !speechPrefs.streams[stream];
+    });
+  }
+
+  const testBtn = document.createElement("button");
+  testBtn.type = "button";
+  testBtn.className = "sheet-item";
+  testBtn.textContent = "Test voice";
+  testBtn.addEventListener("click", () => {
+    // Speaking from a tap also satisfies mobile user-gesture unlock.
+    const utterance = new SpeechSynthesisUtterance(
+      "A giant rat scampers out of the shadows.",
+    );
+    utterance.rate = Math.min(Math.max(speechPrefs.rate || 1.0, 0.5), 3.0);
+    const voice = speechVoiceByName(speechPrefs.voice);
+    if (voice) utterance.voice = voice;
+    speechSynthesis.speak(utterance);
+  });
+  sheetItems.appendChild(testBtn);
+
+  const stopBtn = document.createElement("button");
+  stopBtn.type = "button";
+  stopBtn.className = "sheet-item";
+  stopBtn.textContent = "Stop speaking";
+  stopBtn.addEventListener("click", stopSpeaking);
+  sheetItems.appendChild(stopBtn);
+}
+
+if (speechAvailable()) {
+  // iOS/Android load voice lists asynchronously; refresh the sheet if it's
+  // showing when they land.
+  speechSynthesis.addEventListener?.("voiceschanged", () => {
+    if (!sheet.hidden && sheetTitle.textContent === "Speech") renderSpeechSheet();
+  });
+}
+
 // ---- Settings sheet + config editor ---------------------------------------
 // Config files live server-side (on Android, in the app's private storage
 // where no file manager reaches) — the editor is how highlights and colors
@@ -1353,6 +1552,7 @@ function openAppearanceSheet() {
 function openSettingsSheet() {
   openSheet("Settings");
   sheetButton("Appearance", openAppearanceSheet);
+  sheetButton("Speech (read lines aloud)", openSpeechSheet);
   sheetButton(
     soundMuted ? "Sound alerts: off — tap to enable" : "Sound alerts: on — tap to mute",
     () => {
