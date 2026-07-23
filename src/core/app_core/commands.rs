@@ -292,6 +292,121 @@ impl AppCore {
         self.add_system_message(&summary);
     }
 
+    /// `.tts` — text-to-speech control from any frontend. Subcommands:
+    /// `status` (default), `on`, `off`, `mute`, `rate <0.5-3.0>`,
+    /// `volume <0.0-1.0>`, `voice <name|default>`, `voices`, `test`, `clear`.
+    fn handle_tts_command(&mut self, args: &[String]) {
+        match args.first().map(String::as_str).unwrap_or("status") {
+            "on" => {
+                self.config.tts.enabled = true;
+                self.tts_manager.set_enabled(true);
+                let _ = self.save_config();
+                self.add_system_message("TTS enabled.");
+            }
+            "off" => {
+                self.config.tts.enabled = false;
+                self.tts_manager.set_enabled(false);
+                let _ = self.save_config();
+                self.add_system_message("TTS disabled.");
+            }
+            "mute" => {
+                self.tts_manager.toggle_mute();
+                let status = if self.tts_manager.is_muted() {
+                    "muted"
+                } else {
+                    "unmuted"
+                };
+                self.add_system_message(&format!("TTS {}.", status));
+            }
+            "rate" => match args.get(1).and_then(|v| v.parse::<f32>().ok()) {
+                Some(rate) => {
+                    let _ = self.tts_manager.set_rate(rate);
+                    self.config.tts.rate = self.tts_manager.rate();
+                    let _ = self.save_config();
+                    self.add_system_message(&format!("TTS rate: {:.1}", self.tts_manager.rate()));
+                }
+                None => self.add_system_message("Usage: .tts rate <0.5-3.0>"),
+            },
+            "volume" => match args.get(1).and_then(|v| v.parse::<f32>().ok()) {
+                Some(volume) => {
+                    let _ = self.tts_manager.set_volume(volume);
+                    self.config.tts.volume = self.tts_manager.volume();
+                    let _ = self.save_config();
+                    self.add_system_message(&format!(
+                        "TTS volume: {:.1}",
+                        self.tts_manager.volume()
+                    ));
+                }
+                None => self.add_system_message("Usage: .tts volume <0.0-1.0>"),
+            },
+            "voice" => {
+                let wanted = args[1..].join(" ");
+                if wanted.is_empty() {
+                    self.add_system_message("Usage: .tts voice <name|default>");
+                } else if wanted.eq_ignore_ascii_case("default") {
+                    self.config.tts.voice = None;
+                    self.tts_manager.set_voice_by_name(None);
+                    let _ = self.save_config();
+                    self.add_system_message("TTS voice: engine default.");
+                } else {
+                    self.config.tts.voice = Some(wanted.clone());
+                    self.tts_manager.set_voice_by_name(Some(wanted.clone()));
+                    let _ = self.save_config();
+                    self.add_system_message(&format!("TTS voice: {}", wanted));
+                }
+            }
+            "voices" => {
+                let voices = self.tts_manager.available_voices();
+                if voices.is_empty() {
+                    self.add_system_message(
+                        "No voices listed (TTS off, or this platform doesn't enumerate).",
+                    );
+                } else {
+                    self.add_system_message(&format!("TTS voices: {}", voices.join(", ")));
+                }
+            }
+            "test" => {
+                if let Err(err) = self
+                    .tts_manager
+                    .speak_text_now("A giant rat scampers out of the shadows. Roundtime, 5 seconds.")
+                {
+                    self.add_system_message(&format!("TTS test failed: {}", err));
+                } else {
+                    self.add_system_message("Speaking test sample.");
+                }
+            }
+            "clear" => {
+                self.tts_manager.clear_queue();
+                self.add_system_message("TTS queue cleared.");
+            }
+            "status" => {
+                self.add_system_message(&format!(
+                    "TTS: {} | {} | rate {:.1} | volume {:.1} | voice {} | {} queued",
+                    if self.tts_manager.is_enabled() {
+                        "on"
+                    } else {
+                        "off"
+                    },
+                    if self.tts_manager.is_muted() {
+                        "muted"
+                    } else {
+                        "unmuted"
+                    },
+                    self.tts_manager.rate(),
+                    self.tts_manager.volume(),
+                    self.tts_manager.voice_name().unwrap_or("default"),
+                    self.tts_manager.queue_size(),
+                ));
+            }
+            other => {
+                self.add_system_message(&format!(
+                    "Unknown .tts subcommand '{}'. Try: on, off, mute, rate, volume, voice, voices, test, clear, status.",
+                    other
+                ));
+            }
+        }
+    }
+
     /// `.mapdb` — map data management from any frontend. Subcommands:
     /// `status` (default), `download`, `remove`, `repo <owner/repo>`.
     fn handle_mapdb(&mut self, args: &[String]) {
@@ -553,6 +668,13 @@ impl AppCore {
             // Web frontend: show the pairing URL + QR for phone onboarding
             "webinfo" => {
                 self.show_webinfo();
+            }
+
+            // Text-to-speech control from any frontend (the GUI also has
+            // Settings > Accessibility; on the TUI and phones this is THE way).
+            "tts" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.handle_tts_command(&args);
             }
 
             // Layout commands. The TUI intercepts both in
