@@ -197,6 +197,11 @@ pub struct VellumGuiApp {
     /// that failed to load is absent and falls back to Proportional
     /// (an unbound FontFamily::Name panics inside egui).
     registered_font_families: HashSet<String>,
+    /// Families passed to `ctx.set_fonts` this frame. egui only installs new
+    /// font definitions at the next `begin_pass`, so these must not enter
+    /// `registered_font_families` until the following frame — using a family
+    /// in the same frame it was registered panics inside epaint.
+    pending_font_families: Option<HashSet<String>>,
     /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
     /// `None` until the first sync so startup always pushes the initial set.
     numpad_capture_keys: Option<HashSet<String>>,
@@ -471,6 +476,7 @@ impl VellumGuiApp {
             ui_font,
             fonts_applied: false,
             registered_font_families: HashSet::new(),
+            pending_font_families: None,
             numpad_capture_keys: None,
             ui_settings,
             tab_settings,
@@ -3494,6 +3500,11 @@ impl eframe::App for VellumGuiApp {
         // must not select it.
         let dragging_item = egui::DragAndDrop::has_any_payload(&ctx);
         ctx.global_style_mut(|style| style.interaction.selectable_labels = !dragging_item);
+        // Families set last frame are installed by now (set_fonts only takes
+        // effect at the next begin_pass), so it is safe for widgets to use them.
+        if let Some(families) = self.pending_font_families.take() {
+            self.registered_font_families = families;
+        }
         if !self.fonts_applied {
             self.fonts_applied = true;
             let window_fonts: Vec<FontRef> = self
@@ -3502,15 +3513,20 @@ impl eframe::App for VellumGuiApp {
                 .map(|settings| settings.font_primary.clone())
                 .collect();
             let fonts = theme::build_font_definitions(&self.ui_font, &window_fonts);
-            self.registered_font_families = fonts
-                .families
-                .keys()
-                .filter_map(|family| match family {
-                    egui::FontFamily::Name(name) => Some(name.to_string()),
-                    _ => None,
-                })
-                .collect();
+            self.pending_font_families = Some(
+                fonts
+                    .families
+                    .keys()
+                    .filter_map(|family| match family {
+                        egui::FontFamily::Name(name) => Some(name.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            );
             ctx.set_fonts(fonts);
+            // The new families become usable next frame; make sure it happens
+            // promptly instead of waiting for the idle repaint tick.
+            ctx.request_repaint();
         }
         self.apply_theme_if_changed(&ctx);
         self.skin_state

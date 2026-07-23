@@ -4936,6 +4936,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "skrifa",
  "sysinfo",
  "tempfile",
  "tokio",
