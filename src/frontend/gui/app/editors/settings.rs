@@ -32,6 +32,21 @@ pub(in super::super) struct SettingsEditorState {
     sound_enabled: bool,
     sound_volume: f32,
     sound_cooldown_ms: u64,
+    tts_enabled: bool,
+    tts_rate: f32,
+    tts_volume: f32,
+    /// Selected voice; NONE_VOICE sentinel = engine default.
+    tts_voice: String,
+    /// Voices the engine reported when the editor opened (empty when TTS
+    /// is off or the platform doesn't enumerate).
+    tts_voices: Vec<String>,
+    tts_speak_main: bool,
+    tts_speak_thoughts: bool,
+    tts_speak_speech: bool,
+    /// Speech-only gag patterns (edit buffers; empties dropped on save).
+    tts_gags: Vec<String>,
+    /// Pronunciation substitutions (pattern, replacement).
+    tts_subs: Vec<(String, String)>,
     active_theme: String,
     theme_names: Vec<String>,
     /// Selected skin; NONE_SKIN sentinel = no skin.
@@ -49,11 +64,15 @@ pub(in super::super) struct SettingsEditorState {
 /// ComboBox entry meaning "no skin active".
 const NONE_SKIN: &str = "(none)";
 
+/// ComboBox entry meaning "engine default voice".
+const NONE_VOICE: &str = "(engine default)";
+
 impl SettingsEditorState {
     fn from_config(
         config: &crate::config::Config,
         theme_names: Vec<String>,
         skin_names: Vec<String>,
+        tts_voices: Vec<String>,
         gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
     ) -> Self {
         Self {
@@ -72,6 +91,25 @@ impl SettingsEditorState {
             sound_enabled: config.sound.enabled,
             sound_volume: config.sound.volume,
             sound_cooldown_ms: config.sound.cooldown_ms,
+            tts_enabled: config.tts.enabled,
+            tts_rate: config.tts.rate.clamp(0.5, 3.0),
+            tts_volume: config.tts.volume.clamp(0.0, 1.0),
+            tts_voice: config
+                .tts
+                .voice
+                .clone()
+                .unwrap_or_else(|| NONE_VOICE.to_string()),
+            tts_voices,
+            tts_speak_main: config.tts.speak_main,
+            tts_speak_thoughts: config.tts.speak_thoughts,
+            tts_speak_speech: config.tts.speak_speech,
+            tts_gags: config.tts.gags.clone(),
+            tts_subs: config
+                .tts
+                .substitutions
+                .iter()
+                .map(|sub| (sub.pattern.clone(), sub.replacement.clone()))
+                .collect(),
             active_theme: config.active_theme.clone(),
             theme_names,
             active_skin: config
@@ -111,6 +149,32 @@ impl SettingsEditorState {
         config.sound.enabled = self.sound_enabled;
         config.sound.volume = self.sound_volume;
         config.sound.cooldown_ms = self.sound_cooldown_ms;
+        config.tts.enabled = self.tts_enabled;
+        config.tts.rate = self.tts_rate;
+        config.tts.volume = self.tts_volume;
+        config.tts.voice = if self.tts_voice == NONE_VOICE {
+            None
+        } else {
+            Some(self.tts_voice.clone())
+        };
+        config.tts.speak_main = self.tts_speak_main;
+        config.tts.speak_thoughts = self.tts_speak_thoughts;
+        config.tts.speak_speech = self.tts_speak_speech;
+        config.tts.gags = self
+            .tts_gags
+            .iter()
+            .map(|gag| gag.trim().to_string())
+            .filter(|gag| !gag.is_empty())
+            .collect();
+        config.tts.substitutions = self
+            .tts_subs
+            .iter()
+            .filter(|(pattern, _)| !pattern.trim().is_empty())
+            .map(|(pattern, replacement)| crate::config::TtsSubstitution {
+                pattern: pattern.trim().to_string(),
+                replacement: replacement.clone(),
+            })
+            .collect();
         config.active_theme = self.active_theme.clone();
         config.active_skin = if self.active_skin == NONE_SKIN {
             None
@@ -132,6 +196,7 @@ impl VellumGuiApp {
             &self.app_core.config,
             theme_names,
             crate::config::skins::list_skins(),
+            self.app_core.tts_manager.available_voices(),
             self.ui_settings.clone(),
         ));
     }
@@ -152,6 +217,9 @@ impl VellumGuiApp {
         // makes sense once the selection has been saved and its doll base
         // art actually loaded.
         let mut calibrate_doll_clicked = false;
+        // Test button applies the panel's live values and speaks a sample
+        // without waiting for Save.
+        let mut tts_test_clicked = false;
         let can_calibrate_doll = self
             .skin_state
             .widget_art()
@@ -525,6 +593,147 @@ impl VellumGuiApp {
                             });
                         });
 
+                        ui.collapsing("Accessibility", |ui| {
+                            ui.label(
+                                "Text-to-speech reads incoming lines aloud. Pick which \
+                                 windows speak with the checkbox in each window's editor; \
+                                 the toggles below cover the classic three.",
+                            );
+                            ui.checkbox(&mut state.tts_enabled, "Text-to-speech enabled");
+                            egui::Grid::new("settings_tts_grid").num_columns(2).show(
+                                ui,
+                                |ui| {
+                                    ui.label("Rate");
+                                    ui.add(
+                                        egui::Slider::new(&mut state.tts_rate, 0.5..=3.0)
+                                            .step_by(0.1),
+                                    )
+                                    .on_hover_text(
+                                        "1.0 = the voice's natural speed; 3.0 = the \
+                                         engine's maximum",
+                                    );
+                                    ui.end_row();
+                                    ui.label("Volume");
+                                    ui.add(
+                                        egui::Slider::new(&mut state.tts_volume, 0.0..=1.0)
+                                            .step_by(0.05),
+                                    );
+                                    ui.end_row();
+                                    ui.label("Voice");
+                                    if state.tts_voices.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(
+                                                "enable TTS, save, and reopen to list voices",
+                                            )
+                                            .weak(),
+                                        );
+                                    } else {
+                                        egui::ComboBox::from_id_salt("settings_tts_voice")
+                                            .selected_text(state.tts_voice.clone())
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut state.tts_voice,
+                                                    NONE_VOICE.to_string(),
+                                                    NONE_VOICE,
+                                                );
+                                                for name in &state.tts_voices {
+                                                    ui.selectable_value(
+                                                        &mut state.tts_voice,
+                                                        name.clone(),
+                                                        name,
+                                                    );
+                                                }
+                                            });
+                                    }
+                                    ui.end_row();
+                                },
+                            );
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut state.tts_speak_main, "main");
+                                ui.checkbox(&mut state.tts_speak_thoughts, "thoughts");
+                                ui.checkbox(&mut state.tts_speak_speech, "speech");
+                            });
+                            if ui
+                                .add_enabled(state.tts_enabled, egui::Button::new("Test voice"))
+                                .on_hover_text("Applies the sliders above and speaks a sample")
+                                .clicked()
+                            {
+                                tts_test_clicked = true;
+                            }
+
+                            ui.separator();
+                            ui.label("Speech gags (regex; matching lines show but never speak)");
+                            let mut remove_gag: Option<usize> = None;
+                            for (index, gag) in state.tts_gags.iter_mut().enumerate() {
+                                ui.horizontal(|ui| {
+                                    let valid = regex::Regex::new(gag).is_ok();
+                                    ui.add(
+                                        egui::TextEdit::singleline(gag).desired_width(240.0),
+                                    );
+                                    if !valid {
+                                        ui.colored_label(
+                                            ui.visuals().error_fg_color,
+                                            "invalid",
+                                        );
+                                    }
+                                    if ui.small_button("✕").clicked() {
+                                        remove_gag = Some(index);
+                                    }
+                                });
+                            }
+                            if let Some(index) = remove_gag {
+                                state.tts_gags.remove(index);
+                            }
+                            if ui.button("Add gag").clicked() {
+                                state.tts_gags.push(String::new());
+                            }
+
+                            ui.separator();
+                            ui.label("Pronunciations (regex pattern -> spoken text)");
+                            let mut remove_sub: Option<usize> = None;
+                            for (index, (pattern, replacement)) in
+                                state.tts_subs.iter_mut().enumerate()
+                            {
+                                ui.horizontal(|ui| {
+                                    let valid = regex::Regex::new(pattern).is_ok();
+                                    ui.add(
+                                        egui::TextEdit::singleline(pattern)
+                                            .hint_text("Wehnimer's")
+                                            .desired_width(140.0),
+                                    );
+                                    ui.label("→");
+                                    ui.add(
+                                        egui::TextEdit::singleline(replacement)
+                                            .hint_text("Wenimers")
+                                            .desired_width(140.0),
+                                    );
+                                    if !valid {
+                                        ui.colored_label(
+                                            ui.visuals().error_fg_color,
+                                            "invalid",
+                                        );
+                                    }
+                                    if ui.small_button("✕").clicked() {
+                                        remove_sub = Some(index);
+                                    }
+                                });
+                            }
+                            if let Some(index) = remove_sub {
+                                state.tts_subs.remove(index);
+                            }
+                            if ui.button("Add pronunciation").clicked() {
+                                state.tts_subs.push((String::new(), String::new()));
+                            }
+                            ui.label(
+                                egui::RichText::new(
+                                    "Queue navigation: Ctrl+Alt+Left/Right = previous/next, \
+                                     Ctrl+Alt+Up = next unread, Ctrl+Alt+Down = stop, \
+                                     F11 = mute. Rebind under Keybinds.",
+                                )
+                                .weak(),
+                            );
+                        });
+
                         ui.collapsing("Theme", |ui| {
                             egui::ComboBox::from_id_salt("settings_theme")
                                 .selected_text(state.active_theme.clone())
@@ -649,10 +858,32 @@ impl VellumGuiApp {
         if calibrate_doll_clicked {
             self.open_doll_calibration();
         }
+        if tts_test_clicked {
+            let tts = &mut self.app_core.tts_manager;
+            tts.set_enabled(true);
+            let _ = tts.set_rate(state.tts_rate);
+            let _ = tts.set_volume(state.tts_volume);
+            tts.set_voice_by_name(if state.tts_voice == NONE_VOICE {
+                None
+            } else {
+                Some(state.tts_voice.clone())
+            });
+            if let Err(err) =
+                tts.speak_text_now("A giant rat scampers out of the shadows. Roundtime, 5 seconds.")
+            {
+                self.app_core
+                    .add_system_message(&format!("TTS test failed: {}", err));
+            }
+            // Voices may have just become enumerable (first engine init).
+            if state.tts_voices.is_empty() {
+                state.tts_voices = self.app_core.tts_manager.available_voices();
+            }
+        }
 
         if saved {
             state.apply_to_config(&mut self.app_core.config);
             self.app_core.refresh_map_source();
+            self.app_core.apply_tts_settings();
             match self.app_core.save_config() {
                 Ok(()) => self.app_core.add_system_message("Settings saved."),
                 Err(err) => self
