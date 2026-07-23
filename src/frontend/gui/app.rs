@@ -1027,12 +1027,76 @@ impl VellumGuiApp {
             });
         } else {
             let gap = ui.spacing().item_spacing.y;
-            let member_count = members.len() as f32;
-            let each_height = ((ui.available_height() - gap * (member_count - 1.0))
-                / member_count)
-                .max(24.0);
+            // Compact widgets (bars, timers, hands) only ever draw one row,
+            // so they get exactly that; the leftover splits among flexible
+            // members (doll, text, ...) instead of equal N-way shares that
+            // leave dead space under each bar.
+            let bar_height = ui.spacing().interact_size.y.max(16.0);
+            let natural_heights: Vec<Option<f32>> = members
+                .iter()
+                .map(|member| {
+                    match self
+                        .app_core
+                        .ui_state
+                        .windows
+                        .get(&member.window_name)
+                        .map(|window| &window.content)
+                    {
+                        Some(
+                            WindowContent::Progress(_)
+                            | WindowContent::Countdown(_)
+                            | WindowContent::Hand { .. },
+                        ) => Some(bar_height),
+                        Some(WindowContent::Betrayer)
+                            if self.app_core.game_state.betrayer.items.is_empty() =>
+                        {
+                            Some(bar_height)
+                        }
+                        Some(WindowContent::Encumbrance) => {
+                            let (show_bar, show_label) =
+                                Self::encumbrance_flags(&self.app_core, &member.window_name);
+                            let rows = (show_bar as u32 + show_label as u32).max(1) as f32;
+                            Some(bar_height * rows + gap * (rows - 1.0))
+                        }
+                        Some(WindowContent::GS4Experience) => {
+                            let (level, mind, exp_bar, total, ascension) =
+                                Self::gs4_experience_flags(&self.app_core, &member.window_name);
+                            let rows = ([level, mind, exp_bar, total, ascension]
+                                .into_iter()
+                                .filter(|on| *on)
+                                .count()
+                                .max(1)) as f32;
+                            Some(bar_height * rows + gap * (rows - 1.0))
+                        }
+                        Some(WindowContent::MiniVitals) => {
+                            use crate::frontend::gui::persistence::VitalsOrientation;
+                            let vitals = &self.ui_settings.vitals;
+                            let row = vitals.bar_height.clamp(8.0, 60.0);
+                            match vitals.orientation {
+                                VitalsOrientation::Horizontal => Some(row),
+                                VitalsOrientation::Vertical => {
+                                    let count = vitals.bars.len().max(1) as f32;
+                                    Some(row * count + gap * (count - 1.0))
+                                }
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+                .collect();
+            let fixed_total: f32 = natural_heights.iter().flatten().sum();
+            let flexible_count =
+                natural_heights.iter().filter(|h| h.is_none()).count() as f32;
+            let total_gap = gap * (members.len() as f32 - 1.0);
+            let flex_height = if flexible_count > 0.0 {
+                ((ui.available_height() - total_gap - fixed_total) / flexible_count)
+                    .max(24.0)
+            } else {
+                0.0
+            };
             let width = ui.available_width().max(1.0);
-            for member in &members {
+            for (member, natural) in members.iter().zip(&natural_heights) {
+                let each_height = natural.unwrap_or(flex_height);
                 let block = ui.push_id(&member.id.key, |ui| {
                     ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                         ui.set_min_size(Vec2::new(width, each_height));
