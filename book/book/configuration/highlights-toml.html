@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -217,7 +217,7 @@ category = "Players"
 <tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
 <tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
 <tr><td><code>redirect_to</code></td><td>string</td><td>Send matching lines to this window</td></tr>
-<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"only"</code> (move) or <code>"copy"</code> (show in both)</td></tr>
+<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"redirect_only"</code> (move, default) or <code>"redirect_copy"</code> (show in both)</td></tr>
 <tr><td><code>replace</code></td><td>string</td><td>Replace matched text (supports <code>$1</code>, <code>$2</code> capture groups)</td></tr>
 <tr><td><code>stream</code></td><td>string</td><td>Only apply to lines from this stream (e.g. <code>"thoughts"</code>)</td></tr>
 <tr><td><code>window</code></td><td>string</td><td>With <code>replace</code>: only replace in this window</td></tr>
@@ -250,7 +250,7 @@ sound_volume = 0.8
 <pre><code class="language-toml">[loot_lines]
 pattern = "^You gather"
 redirect_to = "loot"
-redirect_mode = "copy"    # also keep it in the original window
+redirect_mode = "redirect_copy"    # also keep it in the original window
 </code></pre>
 <h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
 <pre><code class="language-toml">[shorten_deaths]

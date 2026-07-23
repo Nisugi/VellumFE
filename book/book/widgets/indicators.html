@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,12 +178,12 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="status-indicators"><a class="header" href="#status-indicators">Status Indicators</a></h1>
-<p>Display character status conditions (kneeling, hidden, webbed, etc).</p>
+<p>Display character status conditions (poisoned, stunned, webbed, etc).</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "status"
+name = "poisoned"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "POISONED"
 row = 0
 col = 0
 rows = 1
@@ -196,66 +196,73 @@ cols = 3
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>id</code></td><td>string</td><td>required</td><td>Status to track</td></tr>
-<tr><td><code>active_color</code></td><td>string</td><td>auto</td><td>Color when active</td></tr>
-<tr><td><code>inactive_color</code></td><td>string</td><td><code>"gray"</code></td><td>Color when inactive</td></tr>
+<tr><td><code>indicator_id</code></td><td>string</td><td>required</td><td>Status to track (see below)</td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>none</td><td>Glyph/text shown when active</td></tr>
+<tr><td><code>active_color</code></td><td>string</td><td><code>#00ff00</code></td><td>Color when active</td></tr>
+<tr><td><code>inactive_color</code></td><td>string</td><td><code>#555555</code></td><td>Color when inactive</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="available-statuses"><a class="header" href="#available-statuses">Available Statuses</a></h2>
+<p>Built-in templates exist for <code>poisoned</code>, <code>bleeding</code>, <code>diseased</code>, <code>stunned</code>,
+and <code>webbed</code> — add them via <code>.addwindow</code> or the Add Window menu.</p>
+<p>The full set of recognized indicator ids:</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>ID</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>kneeling</code></td><td>Kneeling position</td></tr>
-<tr><td><code>sitting</code></td><td>Sitting position</td></tr>
-<tr><td><code>prone</code></td><td>Lying down</td></tr>
-<tr><td><code>stunned</code></td><td>Stunned</td></tr>
-<tr><td><code>webbed</code></td><td>Webbed</td></tr>
-<tr><td><code>hidden</code></td><td>Hidden</td></tr>
-<tr><td><code>invisible</code></td><td>Invisible</td></tr>
-<tr><td><code>dead</code></td><td>Dead</td></tr>
-<tr><td><code>bleeding</code></td><td>Bleeding</td></tr>
-<tr><td><code>poisoned</code></td><td>Poisoned</td></tr>
-<tr><td><code>diseased</code></td><td>Diseased</td></tr>
+<tr><td><code>STANDING</code></td><td>Standing position</td></tr>
+<tr><td><code>KNEELING</code></td><td>Kneeling position</td></tr>
+<tr><td><code>SITTING</code></td><td>Sitting position</td></tr>
+<tr><td><code>PRONE</code></td><td>Lying down</td></tr>
+<tr><td><code>DEAD</code></td><td>Dead</td></tr>
+<tr><td><code>STUNNED</code></td><td>Stunned</td></tr>
+<tr><td><code>BLEEDING</code></td><td>Bleeding</td></tr>
+<tr><td><code>HIDDEN</code></td><td>Hidden</td></tr>
+<tr><td><code>INVISIBLE</code></td><td>Invisible</td></tr>
+<tr><td><code>WEBBED</code></td><td>Webbed</td></tr>
+<tr><td><code>POISONED</code></td><td>Poisoned</td></tr>
+<tr><td><code>DISEASED</code></td><td>Diseased</td></tr>
+<tr><td><code>JOINED</code></td><td>Grouped/joined</td></tr>
 </tbody>
 </table>
 </div>
+<p>Ids without a built-in template can be added as custom indicator windows.</p>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <h3 id="single-indicator"><a class="header" href="#single-indicator">Single Indicator</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "hidden_indicator"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "HIDDEN"
 rows = 1
 cols = 3
 active_color = "#00FF00"
 </code></pre>
 <h3 id="status-row"><a class="header" href="#status-row">Status Row</a></h3>
 <pre><code class="language-toml">[[windows]]
-name = "kneel"
+name = "stun"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "STUNNED"
 row = 0
 col = 0
 rows = 1
 cols = 3
 
 [[windows]]
-name = "hide"
+name = "web"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "WEBBED"
 row = 0
 col = 3
 rows = 1
 cols = 3
 
 [[windows]]
-name = "stun"
+name = "bleed"
 widget_type = "indicator"
-id = "stunned"
+indicator_id = "BLEEDING"
 row = 0
 col = 6
 rows = 1
@@ -263,9 +270,10 @@ cols = 3
 </code></pre>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
 <ul>
-<li>Shows abbreviated status code (3 chars)</li>
-<li>Active: colored, Inactive: dimmed</li>
-<li>Example: <code>KNE</code> (kneeling), <code>HID</code> (hidden)</li>
+<li><strong>Active</strong>: shows the widget’s icon/title (the built-in templates use
+glyph icons), centered, in <code>active_color</code></li>
+<li><strong>Inactive</strong>: renders nothing — the indicator is invisible until the
+status is active</li>
 </ul>
 
                     </main>

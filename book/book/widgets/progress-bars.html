@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,7 +183,7 @@
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
@@ -196,46 +196,50 @@ cols = 20
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>stat</code></td><td>string</td><td>required</td><td>Stat to display</td></tr>
-<tr><td><code>bar_color</code></td><td>string</td><td>auto</td><td>Bar fill color</td></tr>
-<tr><td><code>show_percentage</code></td><td>bool</td><td>true</td><td>Show % value</td></tr>
-<tr><td><code>show_label</code></td><td>bool</td><td>true</td><td>Show stat name</td></tr>
+<tr><td><code>id</code></td><td>string</td><td>required</td><td>Progress feed to display (the game’s <code>progressBar</code> id, case-sensitive)</td></tr>
+<tr><td><code>label</code></td><td>string</td><td>auto</td><td>Label text override</td></tr>
+<tr><td><code>color</code></td><td>string</td><td>auto</td><td>Bar fill color</td></tr>
+<tr><td><code>numbers_only</code></td><td>bool</td><td>false</td><td>Show only <code>current/max</code> numbers (no label)</td></tr>
+<tr><td><code>current_only</code></td><td>bool</td><td>false</td><td>Show only the current value (no label, no max)</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="available-stats"><a class="header" href="#available-stats">Available Stats</a></h2>
+<h2 id="common-feed-ids"><a class="header" href="#common-feed-ids">Common Feed Ids</a></h2>
+<p>Built-in templates exist for these ids (via <code>.addwindow</code> or the Add Window
+menu):</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Stat</th><th>Description</th></tr>
+<tr><th>Id</th><th>Description</th></tr>
 </thead>
 <tbody>
 <tr><td><code>health</code></td><td>Hit points</td></tr>
 <tr><td><code>mana</code></td><td>Mana points</td></tr>
 <tr><td><code>stamina</code></td><td>Stamina points</td></tr>
 <tr><td><code>spirit</code></td><td>Spirit points</td></tr>
-<tr><td><code>encumbrance</code></td><td>Carry weight</td></tr>
-<tr><td><code>mind</code></td><td>Mental state (DR)</td></tr>
 <tr><td><code>concentration</code></td><td>Concentration (DR)</td></tr>
+<tr><td><code>pbarStance</code></td><td>Stance (the <code>stance</code> template)</td></tr>
 </tbody>
 </table>
 </div>
+<p><code>id</code> is not a closed list — it matches whatever <code>progressBar</code> ids the game
+sends. (Encumbrance and mind state are separate widgets, not progress ids.)</p>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <h3 id="minimal-health-bar"><a class="header" href="#minimal-health-bar">Minimal Health Bar</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 rows = 1
 cols = 15
-show_label = false
+numbers_only = true
 </code></pre>
 <h3 id="colored-mana-bar"><a class="header" href="#colored-mana-bar">Colored Mana Bar</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
-bar_color = "#4169E1"
+id = "mana"
+color = "#4169E1"
 rows = 1
 cols = 20
 </code></pre>
@@ -243,38 +247,38 @@ cols = 20
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
 cols = 25
-bar_color = "#FF4040"
+color = "#FF4040"
 
 [[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
+id = "mana"
 row = 1
 col = 0
 rows = 1
 cols = 25
-bar_color = "#4169E1"
+color = "#4169E1"
 
 [[windows]]
 name = "stamina"
 widget_type = "progress"
-stat = "stamina"
+id = "stamina"
 row = 2
 col = 0
 rows = 1
 cols = 25
-bar_color = "#32CD32"
+color = "#32CD32"
 </code></pre>
 <h2 id="color-behavior"><a class="header" href="#color-behavior">Color Behavior</a></h2>
-<p>Without <code>bar_color</code>, bars change color based on value:</p>
-<ul>
-<li>Green (high) → Yellow (medium) → Red (low)</li>
-</ul>
+<p>Each bar renders in a single solid color: the configured <code>color</code> if set,
+otherwise a per-id default (dark red for health, dark blue for mana, orange
+for stamina, gray for spirit, green as the generic fallback). Bars do not
+change color based on the current value.</p>
 
                     </main>
 

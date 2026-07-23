@@ -651,3 +651,39 @@ async fn resume_with_evicted_gap_falls_back_to_gap_snapshot() {
     let seqs: Vec<u64> = text.iter().map(|l| l["seq"].as_u64().unwrap()).collect();
     assert_eq!(seqs, vec![4, 5], "gap snapshot carries the retained tail");
 }
+
+#[tokio::test]
+async fn doll_json_requires_pairing_token() {
+    let (_sink, _event_rx, addr) = start_server(10).await;
+    let response = http_get(addr, "/doll.json").await;
+    assert!(response.starts_with("HTTP/1.1 403"), "got: {response}");
+    let response = http_get(addr, "/doll.json?token=wrong").await;
+    assert!(response.starts_with("HTTP/1.1 403"), "got: {response}");
+}
+
+#[tokio::test]
+async fn doll_json_returns_payload_shape() {
+    // Whether a skin with doll art is active depends on the machine's
+    // config, so assert the contract, not the content: valid JSON with a
+    // boolean `base` and object `anchors`/`dots`/`overlays` fields.
+    let (_sink, _event_rx, addr) = start_server(10).await;
+    let response = http_get(addr, &format!("/doll.json?token={TEST_TOKEN}")).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+    let body = response.split("\r\n\r\n").nth(1).expect("body");
+    let payload: serde_json::Value = serde_json::from_str(body).expect("valid JSON");
+    assert!(payload["base"].is_boolean());
+    assert!(payload["anchors"].is_object());
+    assert!(payload["dots"].is_object());
+    assert!(payload["overlays"].is_object());
+}
+
+#[tokio::test]
+async fn doll_image_rejects_bad_requests() {
+    let (_sink, _event_rx, addr) = start_server(10).await;
+    // No token: forbidden even for nonsense.
+    let response = http_get(addr, "/doll/image?kind=base").await;
+    assert!(response.starts_with("HTTP/1.1 403"), "got: {response}");
+    // Unknown kind is never served, active skin or not.
+    let response = http_get(addr, &format!("/doll/image?kind=bogus&token={TEST_TOKEN}")).await;
+    assert!(response.starts_with("HTTP/1.1 404"), "got: {response}");
+}

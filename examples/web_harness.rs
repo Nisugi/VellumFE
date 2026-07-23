@@ -132,6 +132,19 @@ async fn main() {
             labels: vec![RemoteMapLabel { x: 2, y: 1, t: "The Grid".into() }],
         });
         let mut snap = RemoteStateSnapshot::default();
+        // Scripted wounds/scars so the status drawer's injury doll has
+        // something to draw: wounds 1-3, a scar, and the two "no spot on
+        // the silhouette" parts (back, nsys).
+        for (part, level) in [
+            ("head", 2u8),
+            ("chest", 3),
+            ("leftArm", 1),
+            ("rightHand", 5),
+            ("back", 6),
+            ("nsys", 4),
+        ] {
+            snap.injuries.insert(part.to_string(), level);
+        }
         snap.map_scene = RemoteMapSceneRef(Some(scene));
         snap.map_state = RemoteMapState {
             available: true,

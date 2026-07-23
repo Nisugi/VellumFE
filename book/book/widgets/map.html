@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,9 +197,41 @@ zoom = 16          # pixels per grid cell (optional)
 <p>Or in-app: <code>.addwindow map</code>.</p>
 <p>The mini map follows your character: it recenters as you move and swaps
 sheets automatically when you go inside a building (interiors render as
-their own floor plan). Click a room to walk there via <code>;go2</code> — this needs
-a Lich connection with the go2 script available.</p>
+their own floor plan). Click a room to walk there — natively via the
+built-in <a href="travel.html">travel engine</a>, no Lich needed (switchable to
+<code>;go2</code> pass-through in <strong>Settings → Travel</strong>).</p>
 <p>Right-click the window for a zoom control and <strong>Open Map Explorer</strong>.</p>
+<h2 id="ghost-rooms-unmapped-interiors"><a class="header" href="#ghost-rooms-unmapped-interiors">Ghost Rooms (Unmapped Interiors)</a></h2>
+<p>Map maintainers deliberately leave most shop interiors out of the map
+database — they change too often to keep current. In everyday play the
+map simply holds your last mapped room while you’re inside one: what you
+see on screen is always mapped truth.</p>
+<p>Turn on <strong>Cartography mode</strong> (Settings → Map) and walking into an
+unmapped room sketches a <strong>ghost room</strong> instead: a dashed, dimmed square
+hanging off the street you entered from, labeled with the command that
+took you inside (“go shop”). Moving between unmapped rooms grows the
+sketch, and hovering a ghost shows the room’s title. Ghosts render on
+the mini map, the Map Explorer, and the phone map alike.</p>
+<p>Ghosts are drawn dashed on purpose: solid squares are mapped truth,
+dashed squares are what your client saw this session. The sketch lasts
+until you close VellumFE — it is never saved, so it can never go stale.</p>
+<h2 id="player-shops"><a class="header" href="#player-shops">Player Shops</a></h2>
+<p>Player-shop warrens (hundreds of near-identical rooms) get their own map
+per town — the location picker lists them as <strong>“Mist Harbor (Player
+Shops)”</strong> and so on, right beside their town, so the town map stays
+readable. Walking into the shops switches the map over automatically,
+exactly like entering any other location; <code>.go2</code> routes through them as
+always.</p>
+<h2 id="your-map-learns-as-you-play"><a class="header" href="#your-map-learns-as-you-play">Your Map Learns As You Play</a></h2>
+<p>Type <code>sense</code> (ranger) or <code>forage sense</code> anywhere and VellumFE captures
+the response for the room you’re standing in: climate and terrain,
+wildlife signs, the creature circling overhead, visible structures, and
+the full forageables list. Select that room in the Map Explorer and it
+all shows as ordinary room info.</p>
+<p>Like Lich’s in-memory map edits, these observations are <strong>session-only</strong>:
+they’re never written to disk and vanish when you close VellumFE. The
+map database itself is never modified — permanence comes only through
+submitting curated data (the submission workflow is under construction).</p>
 <h2 id="map-explorer"><a class="header" href="#map-explorer">Map Explorer</a></h2>
 <p>A separate native OS window (like detached tabs) for browsing the whole
 map, not just where you’re standing:</p>
@@ -207,12 +239,16 @@ map, not just where you’re standing:</p>
 <li><strong>Location picker</strong> with filtering — jump to any mapped location</li>
 <li><strong>Follow mode</strong> — track your character as you move</li>
 <li><strong>Outdoor / interiors sheets</strong>, drag-pan, scroll-zoom</li>
-<li><strong>Room inspection</strong> — click a room to see its details</li>
-<li><strong>Walk-to</strong> — double-click a room to travel there (<code>;go2</code>)</li>
+<li><strong>Room inspection</strong> — click a room for its details in collapsible
+sections: Description, Environment (climate/terrain, plus wildlife and
+structures you’ve sensed this session), Forageables (from <code>forage  sense</code>), Tags, and Exits</li>
+<li><strong>Walk-to</strong> — double-click a room to travel there (<a href="travel.html">native travel</a>)</li>
 <li><strong>Override editor</strong> — an edit mode where you drag room groups (Alt-drag
 a single room) to tidy a layout; edits are saved as per-room override
 diffs that survive mapdb updates, and edges can be restyled (e.g.
-dashed) without recomputing the layout</li>
+dashed) without recomputing the layout. Your edits layer on top of any
+community-curated overrides that came with the downloaded map data —
+<strong>Reset overrides</strong> clears only your own layer.</li>
 </ul>
 <h2 id="where-the-map-data-comes-from"><a class="header" href="#where-the-map-data-comes-from">Where the Map Data Comes From</a></h2>
 <p>The map needs a Lich-format map database. Sources, in priority order:</p>
@@ -222,7 +258,9 @@ dashed) without recomputing the layout</li>
 pulls the latest <code>mapdb.json</code> release asset from a GitHub repository
 (<code>mapdb_repo</code>, default <code>Nisugi/mapdb</code>). This is how mobile gets a map
 without Lich. The newest version plus one rollback are kept under
-<code>~/.vellum-fe/mapdb/</code>.</li>
+<code>~/.vellum-fe/mapdb/</code>. If the release also carries an <code>overrides.json</code>
+asset (community layout curation), it’s downloaded alongside and
+applied automatically underneath your own edits.</li>
 <li><strong>Lich install</strong> — <code>lich_dir</code> names the folder containing <code>data/</code>; the
 newest <code>data/&lt;GAME&gt;/map-&lt;timestamp&gt;.json</code> for the connected game is
 used (per-game: GSIV, GST, GSPlat, DR, …).</li>
@@ -230,20 +268,43 @@ used (per-game: GSIV, GST, GSPlat, DR, …).</li>
 <p>Nothing downloads automatically — the Download button is an explicit
 action. Downloaded releases carry GemStone data, so DragonRealms sessions
 use the Lich folder.</p>
+<p>From any frontend — including the phone apps, which have no Settings &gt;
+Map panel — <code>.mapdb download</code> fetches the latest release, <code>.mapdb</code> shows
+status, <code>.mapdb remove</code> deletes downloads, and <code>.mapdb repo &lt;owner/repo&gt;</code>
+changes the source.</p>
+<h2 id="on-the-phone"><a class="header" href="#on-the-phone">On the Phone</a></h2>
+<p>The mobile web client has its own map: once map data is downloaded
+(<code>.mapdb download</code>) and your room resolves, a map button appears in the
+top bar. It opens a full-screen view of the same generated layout the
+desktop mini map shows — auto-following your character, switching to the
+building’s floor plan indoors, ghost rooms included when Cartography
+mode is on. Drag to pan (which
+pauses following until you tap <strong>Follow</strong>), pinch to zoom, and tap a
+room to walk there with <a href="travel.html">native travel</a>.</p>
+<p>Tap the <strong>location name</strong> in the title bar to browse any other mapped
+location — filter the list, pick one, and tap a room there to travel
+across the world; <strong>Return</strong> brings the view back to where you’re
+standing. While a trip is running the map shows its progress
+(“→ 8966 · 12/47 rooms · ETA 1:04”) and a <strong>Stop</strong> button.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <pre><code class="language-toml">[map]
 lich_dir = "C:/Lich5"            # Lich install (folder containing data/)
 # mapdb_path = "C:/maps/map.json"  # explicit file; overrides everything
 mapdb_repo = "Nisugi/mapdb"      # GitHub repo for the Download button
+mapping_mode = false             # Cartography mode: sketch unmapped rooms
 </code></pre>
-<p>All three are editable in <strong>Settings → Map</strong> in the GUI, which also shows
-the downloaded version and offers <strong>Download map data</strong> / delete-downloaded
-actions.</p>
+<p>All of these are editable in <strong>Settings → Map</strong> in the GUI, which also
+shows the downloaded version and offers <strong>Download map data</strong> /
+delete-downloaded actions.</p>
 <h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>
 <li>Layouts are generated in the background the first time you enter a
 location and cached on disk — instant thereafter.</li>
 <li>The map draws in your theme’s colors (light/dark aware).</li>
+<li>On connections that never report a room id (some direct-connect
+setups), the map falls back to matching the room’s title, description,
+and exits against the database — and only trusts an unambiguous match,
+holding in place otherwise.</li>
 </ul>
 
                     </main>
@@ -254,7 +315,7 @@ location and cached on disk — instant thereafter.</li>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../widgets/injury-doll.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../widgets/travel.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -268,7 +329,7 @@ location and cached on disk — instant thereafter.</li>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../widgets/injury-doll.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../widgets/travel.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

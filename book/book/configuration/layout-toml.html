@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -221,11 +221,12 @@ cols = 120
 <tbody>
 <tr><td><code>visible</code></td><td>bool</td><td><code>true</code></td><td>Show window</td></tr>
 <tr><td><code>show_border</code></td><td>bool</td><td><code>true</code></td><td>Draw border</td></tr>
-<tr><td><code>border_style</code></td><td>string</td><td><code>"single"</code></td><td><code>single</code>, <code>double</code>, <code>rounded</code>, <code>thick</code></td></tr>
+<tr><td><code>border_style</code></td><td>string</td><td><code>"single"</code></td><td><code>single</code>, <code>double</code>, <code>rounded</code>, <code>thick</code>, <code>quadrant_inside</code>, <code>quadrant_outside</code></td></tr>
 <tr><td><code>border_color</code></td><td>string</td><td><code>"#808080"</code></td><td>Border color</td></tr>
-<tr><td><code>border_sides</code></td><td>string</td><td><code>"all"</code></td><td>Which sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code>, or combinations</td></tr>
+<tr><td><code>border_sides</code></td><td>array</td><td>all sides</td><td>Which sides to draw, e.g. <code>["top", "bottom"]</code>; <code>[]</code> for none</td></tr>
 <tr><td><code>title</code></td><td>string</td><td>-</td><td>Custom title</td></tr>
 <tr><td><code>show_title</code></td><td>bool</td><td><code>true</code></td><td>Show title in border</td></tr>
+<tr><td><code>title_position</code></td><td>string</td><td><code>"top-left"</code></td><td>Where the title sits on the border</td></tr>
 <tr><td><code>buffer_size</code></td><td>integer</td><td>1000</td><td>Lines to keep (text windows)</td></tr>
 <tr><td><code>background_color</code></td><td>string</td><td>-</td><td>Background color</td></tr>
 <tr><td><code>text_color</code></td><td>string</td><td>-</td><td>Default text color</td></tr>
@@ -270,9 +271,9 @@ streams = ["thoughts"]
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"                 # health, mana, stamina, spirit, encumbrance
-bar_color = "#00FF00"
-show_percentage = true
+id = "health"                   # health, mana, stamina, spirit, concentration, pbarStance
+color = "#00FF00"
+numbers_only = false            # true: show only current/max numbers
 </code></pre>
 <h3 id="countdowns"><a class="header" href="#countdowns">Countdowns</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -327,7 +328,7 @@ streams = ["thoughts"]
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 30
 col = 100
 rows = 1

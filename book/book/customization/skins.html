@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -257,19 +257,51 @@ ne = "compass/ne.png"
 # ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 </code></pre>
 <h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
-<p>A base body image plus full-canvas overlays per body part and severity.
-Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>, <code>back</code>,
-<code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>, <code>rightLeg</code>,
-<code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>), each with <code>injury1</code>–<code>injury3</code> and
-<code>scar1</code>–<code>scar3</code> entries:</p>
+<p>A base body image; wounds and scars render as generated dots on top of it —
+a solid circle for wounds, a ring for scars, with the severity rank (1–3)
+inside. Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>,
+<code>back</code>, <code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>,
+<code>rightLeg</code>, <code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>).</p>
 <pre><code class="language-toml">[injury_doll]
 base = "doll/body.png"
+</code></pre>
+<h3 id="calibrating-dot-positions"><a class="header" href="#calibrating-dot-positions">Calibrating dot positions</a></h3>
+<p>Where each part’s dot lands is set by clicking, not by hand-editing:
+<strong>Settings &gt; Appearance &gt; Skin &gt; Calibrate injury doll</strong>. The calibrator
+shows your doll art with every part’s dot live; click to place the
+highlighted part, adjust dot size, opacity, and the wound/scar colors with
+the controls below, then <strong>Save to skin</strong>. It writes the
+<code>[injury_doll.anchors]</code> and <code>[injury_doll.dots]</code> tables into the skin’s
+<code>skin.toml</code> (everything else in the file, comments included, is left
+alone), so calibration travels with the skin when you share the folder.</p>
+<p>Coordinates are stored as fractions of the base image, so any image size
+works and a uniform resize never needs recalibrating. Parts you don’t
+calibrate use sensible built-in defaults. <code>back</code> and <code>nsys</code> (and usually
+the eyes) have no natural spot on a front-view silhouette — the convention
+is eyes at the top corners, back bottom-left, nerves bottom-right, but any
+click position works; the base art can mark those spots (letters, icons)
+or leave them as empty margin.</p>
+<pre><code class="language-toml"># Written by the calibrator — shown here for reference.
+[injury_doll.anchors]
+head = [0.5, 0.09]
+chest = [0.5, 0.3]
 
-[injury_doll.head]
-injury1 = "doll/head_i1.png"
-injury2 = "doll/head_i2.png"
-injury3 = "doll/head_i3.png"
-scar1 = "doll/head_s1.png"
+[injury_doll.dots]
+wound_color = "#e02020"
+scar_color = "#b8b8b8"
+opacity = 0.9
+diameter = 0.07     # fraction of the drawn doll height
+</code></pre>
+<h3 id="hand-drawn-overlays-optional"><a class="header" href="#hand-drawn-overlays-optional">Hand-drawn overlays (optional)</a></h3>
+<p>A part can instead ship full-canvas overlays per severity, authored on the
+same canvas as the base so they stack in place — useful for effects a dot
+can’t express, like nervous-system damage drawn across the whole body.
+Overlays take precedence over the generated dot for that part and
+severity; every other part keeps its dot.</p>
+<pre><code class="language-toml">[injury_doll.nsys]
+injury1 = "doll/nerves_i1.png"
+injury2 = "doll/nerves_i2.png"
+injury3 = "doll/nerves_i3.png"
 </code></pre>
 <h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>

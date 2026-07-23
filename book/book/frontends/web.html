@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -239,12 +239,21 @@ sheet.</li>
 sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
 tap to move). It starts bottom-right; hold it about half a second to
 lift and drag it anywhere — the spot is remembered per device.</li>
+<li><strong>Map</strong> — a map button appears in the top bar once map data is
+available (<code>.mapdb download</code>); it opens a full-screen canvas map that
+follows your character. Tap a room to walk there with native <code>.go2</code>,
+drag to pan, pinch to zoom. See the <a href="../widgets/map.html">Map</a> and
+<a href="../widgets/travel.html">Travel</a> chapters.</li>
 <li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
 the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
 panel</strong> with the injury doll, injuries list, hands, character sheet
 (experience, encumbrance, bounty, society), active effects with live
 countdowns, and <strong>tap-to-target</strong> — tap a creature to get its
-attack/look/target menu.</li>
+attack/look/target menu. When the server’s active skin ships injury
+doll art, the drawer renders that art with wound/scar dots at the same
+calibrated anchor points as the desktop GUI (see
+<a href="../customization/skins.html">Skins</a>); without one it draws the built-in
+vector doll.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
 <li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable
 floating buttons from <a href="../configuration/macros-toml.html">macros.toml</a>;

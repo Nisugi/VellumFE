@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,9 +186,9 @@
 <tr><th>Platform</th><th>File</th></tr>
 </thead>
 <tbody>
-<tr><td>Windows</td><td><code>vellum-fe-windows.zip</code></td></tr>
-<tr><td>macOS</td><td><code>vellum-fe-macos.tar.gz</code></td></tr>
-<tr><td>Linux</td><td><code>vellum-fe-linux.tar.gz</code></td></tr>
+<tr><td>Windows</td><td><code>vellum-fe-windows-x86_64.zip</code></td></tr>
+<tr><td>macOS</td><td><code>vellum-fe-macos-universal.zip</code> (or <code>-arm64</code> / <code>-x64</code> for a specific chip)</td></tr>
+<tr><td>Linux</td><td><code>vellum-fe-linux-x86_64.tar.gz</code></td></tr>
 <tr><td>Android</td><td><code>vellum-fe-android-arm64.apk</code></td></tr>
 <tr><td>iOS</td><td>TestFlight (beta) — not a release download; see <a href="../frontends/ios.html">iOS App</a></td></tr>
 </tbody>
@@ -216,7 +216,7 @@ signing key). For automatic update checks, add this repository to
 <p>See <a href="../frontends/android.html">Android App</a> for logging in, battery
 behavior, and everything else about playing on the phone.</p>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h2>
-<p>Requires <a href="https://rustup.rs/">Rust</a> 1.70+.</p>
+<p>Requires a recent stable <a href="https://rustup.rs/">Rust</a> toolchain (CI builds with the latest stable).</p>
 <pre><code class="language-bash">git clone https://github.com/Nisugi/VellumFE.git
 cd VellumFE
 cargo build --release
@@ -230,7 +230,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.6</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.9</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -211,9 +211,12 @@ description = "My tweaked dark theme"
 window_background = "#1a1b26"
 text_primary = "#c0caf5"
 link_color = "Link"        # palette name from colors.toml
-# ... any fields you omit fall back to defaults
+# ... every color field must be present — a file with missing
+# fields is skipped when themes are loaded
 </code></pre>
-<p>The easiest way to author one is <code>.edittheme</code> on a built-in you like, then
+<p>Hand-written theme files must define <strong>all</strong> color fields; there is no
+per-field fallback. The easiest (and recommended) way to author one is
+<code>.edittheme</code> on a built-in you like — it writes a complete file — then
 save under a new name.</p>
 <h2 id="themes-vs-colorstoml"><a class="header" href="#themes-vs-colorstoml">Themes vs. colors.toml</a></h2>
 <p>Two separate systems:</p>

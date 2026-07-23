@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,12 +178,16 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="hands"><a class="header" href="#hands">Hands</a></h1>
-<p>Display items held in left and right hands.</p>
+<p>Display items held in the left and right hands (and the prepared spell).</p>
+<p>Which hand a widget shows is determined by its <strong>window name</strong>: <code>left</code> (or
+<code>left_hand</code>), <code>right</code> (or <code>right_hand</code>), and <code>spell</code> (or <code>spell_hand</code>). The
+easiest way to add them is the built-in <code>left</code>, <code>right</code>, and <code>spell</code>
+templates via <code>.addwindow</code> or the Add Window menu.</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "right_hand"
+name = "right"
 widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
@@ -196,57 +200,38 @@ cols = 25
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>hand</code></td><td>string</td><td>required</td><td><code>"left"</code> or <code>"right"</code></td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>from template</td><td>Prefix icon (e.g. <code>"L:"</code>, <code>"R:"</code>, <code>"S:"</code>)</td></tr>
+<tr><td><code>icon_color</code></td><td>string</td><td>window color</td><td>Icon color</td></tr>
+<tr><td><code>text_color</code></td><td>string</td><td>window color</td><td>Item text color override</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
-<h3 id="right-hand"><a class="header" href="#right-hand">Right Hand</a></h3>
+<h2 id="example-side-by-side"><a class="header" href="#example-side-by-side">Example: Side by Side</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "right"
 widget_type = "hand"
-hand = "right"
-rows = 1
-cols = 30
-title = "R:"
-</code></pre>
-<h3 id="left-hand"><a class="header" href="#left-hand">Left Hand</a></h3>
-<pre><code class="language-toml">[[windows]]
-name = "left"
-widget_type = "hand"
-hand = "left"
-rows = 1
-cols = 30
-title = "L:"
-</code></pre>
-<h3 id="side-by-side"><a class="header" href="#side-by-side">Side by Side</a></h3>
-<pre><code class="language-toml">[[windows]]
-name = "right_hand"
-widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
 cols = 25
 show_border = false
-title = "R:"
 
 [[windows]]
-name = "left_hand"
+name = "left"
 widget_type = "hand"
-hand = "left"
+icon = "L:"
 row = 0
 col = 25
 rows = 1
 cols = 25
 show_border = false
-title = "L:"
 </code></pre>
 <h2 id="interaction"><a class="header" href="#interaction">Interaction</a></h2>
 <ul>
-<li>Click item name to interact</li>
-<li>Right-click for context menu</li>
-<li>Shows “Empty” when nothing held</li>
+<li>Click the item name to interact</li>
+<li>Right-click for a context menu</li>
+<li>When nothing is held, only the icon (e.g. <code>R:</code>) is shown</li>
 </ul>
 
                     </main>

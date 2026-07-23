@@ -1733,6 +1733,9 @@ body.hide-chips #chips { display: none !important; }
 
 #status-doll { display: flex; justify-content: center; padding: 4px 0; }
 #status-doll svg { width: 150px; height: 142px; }
+/* Skinned doll: the viewBox carries the image's aspect ratio; cap the
+   height so tall doll art doesn't swallow the drawer. */
+#status-doll.skinned svg { width: auto; height: auto; max-width: 170px; max-height: 220px; }
 
 #status-chiprow {
   display: flex;

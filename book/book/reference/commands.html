@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,6 +196,11 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.menu</code></td><td></td><td>Open the main menu</td></tr>
 <tr><td><code>.settings</code></td><td></td><td>Open the settings editor</td></tr>
 <tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
+<tr><td><code>.room</code></td><td></td><td>Show how the current room resolved against the map database (stream ids, mapdb room/location, routable exits, tags) — for debugging the map and pathing</td></tr>
+<tr><td><code>.mapdb [download|remove|repo &lt;r&gt;]</code></td><td></td><td>Manage downloaded map data from any frontend (no args = status). On phones this is <em>the</em> way to fetch the map — there’s no Settings &gt; Map panel there</td></tr>
+<tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="../widgets/travel.html">Travel chapter</a></td></tr>
+<tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
+<tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
 </tbody>
 </table>
 </div>

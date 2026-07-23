@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,7 +198,9 @@ cols = 15
 <tbody>
 <tr><td><code>id</code></td><td>string</td><td>required</td><td>Timer type</td></tr>
 <tr><td><code>label</code></td><td>string</td><td>auto</td><td>Custom label</td></tr>
-<tr><td><code>bar_color</code></td><td>string</td><td>auto</td><td>Bar color</td></tr>
+<tr><td><code>color</code></td><td>string</td><td>auto</td><td>Bar color</td></tr>
+<tr><td><code>background_color</code></td><td>string</td><td>auto</td><td>Background color</td></tr>
+<tr><td><code>icon</code></td><td>char</td><td>auto</td><td>Icon shown next to the timer</td></tr>
 </tbody>
 </table>
 </div>
@@ -223,7 +225,7 @@ widget_type = "countdown"
 id = "roundtime"
 rows = 1
 cols = 20
-bar_color = "#FFD700"
+color = "#FFD700"
 </code></pre>
 <h3 id="cast-time"><a class="header" href="#cast-time">Cast Time</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -232,7 +234,7 @@ widget_type = "countdown"
 id = "casttime"
 rows = 1
 cols = 15
-bar_color = "#9370DB"
+color = "#9370DB"
 </code></pre>
 <h3 id="stun-timer"><a class="header" href="#stun-timer">Stun Timer</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -241,7 +243,7 @@ widget_type = "countdown"
 id = "stuntime"
 rows = 1
 cols = 15
-bar_color = "#FF4500"
+color = "#FF4500"
 </code></pre>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
 <ul>

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -185,8 +185,8 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 </code></pre>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
@@ -195,24 +195,27 @@ cols = 7
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>style</code></td><td>string</td><td><code>"arrows"</code></td><td>Display style</td></tr>
+<tr><td><code>active_color</code></td><td>string</td><td>green</td><td>Color for available exits</td></tr>
+<tr><td><code>inactive_color</code></td><td>string</td><td>dark gray</td><td>Color for unavailable directions</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="size-requirements"><a class="header" href="#size-requirements">Size Requirements</a></h2>
 <ul>
-<li>Minimum: 3 rows × 7 columns</li>
-<li>Recommended: 3×7 or 5×9</li>
+<li>The direction grid itself is 3 rows × 7 columns</li>
+<li>The built-in template defaults to 5 rows × 9 columns (room for a border)
+with a 3×7 minimum</li>
 </ul>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
-<pre><code>  N
-W ◆ E
-  S
+<pre><code>↑ ↖ ▲ ↗
+  ◀ o ▶
+↓ ↙ ▼ ↘
 </code></pre>
 <ul>
-<li>Available exits shown with arrows</li>
-<li>Unavailable directions dimmed</li>
-<li>Supports all 10 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out</li>
+<li>Available exits shown as colored arrows; unavailable directions dimmed</li>
+<li>The center <code>o</code> is the <strong>out</strong> direction</li>
+<li>Up (<code>↑</code>) and down (<code>↓</code>) render in the left column</li>
+<li>Supports all 11 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out</li>
 </ul>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -220,8 +223,8 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 show_border = true
 border_style = "rounded"
 </code></pre>

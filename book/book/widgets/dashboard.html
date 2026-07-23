@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="dashboard"><a class="header" href="#dashboard">Dashboard</a></h1>
-<p>Configurable grid of status indicators in a single widget.</p>
+<p>Configurable group of status indicators in a single widget.</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "dashboard"
@@ -187,6 +187,17 @@ row = 0
 col = 0
 rows = 2
 cols = 12
+dashboard_layout = "horizontal"
+
+[[windows.dashboard_indicators]]
+id = "POISONED"
+icon = "☠"
+colors = ["#555555", "#00ff00"]   # [inactive, active]
+
+[[windows.dashboard_indicators]]
+id = "BLEEDING"
+icon = "♥"
+colors = ["#555555", "#ff0000"]
 </code></pre>
 <h2 id="properties"><a class="header" href="#properties">Properties</a></h2>
 <div class="table-wrapper">
@@ -195,35 +206,39 @@ cols = 12
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>indicators</code></td><td>array</td><td>all</td><td>Which indicators to show</td></tr>
-<tr><td><code>columns</code></td><td>integer</td><td>auto</td><td>Grid columns</td></tr>
+<tr><td><code>dashboard_layout</code></td><td>string</td><td><code>"horizontal"</code></td><td><code>"horizontal"</code>, <code>"vertical"</code>, or <code>"grid:RxC"</code> (e.g. <code>"grid:2x3"</code>)</td></tr>
+<tr><td><code>dashboard_spacing</code></td><td>integer</td><td>—</td><td>Spacing between indicators (characters)</td></tr>
+<tr><td><code>dashboard_hide_inactive</code></td><td>bool</td><td>—</td><td>Hide indicators that are inactive</td></tr>
+<tr><td><code>dashboard_indicators</code></td><td>array of tables</td><td>empty</td><td>The indicators to show (see below)</td></tr>
 </tbody>
 </table>
 </div>
+<p>Each <code>[[windows.dashboard_indicators]]</code> entry has:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>id</code></td><td>Indicator id (e.g. <code>POISONED</code>, <code>BLEEDING</code>, <code>STUNNED</code>, <code>WEBBED</code>, <code>HIDDEN</code> — see <a href="./indicators.html">Status Indicators</a>)</td></tr>
+<tr><td><code>icon</code></td><td>Glyph to display</td></tr>
+<tr><td><code>colors</code></td><td>Colors by state: <code>[inactive, active]</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>There is no default indicator set — an empty dashboard shows nothing until
+you add indicator entries (the shipped <code>sidebar</code> layout includes a
+configured example, and the GUI window editor can edit them).</p>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
-<p>Shows multiple status indicators in a compact grid:</p>
-<pre><code>┌──────────┐
-│KNE SIT HID│
-│STU WEB BLE│
-└──────────┘
+<p>Shows the configured indicator icons in the chosen layout:</p>
+<pre><code>┌────────────┐
+│ ☠  ♥  ⚠   │
+└────────────┘
 </code></pre>
 <ul>
-<li>Active indicators are highlighted</li>
-<li>Inactive indicators are dimmed</li>
-</ul>
-<h2 id="custom-indicators"><a class="header" href="#custom-indicators">Custom Indicators</a></h2>
-<pre><code class="language-toml">[[windows]]
-name = "dashboard"
-widget_type = "dashboard"
-indicators = ["kneeling", "hidden", "stunned", "webbed"]
-columns = 2
-</code></pre>
-<h2 id="available-indicators"><a class="header" href="#available-indicators">Available Indicators</a></h2>
-<ul>
-<li><code>kneeling</code>, <code>sitting</code>, <code>prone</code></li>
-<li><code>stunned</code>, <code>webbed</code>, <code>hidden</code></li>
-<li><code>invisible</code>, <code>dead</code></li>
-<li><code>bleeding</code>, <code>poisoned</code>, <code>diseased</code></li>
+<li>Active indicators render in their active color</li>
+<li>Inactive indicators render in their inactive color (or are hidden
+entirely with <code>dashboard_hide_inactive = true</code>)</li>
 </ul>
 <h2 id="example-combat-dashboard"><a class="header" href="#example-combat-dashboard">Example: Combat Dashboard</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -231,12 +246,27 @@ name = "combat_status"
 widget_type = "dashboard"
 row = 0
 col = 0
-rows = 2
+rows = 1
 cols = 15
-indicators = ["stunned", "webbed", "prone", "bleeding"]
-columns = 2
+dashboard_layout = "horizontal"
+dashboard_spacing = 1
 show_border = true
 title = "Status"
+
+[[windows.dashboard_indicators]]
+id = "STUNNED"
+icon = "⚠"
+colors = ["#555555", "#ffff00"]
+
+[[windows.dashboard_indicators]]
+id = "WEBBED"
+icon = "🕸"
+colors = ["#555555", "#ffffff"]
+
+[[windows.dashboard_indicators]]
+id = "BLEEDING"
+icon = "♥"
+colors = ["#555555", "#ff0000"]
 </code></pre>
 
                     </main>

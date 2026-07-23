@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>CLI Reference - VellumFE User Guide</title>
+        <title>Travel (.go2) - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,84 +177,92 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
-<pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
+                        <h1 id="travel-go2"><a class="header" href="#travel-go2">Travel (.go2)</a></h1>
+<p>Native map travel — VellumFE walks you across the world using its own
+pathfinding over the map database. No Lich session needed, which means it
+works everywhere the map does, including the mobile apps.</p>
+<pre><code class="language-text">.go2 bank              nearest room tagged "bank"
+.go2 8966              a mapdb room id
+.go2 u7150105          a game uid
+.go2 town square       text search over room titles (a pick list if several match)
+.go2 home              a saved target
+.go2 back              where your last trip started
+.go2 stop              cancel the active trip (or just press Esc)
+.go2 status            progress and ETA
+.go2 save home         save the current room as "home" (.go2 save home 8966 for an explicit id)
+.go2 targets           list saved targets
 </code></pre>
-<h2 id="options"><a class="header" href="#options">Options</a></h2>
-<p>Run with <strong>no arguments</strong> to open <a href="../getting-started/launcher.html">the Launcher</a>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Flag</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>--launcher</code></td><td>Open the graphical launcher (also the no-args default)</td></tr>
-<tr><td><code>--launch-profile &lt;NAME&gt;</code></td><td>Launch a saved launcher profile from launcher.toml</td></tr>
-<tr><td><code>-f, --frontend &lt;tui|gui|headless&gt;</code></td><td>Frontend to run (default <code>tui</code>); <code>headless</code> = core + web server only, browser is the UI</td></tr>
-<tr><td><code>-p, --port &lt;PORT&gt;</code></td><td>Lich proxy port (overrides config.toml)</td></tr>
-<tr><td><code>--host &lt;HOST&gt;</code></td><td>Lich proxy host (overrides config.toml)</td></tr>
-<tr><td><code>--character &lt;NAME&gt;</code></td><td>Character name (login + per-character profile)</td></tr>
-<tr><td><code>--profile &lt;NAME&gt;</code></td><td>Use a different profile directory than the character name</td></tr>
-<tr><td><code>--key &lt;KEY&gt;</code></td><td>Login key from Lich launcher (<code>%key%</code>)</td></tr>
-<tr><td><code>--direct</code></td><td>Connect directly via eAccess (no Lich)</td></tr>
-<tr><td><code>--account &lt;ACCOUNT&gt;</code></td><td>Account name (direct mode)</td></tr>
-<tr><td><code>--password &lt;PASSWORD&gt;</code></td><td>Password (direct mode; omit to be prompted securely)</td></tr>
-<tr><td><code>--game &lt;GAME&gt;</code></td><td>World for direct mode: <code>prime</code>, <code>platinum</code>, <code>shattered</code>, <code>test</code>, <code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td></tr>
-<tr><td><code>-c, --config &lt;FILE&gt;</code></td><td>Use a specific config.toml</td></tr>
-<tr><td><code>--data-dir &lt;DIR&gt;</code></td><td>Data directory (default <code>~/.vellum-fe</code>; also <code>VELLUM_FE_DIR</code> env var)</td></tr>
-<tr><td><code>--web-port &lt;PORT&gt;</code></td><td>Enable the <a href="../frontends/web.html">mobile web server</a> on this port</td></tr>
-<tr><td><code>--color-mode &lt;direct|slot|indexed&gt;</code></td><td>Override color rendering mode</td></tr>
-<tr><td><code>--setup-palette</code></td><td>Load the terminal palette at startup (use with <code>--color-mode slot</code>)</td></tr>
-<tr><td><code>--nosound</code></td><td>Disable the sound system entirely</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
-<h3 id="validate-layout"><a class="header" href="#validate-layout">validate-layout</a></h3>
-<p>Check a layout file for errors:</p>
-<pre><code class="language-bash">vellum-fe validate-layout                 # default layout for --character
-vellum-fe validate-layout mylayout.toml
+<p>Starting a trip prints the room count and ETA; while traveling, the map
+widget shows a progress banner and arrival reports the actual travel
+time. Clicking a room on the mini map or in the Map Explorer travels
+there too (see below).</p>
+<h2 id="what-it-does-on-the-way"><a class="header" href="#what-it-does-on-the-way">What it does on the way</a></h2>
+<p>The walker behaves like Lich’s go2: it waits out roundtime between
+moves, stands up first when needed (skipping that for swim/pedal
+movement), pauses while you’re stunned or webbed, and aborts if you die.
+A move that keeps failing gets that edge disabled for the session and
+the route recomputed — same for ending up somewhere unexpected (fleeing,
+being teleported, walking by hand mid-trip).</p>
+<h2 id="mazes"><a class="header" href="#mazes">Mazes</a></h2>
+<p>Some regions scramble movement — walking their mapdb edges is
+meaningless (and draws as a spiderweb on the map, so their rooms are left
+off it). These are declared in <code>defaults/globals/mazes.toml</code>, and the
+walker uses a per-maze strategy instead of stepping edges.</p>
+<p>The pilot is the <strong>Mist Harbor Ranger Guild</strong> jungle approach, a
+<em>pathcode</em> maze: each character has a personal route, revealed by the
+Master Tracker at the entrance. When a trip crosses it, the walker goes
+to the entrance, asks the Tracker automatically if no route is stored
+(the response — “Your route is: go clearing, west, …” — is captured
+and saved per character), then walks your code. A wrong turn follows the
+Tracker’s own advice: <code>search</code> to re-orient, start the route again, with
+a bounded retry before giving up. Asking the Tracker by hand also
+captures your route — the next <code>.go2</code> through just works.</p>
+<p>A <code>~/.vellum-fe/mazes.toml</code> can add or replace maze definitions by name
+(same shipped-plus-user pattern as travel overrides).</p>
+<h2 id="what-it-cant-do-yet"><a class="header" href="#what-it-cant-do-yet">What it can’t do (yet)</a></h2>
+<p>Lich’s go2 has a decade of special cases; native v1 deliberately walks
+the common world and leaves the exotic paths out:</p>
+<ul>
+<li><strong>No silver handling</strong> — routes that require paying (ferries,
+portmasters, Chronomage day passes) are excluded from pathing rather
+than attempted. The same goes for urchin guides and the Confluence.</li>
+<li><strong>Scripted edges</strong> are supported where VellumFE understands the
+script — about a quarter of them, covering doors, levers, pauses,
+spell-gated and sitting-gated passages. With plain movement included,
+roughly 93% of all map edges are walkable. A route that <em>requires</em> an
+unsupported edge fails with “no route” instead of walking you into a
+dead end.</li>
+<li><strong>One room at a time</strong> — no typeahead pipelining, so long trips are a
+bit slower than Lich’s go2.</li>
+</ul>
+<p>If a specific edge you care about isn’t walkable, it can be hand-taught:
+copy <code>travel_overrides.toml</code> from the defaults into <code>~/.vellum-fe/</code> and
+add the edge (the file documents the format). Overrides beat everything
+the mapdb says about that edge.</p>
+<h2 id="settings"><a class="header" href="#settings">Settings</a></h2>
+<p><strong>Settings → Travel</strong> in the GUI:</p>
+<ul>
+<li><strong>Map clicks travel natively</strong> (default on) — turn off to have map
+clicks send <code>;go2 &lt;id&gt;</code> to Lich instead, if you prefer its go2 for
+silvers/day-pass trips.</li>
+</ul>
+<pre><code class="language-toml">[go2]
+native_map_clicks = true
+# saved targets are written here by .go2 save
 </code></pre>
-<h3 id="migrate-layout"><a class="header" href="#migrate-layout">migrate-layout</a></h3>
-<p>Convert layouts from older VellumFE versions:</p>
-<pre><code class="language-bash">vellum-fe migrate-layout --src &lt;DIR&gt; [--out &lt;DIR&gt;] [--dry-run] [-v]
-</code></pre>
-<h3 id="import-highlights"><a class="header" href="#import-highlights">import-highlights</a></h3>
-<p>Convert a Wrayth/StormFront settings XML into highlights.toml format:</p>
-<pre><code class="language-bash">vellum-fe import-highlights settings.xml [--out FILE] [--dry-run]
-</code></pre>
-<h2 id="common-invocations"><a class="header" href="#common-invocations">Common Invocations</a></h2>
-<pre><code class="language-bash"># Lich, most common
-vellum-fe --port 8000 --character Rolfard
-
-# Lich launcher integration
-vellum-fe --port %port% --key %key%
-
-# Direct, prompted for password
-vellum-fe --direct --account MYACCT --character Rolfard --game prime
-
-# GUI frontend
-vellum-fe --frontend gui --port 8000 --character Rolfard
-
-# TUI plus phone access
-vellum-fe --port 8000 --character Rolfard --web-port 8040
-
-# Headless: no local UI, log in from the browser
-vellum-fe --frontend headless
-
-# Debug logging
-RUST_LOG=debug vellum-fe --port 8000
-</code></pre>
+<h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
+<p><code>.room</code> shows how your current room resolved against the map database —
+the first thing to check when <code>.go2</code> says your room is unknown.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../reference/commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../widgets/map.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/faq.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../widgets/injury-doll.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -264,11 +272,11 @@ RUST_LOG=debug vellum-fe --port 8000
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../reference/commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../widgets/map.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/faq.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../widgets/injury-doll.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

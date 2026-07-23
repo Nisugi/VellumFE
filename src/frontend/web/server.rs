@@ -283,6 +283,8 @@ pub async fn serve_listener_with_token(
         .route("/health", get(health))
         .route("/status", get(status_json))
         .route("/sounds/{name}", get(sound_file))
+        .route("/doll.json", get(doll_json))
+        .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
         .with_state(state);
     let addr = listener
@@ -494,6 +496,73 @@ async fn sound_file(
         Some("wav") => "audio/wav",
         Some("ogg") => "audio/ogg",
         Some("flac") => "audio/flac",
+        _ => "application/octet-stream",
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
+        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+    }
+}
+
+/// Injury doll skin data for the status drawer: whether the active skin
+/// ships doll art, resolved anchors, dot styling, and overlay coverage.
+/// Token-gated like /status; the client falls back to its vector doll on
+/// `base: false` (or any failure).
+async fn doll_json(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "text/plain")],
+            String::new(),
+        );
+    }
+    let payload = super::doll::active_payload();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&payload).unwrap_or_else(|_| r#"{"base":false}"#.to_string()),
+    )
+}
+
+/// Serve a doll image from the active skin: `?kind=base` or
+/// `?kind=overlay&part=<protocol name>&level=<1-6>`. Paths come from the
+/// server operator's own skin.toml (absolute paths are a manifest
+/// feature), so the only gate needed is the pairing token.
+async fn doll_image(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    let kind = params.get("kind").map(String::as_str).unwrap_or("base");
+    let part = params.get("part").map(String::as_str);
+    let level = params.get("level").and_then(|l| l.parse::<u8>().ok());
+    let Some(path) = super::doll::image_path(kind, part, level) else {
+        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    };
+    let content_type = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("gif") => "image/gif",
         _ => "application/octet-stream",
     };
     match std::fs::read(&path) {

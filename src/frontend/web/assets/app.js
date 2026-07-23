@@ -745,6 +745,8 @@ function handleMessage(msg) {
       // Answer with our resume cursor; the server replies with a
       // full/resume/gap snapshot accordingly.
       state.ws.send(JSON.stringify({ t: "resume", d: { seq: state.lastSeq } }));
+      // Authenticated: pick up the skin's injury doll art (if any).
+      fetchDollSkin();
       break;
     case "snapshot": handleSnapshot(msg.d); break;
     case "text": appendText(msg.seq, msg.d.stream, msg.d.line); break;
@@ -2963,6 +2965,103 @@ function injuryText(level) {
   return level <= 3 ? `wound ${level}` : `scar ${level - 3}`;
 }
 
+// ---- Skinned doll: base art + generated dots --------------------------------
+// Mirrors the GUI skin system: /doll.json says whether the active skin
+// ships doll base art, where every part's calibrated anchor sits
+// (fractions of the image), how dots are styled, and which part/severity
+// combos have hand-drawn overlays. Anchors being fractions means the SVG
+// scales freely — same coordinates as the desktop, any display size.
+
+let dollSkin = null;      // /doll.json payload when base art is active
+let dollNatural = null;   // { w, h } of the base image, measured client-side
+
+function dollImageUrl(kind, part, level) {
+  let url = `/doll/image?kind=${kind}&token=${encodeURIComponent(pairingToken)}`;
+  if (part) url += `&part=${encodeURIComponent(part)}&level=${level}`;
+  return url;
+}
+
+function fetchDollSkin() {
+  fetch(`/doll.json?token=${encodeURIComponent(pairingToken)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      dollSkin = d && d.base ? d : null;
+      dollNatural = null;
+      if (!dollSkin) {
+        if (drawerRight.classList.contains("open")) renderStatusDrawer();
+        return;
+      }
+      // The anchors are fractions of the image, so the client needs its
+      // natural size to build the SVG viewBox; measure it here rather
+      // than shipping image-decoding on the server.
+      const img = new Image();
+      img.onload = () => {
+        dollNatural = { w: img.naturalWidth, h: img.naturalHeight };
+        if (drawerRight.classList.contains("open")) renderStatusDrawer();
+      };
+      img.onerror = () => { dollSkin = null; };
+      img.src = dollImageUrl("base");
+    })
+    .catch(() => { dollSkin = null; });
+}
+
+// Only pass through colors we can trust inside SVG markup.
+function safeColor(value, fallback) {
+  return /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback;
+}
+
+function dotNumeralColor(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
+}
+
+// SVG for the skinned doll: base image, then per injured part either the
+// skin's overlay art (stacked full-canvas, like the GUI) or a generated
+// dot at the anchor — solid circle + numeral for wounds, ring for scars.
+function skinDollSvg() {
+  const { w, h } = dollNatural;
+  const dots = dollSkin.dots || {};
+  const woundColor = safeColor(dots.wound_color, "#e02020");
+  const scarColor = safeColor(dots.scar_color, "#b8b8b8");
+  const opacity = typeof dots.opacity === "number" ? Math.min(Math.max(dots.opacity, 0), 1) : 0.9;
+  const r = Math.max(((dots.diameter || 0.07) * h) / 2, 3);
+  const fontSize = Math.max(r * 1.3, 8);
+  const parts = [`<image href="${dollImageUrl("base")}" width="${w}" height="${h}"/>`];
+  for (const [id, level] of Object.entries(injuries).sort()) {
+    if (!level || level > 6) continue;
+    if (((dollSkin.overlays || {})[id] || []).includes(level)) {
+      parts.push(
+        `<image href="${dollImageUrl("overlay", id, level)}" width="${w}" height="${h}"/>`
+      );
+      continue;
+    }
+    const anchor = (dollSkin.anchors || {})[id];
+    if (!anchor) continue; // unknown part: the injured list below still names it
+    const cx = anchor[0] * w;
+    const cy = anchor[1] * h;
+    const numeral = level <= 3 ? level : level - 3;
+    const text = (fill) =>
+      `<text x="${cx}" y="${cy}" fill="${fill}" font-size="${fontSize}" ` +
+      `font-weight="700" text-anchor="middle" dominant-baseline="central">${numeral}</text>`;
+    if (level <= 3) {
+      parts.push(
+        `<g opacity="${opacity}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${woundColor}"/>` +
+        text(dotNumeralColor(woundColor)) + `</g>`
+      );
+    } else {
+      const strokeWidth = Math.max(r * 0.28, 1.2);
+      parts.push(
+        `<g opacity="${opacity}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" ` +
+        `stroke="${scarColor}" stroke-width="${strokeWidth}"/>` +
+        text(scarColor) + `</g>`
+      );
+    }
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Injury doll">${parts.join("")}</svg>`;
+}
+
 function setInjuries(map) {
   injuries = map || {};
   if (drawerRight.classList.contains("open")) renderStatusDrawer();
@@ -2997,31 +3096,41 @@ function renderStatusDrawer() {
     panel.appendChild(section);
   }
 
-  // Doll
+  // Doll: skinned (base art + dots at calibrated anchors) when the active
+  // skin ships doll art, the built-in vector figure otherwise.
+  const skinned = !!(dollSkin && dollNatural);
   const doll = document.createElement("div");
   doll.id = "status-doll";
-  const shapes = DOLL_PARTS.map(([id, shape]) => {
-    const level = injuries[id] || 0;
-    const fill = LEVEL_COLORS[level] || "var(--border)";
-    return shape.replace("/>", ` fill="${fill}"/>`);
-  }).join("");
-  doll.innerHTML =
-    `<svg viewBox="0 0 140 132" role="img" aria-label="Injury doll">${shapes}</svg>`;
+  if (skinned) {
+    doll.classList.add("skinned");
+    doll.innerHTML = skinDollSvg();
+  } else {
+    const shapes = DOLL_PARTS.map(([id, shape]) => {
+      const level = injuries[id] || 0;
+      const fill = LEVEL_COLORS[level] || "var(--border)";
+      return shape.replace("/>", ` fill="${fill}"/>`);
+    }).join("");
+    doll.innerHTML =
+      `<svg viewBox="0 0 140 132" role="img" aria-label="Injury doll">${shapes}</svg>`;
+  }
   panel.appendChild(doll);
 
-  // Back / nervous system indicator chips (no geometry on the doll).
-  const chipRow = document.createElement("div");
-  chipRow.id = "status-chiprow";
-  for (const id of ["back", "nsys"]) {
-    const level = injuries[id] || 0;
-    if (!level) continue;
-    const chip = document.createElement("span");
-    chip.className = "status-chip";
-    chip.style.borderColor = LEVEL_COLORS[level];
-    chip.textContent = `${PART_LABELS[id]}: ${injuryText(level)}`;
-    chipRow.appendChild(chip);
+  // Back / nervous system indicator chips: vector mode only — the skinned
+  // doll gives those parts real anchor positions.
+  if (!skinned) {
+    const chipRow = document.createElement("div");
+    chipRow.id = "status-chiprow";
+    for (const id of ["back", "nsys"]) {
+      const level = injuries[id] || 0;
+      if (!level) continue;
+      const chip = document.createElement("span");
+      chip.className = "status-chip";
+      chip.style.borderColor = LEVEL_COLORS[level];
+      chip.textContent = `${PART_LABELS[id]}: ${injuryText(level)}`;
+      chipRow.appendChild(chip);
+    }
+    if (chipRow.children.length) panel.appendChild(chipRow);
   }
-  if (chipRow.children.length) panel.appendChild(chipRow);
 
   // Injured-part list (exact severities beat squinting at colors).
   const injured = Object.entries(injuries).sort();

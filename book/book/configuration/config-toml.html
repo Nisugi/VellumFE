@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -268,15 +268,19 @@ coloring_enabled = true         # Apply color highlighting
 lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
 # mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
 mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings &gt; Map downloads
+mapping_mode = false               # Cartography mode: sketch unmapped rooms
 </code></pre>
-<p>All three are editable in <strong>Settings → Map</strong> in the GUI. Downloaded map
-data outranks the Lich folder; an empty <code>mapdb_repo</code> disables downloads.</p>
+<p>All of these are editable in <strong>Settings → Map</strong> in the GUI. Downloaded
+map data outranks the Lich folder; an empty <code>mapdb_repo</code> disables
+downloads. <code>mapping_mode</code> gates ghost-room sketches — see
+<a href="../widgets/map.html#ghost-rooms-unmapped-interiors">ghost rooms</a>.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true
 volume = 0.7                    # 0.0 to 1.0
 cooldown_ms = 500               # Min time between repeated sounds
 startup_music = true
+startup_music_delay_ms = 0      # Delay before the login theme starts
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
 <pre><code class="language-toml">[tts]

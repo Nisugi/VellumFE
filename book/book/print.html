@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a5192a6c.js"></script>
+        <script src="toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -258,9 +258,9 @@ vellum-fe --direct --account ACCOUNT --character YourName --game prime
 <tr><th>Platform</th><th>File</th></tr>
 </thead>
 <tbody>
-<tr><td>Windows</td><td><code>vellum-fe-windows.zip</code></td></tr>
-<tr><td>macOS</td><td><code>vellum-fe-macos.tar.gz</code></td></tr>
-<tr><td>Linux</td><td><code>vellum-fe-linux.tar.gz</code></td></tr>
+<tr><td>Windows</td><td><code>vellum-fe-windows-x86_64.zip</code></td></tr>
+<tr><td>macOS</td><td><code>vellum-fe-macos-universal.zip</code> (or <code>-arm64</code> / <code>-x64</code> for a specific chip)</td></tr>
+<tr><td>Linux</td><td><code>vellum-fe-linux-x86_64.tar.gz</code></td></tr>
 <tr><td>Android</td><td><code>vellum-fe-android-arm64.apk</code></td></tr>
 <tr><td>iOS</td><td>TestFlight (beta) — not a release download; see <a href="#ios-app-beta">iOS App</a></td></tr>
 </tbody>
@@ -288,7 +288,7 @@ signing key). For automatic update checks, add this repository to
 <p>See <a href="#android-app">Android App</a> for logging in, battery
 behavior, and everything else about playing on the phone.</p>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h2>
-<p>Requires <a href="https://rustup.rs/">Rust</a> 1.70+.</p>
+<p>Requires a recent stable <a href="https://rustup.rs/">Rust</a> toolchain (CI builds with the latest stable).</p>
 <pre><code class="language-bash">git clone https://github.com/Nisugi/VellumFE.git
 cd VellumFE
 cargo build --release
@@ -302,7 +302,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.6</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.9</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -403,6 +403,9 @@ Credentials can also be stored in <code>config.toml</code> under <code>[connecti
 </tbody>
 </table>
 </div>
+<blockquote>
+<p><strong>Note</strong>: In <code>config.toml</code> and launcher profiles the DragonRealms worlds are spelled without hyphens: <code>drplatinum</code>, <code>drfallen</code>, <code>drtest</code>.</p>
+</blockquote>
 <blockquote>
 <p><strong>Note</strong>: Direct mode uses your operating system’s native TLS stack — no extra setup on Windows or macOS. On Linux, see <a href="#installation">Installation</a>.</p>
 </blockquote>
@@ -613,7 +616,9 @@ light/dark bar text for contrast.</li>
 <ul>
 <li><strong>Compass rose</strong> — a vector rose with lit direction markers.</li>
 <li><strong>Injury paperdoll</strong> — a vector body diagram colored by wound/scar
-severity.</li>
+severity. With a skin that ships doll art, wounds render as generated
+dots (solid = wound, ring = scar, numeral = rank) at positions you set
+by clicking in Settings &gt; Appearance &gt; Skin &gt; Calibrate injury doll.</li>
 <li><strong>Status icons</strong> — vector pictograms for stance, hidden, stunned, and
 the rest of the dashboard/indicator set.</li>
 </ul>
@@ -622,7 +627,10 @@ nine-slice borders, icon sprites, a sprite compass and paperdoll. See
 <a href="#skins-gui-graphics">Skins</a>.</p>
 <h2 id="differences-from-the-tui"><a class="header" href="#differences-from-the-tui">Differences from the TUI</a></h2>
 <ul>
-<li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>.</li>
+<li>Copying is plain text: select with the mouse, <code>Ctrl+C</code>. Selections are
+anchored to the text itself, so they survive scrolling — drag past the
+window edge to auto-scroll, and copy picks up everything selected, even
+lines currently scrolled out of view.</li>
 <li><code>Ctrl+F</code> opens in-window search with match highlighting.</li>
 <li>Up/Down in the input bar browse command history; whatever you were
 typing is stashed and restored when you come back down.</li>
@@ -692,12 +700,21 @@ sheet.</li>
 sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
 tap to move). It starts bottom-right; hold it about half a second to
 lift and drag it anywhere — the spot is remembered per device.</li>
+<li><strong>Map</strong> — a map button appears in the top bar once map data is
+available (<code>.mapdb download</code>); it opens a full-screen canvas map that
+follows your character. Tap a room to walk there with native <code>.go2</code>,
+drag to pan, pinch to zoom. See the <a href="#map-1">Map</a> and
+<a href="#travel-go2">Travel</a> chapters.</li>
 <li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
 the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
 panel</strong> with the injury doll, injuries list, hands, character sheet
 (experience, encumbrance, bounty, society), active effects with live
 countdowns, and <strong>tap-to-target</strong> — tap a creature to get its
-attack/look/target menu.</li>
+attack/look/target menu. When the server’s active skin ships injury
+doll art, the drawer renders that art with wound/scar dots at the same
+calibrated anchor points as the desktop GUI (see
+<a href="#skins-gui-graphics">Skins</a>); without one it draws the built-in
+vector doll.</li>
 <li><strong>Vitals, hands, RT/CT</strong> — a status strip with live countdowns.</li>
 <li><strong>Macro buttons</strong> — the macro rail, menu buttons, and draggable
 floating buttons from <a href="#macrostoml">macros.toml</a>;
@@ -1057,15 +1074,19 @@ coloring_enabled = true         # Apply color highlighting
 lich_dir = "C:/Lich5"              # Lich install (folder containing data/)
 # mapdb_path = "C:/maps/map.json"    # explicit file; overrides everything
 mapdb_repo = "Nisugi/mapdb"        # GitHub repo for Settings &gt; Map downloads
+mapping_mode = false               # Cartography mode: sketch unmapped rooms
 </code></pre>
-<p>All three are editable in <strong>Settings → Map</strong> in the GUI. Downloaded map
-data outranks the Lich folder; an empty <code>mapdb_repo</code> disables downloads.</p>
+<p>All of these are editable in <strong>Settings → Map</strong> in the GUI. Downloaded
+map data outranks the Lich folder; an empty <code>mapdb_repo</code> disables
+downloads. <code>mapping_mode</code> gates ghost-room sketches — see
+<a href="#ghost-rooms-unmapped-interiors">ghost rooms</a>.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true
 volume = 0.7                    # 0.0 to 1.0
 cooldown_ms = 500               # Min time between repeated sounds
 startup_music = true
+startup_music_delay_ms = 0      # Delay before the login theme starts
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
 <pre><code class="language-toml">[tts]
@@ -1193,11 +1214,12 @@ cols = 120
 <tbody>
 <tr><td><code>visible</code></td><td>bool</td><td><code>true</code></td><td>Show window</td></tr>
 <tr><td><code>show_border</code></td><td>bool</td><td><code>true</code></td><td>Draw border</td></tr>
-<tr><td><code>border_style</code></td><td>string</td><td><code>"single"</code></td><td><code>single</code>, <code>double</code>, <code>rounded</code>, <code>thick</code></td></tr>
+<tr><td><code>border_style</code></td><td>string</td><td><code>"single"</code></td><td><code>single</code>, <code>double</code>, <code>rounded</code>, <code>thick</code>, <code>quadrant_inside</code>, <code>quadrant_outside</code></td></tr>
 <tr><td><code>border_color</code></td><td>string</td><td><code>"#808080"</code></td><td>Border color</td></tr>
-<tr><td><code>border_sides</code></td><td>string</td><td><code>"all"</code></td><td>Which sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code>, or combinations</td></tr>
+<tr><td><code>border_sides</code></td><td>array</td><td>all sides</td><td>Which sides to draw, e.g. <code>["top", "bottom"]</code>; <code>[]</code> for none</td></tr>
 <tr><td><code>title</code></td><td>string</td><td>-</td><td>Custom title</td></tr>
 <tr><td><code>show_title</code></td><td>bool</td><td><code>true</code></td><td>Show title in border</td></tr>
+<tr><td><code>title_position</code></td><td>string</td><td><code>"top-left"</code></td><td>Where the title sits on the border</td></tr>
 <tr><td><code>buffer_size</code></td><td>integer</td><td>1000</td><td>Lines to keep (text windows)</td></tr>
 <tr><td><code>background_color</code></td><td>string</td><td>-</td><td>Background color</td></tr>
 <tr><td><code>text_color</code></td><td>string</td><td>-</td><td>Default text color</td></tr>
@@ -1242,9 +1264,9 @@ streams = ["thoughts"]
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"                 # health, mana, stamina, spirit, encumbrance
-bar_color = "#00FF00"
-show_percentage = true
+id = "health"                   # health, mana, stamina, spirit, concentration, pbarStance
+color = "#00FF00"
+numbers_only = false            # true: show only current/max numbers
 </code></pre>
 <h3 id="countdowns"><a class="header" href="#countdowns">Countdowns</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -1299,7 +1321,7 @@ streams = ["thoughts"]
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 30
 col = 100
 rows = 1
@@ -1391,6 +1413,7 @@ lines to see what your terminal actually sends.</p>
 <tr><td><code>scroll_current_window_up_one</code> / <code>..._down_one</code></td><td>Scroll by line</td></tr>
 <tr><td><code>start_search</code> / <code>next_search_match</code> / <code>prev_search_match</code> / <code>clear_search</code></td><td>In-window search</td></tr>
 <tr><td><code>toggle_performance_stats</code></td><td>Performance overlay</td></tr>
+<tr><td><code>stop_travel</code></td><td>Cancel the active <code>.go2</code> trip (while traveling, Esc does this by default)</td></tr>
 <tr><td><code>tts_next</code> / <code>tts_previous</code> / <code>tts_next_unread</code> / <code>tts_stop</code></td><td>Text-to-speech navigation</td></tr>
 <tr><td><code>tts_mute_toggle</code> / <code>tts_increase_volume</code> / <code>tts_decrease_volume</code> / <code>tts_increase_rate</code> / <code>tts_decrease_rate</code></td><td>TTS controls</td></tr>
 </tbody>
@@ -1453,7 +1476,7 @@ category = "Players"
 <tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
 <tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
 <tr><td><code>redirect_to</code></td><td>string</td><td>Send matching lines to this window</td></tr>
-<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"only"</code> (move) or <code>"copy"</code> (show in both)</td></tr>
+<tr><td><code>redirect_mode</code></td><td>string</td><td><code>"redirect_only"</code> (move, default) or <code>"redirect_copy"</code> (show in both)</td></tr>
 <tr><td><code>replace</code></td><td>string</td><td>Replace matched text (supports <code>$1</code>, <code>$2</code> capture groups)</td></tr>
 <tr><td><code>stream</code></td><td>string</td><td>Only apply to lines from this stream (e.g. <code>"thoughts"</code>)</td></tr>
 <tr><td><code>window</code></td><td>string</td><td>With <code>replace</code>: only replace in this window</td></tr>
@@ -1486,7 +1509,7 @@ sound_volume = 0.8
 <pre><code class="language-toml">[loot_lines]
 pattern = "^You gather"
 redirect_to = "loot"
-redirect_mode = "copy"    # also keep it in the original window
+redirect_mode = "redirect_copy"    # also keep it in the original window
 </code></pre>
 <h2 id="text-replacement"><a class="header" href="#text-replacement">Text Replacement</a></h2>
 <pre><code class="language-toml">[shorten_deaths]
@@ -1831,7 +1854,7 @@ rows = 10                       # Height
 cols = 40                       # Width
 visible = true                  # Show/hide
 show_border = true
-border_style = "single"         # single, double, rounded, thick
+border_style = "single"         # single, double, rounded, thick, quadrant_inside, quadrant_outside
 border_color = "#808080"
 title = "Custom Title"
 </code></pre>
@@ -1851,11 +1874,13 @@ title = "Custom Title"
 </thead>
 <tbody>
 <tr><td>Text Windows</td><td>text, tabbedtext</td></tr>
-<tr><td>Status</td><td>progress, countdown, hand, indicator, dashboard</td></tr>
-<tr><td>Navigation</td><td>compass, room</td></tr>
-<tr><td>Entity</td><td>targets, players, items</td></tr>
-<tr><td>Lists</td><td>inventory, spells, container</td></tr>
-<tr><td>Other</td><td>injury_doll, active_effects, reserve, quickbar, hotkeybar, map</td></tr>
+<tr><td>Progress Bars</td><td>progress</td></tr>
+<tr><td>Countdowns</td><td>countdown</td></tr>
+<tr><td>Hands</td><td>hand</td></tr>
+<tr><td>Status</td><td>indicator, dashboard</td></tr>
+<tr><td>Entities</td><td>targets, players, items</td></tr>
+<tr><td>Active Effects</td><td>active_effects</td></tr>
+<tr><td>Other</td><td>compass, room, map, injury_doll, inventory, spells, reserve, container, hotkeybar, and the rest</td></tr>
 </tbody>
 </table>
 </div>
@@ -1898,13 +1923,14 @@ buffer_size = 10000
 <tr><td><code>main</code></td><td>Primary game output</td></tr>
 <tr><td><code>speech</code></td><td>Player dialogue</td></tr>
 <tr><td><code>thoughts</code></td><td>ESP/telepathy</td></tr>
-<tr><td><code>combat</code></td><td>Combat messages</td></tr>
 <tr><td><code>death</code></td><td>Death messages</td></tr>
 <tr><td><code>familiar</code></td><td>Familiar messages</td></tr>
-<tr><td><code>group</code></td><td>Group information</td></tr>
 <tr><td><code>logons</code></td><td>Login/logout</td></tr>
 <tr><td><code>society</code></td><td>Society messages</td></tr>
 <tr><td><code>bounty</code></td><td>Bounty information</td></tr>
+<tr><td><code>loot</code></td><td>Loot messages</td></tr>
+<tr><td><code>announcements</code></td><td>Announcements</td></tr>
+<tr><td><code>ambients</code></td><td>Ambient messages</td></tr>
 </tbody>
 </table>
 </div>
@@ -1979,7 +2005,7 @@ streams = ["combat"]
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>buffer_size</code></td><td>integer</td><td>5000</td><td>Lines per tab</td></tr>
+<tr><td><code>buffer_size</code></td><td>integer</td><td>1000</td><td>Lines per tab (the built-in chat templates set 5000)</td></tr>
 </tbody>
 </table>
 </div>
@@ -2059,7 +2085,7 @@ ignore_activity = true
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
@@ -2072,46 +2098,50 @@ cols = 20
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>stat</code></td><td>string</td><td>required</td><td>Stat to display</td></tr>
-<tr><td><code>bar_color</code></td><td>string</td><td>auto</td><td>Bar fill color</td></tr>
-<tr><td><code>show_percentage</code></td><td>bool</td><td>true</td><td>Show % value</td></tr>
-<tr><td><code>show_label</code></td><td>bool</td><td>true</td><td>Show stat name</td></tr>
+<tr><td><code>id</code></td><td>string</td><td>required</td><td>Progress feed to display (the game’s <code>progressBar</code> id, case-sensitive)</td></tr>
+<tr><td><code>label</code></td><td>string</td><td>auto</td><td>Label text override</td></tr>
+<tr><td><code>color</code></td><td>string</td><td>auto</td><td>Bar fill color</td></tr>
+<tr><td><code>numbers_only</code></td><td>bool</td><td>false</td><td>Show only <code>current/max</code> numbers (no label)</td></tr>
+<tr><td><code>current_only</code></td><td>bool</td><td>false</td><td>Show only the current value (no label, no max)</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="available-stats"><a class="header" href="#available-stats">Available Stats</a></h2>
+<h2 id="common-feed-ids"><a class="header" href="#common-feed-ids">Common Feed Ids</a></h2>
+<p>Built-in templates exist for these ids (via <code>.addwindow</code> or the Add Window
+menu):</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Stat</th><th>Description</th></tr>
+<tr><th>Id</th><th>Description</th></tr>
 </thead>
 <tbody>
 <tr><td><code>health</code></td><td>Hit points</td></tr>
 <tr><td><code>mana</code></td><td>Mana points</td></tr>
 <tr><td><code>stamina</code></td><td>Stamina points</td></tr>
 <tr><td><code>spirit</code></td><td>Spirit points</td></tr>
-<tr><td><code>encumbrance</code></td><td>Carry weight</td></tr>
-<tr><td><code>mind</code></td><td>Mental state (DR)</td></tr>
 <tr><td><code>concentration</code></td><td>Concentration (DR)</td></tr>
+<tr><td><code>pbarStance</code></td><td>Stance (the <code>stance</code> template)</td></tr>
 </tbody>
 </table>
 </div>
+<p><code>id</code> is not a closed list — it matches whatever <code>progressBar</code> ids the game
+sends. (Encumbrance and mind state are separate widgets, not progress ids.)</p>
 <h2 id="examples-1"><a class="header" href="#examples-1">Examples</a></h2>
 <h3 id="minimal-health-bar"><a class="header" href="#minimal-health-bar">Minimal Health Bar</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 rows = 1
 cols = 15
-show_label = false
+numbers_only = true
 </code></pre>
 <h3 id="colored-mana-bar"><a class="header" href="#colored-mana-bar">Colored Mana Bar</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
-bar_color = "#4169E1"
+id = "mana"
+color = "#4169E1"
 rows = 1
 cols = 20
 </code></pre>
@@ -2119,38 +2149,38 @@ cols = 20
 <pre><code class="language-toml">[[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 0
 col = 0
 rows = 1
 cols = 25
-bar_color = "#FF4040"
+color = "#FF4040"
 
 [[windows]]
 name = "mana"
 widget_type = "progress"
-stat = "mana"
+id = "mana"
 row = 1
 col = 0
 rows = 1
 cols = 25
-bar_color = "#4169E1"
+color = "#4169E1"
 
 [[windows]]
 name = "stamina"
 widget_type = "progress"
-stat = "stamina"
+id = "stamina"
 row = 2
 col = 0
 rows = 1
 cols = 25
-bar_color = "#32CD32"
+color = "#32CD32"
 </code></pre>
 <h2 id="color-behavior"><a class="header" href="#color-behavior">Color Behavior</a></h2>
-<p>Without <code>bar_color</code>, bars change color based on value:</p>
-<ul>
-<li>Green (high) → Yellow (medium) → Red (low)</li>
-</ul>
+<p>Each bar renders in a single solid color: the configured <code>color</code> if set,
+otherwise a per-id default (dark red for health, dark blue for mana, orange
+for stamina, gray for spirit, green as the generic fallback). Bars do not
+change color based on the current value.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="countdowns-2"><a class="header" href="#countdowns-2">Countdowns</a></h1>
 <p>Display roundtime, cast time, and stun timers.</p>
@@ -2173,7 +2203,9 @@ cols = 15
 <tbody>
 <tr><td><code>id</code></td><td>string</td><td>required</td><td>Timer type</td></tr>
 <tr><td><code>label</code></td><td>string</td><td>auto</td><td>Custom label</td></tr>
-<tr><td><code>bar_color</code></td><td>string</td><td>auto</td><td>Bar color</td></tr>
+<tr><td><code>color</code></td><td>string</td><td>auto</td><td>Bar color</td></tr>
+<tr><td><code>background_color</code></td><td>string</td><td>auto</td><td>Background color</td></tr>
+<tr><td><code>icon</code></td><td>char</td><td>auto</td><td>Icon shown next to the timer</td></tr>
 </tbody>
 </table>
 </div>
@@ -2198,7 +2230,7 @@ widget_type = "countdown"
 id = "roundtime"
 rows = 1
 cols = 20
-bar_color = "#FFD700"
+color = "#FFD700"
 </code></pre>
 <h3 id="cast-time"><a class="header" href="#cast-time">Cast Time</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -2207,7 +2239,7 @@ widget_type = "countdown"
 id = "casttime"
 rows = 1
 cols = 15
-bar_color = "#9370DB"
+color = "#9370DB"
 </code></pre>
 <h3 id="stun-timer"><a class="header" href="#stun-timer">Stun Timer</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -2216,7 +2248,7 @@ widget_type = "countdown"
 id = "stuntime"
 rows = 1
 cols = 15
-bar_color = "#FF4500"
+color = "#FF4500"
 </code></pre>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
 <ul>
@@ -2233,8 +2265,8 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 </code></pre>
 <h2 id="properties-4"><a class="header" href="#properties-4">Properties</a></h2>
 <div class="table-wrapper">
@@ -2243,24 +2275,27 @@ cols = 7
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>style</code></td><td>string</td><td><code>"arrows"</code></td><td>Display style</td></tr>
+<tr><td><code>active_color</code></td><td>string</td><td>green</td><td>Color for available exits</td></tr>
+<tr><td><code>inactive_color</code></td><td>string</td><td>dark gray</td><td>Color for unavailable directions</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="size-requirements"><a class="header" href="#size-requirements">Size Requirements</a></h2>
 <ul>
-<li>Minimum: 3 rows × 7 columns</li>
-<li>Recommended: 3×7 or 5×9</li>
+<li>The direction grid itself is 3 rows × 7 columns</li>
+<li>The built-in template defaults to 5 rows × 9 columns (room for a border)
+with a 3×7 minimum</li>
 </ul>
 <h2 id="display-1"><a class="header" href="#display-1">Display</a></h2>
-<pre><code>  N
-W ◆ E
-  S
+<pre><code>↑ ↖ ▲ ↗
+  ◀ o ▶
+↓ ↙ ▼ ↘
 </code></pre>
 <ul>
-<li>Available exits shown with arrows</li>
-<li>Unavailable directions dimmed</li>
-<li>Supports all 10 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out</li>
+<li>Available exits shown as colored arrows; unavailable directions dimmed</li>
+<li>The center <code>o</code> is the <strong>out</strong> direction</li>
+<li>Up (<code>↑</code>) and down (<code>↓</code>) render in the left column</li>
+<li>Supports all 11 directions: N, S, E, W, NE, NW, SE, SW, Up, Down, Out</li>
 </ul>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -2268,19 +2303,23 @@ name = "compass"
 widget_type = "compass"
 row = 0
 col = 0
-rows = 3
-cols = 7
+rows = 5
+cols = 9
 show_border = true
 border_style = "rounded"
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="hands"><a class="header" href="#hands">Hands</a></h1>
-<p>Display items held in left and right hands.</p>
+<p>Display items held in the left and right hands (and the prepared spell).</p>
+<p>Which hand a widget shows is determined by its <strong>window name</strong>: <code>left</code> (or
+<code>left_hand</code>), <code>right</code> (or <code>right_hand</code>), and <code>spell</code> (or <code>spell_hand</code>). The
+easiest way to add them is the built-in <code>left</code>, <code>right</code>, and <code>spell</code>
+templates via <code>.addwindow</code> or the Add Window menu.</p>
 <h2 id="basic-usage-5"><a class="header" href="#basic-usage-5">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "right_hand"
+name = "right"
 widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
@@ -2293,66 +2332,47 @@ cols = 25
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>hand</code></td><td>string</td><td>required</td><td><code>"left"</code> or <code>"right"</code></td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>from template</td><td>Prefix icon (e.g. <code>"L:"</code>, <code>"R:"</code>, <code>"S:"</code>)</td></tr>
+<tr><td><code>icon_color</code></td><td>string</td><td>window color</td><td>Icon color</td></tr>
+<tr><td><code>text_color</code></td><td>string</td><td>window color</td><td>Item text color override</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="examples-3"><a class="header" href="#examples-3">Examples</a></h2>
-<h3 id="right-hand"><a class="header" href="#right-hand">Right Hand</a></h3>
+<h2 id="example-side-by-side"><a class="header" href="#example-side-by-side">Example: Side by Side</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "right"
 widget_type = "hand"
-hand = "right"
-rows = 1
-cols = 30
-title = "R:"
-</code></pre>
-<h3 id="left-hand"><a class="header" href="#left-hand">Left Hand</a></h3>
-<pre><code class="language-toml">[[windows]]
-name = "left"
-widget_type = "hand"
-hand = "left"
-rows = 1
-cols = 30
-title = "L:"
-</code></pre>
-<h3 id="side-by-side"><a class="header" href="#side-by-side">Side by Side</a></h3>
-<pre><code class="language-toml">[[windows]]
-name = "right_hand"
-widget_type = "hand"
-hand = "right"
+icon = "R:"
 row = 0
 col = 0
 rows = 1
 cols = 25
 show_border = false
-title = "R:"
 
 [[windows]]
-name = "left_hand"
+name = "left"
 widget_type = "hand"
-hand = "left"
+icon = "L:"
 row = 0
 col = 25
 rows = 1
 cols = 25
 show_border = false
-title = "L:"
 </code></pre>
 <h2 id="interaction"><a class="header" href="#interaction">Interaction</a></h2>
 <ul>
-<li>Click item name to interact</li>
-<li>Right-click for context menu</li>
-<li>Shows “Empty” when nothing held</li>
+<li>Click the item name to interact</li>
+<li>Right-click for a context menu</li>
+<li>When nothing is held, only the icon (e.g. <code>R:</code>) is shown</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="status-indicators"><a class="header" href="#status-indicators">Status Indicators</a></h1>
-<p>Display character status conditions (kneeling, hidden, webbed, etc).</p>
+<p>Display character status conditions (poisoned, stunned, webbed, etc).</p>
 <h2 id="basic-usage-6"><a class="header" href="#basic-usage-6">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "status"
+name = "poisoned"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "POISONED"
 row = 0
 col = 0
 rows = 1
@@ -2365,66 +2385,73 @@ cols = 3
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>id</code></td><td>string</td><td>required</td><td>Status to track</td></tr>
-<tr><td><code>active_color</code></td><td>string</td><td>auto</td><td>Color when active</td></tr>
-<tr><td><code>inactive_color</code></td><td>string</td><td><code>"gray"</code></td><td>Color when inactive</td></tr>
+<tr><td><code>indicator_id</code></td><td>string</td><td>required</td><td>Status to track (see below)</td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>none</td><td>Glyph/text shown when active</td></tr>
+<tr><td><code>active_color</code></td><td>string</td><td><code>#00ff00</code></td><td>Color when active</td></tr>
+<tr><td><code>inactive_color</code></td><td>string</td><td><code>#555555</code></td><td>Color when inactive</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="available-statuses"><a class="header" href="#available-statuses">Available Statuses</a></h2>
+<p>Built-in templates exist for <code>poisoned</code>, <code>bleeding</code>, <code>diseased</code>, <code>stunned</code>,
+and <code>webbed</code> — add them via <code>.addwindow</code> or the Add Window menu.</p>
+<p>The full set of recognized indicator ids:</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>ID</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>kneeling</code></td><td>Kneeling position</td></tr>
-<tr><td><code>sitting</code></td><td>Sitting position</td></tr>
-<tr><td><code>prone</code></td><td>Lying down</td></tr>
-<tr><td><code>stunned</code></td><td>Stunned</td></tr>
-<tr><td><code>webbed</code></td><td>Webbed</td></tr>
-<tr><td><code>hidden</code></td><td>Hidden</td></tr>
-<tr><td><code>invisible</code></td><td>Invisible</td></tr>
-<tr><td><code>dead</code></td><td>Dead</td></tr>
-<tr><td><code>bleeding</code></td><td>Bleeding</td></tr>
-<tr><td><code>poisoned</code></td><td>Poisoned</td></tr>
-<tr><td><code>diseased</code></td><td>Diseased</td></tr>
+<tr><td><code>STANDING</code></td><td>Standing position</td></tr>
+<tr><td><code>KNEELING</code></td><td>Kneeling position</td></tr>
+<tr><td><code>SITTING</code></td><td>Sitting position</td></tr>
+<tr><td><code>PRONE</code></td><td>Lying down</td></tr>
+<tr><td><code>DEAD</code></td><td>Dead</td></tr>
+<tr><td><code>STUNNED</code></td><td>Stunned</td></tr>
+<tr><td><code>BLEEDING</code></td><td>Bleeding</td></tr>
+<tr><td><code>HIDDEN</code></td><td>Hidden</td></tr>
+<tr><td><code>INVISIBLE</code></td><td>Invisible</td></tr>
+<tr><td><code>WEBBED</code></td><td>Webbed</td></tr>
+<tr><td><code>POISONED</code></td><td>Poisoned</td></tr>
+<tr><td><code>DISEASED</code></td><td>Diseased</td></tr>
+<tr><td><code>JOINED</code></td><td>Grouped/joined</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="examples-4"><a class="header" href="#examples-4">Examples</a></h2>
+<p>Ids without a built-in template can be added as custom indicator windows.</p>
+<h2 id="examples-3"><a class="header" href="#examples-3">Examples</a></h2>
 <h3 id="single-indicator"><a class="header" href="#single-indicator">Single Indicator</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "hidden_indicator"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "HIDDEN"
 rows = 1
 cols = 3
 active_color = "#00FF00"
 </code></pre>
 <h3 id="status-row"><a class="header" href="#status-row">Status Row</a></h3>
 <pre><code class="language-toml">[[windows]]
-name = "kneel"
+name = "stun"
 widget_type = "indicator"
-id = "kneeling"
+indicator_id = "STUNNED"
 row = 0
 col = 0
 rows = 1
 cols = 3
 
 [[windows]]
-name = "hide"
+name = "web"
 widget_type = "indicator"
-id = "hidden"
+indicator_id = "WEBBED"
 row = 0
 col = 3
 rows = 1
 cols = 3
 
 [[windows]]
-name = "stun"
+name = "bleed"
 widget_type = "indicator"
-id = "stunned"
+indicator_id = "BLEEDING"
 row = 0
 col = 6
 rows = 1
@@ -2432,13 +2459,14 @@ cols = 3
 </code></pre>
 <h2 id="display-2"><a class="header" href="#display-2">Display</a></h2>
 <ul>
-<li>Shows abbreviated status code (3 chars)</li>
-<li>Active: colored, Inactive: dimmed</li>
-<li>Example: <code>KNE</code> (kneeling), <code>HID</code> (hidden)</li>
+<li><strong>Active</strong>: shows the widget’s icon/title (the built-in templates use
+glyph icons), centered, in <code>active_color</code></li>
+<li><strong>Inactive</strong>: renders nothing — the indicator is invisible until the
+status is active</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="dashboard"><a class="header" href="#dashboard">Dashboard</a></h1>
-<p>Configurable grid of status indicators in a single widget.</p>
+<p>Configurable group of status indicators in a single widget.</p>
 <h2 id="basic-usage-7"><a class="header" href="#basic-usage-7">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "dashboard"
@@ -2447,6 +2475,17 @@ row = 0
 col = 0
 rows = 2
 cols = 12
+dashboard_layout = "horizontal"
+
+[[windows.dashboard_indicators]]
+id = "POISONED"
+icon = "☠"
+colors = ["#555555", "#00ff00"]   # [inactive, active]
+
+[[windows.dashboard_indicators]]
+id = "BLEEDING"
+icon = "♥"
+colors = ["#555555", "#ff0000"]
 </code></pre>
 <h2 id="properties-7"><a class="header" href="#properties-7">Properties</a></h2>
 <div class="table-wrapper">
@@ -2455,35 +2494,39 @@ cols = 12
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>indicators</code></td><td>array</td><td>all</td><td>Which indicators to show</td></tr>
-<tr><td><code>columns</code></td><td>integer</td><td>auto</td><td>Grid columns</td></tr>
+<tr><td><code>dashboard_layout</code></td><td>string</td><td><code>"horizontal"</code></td><td><code>"horizontal"</code>, <code>"vertical"</code>, or <code>"grid:RxC"</code> (e.g. <code>"grid:2x3"</code>)</td></tr>
+<tr><td><code>dashboard_spacing</code></td><td>integer</td><td>—</td><td>Spacing between indicators (characters)</td></tr>
+<tr><td><code>dashboard_hide_inactive</code></td><td>bool</td><td>—</td><td>Hide indicators that are inactive</td></tr>
+<tr><td><code>dashboard_indicators</code></td><td>array of tables</td><td>empty</td><td>The indicators to show (see below)</td></tr>
 </tbody>
 </table>
 </div>
+<p>Each <code>[[windows.dashboard_indicators]]</code> entry has:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>id</code></td><td>Indicator id (e.g. <code>POISONED</code>, <code>BLEEDING</code>, <code>STUNNED</code>, <code>WEBBED</code>, <code>HIDDEN</code> — see <a href="#status-indicators">Status Indicators</a>)</td></tr>
+<tr><td><code>icon</code></td><td>Glyph to display</td></tr>
+<tr><td><code>colors</code></td><td>Colors by state: <code>[inactive, active]</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>There is no default indicator set — an empty dashboard shows nothing until
+you add indicator entries (the shipped <code>sidebar</code> layout includes a
+configured example, and the GUI window editor can edit them).</p>
 <h2 id="display-3"><a class="header" href="#display-3">Display</a></h2>
-<p>Shows multiple status indicators in a compact grid:</p>
-<pre><code>┌──────────┐
-│KNE SIT HID│
-│STU WEB BLE│
-└──────────┘
+<p>Shows the configured indicator icons in the chosen layout:</p>
+<pre><code>┌────────────┐
+│ ☠  ♥  ⚠   │
+└────────────┘
 </code></pre>
 <ul>
-<li>Active indicators are highlighted</li>
-<li>Inactive indicators are dimmed</li>
-</ul>
-<h2 id="custom-indicators"><a class="header" href="#custom-indicators">Custom Indicators</a></h2>
-<pre><code class="language-toml">[[windows]]
-name = "dashboard"
-widget_type = "dashboard"
-indicators = ["kneeling", "hidden", "stunned", "webbed"]
-columns = 2
-</code></pre>
-<h2 id="available-indicators"><a class="header" href="#available-indicators">Available Indicators</a></h2>
-<ul>
-<li><code>kneeling</code>, <code>sitting</code>, <code>prone</code></li>
-<li><code>stunned</code>, <code>webbed</code>, <code>hidden</code></li>
-<li><code>invisible</code>, <code>dead</code></li>
-<li><code>bleeding</code>, <code>poisoned</code>, <code>diseased</code></li>
+<li>Active indicators render in their active color</li>
+<li>Inactive indicators render in their inactive color (or are hidden
+entirely with <code>dashboard_hide_inactive = true</code>)</li>
 </ul>
 <h2 id="example-combat-dashboard"><a class="header" href="#example-combat-dashboard">Example: Combat Dashboard</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -2491,12 +2534,27 @@ name = "combat_status"
 widget_type = "dashboard"
 row = 0
 col = 0
-rows = 2
+rows = 1
 cols = 15
-indicators = ["stunned", "webbed", "prone", "bleeding"]
-columns = 2
+dashboard_layout = "horizontal"
+dashboard_spacing = 1
 show_border = true
 title = "Status"
+
+[[windows.dashboard_indicators]]
+id = "STUNNED"
+icon = "⚠"
+colors = ["#555555", "#ffff00"]
+
+[[windows.dashboard_indicators]]
+id = "WEBBED"
+icon = "🕸"
+colors = ["#555555", "#ffffff"]
+
+[[windows.dashboard_indicators]]
+id = "BLEEDING"
+icon = "♥"
+colors = ["#555555", "#ff0000"]
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="room-window-1"><a class="header" href="#room-window-1">Room Window</a></h1>
@@ -2517,7 +2575,7 @@ cols = 50
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>show_name</code></td><td>bool</td><td>true</td><td>Show room name</td></tr>
+<tr><td><code>show_name</code></td><td>bool</td><td>false</td><td>Show room name inline in the content (the name always appears as the border title)</td></tr>
 <tr><td><code>show_desc</code></td><td>bool</td><td>true</td><td>Show description</td></tr>
 <tr><td><code>show_objs</code></td><td>bool</td><td>true</td><td>Show objects/creatures</td></tr>
 <tr><td><code>show_players</code></td><td>bool</td><td>true</td><td>Show other players</td></tr>
@@ -2525,7 +2583,7 @@ cols = 50
 </tbody>
 </table>
 </div>
-<h2 id="examples-5"><a class="header" href="#examples-5">Examples</a></h2>
+<h2 id="examples-4"><a class="header" href="#examples-4">Examples</a></h2>
 <h3 id="full-room-display"><a class="header" href="#full-room-display">Full Room Display</a></h3>
 <pre><code class="language-toml">[[windows]]
 name = "room"
@@ -2599,9 +2657,41 @@ zoom = 16          # pixels per grid cell (optional)
 <p>Or in-app: <code>.addwindow map</code>.</p>
 <p>The mini map follows your character: it recenters as you move and swaps
 sheets automatically when you go inside a building (interiors render as
-their own floor plan). Click a room to walk there via <code>;go2</code> — this needs
-a Lich connection with the go2 script available.</p>
+their own floor plan). Click a room to walk there — natively via the
+built-in <a href="#travel-go2">travel engine</a>, no Lich needed (switchable to
+<code>;go2</code> pass-through in <strong>Settings → Travel</strong>).</p>
 <p>Right-click the window for a zoom control and <strong>Open Map Explorer</strong>.</p>
+<h2 id="ghost-rooms-unmapped-interiors"><a class="header" href="#ghost-rooms-unmapped-interiors">Ghost Rooms (Unmapped Interiors)</a></h2>
+<p>Map maintainers deliberately leave most shop interiors out of the map
+database — they change too often to keep current. In everyday play the
+map simply holds your last mapped room while you’re inside one: what you
+see on screen is always mapped truth.</p>
+<p>Turn on <strong>Cartography mode</strong> (Settings → Map) and walking into an
+unmapped room sketches a <strong>ghost room</strong> instead: a dashed, dimmed square
+hanging off the street you entered from, labeled with the command that
+took you inside (“go shop”). Moving between unmapped rooms grows the
+sketch, and hovering a ghost shows the room’s title. Ghosts render on
+the mini map, the Map Explorer, and the phone map alike.</p>
+<p>Ghosts are drawn dashed on purpose: solid squares are mapped truth,
+dashed squares are what your client saw this session. The sketch lasts
+until you close VellumFE — it is never saved, so it can never go stale.</p>
+<h2 id="player-shops"><a class="header" href="#player-shops">Player Shops</a></h2>
+<p>Player-shop warrens (hundreds of near-identical rooms) get their own map
+per town — the location picker lists them as <strong>“Mist Harbor (Player
+Shops)”</strong> and so on, right beside their town, so the town map stays
+readable. Walking into the shops switches the map over automatically,
+exactly like entering any other location; <code>.go2</code> routes through them as
+always.</p>
+<h2 id="your-map-learns-as-you-play"><a class="header" href="#your-map-learns-as-you-play">Your Map Learns As You Play</a></h2>
+<p>Type <code>sense</code> (ranger) or <code>forage sense</code> anywhere and VellumFE captures
+the response for the room you’re standing in: climate and terrain,
+wildlife signs, the creature circling overhead, visible structures, and
+the full forageables list. Select that room in the Map Explorer and it
+all shows as ordinary room info.</p>
+<p>Like Lich’s in-memory map edits, these observations are <strong>session-only</strong>:
+they’re never written to disk and vanish when you close VellumFE. The
+map database itself is never modified — permanence comes only through
+submitting curated data (the submission workflow is under construction).</p>
 <h2 id="map-explorer"><a class="header" href="#map-explorer">Map Explorer</a></h2>
 <p>A separate native OS window (like detached tabs) for browsing the whole
 map, not just where you’re standing:</p>
@@ -2609,12 +2699,16 @@ map, not just where you’re standing:</p>
 <li><strong>Location picker</strong> with filtering — jump to any mapped location</li>
 <li><strong>Follow mode</strong> — track your character as you move</li>
 <li><strong>Outdoor / interiors sheets</strong>, drag-pan, scroll-zoom</li>
-<li><strong>Room inspection</strong> — click a room to see its details</li>
-<li><strong>Walk-to</strong> — double-click a room to travel there (<code>;go2</code>)</li>
+<li><strong>Room inspection</strong> — click a room for its details in collapsible
+sections: Description, Environment (climate/terrain, plus wildlife and
+structures you’ve sensed this session), Forageables (from <code>forage  sense</code>), Tags, and Exits</li>
+<li><strong>Walk-to</strong> — double-click a room to travel there (<a href="#travel-go2">native travel</a>)</li>
 <li><strong>Override editor</strong> — an edit mode where you drag room groups (Alt-drag
 a single room) to tidy a layout; edits are saved as per-room override
 diffs that survive mapdb updates, and edges can be restyled (e.g.
-dashed) without recomputing the layout</li>
+dashed) without recomputing the layout. Your edits layer on top of any
+community-curated overrides that came with the downloaded map data —
+<strong>Reset overrides</strong> clears only your own layer.</li>
 </ul>
 <h2 id="where-the-map-data-comes-from"><a class="header" href="#where-the-map-data-comes-from">Where the Map Data Comes From</a></h2>
 <p>The map needs a Lich-format map database. Sources, in priority order:</p>
@@ -2624,7 +2718,9 @@ dashed) without recomputing the layout</li>
 pulls the latest <code>mapdb.json</code> release asset from a GitHub repository
 (<code>mapdb_repo</code>, default <code>Nisugi/mapdb</code>). This is how mobile gets a map
 without Lich. The newest version plus one rollback are kept under
-<code>~/.vellum-fe/mapdb/</code>.</li>
+<code>~/.vellum-fe/mapdb/</code>. If the release also carries an <code>overrides.json</code>
+asset (community layout curation), it’s downloaded alongside and
+applied automatically underneath your own edits.</li>
 <li><strong>Lich install</strong> — <code>lich_dir</code> names the folder containing <code>data/</code>; the
 newest <code>data/&lt;GAME&gt;/map-&lt;timestamp&gt;.json</code> for the connected game is
 used (per-game: GSIV, GST, GSPlat, DR, …).</li>
@@ -2632,46 +2728,172 @@ used (per-game: GSIV, GST, GSPlat, DR, …).</li>
 <p>Nothing downloads automatically — the Download button is an explicit
 action. Downloaded releases carry GemStone data, so DragonRealms sessions
 use the Lich folder.</p>
+<p>From any frontend — including the phone apps, which have no Settings &gt;
+Map panel — <code>.mapdb download</code> fetches the latest release, <code>.mapdb</code> shows
+status, <code>.mapdb remove</code> deletes downloads, and <code>.mapdb repo &lt;owner/repo&gt;</code>
+changes the source.</p>
+<h2 id="on-the-phone"><a class="header" href="#on-the-phone">On the Phone</a></h2>
+<p>The mobile web client has its own map: once map data is downloaded
+(<code>.mapdb download</code>) and your room resolves, a map button appears in the
+top bar. It opens a full-screen view of the same generated layout the
+desktop mini map shows — auto-following your character, switching to the
+building’s floor plan indoors, ghost rooms included when Cartography
+mode is on. Drag to pan (which
+pauses following until you tap <strong>Follow</strong>), pinch to zoom, and tap a
+room to walk there with <a href="#travel-go2">native travel</a>.</p>
+<p>Tap the <strong>location name</strong> in the title bar to browse any other mapped
+location — filter the list, pick one, and tap a room there to travel
+across the world; <strong>Return</strong> brings the view back to where you’re
+standing. While a trip is running the map shows its progress
+(“→ 8966 · 12/47 rooms · ETA 1:04”) and a <strong>Stop</strong> button.</p>
 <h2 id="configuration-2"><a class="header" href="#configuration-2">Configuration</a></h2>
 <pre><code class="language-toml">[map]
 lich_dir = "C:/Lich5"            # Lich install (folder containing data/)
 # mapdb_path = "C:/maps/map.json"  # explicit file; overrides everything
 mapdb_repo = "Nisugi/mapdb"      # GitHub repo for the Download button
+mapping_mode = false             # Cartography mode: sketch unmapped rooms
 </code></pre>
-<p>All three are editable in <strong>Settings → Map</strong> in the GUI, which also shows
-the downloaded version and offers <strong>Download map data</strong> / delete-downloaded
-actions.</p>
+<p>All of these are editable in <strong>Settings → Map</strong> in the GUI, which also
+shows the downloaded version and offers <strong>Download map data</strong> /
+delete-downloaded actions.</p>
 <h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>
 <li>Layouts are generated in the background the first time you enter a
 location and cached on disk — instant thereafter.</li>
 <li>The map draws in your theme’s colors (light/dark aware).</li>
+<li>On connections that never report a room id (some direct-connect
+setups), the map falls back to matching the room’s title, description,
+and exits against the database — and only trusts an unambiguous match,
+holding in place otherwise.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="travel-go2"><a class="header" href="#travel-go2">Travel (.go2)</a></h1>
+<p>Native map travel — VellumFE walks you across the world using its own
+pathfinding over the map database. No Lich session needed, which means it
+works everywhere the map does, including the mobile apps.</p>
+<pre><code class="language-text">.go2 bank              nearest room tagged "bank"
+.go2 8966              a mapdb room id
+.go2 u7150105          a game uid
+.go2 town square       text search over room titles (a pick list if several match)
+.go2 home              a saved target
+.go2 back              where your last trip started
+.go2 stop              cancel the active trip (or just press Esc)
+.go2 status            progress and ETA
+.go2 save home         save the current room as "home" (.go2 save home 8966 for an explicit id)
+.go2 targets           list saved targets
+</code></pre>
+<p>Starting a trip prints the room count and ETA; while traveling, the map
+widget shows a progress banner and arrival reports the actual travel
+time. Clicking a room on the mini map or in the Map Explorer travels
+there too (see below).</p>
+<h2 id="what-it-does-on-the-way"><a class="header" href="#what-it-does-on-the-way">What it does on the way</a></h2>
+<p>The walker behaves like Lich’s go2: it waits out roundtime between
+moves, stands up first when needed (skipping that for swim/pedal
+movement), pauses while you’re stunned or webbed, and aborts if you die.
+A move that keeps failing gets that edge disabled for the session and
+the route recomputed — same for ending up somewhere unexpected (fleeing,
+being teleported, walking by hand mid-trip).</p>
+<h2 id="mazes"><a class="header" href="#mazes">Mazes</a></h2>
+<p>Some regions scramble movement — walking their mapdb edges is
+meaningless (and draws as a spiderweb on the map, so their rooms are left
+off it). These are declared in <code>defaults/globals/mazes.toml</code>, and the
+walker uses a per-maze strategy instead of stepping edges.</p>
+<p>The pilot is the <strong>Mist Harbor Ranger Guild</strong> jungle approach, a
+<em>pathcode</em> maze: each character has a personal route, revealed by the
+Master Tracker at the entrance. When a trip crosses it, the walker goes
+to the entrance, asks the Tracker automatically if no route is stored
+(the response — “Your route is: go clearing, west, …” — is captured
+and saved per character), then walks your code. A wrong turn follows the
+Tracker’s own advice: <code>search</code> to re-orient, start the route again, with
+a bounded retry before giving up. Asking the Tracker by hand also
+captures your route — the next <code>.go2</code> through just works.</p>
+<p>A <code>~/.vellum-fe/mazes.toml</code> can add or replace maze definitions by name
+(same shipped-plus-user pattern as travel overrides).</p>
+<h2 id="what-it-cant-do-yet"><a class="header" href="#what-it-cant-do-yet">What it can’t do (yet)</a></h2>
+<p>Lich’s go2 has a decade of special cases; native v1 deliberately walks
+the common world and leaves the exotic paths out:</p>
+<ul>
+<li><strong>No silver handling</strong> — routes that require paying (ferries,
+portmasters, Chronomage day passes) are excluded from pathing rather
+than attempted. The same goes for urchin guides and the Confluence.</li>
+<li><strong>Scripted edges</strong> are supported where VellumFE understands the
+script — about a quarter of them, covering doors, levers, pauses,
+spell-gated and sitting-gated passages. With plain movement included,
+roughly 93% of all map edges are walkable. A route that <em>requires</em> an
+unsupported edge fails with “no route” instead of walking you into a
+dead end.</li>
+<li><strong>One room at a time</strong> — no typeahead pipelining, so long trips are a
+bit slower than Lich’s go2.</li>
+</ul>
+<p>If a specific edge you care about isn’t walkable, it can be hand-taught:
+copy <code>travel_overrides.toml</code> from the defaults into <code>~/.vellum-fe/</code> and
+add the edge (the file documents the format). Overrides beat everything
+the mapdb says about that edge.</p>
+<h2 id="settings"><a class="header" href="#settings">Settings</a></h2>
+<p><strong>Settings → Travel</strong> in the GUI:</p>
+<ul>
+<li><strong>Map clicks travel natively</strong> (default on) — turn off to have map
+clicks send <code>;go2 &lt;id&gt;</code> to Lich instead, if you prefer its go2 for
+silvers/day-pass trips.</li>
+</ul>
+<pre><code class="language-toml">[go2]
+native_map_clicks = true
+# saved targets are written here by .go2 save
+</code></pre>
+<h2 id="debugging"><a class="header" href="#debugging">Debugging</a></h2>
+<p><code>.room</code> shows how your current room resolved against the map database —
+the first thing to check when <code>.go2</code> says your room is unknown.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="injury-display"><a class="header" href="#injury-display">Injury Display</a></h1>
-<p>Shows body part injuries as a visual “paper doll”.</p>
+<p>Shows body part injuries as a visual “paper doll” stick figure.</p>
 <h2 id="basic-usage-9"><a class="header" href="#basic-usage-9">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "injuries"
 widget_type = "injury_doll"
 row = 0
 col = 0
-rows = 10
-cols = 15
+rows = 8
+cols = 10
 </code></pre>
 <h2 id="display-5"><a class="header" href="#display-5">Display</a></h2>
-<pre><code>    [Head]
-[L.Arm][Chest][R.Arm]
-   [L.Leg][R.Leg]
+<p>A compact stick figure, with eyes above the head and short text labels on
+the right for parts that don’t fit the figure:</p>
+<pre><code>👁   👁
+  0      nk
+ /|\
+o | o    bk
+ / \
+o   o    ns
 </code></pre>
 <ul>
-<li>Each body part changes color based on injury severity</li>
-<li>Green (healthy) → Yellow (minor) → Orange (moderate) → Red (severe)</li>
+<li>Head <code>0</code>, arms <code>/ \</code>, chest and abdomen <code>|</code>, hands and feet <code>o</code></li>
+<li><code>nk</code> = neck, <code>bk</code> = back, <code>ns</code> = nerves</li>
+<li>Each body part changes color with injury severity</li>
 </ul>
+<h2 id="colors"><a class="header" href="#colors">Colors</a></h2>
+<p>Seven severity levels, each with its own configurable color:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>Default color</th></tr>
+</thead>
+<tbody>
+<tr><td>Healthy</td><td><code>#333333</code> (dark gray)</td></tr>
+<tr><td>Injury 1</td><td><code>#aa5500</code> (brown)</td></tr>
+<tr><td>Injury 2</td><td><code>#ff8800</code> (orange)</td></tr>
+<tr><td>Injury 3</td><td><code>#ff0000</code> (red)</td></tr>
+<tr><td>Scar 1</td><td><code>#999999</code></td></tr>
+<tr><td>Scar 2</td><td><code>#777777</code></td></tr>
+<tr><td>Scar 3</td><td><code>#555555</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Override with <code>injury_default_color</code>, <code>injury1_color</code> … <code>injury3_color</code>,
+and <code>scar1_color</code> … <code>scar3_color</code>.</p>
 <h2 id="size-requirements-1"><a class="header" href="#size-requirements-1">Size Requirements</a></h2>
 <ul>
-<li>Minimum: 8 rows × 12 columns</li>
-<li>Recommended: 10×15</li>
+<li>Minimum: 6 rows × 8 columns</li>
+<li>Default: 8 rows × 10 columns</li>
 </ul>
 <h2 id="example-1"><a class="header" href="#example-1">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -2679,8 +2901,8 @@ name = "injuries"
 widget_type = "injury_doll"
 row = 0
 col = 0
-rows = 10
-cols = 15
+rows = 8
+cols = 10
 show_border = true
 border_style = "rounded"
 title = "Injuries"
@@ -2693,14 +2915,16 @@ title = "Injuries"
 <li>Left/Right Hand</li>
 <li>Left/Right Leg</li>
 <li>Left/Right Eye</li>
+<li>Nerves</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="active-effects"><a class="header" href="#active-effects">Active Effects</a></h1>
 <p>Displays active spells, buffs, debuffs, and cooldowns.</p>
 <h2 id="basic-usage-10"><a class="header" href="#basic-usage-10">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "effects"
+name = "buffs"
 widget_type = "active_effects"
+category = "Buffs"
 row = 0
 col = 0
 rows = 10
@@ -2713,38 +2937,41 @@ cols = 30
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>category</code></td><td>string</td><td><code>"all"</code></td><td>Filter by type</td></tr>
+<tr><td><code>category</code></td><td>string</td><td>required</td><td>Which effects dialog to show</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="categories-1"><a class="header" href="#categories-1">Categories</a></h2>
+<p>Each widget shows exactly one of the game’s effect dialogs — there is no
+combined view. Built-in templates exist for all four (<code>buffs</code>, <code>debuffs</code>,
+<code>cooldowns</code>, <code>active_spells</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Category</th><th>Content</th></tr>
 </thead>
 <tbody>
-<tr><td><code>all</code></td><td>Everything</td></tr>
-<tr><td><code>spell</code></td><td>Active spells</td></tr>
-<tr><td><code>buff</code></td><td>Beneficial effects</td></tr>
-<tr><td><code>debuff</code></td><td>Harmful effects</td></tr>
-<tr><td><code>cooldown</code></td><td>Ability cooldowns</td></tr>
+<tr><td><code>Buffs</code></td><td>Beneficial effects</td></tr>
+<tr><td><code>Debuffs</code></td><td>Harmful effects</td></tr>
+<tr><td><code>Cooldowns</code></td><td>Ability cooldowns</td></tr>
+<tr><td><code>ActiveSpells</code></td><td>Active spells</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="display-6"><a class="header" href="#display-6">Display</a></h2>
-<p>Shows effect name with remaining duration:</p>
-<pre><code>┌─ Active Effects ──────┐
-│ Spirit Shield   12:34 │
-│ Haste            3:45 │
-│ Bless            8:20 │
-└───────────────────────┘
+<p>Shows effect name with remaining duration in brackets (<code>[MM:SS]</code>, or
+<code>[HH:MM]</code> for long durations):</p>
+<pre><code>┌─ Buffs ─────────────────┐
+│ Spirit Shield   [12:34] │
+│ Haste           [03:45] │
+│ Bless           [08:20] │
+└─────────────────────────┘
 </code></pre>
 <h2 id="example-2"><a class="header" href="#example-2">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "buffs"
+name = "spells"
 widget_type = "active_effects"
-category = "spell"
+category = "ActiveSpells"
 rows = 8
 cols = 25
 show_border = true
@@ -3023,10 +3250,12 @@ title = "Known Spells"
 <h2 id="basic-usage-17"><a class="header" href="#basic-usage-17">Basic Usage</a></h2>
 <p>Container windows are created dynamically when you look in a container.</p>
 <h2 id="enabling-containers"><a class="header" href="#enabling-containers">Enabling Containers</a></h2>
-<p>Enable container windows via command:</p>
+<p>Enable container discovery mode via command:</p>
 <pre><code>.containers
 </code></pre>
-<p>Or via menu: <code>.menu</code> → Config → Toggle Containers</p>
+<p>The client confirms with “Container discovery ON/OFF”. While on, LOOK IN a
+container to create a window for it. <code>.hidecontainers [title]</code> closes
+container windows again.</p>
 <h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
 <p>When enabled:</p>
 <ol>
@@ -3245,7 +3474,7 @@ cols = 30
 [[windows]]
 name = "health"
 widget_type = "progress"
-stat = "health"
+id = "health"
 row = 25
 col = 100
 rows = 1
@@ -3345,7 +3574,7 @@ category = "Squelch"
 <pre><code class="language-toml">[loot_lines]
 pattern = "^You gather"
 redirect_to = "loot"
-redirect_mode = "copy"    # "only" to move instead of copy
+redirect_mode = "redirect_copy"    # "redirect_only" (the default) to move instead of copy
 </code></pre>
 <h2 id="rewrite-text"><a class="header" href="#rewrite-text">Rewrite Text</a></h2>
 <p>Capture groups from the pattern are available as <code>$1</code>, <code>$2</code>:</p>
@@ -3457,10 +3686,11 @@ volume = 0.7              # Master volume
 cooldown_ms = 500         # Min time between sounds
 startup_music = true      # Play music on launch
 </code></pre>
-<p><code>startup_music</code> plays the classic login theme when a TUI or GUI session
-starts. The mobile apps play it too, once the game connection comes up —
-a <strong>Stop / Don’t play again</strong> bar appears while it plays, and it can be
-turned back on under <strong>⚙ Settings → Login music</strong>.</p>
+<p><code>startup_music</code> plays the classic login theme once the game connection
+comes up (not while you’re still on the login screen — no connection, no
+music). On the mobile apps a <strong>Stop / Don’t play again</strong> bar appears
+while it plays, and it can be turned back on under
+<strong>⚙ Settings → Login music</strong>.</p>
 <h2 id="disabling-sounds"><a class="header" href="#disabling-sounds">Disabling Sounds</a></h2>
 <h3 id="all-sounds"><a class="header" href="#all-sounds">All Sounds</a></h3>
 <pre><code class="language-toml">[sound]
@@ -3548,9 +3778,12 @@ description = "My tweaked dark theme"
 window_background = "#1a1b26"
 text_primary = "#c0caf5"
 link_color = "Link"        # palette name from colors.toml
-# ... any fields you omit fall back to defaults
+# ... every color field must be present — a file with missing
+# fields is skipped when themes are loaded
 </code></pre>
-<p>The easiest way to author one is <code>.edittheme</code> on a built-in you like, then
+<p>Hand-written theme files must define <strong>all</strong> color fields; there is no
+per-field fallback. The easiest (and recommended) way to author one is
+<code>.edittheme</code> on a built-in you like — it writes a complete file — then
 save under a new name.</p>
 <h2 id="themes-vs-colorstoml"><a class="header" href="#themes-vs-colorstoml">Themes vs. colors.toml</a></h2>
 <p>Two separate systems:</p>
@@ -3649,19 +3882,51 @@ ne = "compass/ne.png"
 # ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 </code></pre>
 <h2 id="sprite-injury-paperdoll"><a class="header" href="#sprite-injury-paperdoll">Sprite Injury Paperdoll</a></h2>
-<p>A base body image plus full-canvas overlays per body part and severity.
-Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>, <code>back</code>,
-<code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>, <code>rightLeg</code>,
-<code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>), each with <code>injury1</code>–<code>injury3</code> and
-<code>scar1</code>–<code>scar3</code> entries:</p>
+<p>A base body image; wounds and scars render as generated dots on top of it —
+a solid circle for wounds, a ring for scars, with the severity rank (1–3)
+inside. Parts use the protocol names (<code>head</code>, <code>neck</code>, <code>chest</code>, <code>abdomen</code>,
+<code>back</code>, <code>leftArm</code>, <code>rightArm</code>, <code>leftHand</code>, <code>rightHand</code>, <code>leftLeg</code>,
+<code>rightLeg</code>, <code>leftEye</code>, <code>rightEye</code>, <code>nsys</code>).</p>
 <pre><code class="language-toml">[injury_doll]
 base = "doll/body.png"
+</code></pre>
+<h3 id="calibrating-dot-positions"><a class="header" href="#calibrating-dot-positions">Calibrating dot positions</a></h3>
+<p>Where each part’s dot lands is set by clicking, not by hand-editing:
+<strong>Settings &gt; Appearance &gt; Skin &gt; Calibrate injury doll</strong>. The calibrator
+shows your doll art with every part’s dot live; click to place the
+highlighted part, adjust dot size, opacity, and the wound/scar colors with
+the controls below, then <strong>Save to skin</strong>. It writes the
+<code>[injury_doll.anchors]</code> and <code>[injury_doll.dots]</code> tables into the skin’s
+<code>skin.toml</code> (everything else in the file, comments included, is left
+alone), so calibration travels with the skin when you share the folder.</p>
+<p>Coordinates are stored as fractions of the base image, so any image size
+works and a uniform resize never needs recalibrating. Parts you don’t
+calibrate use sensible built-in defaults. <code>back</code> and <code>nsys</code> (and usually
+the eyes) have no natural spot on a front-view silhouette — the convention
+is eyes at the top corners, back bottom-left, nerves bottom-right, but any
+click position works; the base art can mark those spots (letters, icons)
+or leave them as empty margin.</p>
+<pre><code class="language-toml"># Written by the calibrator — shown here for reference.
+[injury_doll.anchors]
+head = [0.5, 0.09]
+chest = [0.5, 0.3]
 
-[injury_doll.head]
-injury1 = "doll/head_i1.png"
-injury2 = "doll/head_i2.png"
-injury3 = "doll/head_i3.png"
-scar1 = "doll/head_s1.png"
+[injury_doll.dots]
+wound_color = "#e02020"
+scar_color = "#b8b8b8"
+opacity = 0.9
+diameter = 0.07     # fraction of the drawn doll height
+</code></pre>
+<h3 id="hand-drawn-overlays-optional"><a class="header" href="#hand-drawn-overlays-optional">Hand-drawn overlays (optional)</a></h3>
+<p>A part can instead ship full-canvas overlays per severity, authored on the
+same canvas as the base so they stack in place — useful for effects a dot
+can’t express, like nervous-system damage drawn across the whole body.
+Overlays take precedence over the generated dot for that part and
+severity; every other part keeps its dot.</p>
+<pre><code class="language-toml">[injury_doll.nsys]
+injury1 = "doll/nerves_i1.png"
+injury2 = "doll/nerves_i2.png"
+injury3 = "doll/nerves_i3.png"
 </code></pre>
 <h2 id="notes-2"><a class="header" href="#notes-2">Notes</a></h2>
 <ul>
@@ -3689,6 +3954,11 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.menu</code></td><td></td><td>Open the main menu</td></tr>
 <tr><td><code>.settings</code></td><td></td><td>Open the settings editor</td></tr>
 <tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
+<tr><td><code>.room</code></td><td></td><td>Show how the current room resolved against the map database (stream ids, mapdb room/location, routable exits, tags) — for debugging the map and pathing</td></tr>
+<tr><td><code>.mapdb [download|remove|repo &lt;r&gt;]</code></td><td></td><td>Manage downloaded map data from any frontend (no args = status). On phones this is <em>the</em> way to fetch the map — there’s no Settings &gt; Map panel there</td></tr>
+<tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="#travel-go2">Travel chapter</a></td></tr>
+<tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
+<tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
 </tbody>
 </table>
 </div>
@@ -3826,7 +4096,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>-c, --config &lt;FILE&gt;</code></td><td>Use a specific config.toml</td></tr>
 <tr><td><code>--data-dir &lt;DIR&gt;</code></td><td>Data directory (default <code>~/.vellum-fe</code>; also <code>VELLUM_FE_DIR</code> env var)</td></tr>
 <tr><td><code>--web-port &lt;PORT&gt;</code></td><td>Enable the <a href="#mobile-web">mobile web server</a> on this port</td></tr>
-<tr><td><code>--color-mode &lt;direct|slot&gt;</code></td><td>Override color rendering mode</td></tr>
+<tr><td><code>--color-mode &lt;direct|slot|indexed&gt;</code></td><td>Override color rendering mode</td></tr>
 <tr><td><code>--setup-palette</code></td><td>Load the terminal palette at startup (use with <code>--color-mode slot</code>)</td></tr>
 <tr><td><code>--nosound</code></td><td>Disable the sound system entirely</td></tr>
 </tbody>
@@ -4018,7 +4288,9 @@ VellumFE project.</p>
 <h2 id="what-we-collect"><a class="header" href="#what-we-collect">What we collect</a></h2>
 <p><strong>Nothing.</strong> VellumFE contains no analytics, telemetry, advertising, or
 tracking of any kind. The app makes no network connections other than the
-ones you explicitly initiate to play the game.</p>
+ones you explicitly initiate: connecting to the game (directly or via Lich),
+and — only when you run <code>.mapdb download</code> or use the equivalent settings
+button — fetching map data from GitHub.</p>
 <h2 id="your-login-credentials"><a class="header" href="#your-login-credentials">Your login credentials</a></h2>
 <ul>
 <li>Your play.net account name and password are used solely to authenticate

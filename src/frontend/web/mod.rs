@@ -8,6 +8,7 @@
 //! (serving assets, per-client snapshots, delta fan-out) happens on the
 //! spawned server task. See docs/mobile-web-frontend-plan.md.
 
+pub mod doll;
 pub mod protocol;
 pub mod server;
 

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,8 +181,9 @@
 <p>Displays active spells, buffs, debuffs, and cooldowns.</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "effects"
+name = "buffs"
 widget_type = "active_effects"
+category = "Buffs"
 row = 0
 col = 0
 rows = 10
@@ -195,38 +196,41 @@ cols = 30
 <tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>category</code></td><td>string</td><td><code>"all"</code></td><td>Filter by type</td></tr>
+<tr><td><code>category</code></td><td>string</td><td>required</td><td>Which effects dialog to show</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="categories"><a class="header" href="#categories">Categories</a></h2>
+<p>Each widget shows exactly one of the game’s effect dialogs — there is no
+combined view. Built-in templates exist for all four (<code>buffs</code>, <code>debuffs</code>,
+<code>cooldowns</code>, <code>active_spells</code>):</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Category</th><th>Content</th></tr>
 </thead>
 <tbody>
-<tr><td><code>all</code></td><td>Everything</td></tr>
-<tr><td><code>spell</code></td><td>Active spells</td></tr>
-<tr><td><code>buff</code></td><td>Beneficial effects</td></tr>
-<tr><td><code>debuff</code></td><td>Harmful effects</td></tr>
-<tr><td><code>cooldown</code></td><td>Ability cooldowns</td></tr>
+<tr><td><code>Buffs</code></td><td>Beneficial effects</td></tr>
+<tr><td><code>Debuffs</code></td><td>Harmful effects</td></tr>
+<tr><td><code>Cooldowns</code></td><td>Ability cooldowns</td></tr>
+<tr><td><code>ActiveSpells</code></td><td>Active spells</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
-<p>Shows effect name with remaining duration:</p>
-<pre><code>┌─ Active Effects ──────┐
-│ Spirit Shield   12:34 │
-│ Haste            3:45 │
-│ Bless            8:20 │
-└───────────────────────┘
+<p>Shows effect name with remaining duration in brackets (<code>[MM:SS]</code>, or
+<code>[HH:MM]</code> for long durations):</p>
+<pre><code>┌─ Buffs ─────────────────┐
+│ Spirit Shield   [12:34] │
+│ Haste           [03:45] │
+│ Bless           [08:20] │
+└─────────────────────────┘
 </code></pre>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
-name = "buffs"
+name = "spells"
 widget_type = "active_effects"
-category = "spell"
+category = "ActiveSpells"
 rows = 8
 cols = 25
 show_border = true

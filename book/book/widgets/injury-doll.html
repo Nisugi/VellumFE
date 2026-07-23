@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-6e538b1c.js";
+            window.path_to_searchindex_js = "../searchindex-735503f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a5192a6c.js"></script>
+        <script src="../toc-e125f080.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,29 +178,55 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="injury-display"><a class="header" href="#injury-display">Injury Display</a></h1>
-<p>Shows body part injuries as a visual “paper doll”.</p>
+<p>Shows body part injuries as a visual “paper doll” stick figure.</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
 <pre><code class="language-toml">[[windows]]
 name = "injuries"
 widget_type = "injury_doll"
 row = 0
 col = 0
-rows = 10
-cols = 15
+rows = 8
+cols = 10
 </code></pre>
 <h2 id="display"><a class="header" href="#display">Display</a></h2>
-<pre><code>    [Head]
-[L.Arm][Chest][R.Arm]
-   [L.Leg][R.Leg]
+<p>A compact stick figure, with eyes above the head and short text labels on
+the right for parts that don’t fit the figure:</p>
+<pre><code>👁   👁
+  0      nk
+ /|\
+o | o    bk
+ / \
+o   o    ns
 </code></pre>
 <ul>
-<li>Each body part changes color based on injury severity</li>
-<li>Green (healthy) → Yellow (minor) → Orange (moderate) → Red (severe)</li>
+<li>Head <code>0</code>, arms <code>/ \</code>, chest and abdomen <code>|</code>, hands and feet <code>o</code></li>
+<li><code>nk</code> = neck, <code>bk</code> = back, <code>ns</code> = nerves</li>
+<li>Each body part changes color with injury severity</li>
 </ul>
+<h2 id="colors"><a class="header" href="#colors">Colors</a></h2>
+<p>Seven severity levels, each with its own configurable color:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>Default color</th></tr>
+</thead>
+<tbody>
+<tr><td>Healthy</td><td><code>#333333</code> (dark gray)</td></tr>
+<tr><td>Injury 1</td><td><code>#aa5500</code> (brown)</td></tr>
+<tr><td>Injury 2</td><td><code>#ff8800</code> (orange)</td></tr>
+<tr><td>Injury 3</td><td><code>#ff0000</code> (red)</td></tr>
+<tr><td>Scar 1</td><td><code>#999999</code></td></tr>
+<tr><td>Scar 2</td><td><code>#777777</code></td></tr>
+<tr><td>Scar 3</td><td><code>#555555</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Override with <code>injury_default_color</code>, <code>injury1_color</code> … <code>injury3_color</code>,
+and <code>scar1_color</code> … <code>scar3_color</code>.</p>
 <h2 id="size-requirements"><a class="header" href="#size-requirements">Size Requirements</a></h2>
 <ul>
-<li>Minimum: 8 rows × 12 columns</li>
-<li>Recommended: 10×15</li>
+<li>Minimum: 6 rows × 8 columns</li>
+<li>Default: 8 rows × 10 columns</li>
 </ul>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <pre><code class="language-toml">[[windows]]
@@ -208,8 +234,8 @@ name = "injuries"
 widget_type = "injury_doll"
 row = 0
 col = 0
-rows = 10
-cols = 15
+rows = 8
+cols = 10
 show_border = true
 border_style = "rounded"
 title = "Injuries"
@@ -222,13 +248,14 @@ title = "Injuries"
 <li>Left/Right Hand</li>
 <li>Left/Right Leg</li>
 <li>Left/Right Eye</li>
+<li>Nerves</li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../widgets/map.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../widgets/travel.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -242,7 +269,7 @@ title = "Injuries"
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../widgets/map.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../widgets/travel.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

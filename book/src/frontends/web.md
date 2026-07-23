@@ -82,7 +82,11 @@ port.
   panel** with the injury doll, injuries list, hands, character sheet
   (experience, encumbrance, bounty, society), active effects with live
   countdowns, and **tap-to-target** — tap a creature to get its
-  attack/look/target menu.
+  attack/look/target menu. When the server's active skin ships injury
+  doll art, the drawer renders that art with wound/scar dots at the same
+  calibrated anchor points as the desktop GUI (see
+  [Skins](../customization/skins.md)); without one it draws the built-in
+  vector doll.
 - **Vitals, hands, RT/CT** — a status strip with live countdowns.
 - **Macro buttons** — the macro rail, menu buttons, and draggable
   floating buttons from [macros.toml](../configuration/macros-toml.md);
