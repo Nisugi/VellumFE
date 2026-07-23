@@ -33,6 +33,10 @@ pub(in super::super) struct WindowEditorState {
     room: Option<RoomFields>,
     /// Some for Targets windows: per-window display options.
     targets: Option<TargetFields>,
+    /// Some for gs4_experience windows: per-field display toggles.
+    experience: Option<ExperienceFields>,
+    /// Some for encum windows: bar/blurb display toggles.
+    encum: Option<EncumFields>,
     /// Lock flag from the layout definition; None when the window has no
     /// layout def. Locked windows can't be deleted.
     locked: Option<bool>,
@@ -47,6 +51,21 @@ struct RoomFields {
     show_objs: bool,
     show_players: bool,
     show_exits: bool,
+}
+
+/// gs4_experience field toggles (shared with the TUI via GS4ExperienceWidgetData).
+struct ExperienceFields {
+    show_level: bool,
+    show_mind_bar: bool,
+    show_exp_bar: bool,
+    show_total_exp: bool,
+    show_ascension_exp: bool,
+}
+
+/// Encumbrance display toggles (shared via EncumbranceWidgetData).
+struct EncumFields {
+    show_bar: bool,
+    show_label: bool,
 }
 
 /// Targets window display options (shared via TargetsWidgetData).
@@ -143,6 +162,8 @@ impl WindowEditorState {
             effects_category: None,
             room: None,
             targets: None,
+            experience: None,
+            encum: None,
             locked: None,
             tabs: None,
             error: None,
@@ -198,6 +219,8 @@ impl VellumGuiApp {
         state.effects_category = None;
         state.room = None;
         state.targets = None;
+        state.experience = None;
+        state.encum = None;
         state.locked = None;
         state.tabs = None;
         // Def-backed options (lock flag, room/targets display settings).
@@ -222,6 +245,21 @@ impl VellumGuiApp {
                     state.targets = Some(TargetFields {
                         show_appendages: data.show_body_part_count,
                         status_position: data.status_position.clone().unwrap_or_default(),
+                    });
+                }
+                crate::config::WindowDef::GS4Experience { data, .. } => {
+                    state.experience = Some(ExperienceFields {
+                        show_level: data.show_level,
+                        show_mind_bar: data.show_mind_bar,
+                        show_exp_bar: data.show_exp_bar,
+                        show_total_exp: data.show_total_exp,
+                        show_ascension_exp: data.show_ascension_exp,
+                    });
+                }
+                crate::config::WindowDef::Encumbrance { data, .. } => {
+                    state.encum = Some(EncumFields {
+                        show_bar: data.show_bar,
+                        show_label: data.show_label,
                     });
                 }
                 _ => {}
@@ -500,6 +538,37 @@ impl VellumGuiApp {
             }
         }
 
+        if let Some(experience) = &state.experience {
+            if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                data.show_level = experience.show_level;
+                data.show_mind_bar = experience.show_mind_bar;
+                data.show_exp_bar = experience.show_exp_bar;
+                data.show_total_exp = experience.show_total_exp;
+                data.show_ascension_exp = experience.show_ascension_exp;
+                self.app_core.layout_modified_since_save = true;
+            }
+        }
+
+        if let Some(encum) = &state.encum {
+            if let Some(crate::config::WindowDef::Encumbrance { data, .. }) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                data.show_bar = encum.show_bar;
+                data.show_label = encum.show_label;
+                self.app_core.layout_modified_since_save = true;
+            }
+        }
+
         if let Some(locked) = state.locked {
             if let Some(def) = self
                 .app_core
@@ -705,6 +774,33 @@ impl VellumGuiApp {
                                 ui.checkbox(&mut room.show_objs, "objects");
                                 ui.checkbox(&mut room.show_players, "players");
                                 ui.checkbox(&mut room.show_exits, "exits");
+                            });
+                            ui.end_row();
+                        }
+                        if let Some(experience) = state.experience.as_mut() {
+                            ui.label("Fields");
+                            ui.vertical(|ui| {
+                                ui.checkbox(&mut experience.show_level, "level");
+                                ui.checkbox(&mut experience.show_mind_bar, "mind state");
+                                ui.checkbox(&mut experience.show_exp_bar, "experience bar");
+                                ui.checkbox(&mut experience.show_total_exp, "total exp")
+                                    .on_hover_text(
+                                        "Total absorbed experience (needs the Lich \
+                                         experience feed).",
+                                    );
+                                ui.checkbox(&mut experience.show_ascension_exp, "ascension exp")
+                                    .on_hover_text(
+                                        "Total ascension experience (needs the Lich \
+                                         experience feed).",
+                                    );
+                            });
+                            ui.end_row();
+                        }
+                        if let Some(encum) = state.encum.as_mut() {
+                            ui.label("Fields");
+                            ui.vertical(|ui| {
+                                ui.checkbox(&mut encum.show_bar, "level bar");
+                                ui.checkbox(&mut encum.show_label, "help text");
                             });
                             ui.end_row();
                         }

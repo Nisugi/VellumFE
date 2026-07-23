@@ -22,6 +22,8 @@ pub struct Encumbrance {
     align: Alignment,
     /// Whether to show the descriptive blurb
     show_label: bool,
+    /// Whether to show the level bar
+    show_bar: bool,
     /// Whether to show the title
     show_title: bool,
     /// Whether to show the border
@@ -62,6 +64,7 @@ impl Encumbrance {
             title: title.to_string(),
             align: alignment,
             show_label,
+            show_bar: true,
             show_title: true,
             show_border: true,
             border_sides: BorderSides::default(),
@@ -97,6 +100,11 @@ impl Encumbrance {
     /// Set whether to show the label
     pub fn set_show_label(&mut self, show: bool) {
         self.show_label = show;
+    }
+
+    /// Set whether to show the level bar
+    pub fn set_show_bar(&mut self, show: bool) {
+        self.show_bar = show;
     }
 
     /// Set whether to show the title
@@ -264,8 +272,8 @@ impl Encumbrance {
 
         let mut current_y = inner.y;
 
-        // Row 1: Progress bar
-        if inner.height > 0 {
+        // Row 1: Progress bar (if enabled)
+        if self.show_bar && inner.height > 0 {
             let bar_area = Rect {
                 x: inner.x,
                 y: current_y,

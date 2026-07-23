@@ -47,6 +47,16 @@ pub struct GS4Experience {
     show_level: bool,
     /// Whether to show the exp bar (nextLvlPB)
     show_exp_bar: bool,
+    /// Whether to show the mind state bar
+    show_mind_bar: bool,
+    /// Whether to show the total absorbed experience line
+    show_total_exp: bool,
+    /// Whether to show the total ascension experience line
+    show_ascension_exp: bool,
+    /// Total absorbed experience (from exp attrs; None until the feed sends it)
+    exp_total: Option<u64>,
+    /// Total ascension experience
+    ascension_exp: Option<u64>,
     /// Background color (from theme)
     background_color: Option<Color>,
 }
@@ -77,6 +87,11 @@ impl GS4Experience {
             exp_bar_color: None, // Default to theme background for max-level users
             show_level: true,
             show_exp_bar: true,
+            show_mind_bar: true,
+            show_total_exp: false,
+            show_ascension_exp: false,
+            exp_total: None,
+            ascension_exp: None,
             background_color: None,
         }
     }
@@ -99,6 +114,21 @@ impl GS4Experience {
     /// Set whether to show the exp bar
     pub fn set_show_exp_bar(&mut self, show: bool) {
         self.show_exp_bar = show;
+    }
+
+    /// Set whether to show the mind state bar
+    pub fn set_show_mind_bar(&mut self, show: bool) {
+        self.show_mind_bar = show;
+    }
+
+    /// Set whether to show the total experience line
+    pub fn set_show_total_exp(&mut self, show: bool) {
+        self.show_total_exp = show;
+    }
+
+    /// Set whether to show the ascension experience line
+    pub fn set_show_ascension_exp(&mut self, show: bool) {
+        self.show_ascension_exp = show;
     }
 
     /// Set whether to show the title
@@ -145,8 +175,37 @@ impl GS4Experience {
         self.mind_text = state.mind_state_text.clone();
         self.next_level_value = state.next_level_value;
         self.next_level_text = state.next_level_text.clone();
+        self.exp_total = state.exp;
+        self.ascension_exp = state.ascension_exp;
 
         true
+    }
+
+    /// Group digits in threes: 1234567 -> "1,234,567".
+    fn format_thousands(value: u64) -> String {
+        let digits = value.to_string();
+        let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        out
+    }
+
+    /// Render one plain text line at `y`, returning the next row.
+    fn render_text_row(&self, inner: Rect, buf: &mut Buffer, y: u16, text: String) -> u16 {
+        let line = Line::from(Span::styled(text, Style::default().fg(self.text_color)));
+        let line_area = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let para = ratatui::widgets::Paragraph::new(line).alignment(self.align);
+        para.render(line_area, buf);
+        y + 1
     }
 
     /// Render a simple progress bar within a single line
@@ -284,8 +343,9 @@ impl GS4Experience {
             current_y += 1;
         }
 
-        // Row 2: Mind state bar
-        if current_y < inner.y + inner.height && !self.mind_text.is_empty() {
+        // Row 2: Mind state bar (if enabled)
+        if self.show_mind_bar && current_y < inner.y + inner.height && !self.mind_text.is_empty()
+        {
             let bar_area = Rect {
                 x: inner.x,
                 y: current_y,
@@ -320,6 +380,31 @@ impl GS4Experience {
                 &self.next_level_text,
                 self.exp_bar_color,
             );
+            current_y += 1;
+        }
+
+        // Row 4: Total absorbed experience (if enabled and the feed sent it)
+        if self.show_total_exp && current_y < inner.y + inner.height {
+            if let Some(total) = self.exp_total {
+                current_y = self.render_text_row(
+                    inner,
+                    buf,
+                    current_y,
+                    format!("Exp: {}", Self::format_thousands(total)),
+                );
+            }
+        }
+
+        // Row 5: Total ascension experience (if enabled and the feed sent it)
+        if self.show_ascension_exp && current_y < inner.y + inner.height {
+            if let Some(ascension) = self.ascension_exp {
+                self.render_text_row(
+                    inner,
+                    buf,
+                    current_y,
+                    format!("Ascension: {}", Self::format_thousands(ascension)),
+                );
+            }
         }
     }
 }

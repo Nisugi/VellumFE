@@ -836,6 +836,16 @@ pub struct GS4ExperienceWidgetData {
     /// Show experience progress bar (nextLvlPB) - default true
     #[serde(default = "default_true")]
     pub show_exp_bar: bool,
+    /// Show mind state progress bar - default true
+    #[serde(default = "default_true")]
+    pub show_mind_bar: bool,
+    /// Show total absorbed experience line - default false (new data feed;
+    /// off keeps existing layouts unchanged)
+    #[serde(default)]
+    pub show_total_exp: bool,
+    /// Show total ascension experience line - default false
+    #[serde(default)]
+    pub show_ascension_exp: bool,
     /// Mind bar fill color (default: cyan)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mind_bar_color: Option<String>,
@@ -853,6 +863,9 @@ pub struct EncumbranceWidgetData {
     /// Show descriptive blurb text - default true
     #[serde(default = "default_true")]
     pub show_label: bool,
+    /// Show the encumbrance level bar - default true
+    #[serde(default = "default_true")]
+    pub show_bar: bool,
     /// Bar color for light encumbrance (0-20) - default green
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_light: Option<String>,

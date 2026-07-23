@@ -1287,10 +1287,10 @@ impl Config {
                     title: Some("Experience".to_string()),
                     row: 0,
                     col: 0,
-                    rows: 5,           // 3 content (level, mind, exp) + 2 borders = 5 total
+                    rows: 5,           // 3 default content rows (level, mind, exp) + 2 borders
                     cols: 30,
-                    min_rows: Some(5), // Minimum with all content + borders
-                    max_rows: Some(5), // Maximum with all content + borders
+                    min_rows: Some(3), // 1 content row + borders (fields are toggleable)
+                    max_rows: Some(7), // 5 content rows (level, mind, exp, total, ascension) + borders
                     min_cols: Some(20),
                     show_border: true,
                     ..base_defaults.clone()
@@ -1299,6 +1299,9 @@ impl Config {
                     align: "center".to_string(),
                     show_level: true,
                     show_exp_bar: true,
+                    show_mind_bar: true,
+                    show_total_exp: false,
+                    show_ascension_exp: false,
                     mind_bar_color: None,
                     exp_bar_color: None,
                 },
@@ -1312,7 +1315,7 @@ impl Config {
                     col: 0,
                     rows: 4,           // 1 bar + 1 label + 2 borders = 4 total
                     cols: 25,
-                    min_rows: Some(4), // Minimum with borders + label
+                    min_rows: Some(3), // 1 content row + borders (bar/label are toggleable)
                     max_rows: Some(4), // Maximum with borders + label
                     min_cols: Some(15),
                     show_border: true,
@@ -1321,6 +1324,7 @@ impl Config {
                 data: EncumbranceWidgetData {
                     align: "left".to_string(),
                     show_label: true,
+                    show_bar: true,
                     color_light: None,
                     color_moderate: None,
                     color_heavy: None,

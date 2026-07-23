@@ -1907,22 +1907,82 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    /// Per-window field toggles for the gs4_experience widget, from its
+    /// layout def: (level, mind bar, exp bar, total exp, ascension exp).
+    /// Missing def falls back to the widget's classic three-line look.
+    pub(super) fn gs4_experience_flags(
+        app_core: &AppCore,
+        window_name: &str,
+    ) -> (bool, bool, bool, bool, bool) {
+        match app_core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == window_name)
+        {
+            Some(crate::config::WindowDef::GS4Experience { data, .. }) => (
+                data.show_level,
+                data.show_mind_bar,
+                data.show_exp_bar,
+                data.show_total_exp,
+                data.show_ascension_exp,
+            ),
+            _ => (true, true, true, false, false),
+        }
+    }
+
+    /// Per-window field toggles for the encum widget: (bar, blurb text).
+    pub(super) fn encumbrance_flags(app_core: &AppCore, window_name: &str) -> (bool, bool) {
+        match app_core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == window_name)
+        {
+            Some(crate::config::WindowDef::Encumbrance { data, .. }) => {
+                (data.show_bar, data.show_label)
+            }
+            _ => (true, true),
+        }
+    }
+
+    /// Group digits in threes: 1234567 -> "1,234,567".
+    fn format_thousands(value: u64) -> String {
+        let digits = value.to_string();
+        let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        out
+    }
+
     pub(super) fn render_gs4_experience_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
+        window_name: &str,
         settings: &WidgetRenderSettings,
     ) {
         let exp = &app_core.game_state.gs4_experience;
-        if exp.level_text.is_empty() && exp.mind_state_text.is_empty() && exp.next_level_text.is_empty() {
+        if exp.level_text.is_empty()
+            && exp.mind_state_text.is_empty()
+            && exp.next_level_text.is_empty()
+            && exp.exp.is_none()
+            && exp.ascension_exp.is_none()
+        {
             ui.weak("No experience data yet.");
             return;
         }
 
-        if !exp.level_text.is_empty() {
+        let (show_level, show_mind_bar, show_exp_bar, show_total_exp, show_ascension_exp) =
+            Self::gs4_experience_flags(app_core, window_name);
+        if show_level && !exp.level_text.is_empty() {
             ui.label(RichText::new(&exp.level_text).strong());
         }
         let bar_height = ui.spacing().interact_size.y.max(16.0);
-        if !exp.mind_state_text.is_empty() {
+        if show_mind_bar && !exp.mind_state_text.is_empty() {
             let fraction =
                 Self::animated_fraction(ui, "gs4_mind", exp.mind_state_value.min(100) as f32 / 100.0);
             let bar = Self::styled_progress_bar(
@@ -1934,7 +1994,7 @@ impl VellumGuiApp {
             );
             ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
         }
-        if !exp.next_level_text.is_empty() {
+        if show_exp_bar && !exp.next_level_text.is_empty() {
             let fraction =
                 Self::animated_fraction(ui, "gs4_next", exp.next_level_value.min(100) as f32 / 100.0);
             let bar = Self::styled_progress_bar(
@@ -1945,6 +2005,16 @@ impl VellumGuiApp {
                 format!("Next: {}", exp.next_level_text),
             );
             ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+        }
+        if show_total_exp {
+            if let Some(total) = exp.exp {
+                ui.label(format!("Exp: {}", Self::format_thousands(total)));
+            }
+        }
+        if show_ascension_exp {
+            if let Some(ascension) = exp.ascension_exp {
+                ui.label(format!("Ascension: {}", Self::format_thousands(ascension)));
+            }
         }
     }
 
@@ -1971,25 +2041,29 @@ impl VellumGuiApp {
     pub(super) fn render_encumbrance_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
+        window_name: &str,
         settings: &WidgetRenderSettings,
     ) {
         let enc = &app_core.game_state.encumbrance;
-        let value = enc.value.min(100);
-        let fill = match value {
-            0..=33 => Color32::from_rgb(0x55, 0xb8, 0x6c),
-            34..=66 => Color32::from_rgb(0xff, 0x88, 0x00),
-            _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
-        };
-        let text = if enc.text.is_empty() {
-            format!("Encumbrance: {}%", value)
-        } else {
-            format!("Encumbrance: {}", enc.text)
-        };
-        let bar_height = ui.spacing().interact_size.y.max(16.0);
-        let fraction = Self::animated_fraction(ui, "encumbrance", value as f32 / 100.0);
-        let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
-        ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
-        if !enc.blurb.is_empty() {
+        let (show_bar, show_label) = Self::encumbrance_flags(app_core, window_name);
+        if show_bar {
+            let value = enc.value.min(100);
+            let fill = match value {
+                0..=33 => Color32::from_rgb(0x55, 0xb8, 0x6c),
+                34..=66 => Color32::from_rgb(0xff, 0x88, 0x00),
+                _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+            };
+            let text = if enc.text.is_empty() {
+                format!("Encumbrance: {}%", value)
+            } else {
+                format!("Encumbrance: {}", enc.text)
+            };
+            let bar_height = ui.spacing().interact_size.y.max(16.0);
+            let fraction = Self::animated_fraction(ui, "encumbrance", value as f32 / 100.0);
+            let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
+            ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+        }
+        if show_label && !enc.blurb.is_empty() {
             ui.weak(&enc.blurb);
         }
     }
@@ -3727,7 +3801,7 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::GS4Experience => {
-                Self::render_gs4_experience_content(app_core, ui, &settings);
+                Self::render_gs4_experience_content(app_core, ui, &tab.window_name, &settings);
                 None
             }
             WindowContent::Experience => {
@@ -3735,7 +3809,7 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Encumbrance => {
-                Self::render_encumbrance_content(app_core, ui, &settings);
+                Self::render_encumbrance_content(app_core, ui, &tab.window_name, &settings);
                 None
             }
             WindowContent::Betrayer => {
