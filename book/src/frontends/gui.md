@@ -117,7 +117,9 @@ The GUI draws real graphics where the terminal uses characters:
 
 - **Compass rose** — a vector rose with lit direction markers.
 - **Injury paperdoll** — a vector body diagram colored by wound/scar
-  severity.
+  severity. With a skin that ships doll art, wounds render as generated
+  dots (solid = wound, ring = scar, numeral = rank) at positions you set
+  by clicking in Settings > Appearance > Skin > Calibrate injury doll.
 - **Status icons** — vector pictograms for stance, hidden, stunned, and
   the rest of the dashboard/indicator set.
 

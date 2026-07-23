@@ -21,6 +21,7 @@ mod io;
 mod macros;
 mod paths;
 pub mod profiles;
+pub mod skins;
 mod keybinds;
 mod layout;
 mod settings;

@@ -1102,6 +1102,16 @@ impl VellumGuiApp {
         }
     }
 
+    /// Human-readable body part name for a hover tooltip ("leftArm" ->
+    /// "left arm"); unknown protocol keys pass through unchanged.
+    fn doll_part_display_name(part: &str) -> &str {
+        crate::config::skins::DOLL_PARTS
+            .iter()
+            .find(|(key, _, _)| key.eq_ignore_ascii_case(part))
+            .map(|(_, display, _)| *display)
+            .unwrap_or(part)
+    }
+
     /// Human-readable severity for a hover tooltip.
     fn injury_severity_text(level: u8) -> &'static str {
         match level.min(6) {
@@ -1125,8 +1135,10 @@ impl VellumGuiApp {
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
-        // Sprite mode: skin-supplied base body plus per-part severity
-        // overlays, authored on the same canvas so they stack in place.
+        // Sprite mode: skin-supplied base body, then per part either a
+        // hand-drawn severity overlay (authored on the base's canvas so it
+        // stacks in place) or a generated dot at the part's calibrated
+        // anchor point.
         if let Some(base) = skin_art.and_then(|art| art.doll_base) {
             let art = skin_art.unwrap();
             let avail = ui.available_size();
@@ -1137,6 +1149,8 @@ impl VellumGuiApp {
             let painter = ui.painter().with_clip_rect(outer);
             let dest = crate::frontend::gui::skin::sprite_dest(&base, outer);
             crate::frontend::gui::skin::paint_sprite(&painter, dest, &base, Color32::WHITE);
+            let dot_radius =
+                (art.doll_dots.diameter * dest.height() / 2.0).max(4.0);
             let mut wounds: Vec<String> = Vec::new();
             for (part, level) in injuries {
                 if *level == 0 {
@@ -1149,8 +1163,23 @@ impl VellumGuiApp {
                         &overlay,
                         Color32::WHITE,
                     );
+                } else {
+                    let anchor = art.doll_anchor(part);
+                    let center = dest.min
+                        + Vec2::new(anchor.x * dest.width(), anchor.y * dest.height());
+                    crate::frontend::gui::skin::paint_severity_dot(
+                        &painter,
+                        center,
+                        dot_radius,
+                        *level,
+                        &art.doll_dots,
+                    );
                 }
-                wounds.push(format!("{}: {}", part, Self::injury_severity_text(*level)));
+                wounds.push(format!(
+                    "{}: {}",
+                    Self::doll_part_display_name(part),
+                    Self::injury_severity_text(*level)
+                ));
             }
             if wounds.is_empty() {
                 response.on_hover_text("uninjured");

@@ -4,6 +4,7 @@
 
 mod colors;
 mod custom_windows;
+mod doll_calibration;
 mod highlights;
 mod hotbars;
 mod indicators;
@@ -14,6 +15,7 @@ mod windows;
 
 pub(super) use colors::ColorsEditorState;
 pub(super) use custom_windows::CustomWindowsEditorState;
+pub(super) use doll_calibration::DollCalibrationState;
 pub(super) use highlights::HighlightEditorState;
 pub(super) use hotbars::HotbarEditorState;
 pub(super) use indicators::IndicatorTemplatesEditorState;
@@ -38,6 +40,7 @@ impl VellumGuiApp {
         self.render_indicator_templates_editor(ctx);
         self.render_window_editor(ctx);
         self.render_custom_windows_editor(ctx);
+        self.render_doll_calibration(ctx);
     }
 }
 

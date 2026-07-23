@@ -85,13 +85,30 @@ n = "compass/n_lit.png"
 ne = "compass/ne_lit.png"
 # ... e, se, s, sw, w, nw — plus optional up / down / out overlays
 
-# Sprite injury doll: base body plus full-canvas overlays per part and
-# severity (injury1-3, scar1-3). Parts use the protocol names: head,
-# neck, chest, abdomen, back, leftArm, rightArm, leftHand, rightHand,
-# leftLeg, rightLeg, leftEye, rightEye, nsys.
+# Sprite injury doll: a base body image; wounds/scars render as generated
+# dots (solid circle = wound, ring = scar, numeral = rank) at calibrated
+# anchor points. Calibrate by clicking in Settings > Appearance > Skin >
+# "Calibrate injury doll" — it writes the anchors/dots tables below.
+# Parts use the protocol names: head, neck, chest, abdomen, back,
+# leftArm, rightArm, leftHand, rightHand, leftLeg, rightLeg, leftEye,
+# rightEye, nsys.
 [injury_doll]
 base = "doll/base.png"
 
+# Written by the calibrator: [x, y] fractions (0-1) of the base image.
+# Uncalibrated parts use built-in defaults.
+[injury_doll.anchors]
+head = [0.50, 0.09]
+
+# Generated-dot styling (also written by the calibrator).
+[injury_doll.dots]
+wound_color = "#e02020"
+scar_color = "#b8b8b8"
+opacity = 0.9
+diameter = 0.07      # fraction of the drawn doll height
+
+# Optional per-part hand-drawn overlays (full-canvas, injury1-3/scar1-3);
+# they take precedence over the generated dot for that part+severity.
 [injury_doll.head]
 injury1 = "doll/head_i1.png"
 injury2 = "doll/head_i2.png"
@@ -138,9 +155,13 @@ windows keep their OS chrome.
   (the eight rose directions plus `up`/`down`/`out`) light up per
   available exit. Click regions and tooltips are unchanged: the hub is
   the out exit, and up/down arrows sit beside the rose.
-- `[injury_doll]`: overlays stack on the base image in author-canvas
-  alignment; hovering shows a summary of current wounds. Without a `base`
-  the vector paperdoll renders instead.
+- `[injury_doll]`: wounds and scars render as generated dots at each
+  part's anchor point — calibrated by clicking the doll in Settings >
+  Appearance > Skin > "Calibrate injury doll", stored as fractions of the
+  base image so any image size works. A part with hand-drawn overlays
+  uses those instead (stacked on the base in author-canvas alignment).
+  Hovering shows a summary of current wounds. Without a `base` the vector
+  paperdoll renders instead.
 
 ### Notes
 

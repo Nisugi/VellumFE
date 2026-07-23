@@ -1,163 +1,17 @@
-//! GUI skin system: user-supplied graphics layered on top of themes.
+//! GUI skin rendering: user-supplied graphics layered on top of themes.
 //!
-//! A skin is a directory under `~/.vellum-fe/skins/<name>/` containing a
-//! `skin.toml` manifest plus image assets. Themes own colors and fonts;
-//! skins own graphics. This module currently covers window background
-//! images; border nine-slices and icon sets build on the same manifest in
-//! later phases. Everything falls back to plain theme rendering when no
-//! skin is active or an asset fails to load.
-//!
-//! Manifest format:
-//!
-//! ```toml
-//! [meta]
-//! name = "Parchment"
-//! description = "Warm paper backgrounds for text windows"
-//!
-//! # Applies to every window without its own [window.<name>] entry.
-//! [window.default.background]
-//! image = "bg/paper.png"   # relative to the skin directory (absolute paths allowed)
-//! fit = "cover"            # stretch | cover | contain | tile | center
-//! opacity = 0.85           # 0.0..=1.0
-//! tint = "#c0a878"         # optional multiply tint
-//! scrim = 0.3              # 0.0..=1.0 theme-colored overlay for text readability
-//!
-//! # Windows are matched by their layout window name ("main", "thoughts", ...).
-//! [window.main.background]
-//! image = "bg/vellum.png"
-//! scrim = 0.5
-//! ```
-//!
-//! Image paths are usually relative to the skin directory; absolute paths
-//! are allowed on purpose so a skin can reference assets from another
-//! install (e.g. a user's local Wrayth art) without copying them.
+//! The manifest format, loading, and the canonical injury doll part table
+//! live in `crate::config::skins` (shared with the web frontend, which
+//! compiles without egui). This module owns everything egui: texture
+//! loading, the per-skin runtime state, widget sprite lookups, the paint
+//! helpers, and the calibrator's comment-preserving skin.toml save.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-
-/// Parsed skin.toml.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SkinManifest {
-    #[serde(default)]
-    pub meta: SkinMeta,
-    /// Per-window graphics keyed by layout window name; the "default" entry
-    /// applies to windows without their own entry.
-    #[serde(default, rename = "window")]
-    pub windows: HashMap<String, WindowSkin>,
-    /// Status icon sprites keyed by indicator id ("kneeling", "STUNNED",
-    /// ...; case-insensitive). Replace the built-in vector pictograms in
-    /// the dashboard and indicator widgets.
-    #[serde(default)]
-    pub icons: HashMap<String, String>,
-    /// Sprite compass replacing the vector rose.
-    #[serde(default)]
-    pub compass: CompassSkin,
-    /// Sprite paperdoll replacing the vector injury doll.
-    #[serde(default)]
-    pub injury_doll: InjuryDollSkin,
-}
-
-/// Sprite compass: a full-square rose image plus one full-square overlay
-/// per direction, drawn only while that exit is available. Overlays are
-/// authored at the same canvas size as the rose, so positioning lives in
-/// the art, not the manifest.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct CompassSkin {
-    #[serde(default)]
-    pub rose: Option<String>,
-    /// Direction key ("n", "ne", ... "nw") -> lit overlay image.
-    #[serde(flatten)]
-    pub directions: HashMap<String, String>,
-}
-
-/// Sprite injury doll: a base body image plus full-canvas overlays per
-/// part and severity. Overlay tables are keyed by body part (protocol
-/// names: head, neck, chest, ..., leftArm, nsys) with entries injury1-3
-/// and scar1-3.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct InjuryDollSkin {
-    #[serde(default)]
-    pub base: Option<String>,
-    /// part -> { injury1 = "...", scar2 = "...", ... }
-    #[serde(flatten)]
-    pub parts: HashMap<String, HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SkinMeta {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WindowSkin {
-    #[serde(default)]
-    pub background: Option<BackgroundSpec>,
-    #[serde(default)]
-    pub border: Option<BorderSpec>,
-}
-
-/// Nine-slice border image: the `slice` insets (source pixels, top/right/
-/// bottom/left) split the image into corners (drawn fixed), edges
-/// (stretched along one axis), and a center (skipped — the window fill or
-/// background image shows through).
-#[derive(Debug, Clone, Deserialize)]
-pub struct BorderSpec {
-    /// Image path, relative to the skin directory (absolute allowed).
-    pub image: String,
-    /// Slice insets in source pixels: [top, right, bottom, left].
-    pub slice: [f32; 4],
-    /// Multiplier from source pixels to on-screen points for the border
-    /// thickness (1.0 = native size).
-    #[serde(default = "default_border_scale")]
-    pub scale: f32,
-}
-
-fn default_border_scale() -> f32 {
-    1.0
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct BackgroundSpec {
-    /// Image path, relative to the skin directory (absolute allowed).
-    pub image: String,
-    #[serde(default)]
-    pub fit: BackgroundFit,
-    /// Image opacity, 0.0..=1.0.
-    #[serde(default = "default_opacity")]
-    pub opacity: f32,
-    /// Optional multiply tint as "#rrggbb".
-    #[serde(default)]
-    pub tint: Option<String>,
-    /// Strength (0.0..=1.0) of a theme-colored overlay painted over the
-    /// image so window text stays readable. 0 disables it.
-    #[serde(default)]
-    pub scrim: f32,
-}
-
-fn default_opacity() -> f32 {
-    1.0
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BackgroundFit {
-    /// Fill the window, distorting aspect ratio.
-    Stretch,
-    /// Fill the window, cropping whatever overflows.
-    #[default]
-    Cover,
-    /// Show the whole image, letterboxed and centered.
-    Contain,
-    /// Repeat the image at its native size from the top-left.
-    Tile,
-    /// Native size, centered, no scaling.
-    Center,
-}
+use crate::config::skins::{
+    self, BackgroundFit, DollDotSpec, InjuryDollSkin, SkinManifest,
+};
 
 /// Everything a renderer needs to paint one window background. Resolved
 /// once per frame from the loaded skin, then handed to render paths (some
@@ -193,6 +47,40 @@ pub struct SkinWidgetArt {
     pub doll_base: Option<SkinTexture>,
     /// Body part (lowercase) -> severity level (1-6) -> overlay.
     doll_parts: HashMap<String, HashMap<u8, SkinTexture>>,
+    /// Body part (lowercase) -> calibrated dot anchor as fractions (0-1)
+    /// of the doll image.
+    doll_anchors: HashMap<String, egui::Vec2>,
+    /// Generated-dot styling resolved from the manifest.
+    pub doll_dots: ResolvedDotStyle,
+}
+
+/// Dot styling with colors parsed, ready for the painter.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedDotStyle {
+    pub wound: egui::Color32,
+    pub scar: egui::Color32,
+    pub opacity: f32,
+    /// Diameter as a fraction of the drawn doll height.
+    pub diameter: f32,
+}
+
+impl Default for ResolvedDotStyle {
+    fn default() -> Self {
+        Self::from_spec(&DollDotSpec::default())
+    }
+}
+
+impl ResolvedDotStyle {
+    pub fn from_spec(spec: &DollDotSpec) -> Self {
+        Self {
+            wound: parse_hex_rgb(&spec.wound_color)
+                .unwrap_or(egui::Color32::from_rgb(0xe0, 0x20, 0x20)),
+            scar: parse_hex_rgb(&spec.scar_color)
+                .unwrap_or(egui::Color32::from_rgb(0xb8, 0xb8, 0xb8)),
+            opacity: spec.opacity.clamp(0.0, 1.0),
+            diameter: spec.diameter.clamp(0.01, 0.5),
+        }
+    }
 }
 
 impl SkinWidgetArt {
@@ -211,26 +99,25 @@ impl SkinWidgetArt {
             .copied()
     }
 
+    /// Dot anchor for a body part: the skin's calibrated point, else the
+    /// built-in default, else dead center (unknown part).
+    pub fn doll_anchor(&self, part: &str) -> egui::Vec2 {
+        let key = part.to_ascii_lowercase();
+        self.doll_anchors
+            .get(&key)
+            .copied()
+            .or_else(|| {
+                skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y))
+            })
+            .unwrap_or(egui::vec2(0.5, 0.5))
+    }
+
     fn is_empty(&self) -> bool {
         self.icons.is_empty()
             && self.compass_rose.is_none()
             && self.compass_dirs.is_empty()
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
-    }
-}
-
-/// Severity level for an injury-doll overlay key: injury1-3 -> 1-3,
-/// scar1-3 -> 4-6.
-fn severity_level_from_key(key: &str) -> Option<u8> {
-    match key {
-        "injury1" => Some(1),
-        "injury2" => Some(2),
-        "injury3" => Some(3),
-        "scar1" => Some(4),
-        "scar2" => Some(5),
-        "scar3" => Some(6),
-        _ => None,
     }
 }
 
@@ -285,11 +172,11 @@ impl SkinState {
         let Some(name) = active else {
             return;
         };
-        match load_manifest(name) {
+        match skins::load_manifest(name) {
             Ok((manifest, root)) => {
                 self.manifest = manifest;
                 self.root = root;
-                self.manifest_mtime = manifest_mtime(&self.root);
+                self.manifest_mtime = skins::manifest_mtime(&self.root);
                 self.load_textures(ctx, name);
                 self.widget_art = self.build_widget_art();
             }
@@ -325,7 +212,7 @@ impl SkinState {
             return false;
         }
         self.last_mtime_check = Some(now);
-        let current = manifest_mtime(&self.root);
+        let current = skins::manifest_mtime(&self.root);
         current.is_some() && current != self.manifest_mtime
     }
 
@@ -333,6 +220,17 @@ impl SkinState {
     /// widget art (renderers then use their vector drawings).
     pub fn widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
         self.widget_art.clone()
+    }
+
+    /// Directory name of the loaded skin, if one is active.
+    pub fn loaded_skin(&self) -> Option<&str> {
+        self.loaded_id.as_deref()
+    }
+
+    /// The loaded manifest's injury doll section (for seeding the
+    /// calibrator with the current anchors and dot styling).
+    pub fn doll_manifest(&self) -> &InjuryDollSkin {
+        &self.manifest.injury_doll
     }
 
     fn build_widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
@@ -360,9 +258,16 @@ impl SkinState {
             }
         }
         art.doll_base = self.manifest.injury_doll.base.as_ref().and_then(tex);
+        art.doll_dots = ResolvedDotStyle::from_spec(&self.manifest.injury_doll.dots);
+        for (part, anchor) in &self.manifest.injury_doll.anchors {
+            art.doll_anchors.insert(
+                part.to_ascii_lowercase(),
+                egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+            );
+        }
         for (part, levels) in &self.manifest.injury_doll.parts {
             for (key, path) in levels {
-                let Some(level) = severity_level_from_key(key) else {
+                let Some(level) = skins::severity_level_from_key(key) else {
                     tracing::warn!(
                         "Skin injury_doll.{}: unknown severity key '{}' (expected injury1-3/scar1-3)",
                         part,
@@ -424,7 +329,7 @@ impl SkinState {
     /// "default" entry. None when no skin is active, the window has no
     /// background, or its image failed to load.
     pub fn background_for(&self, window_name: &str) -> Option<ResolvedBackground> {
-        let spec = window_background(&self.manifest, window_name)?;
+        let spec = skins::window_background(&self.manifest, window_name)?;
         let texture = self.textures.get(&spec.image)?.as_ref()?;
         let opacity = spec.opacity.clamp(0.0, 1.0);
         let tint = spec
@@ -446,7 +351,8 @@ impl SkinState {
     /// manifest's "default" entry (independently of the background, so a
     /// window can override one without losing the other).
     pub fn border_for(&self, window_name: &str) -> Option<ResolvedBorder> {
-        let spec = window_field(&self.manifest, window_name, |window| window.border.as_ref())?;
+        let spec =
+            skins::window_field(&self.manifest, window_name, |window| window.border.as_ref())?;
         let texture = self.textures.get(&spec.image)?.as_ref()?;
         Some(ResolvedBorder {
             texture: texture.id(),
@@ -455,182 +361,6 @@ impl SkinState {
             scale: spec.scale.max(0.05),
         })
     }
-}
-
-/// Manifest lookup for a window: exact name, then case-insensitive, then
-/// the "default" entry.
-fn window_background<'a>(
-    manifest: &'a SkinManifest,
-    window_name: &str,
-) -> Option<&'a BackgroundSpec> {
-    window_field(manifest, window_name, |window| window.background.as_ref())
-}
-
-/// Per-field manifest lookup: the window's own entry (exact name, then
-/// case-insensitive), falling back to the "default" entry when the window
-/// has no entry or its entry doesn't set this field.
-fn window_field<'a, T>(
-    manifest: &'a SkinManifest,
-    window_name: &str,
-    field: impl Fn(&'a WindowSkin) -> Option<&'a T>,
-) -> Option<&'a T> {
-    let entry = manifest.windows.get(window_name).or_else(|| {
-        manifest
-            .windows
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(window_name))
-            .map(|(_, window)| window)
-    });
-    entry
-        .and_then(&field)
-        .or_else(|| manifest.windows.get("default").and_then(&field))
-}
-
-/// mtime of a skin directory's manifest, if it exists.
-fn manifest_mtime(root: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(root.join("skin.toml"))
-        .and_then(|meta| meta.modified())
-        .ok()
-}
-
-/// Starter manifest written by `write_scaffold`: every section present but
-/// commented out, so making a skin starts as "uncomment and point at a PNG".
-/// Kept in sync with docs/SKINS.md; a test asserts it stays parseable.
-const SCAFFOLD_MANIFEST: &str = r##"# VellumFE skin manifest.
-# Full documentation: docs/SKINS.md in the VellumFE repository.
-#
-# Image paths are relative to this folder; absolute paths are allowed
-# (e.g. pointing at art from another install). Formats: PNG, JPEG, WebP, BMP.
-# Activate with `.setskin <folder-name>`. Edits to this file reload
-# automatically; after editing images run `.reloadskin`.
-
-[meta]
-name = "My Skin"
-description = ""
-
-# ---- Window backgrounds ---------------------------------------------------
-# "default" applies to every window without its own [window.<name>] entry.
-# Windows are matched by layout window name ("main", "thoughts", "combat", ...).
-#
-# [window.default.background]
-# image = "bg/paper.png"
-# fit = "cover"          # stretch | cover | contain | tile | center
-# opacity = 1.0          # 0.0 - 1.0
-# tint = "#c0a878"       # optional multiply tint
-# scrim = 0.3            # 0.0 - 1.0 theme-colored overlay so text stays readable
-
-# ---- Window borders (nine-slice) -------------------------------------------
-# slice = [top, right, bottom, left] insets in source-image pixels: corners
-# draw fixed, edges stretch, the center is never drawn.
-#
-# [window.default.border]
-# image = "border/frame.png"
-# slice = [8.0, 8.0, 8.0, 8.0]
-# scale = 1.0            # source pixels -> screen points
-
-# ---- Status icons -----------------------------------------------------------
-# Indicator id -> sprite (ids are case-insensitive). Used by the dashboard
-# and single indicator widgets; ids you don't list keep the vector pictogram.
-#
-# [icons]
-# standing = "icons/standing.png"
-# kneeling = "icons/kneeling.png"
-# sitting = "icons/sitting.png"
-# prone = "icons/prone.png"
-# dead = "icons/dead.png"
-# stunned = "icons/stunned.png"
-# bleeding = "icons/bleeding.png"
-# hidden = "icons/hidden.png"
-# invisible = "icons/invisible.png"
-# webbed = "icons/webbed.png"
-# poisoned = "icons/poisoned.png"
-# diseased = "icons/diseased.png"
-# joined = "icons/joined.png"
-
-# ---- Compass ----------------------------------------------------------------
-# Author the rose and every overlay on the same canvas size; each overlay
-# draws on top of the rose only while that exit is available. The hub is
-# the "out" exit.
-#
-# [compass]
-# rose = "compass/rose.png"
-# n = "compass/n.png"
-# ne = "compass/ne.png"
-# e = "compass/e.png"
-# se = "compass/se.png"
-# s = "compass/s.png"
-# sw = "compass/sw.png"
-# w = "compass/w.png"
-# nw = "compass/nw.png"
-# up = "compass/up.png"
-# down = "compass/down.png"
-# out = "compass/out.png"
-
-# ---- Injury doll ------------------------------------------------------------
-# A base body image plus full-canvas overlays per part and severity
-# (injury1-3, scar1-3). Parts: head, neck, chest, abdomen, back, leftArm,
-# rightArm, leftHand, rightHand, leftLeg, rightLeg, leftEye, rightEye, nsys.
-#
-# [injury_doll]
-# base = "doll/base.png"
-#
-# [injury_doll.head]
-# injury1 = "doll/head_i1.png"
-# injury2 = "doll/head_i2.png"
-# injury3 = "doll/head_i3.png"
-# scar1 = "doll/head_s1.png"
-"##;
-
-/// Create `skins/<name>/` with the commented starter skin.toml. Refuses to
-/// overwrite an existing skin. Returns the manifest path.
-pub fn write_scaffold(name: &str) -> anyhow::Result<PathBuf> {
-    let name = name.trim();
-    anyhow::ensure!(!name.is_empty(), "skin name is required");
-    anyhow::ensure!(
-        name.chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')),
-        "skin names may only use letters, digits, '-' and '_'"
-    );
-    let root = crate::config::Config::skins_dir()?.join(name);
-    let manifest_path = root.join("skin.toml");
-    anyhow::ensure!(
-        !manifest_path.exists(),
-        "skin '{}' already exists at {}",
-        name,
-        manifest_path.display()
-    );
-    std::fs::create_dir_all(&root)?;
-    std::fs::write(&manifest_path, SCAFFOLD_MANIFEST)?;
-    Ok(manifest_path)
-}
-
-/// Read and parse `skins/<name>/skin.toml`. Returns the manifest and the
-/// skin directory (for resolving relative image paths).
-pub fn load_manifest(name: &str) -> anyhow::Result<(SkinManifest, PathBuf)> {
-    let root = crate::config::Config::skins_dir()?.join(name);
-    let manifest_path = root.join("skin.toml");
-    let contents = std::fs::read_to_string(&manifest_path)
-        .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
-    let manifest: SkinManifest = toml::from_str(&contents)
-        .map_err(|err| anyhow::anyhow!("invalid {}: {}", manifest_path.display(), err))?;
-    Ok((manifest, root))
-}
-
-/// Skin directory names that contain a skin.toml, sorted.
-pub fn list_skins() -> Vec<String> {
-    let Ok(dir) = crate::config::Config::skins_dir() else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut skins: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.path().join("skin.toml").is_file())
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-        .collect();
-    skins.sort();
-    skins
 }
 
 fn load_texture(
@@ -747,6 +477,135 @@ pub fn paint_sprite(
     painter.image(sprite.texture, dest, full_uv, tint);
 }
 
+/// Paint one generated injury dot: wounds (levels 1-3) are a solid circle
+/// with the severity numeral inside, scars (levels 4-6) a ring with the
+/// numeral in the ring color. The numeral is skipped when the dot is too
+/// small to render it legibly (the doll tooltip still carries the detail).
+pub fn paint_severity_dot(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    level: u8,
+    style: &ResolvedDotStyle,
+) {
+    if level == 0 || level > 6 {
+        return;
+    }
+    let radius = radius.max(3.0);
+    let numeral_font = egui::FontId::proportional((radius * 1.3).max(9.0));
+    let show_numeral = radius >= 5.5;
+    if level <= 3 {
+        let fill = style.wound.gamma_multiply(style.opacity);
+        painter.circle_filled(center, radius, fill);
+        if show_numeral {
+            let numeral_color = contrast_color(style.wound).gamma_multiply(style.opacity);
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                level.to_string(),
+                numeral_font,
+                numeral_color,
+            );
+        }
+    } else {
+        let color = style.scar.gamma_multiply(style.opacity);
+        let stroke_width = (radius * 0.28).max(1.5);
+        painter.circle_stroke(center, radius, egui::Stroke::new(stroke_width, color));
+        if show_numeral {
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                (level - 3).to_string(),
+                numeral_font,
+                color,
+            );
+        }
+    }
+}
+
+/// Black or white, whichever contrasts more against `fill` (for the wound
+/// numeral painted on the solid dot).
+fn contrast_color(fill: egui::Color32) -> egui::Color32 {
+    let luminance =
+        0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
+    if luminance > 140.0 {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    }
+}
+
+/// Rewrite the `[injury_doll.anchors]` and `[injury_doll.dots]` tables in a
+/// skin.toml, preserving everything else byte-for-byte (comments included).
+/// Pure string -> string so it's testable without touching the filesystem.
+pub fn calibration_toml(
+    contents: &str,
+    anchors: &HashMap<String, [f32; 2]>,
+    dots: &DollDotSpec,
+) -> anyhow::Result<String> {
+    use toml_edit::{value, Array, DocumentMut, Item, Table};
+
+    let mut doc: DocumentMut = contents
+        .parse()
+        .map_err(|err| anyhow::anyhow!("skin.toml is not valid TOML: {}", err))?;
+
+    let existed = doc.contains_key("injury_doll");
+    let doll = doc
+        .entry("injury_doll")
+        .or_insert(Item::Table(Table::new()));
+    let doll = doll
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[injury_doll] is not a table"))?;
+    // A freshly created parent shouldn't emit its own empty [injury_doll]
+    // header; one that already existed keeps whatever shape it had.
+    if !existed {
+        doll.set_implicit(true);
+    }
+
+    // Round in f64: the f32 -> f64 cast would otherwise smear 0.09 into
+    // 0.09000000357... in the written file. Four decimals is sub-pixel on
+    // any realistic doll image and keeps the file readable.
+    let rounded = |v: f32, places: f64| (v as f64 * places).round() / places;
+
+    let mut anchors_table = Table::new();
+    let mut keys: Vec<&String> = anchors.keys().collect();
+    keys.sort();
+    for key in keys {
+        let [x, y] = anchors[key];
+        let mut pair = Array::new();
+        pair.push(rounded(x, 10_000.0));
+        pair.push(rounded(y, 10_000.0));
+        anchors_table.insert(key, value(pair));
+    }
+    doll.insert("anchors", Item::Table(anchors_table));
+
+    let mut dots_table = Table::new();
+    dots_table.insert("wound_color", value(dots.wound_color.as_str()));
+    dots_table.insert("scar_color", value(dots.scar_color.as_str()));
+    dots_table.insert("opacity", value(rounded(dots.opacity, 100.0)));
+    dots_table.insert("diameter", value(rounded(dots.diameter, 1_000.0)));
+    doll.insert("dots", Item::Table(dots_table));
+
+    Ok(doc.to_string())
+}
+
+/// Write calibrated anchors + dot styling into `skins/<name>/skin.toml`.
+/// The skin hot-reload poll picks the change up within a second.
+pub fn save_calibration(
+    name: &str,
+    anchors: &HashMap<String, [f32; 2]>,
+    dots: &DollDotSpec,
+) -> anyhow::Result<()> {
+    let root = crate::config::Config::skins_dir()?.join(name);
+    let manifest_path = root.join("skin.toml");
+    let contents = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
+    let updated = calibration_toml(&contents, anchors, dots)?;
+    std::fs::write(&manifest_path, updated)
+        .map_err(|err| anyhow::anyhow!("cannot write {}: {}", manifest_path.display(), err))?;
+    Ok(())
+}
+
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
 /// background image shows through.
@@ -857,74 +716,6 @@ fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
 mod tests {
     use super::*;
 
-    fn manifest(toml_src: &str) -> SkinManifest {
-        toml::from_str(toml_src).expect("manifest should parse")
-    }
-
-    #[test]
-    fn manifest_parses_defaults_and_per_window_entries() {
-        let manifest = manifest(
-            r##"
-            [meta]
-            name = "Test"
-
-            [window.default.background]
-            image = "bg/paper.png"
-
-            [window.main.background]
-            image = "bg/vellum.png"
-            fit = "tile"
-            opacity = 0.5
-            tint = "#ff8800"
-            scrim = 0.25
-            "##,
-        );
-        assert_eq!(manifest.meta.name, "Test");
-
-        let default_bg = manifest.windows["default"].background.as_ref().unwrap();
-        assert_eq!(default_bg.image, "bg/paper.png");
-        assert_eq!(default_bg.fit, BackgroundFit::Cover);
-        assert_eq!(default_bg.opacity, 1.0);
-        assert_eq!(default_bg.scrim, 0.0);
-        assert!(default_bg.tint.is_none());
-
-        let main_bg = manifest.windows["main"].background.as_ref().unwrap();
-        assert_eq!(main_bg.fit, BackgroundFit::Tile);
-        assert_eq!(main_bg.opacity, 0.5);
-        assert_eq!(main_bg.tint.as_deref(), Some("#ff8800"));
-        assert_eq!(main_bg.scrim, 0.25);
-    }
-
-    #[test]
-    fn window_lookup_falls_back_to_default() {
-        let manifest = manifest(
-            r#"
-            [window.default.background]
-            image = "default.png"
-
-            [window.main.background]
-            image = "main.png"
-            "#,
-        );
-        assert_eq!(window_background(&manifest, "main").unwrap().image, "main.png");
-        assert_eq!(window_background(&manifest, "Main").unwrap().image, "main.png");
-        assert_eq!(
-            window_background(&manifest, "thoughts").unwrap().image,
-            "default.png"
-        );
-    }
-
-    #[test]
-    fn window_lookup_without_default_is_none() {
-        let manifest = manifest(
-            r#"
-            [window.main.background]
-            image = "main.png"
-            "#,
-        );
-        assert!(window_background(&manifest, "thoughts").is_none());
-    }
-
     #[test]
     fn cover_uv_crops_the_longer_axis() {
         // Wide texture (2:1) into a square: crop left/right.
@@ -948,32 +739,6 @@ mod tests {
         assert!((dest.width() - 100.0).abs() < 1e-4);
         assert!((dest.height() - 50.0).abs() < 1e-4);
         assert!((dest.min.y - 25.0).abs() < 1e-4);
-    }
-
-    #[test]
-    fn manifest_parses_border_spec() {
-        let manifest = manifest(
-            r#"
-            [window.default.border]
-            image = "border/brass.png"
-            slice = [8.0, 8.0, 8.0, 8.0]
-
-            [window.main]
-            background = { image = "main.png" }
-            "#,
-        );
-        let border = manifest.windows["default"].border.as_ref().unwrap();
-        assert_eq!(border.image, "border/brass.png");
-        assert_eq!(border.slice, [8.0, 8.0, 8.0, 8.0]);
-        assert_eq!(border.scale, 1.0);
-        // Per-field fallback: main sets only a background, so its border
-        // comes from default.
-        assert_eq!(
-            window_field(&manifest, "main", |w| w.border.as_ref())
-                .unwrap()
-                .image,
-            "border/brass.png"
-        );
     }
 
     #[test]
@@ -1015,44 +780,71 @@ mod tests {
     }
 
     #[test]
-    fn manifest_parses_widget_art_sections() {
-        let manifest = manifest(
-            r#"
-            [icons]
-            kneeling = "icons/kneel.png"
-            STUNNED = "icons/stunned.png"
-
-            [compass]
-            rose = "compass/rose.png"
-            n = "compass/n.png"
-            up = "compass/up.png"
-
-            [injury_doll]
-            base = "doll/base.png"
-
-            [injury_doll.head]
-            injury1 = "doll/head_i1.png"
-            scar3 = "doll/head_s3.png"
-            "#,
-        );
-        assert_eq!(manifest.icons["kneeling"], "icons/kneel.png");
-        assert_eq!(manifest.icons["STUNNED"], "icons/stunned.png");
-        assert_eq!(manifest.compass.rose.as_deref(), Some("compass/rose.png"));
-        assert_eq!(manifest.compass.directions["n"], "compass/n.png");
-        assert_eq!(manifest.compass.directions["up"], "compass/up.png");
-        assert_eq!(manifest.injury_doll.base.as_deref(), Some("doll/base.png"));
-        assert_eq!(manifest.injury_doll.parts["head"]["injury1"], "doll/head_i1.png");
-        assert_eq!(manifest.injury_doll.parts["head"]["scar3"], "doll/head_s3.png");
+    fn doll_anchor_prefers_skin_then_default_then_center() {
+        let mut art = SkinWidgetArt::default();
+        art.doll_anchors
+            .insert("head".to_string(), egui::vec2(0.4, 0.2));
+        // Calibrated part; lookup is case-insensitive on the protocol key.
+        assert_eq!(art.doll_anchor("Head"), egui::vec2(0.4, 0.2));
+        // Uncalibrated known part falls back to the built-in default.
+        let [dx, dy] = skins::default_doll_anchor("leftarm").unwrap();
+        assert_eq!(art.doll_anchor("leftArm"), egui::vec2(dx, dy));
+        // Unknown part lands dead center rather than vanishing.
+        assert_eq!(art.doll_anchor("tail"), egui::vec2(0.5, 0.5));
     }
 
     #[test]
-    fn severity_levels_map_injuries_then_scars() {
-        assert_eq!(severity_level_from_key("injury1"), Some(1));
-        assert_eq!(severity_level_from_key("injury3"), Some(3));
-        assert_eq!(severity_level_from_key("scar1"), Some(4));
-        assert_eq!(severity_level_from_key("scar3"), Some(6));
-        assert_eq!(severity_level_from_key("injury4"), None);
-        assert_eq!(severity_level_from_key("base"), None);
+    fn calibration_toml_preserves_comments_and_replaces_tables() {
+        let original = r##"# My hand-written skin.
+[meta]
+name = "Test" # keep me
+
+[injury_doll]
+base = "doll/base.png"
+
+# stale calibration to be replaced
+[injury_doll.anchors]
+head = [0.1, 0.1]
+
+[injury_doll.nsys]
+injury1 = "doll/nerves.png"
+"##;
+        let mut anchors = HashMap::new();
+        anchors.insert("head".to_string(), [0.5, 0.09]);
+        anchors.insert("neck".to_string(), [0.5, 0.2]);
+        let dots = DollDotSpec {
+            wound_color: "#aa0000".to_string(),
+            ..DollDotSpec::default()
+        };
+        let updated = calibration_toml(original, &anchors, &dots).unwrap();
+
+        // Hand-written content survives byte-for-byte.
+        assert!(updated.contains("# My hand-written skin."));
+        assert!(updated.contains(r#"name = "Test" # keep me"#));
+        assert!(updated.contains(r#"base = "doll/base.png""#));
+        assert!(updated.contains(r#"injury1 = "doll/nerves.png""#));
+
+        // The stale anchor is gone; the round-trip parses to the new values.
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        assert_eq!(manifest.injury_doll.anchors.len(), 2);
+        assert_eq!(manifest.injury_doll.anchors["head"], [0.5, 0.09]);
+        assert_eq!(manifest.injury_doll.anchors["neck"], [0.5, 0.2]);
+        assert_eq!(manifest.injury_doll.dots.wound_color, "#aa0000");
+        assert_eq!(manifest.injury_doll.parts["nsys"]["injury1"], "doll/nerves.png");
+    }
+
+    #[test]
+    fn calibration_toml_creates_section_when_absent() {
+        let original = "[meta]\nname = \"Bare\"\n";
+        let mut anchors = HashMap::new();
+        anchors.insert("chest".to_string(), [0.5, 0.3]);
+        let updated =
+            calibration_toml(original, &anchors, &DollDotSpec::default()).unwrap();
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        assert_eq!(manifest.meta.name, "Bare");
+        assert_eq!(manifest.injury_doll.anchors["chest"], [0.5, 0.3]);
+        // No spurious [injury_doll] header for the implicit parent table.
+        assert!(!updated.contains("[injury_doll]\n"));
     }
 
     #[test]
@@ -1077,28 +869,6 @@ mod tests {
         assert!(art.doll_overlay("leftArm", 3).is_none());
         assert!(!art.is_empty());
         assert!(SkinWidgetArt::default().is_empty());
-    }
-
-    #[test]
-    fn scaffold_manifest_parses_and_is_inert() {
-        // The starter file must parse and, being fully commented out,
-        // define no graphics — activating a fresh scaffold changes nothing.
-        let manifest: SkinManifest =
-            toml::from_str(SCAFFOLD_MANIFEST).expect("scaffold should parse");
-        assert_eq!(manifest.meta.name, "My Skin");
-        assert!(manifest.windows.is_empty());
-        assert!(manifest.icons.is_empty());
-        assert!(manifest.compass.rose.is_none());
-        assert!(manifest.injury_doll.base.is_none());
-    }
-
-    #[test]
-    fn write_scaffold_rejects_bad_names() {
-        assert!(write_scaffold("").is_err());
-        assert!(write_scaffold("   ").is_err());
-        assert!(write_scaffold("no/slashes").is_err());
-        assert!(write_scaffold("no spaces").is_err());
-        assert!(write_scaffold("..").is_err());
     }
 
     #[test]

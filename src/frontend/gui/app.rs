@@ -231,6 +231,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
+    doll_calibration: Option<editors::DollCalibrationState>,
     search_bar_needs_focus: bool,
     /// Cached search-bar match count: (lowercased query, content fingerprint, count).
     search_match_cache: Option<(String, u64, usize)>,
@@ -489,6 +490,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             custom_windows_editor: None,
+            doll_calibration: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
@@ -1070,7 +1072,7 @@ impl VellumGuiApp {
             self.app_core.add_system_message("Skin disabled.");
             return;
         }
-        match skin::load_manifest(name) {
+        match crate::config::skins::load_manifest(name) {
             Ok(_) => {
                 self.app_core.config.active_skin = Some(name.to_string());
                 self.save_config_after_skin_change();
@@ -1078,7 +1080,7 @@ impl VellumGuiApp {
                     .add_system_message(&format!("Skin switched to: {}", name));
             }
             Err(err) => {
-                let available = skin::list_skins();
+                let available = crate::config::skins::list_skins();
                 if available.is_empty() {
                     self.app_core.add_system_message(&format!(
                         "Cannot load skin '{}': {}. No skins installed; create one under ~/.vellum-fe/skins/<name>/skin.toml",
@@ -1098,7 +1100,7 @@ impl VellumGuiApp {
 
     /// Handle `action:skins`: list installed skins in the main window.
     fn list_skins_to_window(&mut self) {
-        let available = skin::list_skins();
+        let available = crate::config::skins::list_skins();
         if available.is_empty() {
             self.app_core.add_system_message(
                 "No skins installed. Create one under ~/.vellum-fe/skins/<name>/skin.toml",
@@ -1124,7 +1126,7 @@ impl VellumGuiApp {
     /// user how to proceed. Does not activate it — a fresh scaffold is all
     /// comments, so activating it would visibly do nothing.
     fn make_skin_scaffold(&mut self, name: &str) {
-        match skin::write_scaffold(name) {
+        match crate::config::skins::write_scaffold(name) {
             Ok(path) => {
                 self.app_core.add_system_message(&format!(
                     "Created skin '{}' at {}",

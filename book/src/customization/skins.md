@@ -107,21 +107,62 @@ ne = "compass/ne.png"
 
 ## Sprite Injury Paperdoll
 
-A base body image plus full-canvas overlays per body part and severity.
-Parts use the protocol names (`head`, `neck`, `chest`, `abdomen`, `back`,
-`leftArm`, `rightArm`, `leftHand`, `rightHand`, `leftLeg`, `rightLeg`,
-`leftEye`, `rightEye`, `nsys`), each with `injury1`–`injury3` and
-`scar1`–`scar3` entries:
+A base body image; wounds and scars render as generated dots on top of it —
+a solid circle for wounds, a ring for scars, with the severity rank (1–3)
+inside. Parts use the protocol names (`head`, `neck`, `chest`, `abdomen`,
+`back`, `leftArm`, `rightArm`, `leftHand`, `rightHand`, `leftLeg`,
+`rightLeg`, `leftEye`, `rightEye`, `nsys`).
 
 ```toml
 [injury_doll]
 base = "doll/body.png"
+```
 
-[injury_doll.head]
-injury1 = "doll/head_i1.png"
-injury2 = "doll/head_i2.png"
-injury3 = "doll/head_i3.png"
-scar1 = "doll/head_s1.png"
+### Calibrating dot positions
+
+Where each part's dot lands is set by clicking, not by hand-editing:
+**Settings > Appearance > Skin > Calibrate injury doll**. The calibrator
+shows your doll art with every part's dot live; click to place the
+highlighted part, adjust dot size, opacity, and the wound/scar colors with
+the controls below, then **Save to skin**. It writes the
+`[injury_doll.anchors]` and `[injury_doll.dots]` tables into the skin's
+`skin.toml` (everything else in the file, comments included, is left
+alone), so calibration travels with the skin when you share the folder.
+
+Coordinates are stored as fractions of the base image, so any image size
+works and a uniform resize never needs recalibrating. Parts you don't
+calibrate use sensible built-in defaults. `back` and `nsys` (and usually
+the eyes) have no natural spot on a front-view silhouette — the convention
+is eyes at the top corners, back bottom-left, nerves bottom-right, but any
+click position works; the base art can mark those spots (letters, icons)
+or leave them as empty margin.
+
+```toml
+# Written by the calibrator — shown here for reference.
+[injury_doll.anchors]
+head = [0.5, 0.09]
+chest = [0.5, 0.3]
+
+[injury_doll.dots]
+wound_color = "#e02020"
+scar_color = "#b8b8b8"
+opacity = 0.9
+diameter = 0.07     # fraction of the drawn doll height
+```
+
+### Hand-drawn overlays (optional)
+
+A part can instead ship full-canvas overlays per severity, authored on the
+same canvas as the base so they stack in place — useful for effects a dot
+can't express, like nervous-system damage drawn across the whole body.
+Overlays take precedence over the generated dot for that part and
+severity; every other part keeps its dot.
+
+```toml
+[injury_doll.nsys]
+injury1 = "doll/nerves_i1.png"
+injury2 = "doll/nerves_i2.png"
+injury3 = "doll/nerves_i3.png"
 ```
 
 ## Notes

@@ -35,6 +35,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 toml = "0.8"
+toml_edit = { version = "0.22", optional = true }  # Comment-preserving skin.toml edits (injury doll calibrator)
 dirs = "5"
 
 # Text processing
@@ -102,7 +103,7 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 # web frontend + (Phase A2) headless runtime only.
 default = ["tui", "gui", "sound", "tts", "desktop"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea"]
-gui = ["dep:egui", "dep:eframe", "dep:fontdb", "dep:image"]
+gui = ["dep:egui", "dep:eframe", "dep:fontdb", "dep:image", "dep:toml_edit"]
 sound = ["dep:rodio"]
 tts = ["dep:tts"]
 # Desktop OS integrations: clipboard, browser-open, process inspection,

@@ -131,7 +131,7 @@ impl VellumGuiApp {
         self.settings_editor = Some(SettingsEditorState::from_config(
             &self.app_core.config,
             theme_names,
-            crate::frontend::gui::skin::list_skins(),
+            crate::config::skins::list_skins(),
             self.ui_settings.clone(),
         ));
     }
@@ -148,6 +148,14 @@ impl VellumGuiApp {
         // settings); the repo text itself still applies on Save.
         let mut map_download_repo: Option<String> = None;
         let mut map_remove_clicked = false;
+        // Calibration works against the *loaded* skin, so the button only
+        // makes sense once the selection has been saved and its doll base
+        // art actually loaded.
+        let mut calibrate_doll_clicked = false;
+        let can_calibrate_doll = self
+            .skin_state
+            .widget_art()
+            .is_some_and(|art| art.doll_base.is_some());
         let updater_status = self.app_core.map_updater.status.clone();
         let updater_installed = self.app_core.map_updater.installed.clone();
         let updater_in_flight = self.app_core.map_updater.in_flight();
@@ -582,7 +590,7 @@ impl VellumGuiApp {
                                     )
                                     .clicked()
                                 {
-                                    match crate::frontend::gui::skin::write_scaffold(
+                                    match crate::config::skins::write_scaffold(
                                         &state.new_skin_name,
                                     ) {
                                         Ok(_) => {
@@ -601,6 +609,21 @@ impl VellumGuiApp {
                             });
                             if let Some(error) = &state.skin_error {
                                 ui.colored_label(ui.visuals().error_fg_color, error);
+                            }
+                            if ui
+                                .add_enabled(
+                                    can_calibrate_doll,
+                                    egui::Button::new("Calibrate injury doll\u{2026}"),
+                                )
+                                .on_hover_text(
+                                    "Click each body part on the skin's doll image to place its wound dot",
+                                )
+                                .on_disabled_hover_text(
+                                    "Needs an active (saved) skin with base art under [injury_doll] in its skin.toml",
+                                )
+                                .clicked()
+                            {
+                                calibrate_doll_clicked = true;
                             }
                         });
 
@@ -622,6 +645,9 @@ impl VellumGuiApp {
         if map_remove_clicked {
             self.app_core.remove_downloaded_mapdb();
             self.app_core.add_system_message("Downloaded map data removed.");
+        }
+        if calibrate_doll_clicked {
+            self.open_doll_calibration();
         }
 
         if saved {
