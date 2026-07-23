@@ -17,14 +17,39 @@ pub struct WebUiHandshake {
     /// "ok", "disabled", or "stopped"
     pub status: String,
     pub port: u16,
-    /// Landing page URL, e.g. "http://127.0.0.1:51423/"
+    /// Landing page URL. Loopback for a local Lich
+    /// ("http://127.0.0.1:51423/"); a reachable LAN/VPN address when Lich
+    /// runs elsewhere, e.g. in a container ("http://192.168.86.4:8200/").
     pub url: String,
-    /// Tokenized auth URL: "http://127.0.0.1:51423/auth?token=<64 hex>"
+    /// Tokenized auth URL: "<url>auth?token=<64 hex>"
     pub auth: String,
     pub schema: u32,
 }
 
 impl WebUiHandshake {
+    /// Host and port to dial, taken from the `url` attribute — Lich builds
+    /// it as an address reachable from the FE (loopback normally, the LAN
+    /// address for a containerized Lich). Falls back to loopback + the
+    /// `port` attribute when `url` is absent or unparseable, and to the
+    /// `port` attribute when the url carries no explicit port.
+    pub fn endpoint(&self) -> (String, u16) {
+        let fallback = || ("127.0.0.1".to_string(), self.port);
+        let Some((_, rest)) = self.url.split_once("://") else {
+            return fallback();
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        if authority.is_empty() {
+            return fallback();
+        }
+        match authority.rsplit_once(':') {
+            Some((host, port)) if !host.is_empty() => match port.parse() {
+                Ok(port) => (host.to_string(), port),
+                Err(_) => fallback(),
+            },
+            _ => (authority.to_string(), self.port),
+        }
+    }
+
     /// Extracts the auth token from the auth URL. The token doubles as the
     /// value of the `lich_webui` cookie, so a native client can skip the
     /// HTTP /auth round-trip and present the cookie directly.
@@ -299,6 +324,11 @@ pub struct WebUiPanelContent {
     pub page_id: String,
     /// Display title (descriptor title, falls back to page id)
     pub title: String,
+    /// Author embedding hint from the page descriptor, remembered here
+    /// because the descriptor is gone from the registry by the time the
+    /// page closes. `Some("panel")` = persistent (keep the window on page
+    /// end, it auto-resumes); anything else = transient (auto-close).
+    pub kind: Option<String>,
     /// Latest component tree; None until the first render arrives
     pub tree: Option<WebUiNode>,
     /// Last applied render sequence (stale/out-of-order renders are dropped)
@@ -336,6 +366,54 @@ mod tests {
             schema: 1,
         };
         assert_eq!(hs.token(), Some("abc123def"));
+    }
+
+    #[test]
+    fn endpoint_prefers_url_authority() {
+        // Local Lich: loopback url.
+        let hs = WebUiHandshake {
+            status: "ok".into(),
+            port: 51423,
+            url: "http://127.0.0.1:51423/".into(),
+            auth: "http://127.0.0.1:51423/auth?token=abc".into(),
+            schema: 1,
+        };
+        assert_eq!(hs.endpoint(), ("127.0.0.1".to_string(), 51423));
+
+        // Containerized Lich: url carries the reachable LAN address, and its
+        // port wins even if docker remapped it away from the `port` attr.
+        let hs = WebUiHandshake {
+            url: "http://192.168.86.4:8200/".into(),
+            port: 51423,
+            ..hs
+        };
+        assert_eq!(hs.endpoint(), ("192.168.86.4".to_string(), 8200));
+
+        // Hostname without an explicit port: keep the port attribute.
+        let hs = WebUiHandshake {
+            url: "http://lich.tailnet.ts.net/".into(),
+            port: 8200,
+            ..hs
+        };
+        assert_eq!(hs.endpoint(), ("lich.tailnet.ts.net".to_string(), 8200));
+    }
+
+    #[test]
+    fn endpoint_falls_back_to_loopback() {
+        let hs = WebUiHandshake {
+            status: "ok".into(),
+            port: 51423,
+            url: String::new(),
+            auth: String::new(),
+            schema: 1,
+        };
+        assert_eq!(hs.endpoint(), ("127.0.0.1".to_string(), 51423));
+
+        let hs = WebUiHandshake {
+            url: "not a url".into(),
+            ..hs
+        };
+        assert_eq!(hs.endpoint(), ("127.0.0.1".to_string(), 51423));
     }
 
     #[test]

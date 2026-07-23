@@ -3435,6 +3435,7 @@ impl AppCore {
         page_id: &str,
         title: &str,
         size_hint: Option<[f32; 2]>,
+        kind: Option<String>,
     ) -> String {
         use crate::data::{WidgetType, WindowContent, WindowPosition, WindowState};
 
@@ -3453,12 +3454,12 @@ impl AppCore {
             None => (40, 12),
         };
 
+        let mut content = crate::data::webui::WebUiPanelContent::new(page_id, title);
+        content.kind = kind;
         let window = WindowState {
             name: name.clone(),
             widget_type: WidgetType::WebUi,
-            content: WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(
-                page_id, title,
-            )),
+            content: WindowContent::WebUi(content),
             position: WindowPosition {
                 x: 0,
                 y: 0,

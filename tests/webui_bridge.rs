@@ -15,12 +15,16 @@ use vellum_fe::webui::{self, WebUiEvent};
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-/// Accepts one WebSocket connection, validating the upgrade like Lich does.
-async fn accept_validated(
+/// Accepts one WebSocket connection, validating the upgrade like Lich does:
+/// auth cookie plus an Origin matching the dialed host:port (the server's
+/// allowed-hosts check).
+async fn accept_validated_from(
     listener: &tokio::net::TcpListener,
+    host: &str,
     port: u16,
 ) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
     let (stream, _) = listener.accept().await.expect("accept");
+    let expected_origin = format!("http://{}:{}", host, port);
     tokio_tungstenite::accept_hdr_async(stream, move |req: &Request, resp: Response| {
         let headers = req.headers();
         let cookie = headers
@@ -37,14 +41,20 @@ async fn accept_validated(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         assert_eq!(
-            origin,
-            format!("http://127.0.0.1:{}", port),
-            "upgrade must carry the loopback Origin"
+            origin, expected_origin,
+            "upgrade Origin must match the dialed host:port"
         );
         Ok(resp)
     })
     .await
     .expect("websocket upgrade")
+}
+
+async fn accept_validated(
+    listener: &tokio::net::TcpListener,
+    port: u16,
+) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+    accept_validated_from(listener, "127.0.0.1", port).await
 }
 
 fn hello_json() -> String {
@@ -79,7 +89,13 @@ async fn bridge_full_round_trip() {
     let port = listener.local_addr().unwrap().port();
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let handle = webui::start(&tokio::runtime::Handle::current(), port, TOKEN.into(), event_tx);
+    let handle = webui::start(
+        &tokio::runtime::Handle::current(),
+        "127.0.0.1".into(),
+        port,
+        TOKEN.into(),
+        event_tx,
+    );
 
     let mut socket = accept_validated(&listener, port).await;
     socket.send(Message::text(hello_json())).await.unwrap();
@@ -137,6 +153,32 @@ async fn bridge_full_round_trip() {
 }
 
 #[tokio::test]
+async fn bridge_dials_the_handshake_host_not_loopback() {
+    // A containerized Lich advertises a LAN address in the handshake url;
+    // the bridge must dial that host and present it in the Origin. Dialing
+    // "localhost" (resolves to the same listener, but a different Origin
+    // string than 127.0.0.1) proves nothing is hardcoded to loopback.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let _handle = webui::start(
+        &tokio::runtime::Handle::current(),
+        "localhost".into(),
+        port,
+        TOKEN.into(),
+        event_tx,
+    );
+
+    let mut socket = accept_validated_from(&listener, "localhost", port).await;
+    socket.send(Message::text(hello_json())).await.unwrap();
+    assert!(matches!(
+        recv_event(&mut event_rx).await,
+        WebUiEvent::Hello { .. }
+    ));
+}
+
+#[tokio::test]
 async fn fetch_image_sends_cookie_and_returns_body() {
     // Minimal 1x1 PNG (what the /files/ route would serve).
     let png: Vec<u8> = vec![
@@ -177,6 +219,7 @@ async fn fetch_image_sends_cookie_and_returns_body() {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     webui::fetch_image(
         &tokio::runtime::Handle::current(),
+        "127.0.0.1".into(),
         port,
         TOKEN.into(),
         "/files/cbcal/greyscale/hinterwilds/angargeist.png".into(),
@@ -211,6 +254,7 @@ async fn fetch_image_reports_http_errors() {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     webui::fetch_image(
         &tokio::runtime::Handle::current(),
+        "127.0.0.1".into(),
         port,
         TOKEN.into(),
         "/files/cbcal/missing.png".into(),
@@ -230,7 +274,13 @@ async fn bridge_reconnects_and_replays_subscriptions() {
     let port = listener.local_addr().unwrap().port();
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let handle = webui::start(&tokio::runtime::Handle::current(), port, TOKEN.into(), event_tx);
+    let handle = webui::start(
+        &tokio::runtime::Handle::current(),
+        "127.0.0.1".into(),
+        port,
+        TOKEN.into(),
+        event_tx,
+    );
 
     // First connection: hello, subscribe, then drop the socket.
     {

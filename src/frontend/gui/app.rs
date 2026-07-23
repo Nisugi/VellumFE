@@ -271,9 +271,11 @@ pub struct VellumGuiApp {
     is_direct_connection: bool,
     /// Ensures the layout-driven auto-handshake fires once per connect.
     webui_handshake_sent: bool,
-    /// (port, auth token) of the connected WebUI server, for /files/ image
-    /// fetches. The token is script-level power: never log it.
-    webui_endpoint: Option<(u16, String)>,
+    /// (host, port, auth token) of the connected WebUI server, for /files/
+    /// image fetches. Host comes from the handshake url (loopback for a
+    /// local Lich, a LAN address for a containerized one). The token is
+    /// script-level power: never log it.
+    webui_endpoint: Option<(String, u16, String)>,
     /// Raw bridge event sender; image fetch tasks report through it.
     webui_event_tx: Option<mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
     /// Image srcs with a fetch task in flight (dedupes re-queues).
@@ -1910,9 +1912,12 @@ impl VellumGuiApp {
         };
 
         // Replace any prior bridge (Lich restarts change port and token).
+        // Dial the address the handshake url advertises — a containerized
+        // Lich hands out its reachable LAN address there, not loopback.
+        let (host, port) = handshake.endpoint();
         self.webui_bridge = None;
         self.webui_rx = None;
-        self.webui_endpoint = Some((handshake.port, token.clone()));
+        self.webui_endpoint = Some((host.clone(), port, token.clone()));
         self.webui_fetches_inflight.clear();
 
         // Same waking hop as server messages: forward bridge events and
@@ -1933,10 +1938,10 @@ impl VellumGuiApp {
         });
 
         let handle =
-            crate::webui::start(self._runtime.handle(), handshake.port, token, event_tx);
+            crate::webui::start(self._runtime.handle(), host.clone(), port, token, event_tx);
         self.webui_bridge = Some(handle);
         self.webui_rx = Some(forward_rx);
-        tracing::info!("WebUI bridge connecting to port {}", handshake.port);
+        tracing::info!("WebUI bridge connecting to {}:{}", host, port);
     }
 
     /// Applies bridge events to panel windows. Called once per frame.
@@ -1952,6 +1957,7 @@ impl VellumGuiApp {
             match event {
                 crate::webui::WebUiEvent::Hello { session, pages, .. } => {
                     self.webui_pages = pages;
+                    self.refresh_webui_window_kinds();
                     self.set_webui_windows_connected(true);
                     // Fresh connection: failed images are worth retrying, and
                     // Loading entries are orphans of the previous socket.
@@ -2012,14 +2018,49 @@ impl VellumGuiApp {
                         }
                     }
                     self.webui_pages = pages;
+                    self.refresh_webui_window_kinds();
                 }
                 crate::webui::WebUiEvent::Render { page, seq, tree } => {
                     self.apply_webui_render(&page, seq, tree);
                 }
                 crate::webui::WebUiEvent::PageClosed { page } => {
-                    self.with_webui_window(&page, |content| {
-                        content.ended = Some("The owning script exited.".to_string());
+                    // Declared panels (kind: "panel") stay docked with a
+                    // notice and resume when the script re-registers, so a
+                    // crash or ;repository restart never silently removes a
+                    // docked widget. Everything else (settings dialogs,
+                    // pages with no kind hint) closes with its script.
+                    let is_panel = self.app_core.ui_state.windows.values().any(|w| {
+                        matches!(&w.content, WindowContent::WebUi(c)
+                            if c.page_id == page && c.kind.as_deref() == Some("panel"))
                     });
+                    if is_panel {
+                        self.with_webui_window(&page, |content| {
+                            content.ended = Some("The owning script exited.".to_string());
+                        });
+                    } else {
+                        let names: Vec<String> = self
+                            .app_core
+                            .ui_state
+                            .windows
+                            .values()
+                            .filter(|w| {
+                                matches!(&w.content, WindowContent::WebUi(c)
+                                    if c.page_id == page)
+                            })
+                            .map(|w| w.name.clone())
+                            .collect();
+                        if !names.is_empty() {
+                            for name in &names {
+                                self.app_core.remove_window(name);
+                                self.app_core.layout.windows.retain(|w| w.name() != *name);
+                            }
+                            self.app_core.layout_modified_since_save = true;
+                            tracing::info!(
+                                "WebUI page '{}' ended; closed transient panel",
+                                page
+                            );
+                        }
+                    }
                 }
                 crate::webui::WebUiEvent::Notice { level, text } => {
                     self.app_core
@@ -2130,7 +2171,10 @@ impl VellumGuiApp {
                 };
                 PopupMenuItem {
                     text,
-                    command: format!(".webui {}", page.id),
+                    // Menu commands that miss every internal prefix are sent
+                    // to the game raw (Wrayth menu semantics), so this must
+                    // be the action string, not the ".webui" dot-command.
+                    command: format!("action:webui:open:{}", page.id),
                     disabled: false,
                 }
             })
@@ -2138,6 +2182,23 @@ impl VellumGuiApp {
         self.close_all_popup_menus();
         self.app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (8, 4)));
         self.app_core.ui_state.input_mode = InputMode::Menu;
+    }
+
+    /// Refreshes each hosted window's remembered page kind from the current
+    /// registry. Windows restored from a saved layout start with no kind;
+    /// this is what re-teaches them before their page can end.
+    fn refresh_webui_window_kinds(&mut self) {
+        for window in self.app_core.ui_state.windows.values_mut() {
+            if let WindowContent::WebUi(content) = &mut window.content {
+                if let Some(descriptor) =
+                    self.webui_pages.iter().find(|p| p.id == content.page_id)
+                {
+                    if descriptor.kind.is_some() {
+                        content.kind = descriptor.kind.clone();
+                    }
+                }
+            }
+        }
     }
 
     /// Creates (or focuses) the panel window for a page and subscribes.
@@ -2153,10 +2214,16 @@ impl VellumGuiApp {
             })
             .unwrap_or_else(|| page_id.to_string());
         let size = descriptor.and_then(|d| d.size);
+        let kind = descriptor.and_then(|d| d.kind.clone());
 
-        let name = self.app_core.add_webui_window(page_id, &title, size);
+        let name = self
+            .app_core
+            .add_webui_window(page_id, &title, size, kind.clone());
         self.with_webui_window(page_id, |content| {
             content.connected = true;
+            if kind.is_some() {
+                content.kind = kind.clone();
+            }
         });
         if let Some(bridge) = &self.webui_bridge {
             bridge.subscribe(page_id);
@@ -4032,10 +4099,11 @@ impl eframe::App for VellumGuiApp {
                 continue;
             }
             match (&self.webui_endpoint, &self.webui_event_tx) {
-                (Some((port, token)), Some(event_tx)) if src.starts_with("/files/") => {
+                (Some((host, port, token)), Some(event_tx)) if src.starts_with("/files/") => {
                     self.webui_fetches_inflight.insert(src.clone());
                     crate::webui::fetch_image(
                         self._runtime.handle(),
+                        host.clone(),
                         *port,
                         token.clone(),
                         src,

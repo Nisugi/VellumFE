@@ -5,7 +5,8 @@
 //! relays envelopes between the server and the frontend over channels:
 //!
 //! ```text
-//! Lich (ws://127.0.0.1:<port>/ws)
+//! Lich (ws://<host>:<port>/ws — host from the handshake url: loopback
+//!       for a local Lich, a LAN address for a containerized one)
 //!        │  ▲
 //!  hello/pages/render/close        subscribe/unsubscribe/event
 //!        ▼  │
@@ -17,7 +18,8 @@
 //! ```
 //!
 //! Auth: the server accepts the upgrade when the request carries the
-//! `lich_webui=<token>` cookie and a loopback Origin. The token is
+//! `lich_webui=<token>` cookie and an allowlisted Origin (the dialed
+//! host:port must be in the server's allowed hosts). The token is
 //! script-level power (WebUI callbacks run Ruby inside Lich) - it is never
 //! logged here and must not appear in errors surfaced to windows.
 
@@ -95,12 +97,13 @@ impl Drop for WebUiHandle {
 /// `Disconnected { gave_up: true }` and exits (the user re-runs `.webui`).
 pub fn start(
     runtime: &tokio::runtime::Handle,
+    host: String,
     port: u16,
     token: String,
     event_tx: mpsc::UnboundedSender<WebUiEvent>,
 ) -> WebUiHandle {
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
-    let task = runtime.spawn(run_bridge(port, token, event_tx, outbound_rx));
+    let task = runtime.spawn(run_bridge(host, port, token, event_tx, outbound_rx));
     WebUiHandle {
         port,
         outbound_tx,
@@ -111,6 +114,7 @@ pub fn start(
 const MAX_RECONNECT_ATTEMPTS: u32 = 8;
 
 async fn run_bridge(
+    host: String,
     port: u16,
     token: String,
     event_tx: mpsc::UnboundedSender<WebUiEvent>,
@@ -121,10 +125,10 @@ async fn run_bridge(
     let mut attempts: u32 = 0;
 
     loop {
-        match connect(port, &token).await {
+        match connect(&host, port, &token).await {
             Ok(mut socket) => {
                 attempts = 0;
-                tracing::info!("WebUI bridge connected on port {}", port);
+                tracing::info!("WebUI bridge connected to {}:{}", host, port);
 
                 // Replay subscriptions lost with the previous socket.
                 for page in &subscriptions {
@@ -188,7 +192,8 @@ async fn run_bridge(
             Err(err) => {
                 attempts += 1;
                 tracing::warn!(
-                    "WebUI bridge connect to port {} failed (attempt {}/{}): {}",
+                    "WebUI bridge connect to {}:{} failed (attempt {}/{}): {}",
+                    host,
                     port,
                     attempts,
                     MAX_RECONNECT_ATTEMPTS,
@@ -222,13 +227,14 @@ async fn run_bridge(
 /// the body is simply everything after the headers until EOF.
 pub fn fetch_image(
     runtime: &tokio::runtime::Handle,
+    host: String,
     port: u16,
     token: String,
     src: String,
     event_tx: mpsc::UnboundedSender<WebUiEvent>,
 ) {
     runtime.spawn(async move {
-        let fetch = http_get_files(port, &token, &src);
+        let fetch = http_get_files(&host, port, &token, &src);
         let data = match tokio::time::timeout(std::time::Duration::from_secs(10), fetch).await {
             Ok(Ok(bytes)) => Ok(bytes),
             Ok(Err(err)) => Err(err.to_string()),
@@ -238,18 +244,18 @@ pub fn fetch_image(
     });
 }
 
-async fn http_get_files(port: u16, token: &str, path: &str) -> anyhow::Result<Vec<u8>> {
+async fn http_get_files(host: &str, port: u16, token: &str, path: &str) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(
         path.starts_with("/files/") && !path.contains("..") && !path.contains(['\r', '\n']),
         "unsupported image source"
     );
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+    let mut stream = tokio::net::TcpStream::connect((host, port)).await?;
     let encoded_path = path.replace(' ', "%20");
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nCookie: lich_webui={}\r\nConnection: close\r\n\r\n",
-        encoded_path, port, token
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nCookie: lich_webui={}\r\nConnection: close\r\n\r\n",
+        encoded_path, host, port, token
     );
     stream.write_all(request.as_bytes()).await?;
 
@@ -274,15 +280,16 @@ type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Opens the authenticated WebSocket. The server requires the auth cookie
-/// AND an allowlisted Origin (`http://127.0.0.1:<port>`) on the upgrade;
-/// the cookie value is the token itself, so no /auth round-trip is needed.
-async fn connect(port: u16, token: &str) -> anyhow::Result<WsStream> {
-    let url = format!("ws://127.0.0.1:{}/ws", port);
+/// AND an allowlisted Origin (`http://<host>:<port>` — the dialed address,
+/// which must be in the server's allowed hosts) on the upgrade; the cookie
+/// value is the token itself, so no /auth round-trip is needed.
+async fn connect(host: &str, port: u16, token: &str) -> anyhow::Result<WsStream> {
+    let url = format!("ws://{}:{}/ws", host, port);
     let mut request = url.into_client_request()?;
     let headers = request.headers_mut();
     headers.insert(
         "Origin",
-        format!("http://127.0.0.1:{}", port).parse()?,
+        format!("http://{}:{}", host, port).parse()?,
     );
     headers.insert("Cookie", format!("lich_webui={}", token).parse()?);
 
