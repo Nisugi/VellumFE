@@ -57,8 +57,10 @@ enum GuiWindowMenuCommand {
     SetAccent(Option<[u8; 3]>),
     /// Lock this window together with another one.
     GroupWith(TabKey),
-    /// Remove this window from its group.
-    Ungroup,
+    /// Remove one specific member from this window's group.
+    UngroupMember(TabKey),
+    /// Break up this window's whole group.
+    DissolveGroup,
     /// Open the Map Explorer native window (map widgets only).
     OpenMapExplorer,
     /// Mini map zoom in px per cell; None reverts to the widget default.
@@ -66,6 +68,8 @@ enum GuiWindowMenuCommand {
     SetMapZoom(Option<f32>),
     /// Group layout: true = side by side, false = stacked.
     SetGroupOrientation(bool),
+    /// Move a group member one step up/down in the group's render order.
+    MoveGroupMember { member: TabKey, up: bool },
 }
 
 /// Everything the window context menu needs to render, resolved up front so
@@ -87,6 +91,8 @@ struct WindowMenuView<'a> {
     accent_color: Option<Color32>,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
+    /// Members of this window's group in render order (empty when ungrouped).
+    group_members: &'a [(TabKey, String)],
     /// Windows this one could be grouped with (visible, ungrouped).
     group_candidates: &'a [(TabKey, String)],
 }
@@ -209,7 +215,36 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::GroupWith(other) => {
                 self.group_tabs(&request.tab_key.clone(), other);
             }
-            GuiWindowMenuCommand::Ungroup => self.ungroup_tab(&request.tab_key.clone()),
+            GuiWindowMenuCommand::UngroupMember(member) => self.ungroup_tab(&member),
+            GuiWindowMenuCommand::DissolveGroup => {
+                if let Some(index) = self
+                    .tab_groups
+                    .iter()
+                    .position(|group| group.members.contains(&request.tab_key))
+                {
+                    self.tab_groups.remove(index);
+                    self.layout_dirty = true;
+                }
+            }
+            GuiWindowMenuCommand::MoveGroupMember { member, up } => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    if let Some(index) = group.members.iter().position(|key| *key == member) {
+                        let target = if up {
+                            index.checked_sub(1)
+                        } else {
+                            (index + 1 < group.members.len()).then_some(index + 1)
+                        };
+                        if let Some(target) = target {
+                            group.members.swap(index, target);
+                            self.layout_dirty = true;
+                        }
+                    }
+                }
+            }
             GuiWindowMenuCommand::OpenMapExplorer => {
                 self.map_explorer.open = true;
             }
@@ -262,6 +297,21 @@ impl VellumGuiApp {
             .map(|(key, tab)| (key.clone(), tab.id.title.clone()))
             .collect();
         group_candidates.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+        // Group members in render order, for the reorder controls.
+        let group_members: Vec<(TabKey, String)> = self
+            .group_for_tab(&request.tab_key)
+            .map(|group| {
+                group
+                    .members
+                    .iter()
+                    .filter_map(|key| {
+                        self.available_tabs
+                            .get(key)
+                            .map(|tab| (key.clone(), tab.id.title.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let supports_wrap = self
             .available_tabs
             .get(&request.tab_key)
@@ -307,6 +357,7 @@ impl VellumGuiApp {
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
                 .map(|group| group.horizontal),
+            group_members: &group_members,
             group_candidates: &group_candidates,
         };
 
@@ -332,6 +383,8 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetWrapText(_)
                     | GuiWindowMenuCommand::SetAccent(_)
                     | GuiWindowMenuCommand::SetGroupOrientation(_)
+                    | GuiWindowMenuCommand::MoveGroupMember { .. }
+                    | GuiWindowMenuCommand::UngroupMember(_)
             );
             self.apply_window_menu_command(&request, command);
             if !keep_open {
@@ -836,8 +889,47 @@ impl VellumGuiApp {
                     settings_command = Some(GuiWindowMenuCommand::SetGroupOrientation(true));
                 }
             });
-            if ui.button("Ungroup").clicked() {
-                return Some(GuiWindowMenuCommand::Ungroup);
+            if view.group_members.len() > 1 {
+                ui.label("Order");
+                let last = view.group_members.len() - 1;
+                for (index, (key, title)) in view.group_members.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("⬆").small())
+                            .clicked()
+                        {
+                            settings_command = Some(GuiWindowMenuCommand::MoveGroupMember {
+                                member: key.clone(),
+                                up: true,
+                            });
+                        }
+                        if ui
+                            .add_enabled(index < last, egui::Button::new("⬇").small())
+                            .clicked()
+                        {
+                            settings_command = Some(GuiWindowMenuCommand::MoveGroupMember {
+                                member: key.clone(),
+                                up: false,
+                            });
+                        }
+                        if ui
+                            .add(egui::Button::new("✕").small())
+                            .on_hover_text("Remove this window from the group")
+                            .clicked()
+                        {
+                            settings_command =
+                                Some(GuiWindowMenuCommand::UngroupMember(key.clone()));
+                        }
+                        ui.label(title);
+                    });
+                }
+            }
+            if ui
+                .button("Dissolve group")
+                .on_hover_text("Ungroup all members; every window stands alone again")
+                .clicked()
+            {
+                return Some(GuiWindowMenuCommand::DissolveGroup);
             }
         }
         if !view.group_candidates.is_empty() {
