@@ -79,6 +79,11 @@ pub struct TtsManager {
     /// True between speak() and the engine's utterance-end/stop callback.
     speaking: bool,
 
+    /// When the last utterance was handed to the engine. The pump's
+    /// watchdog only trusts `engine.is_speaking() == false` after a grace
+    /// period, because engines start utterances asynchronously.
+    last_speak: Option<std::time::Instant>,
+
     /// Is TTS globally muted?
     muted: bool,
 
@@ -127,6 +132,7 @@ impl TtsManager {
             queue: VecDeque::new(),
             current_index: None,
             speaking: false,
+            last_speak: None,
             muted: false,
             enabled,
             rate,
@@ -316,6 +322,7 @@ impl TtsManager {
             let _ = engine.stop();
             engine.speak(text, false)?;
             self.speaking = true;
+            self.last_speak = Some(std::time::Instant::now());
         }
         Ok(())
     }
@@ -424,6 +431,37 @@ impl TtsManager {
         }
     }
 
+    /// Frame-driven watchdog: keeps the queue draining even when the
+    /// platform never delivers utterance callbacks (load-bearing on
+    /// Windows, where end callbacks are unreliable). Asks the engine
+    /// directly whether it is still speaking - after a grace period,
+    /// since engines start utterances asynchronously - and chains the
+    /// next unread entry when idle. Call once per frame.
+    pub fn pump(&mut self) {
+        if !self.enabled || self.muted {
+            return;
+        }
+        #[cfg(feature = "tts")]
+        if self.speaking {
+            let grace_passed = self
+                .last_speak
+                .is_none_or(|at| at.elapsed().as_millis() > 300);
+            if grace_passed {
+                if let Some(ref engine) = self.engine {
+                    if matches!(engine.is_speaking(), Ok(false)) {
+                        tracing::debug!("TTS pump: engine idle, clearing speaking flag");
+                        self.speaking = false;
+                    }
+                }
+            }
+        }
+        if !self.speaking && self.queue.iter().any(|entry| !entry.spoken) {
+            if let Err(err) = self.auto_play_next() {
+                tracing::warn!("TTS pump auto-play failed: {}", err);
+            }
+        }
+    }
+
     /// Utterance was stopped (interrupt/mute): just clear the speaking flag.
     pub fn handle_utterance_stopped(&mut self) {
         self.speaking = false;
@@ -453,6 +491,7 @@ impl TtsManager {
 
             engine.speak(&text, false)?;
             self.speaking = true;
+            self.last_speak = Some(std::time::Instant::now());
         }
         if let Some(entry) = self.queue.get_mut(index) {
             entry.spoken = true;
@@ -462,13 +501,20 @@ impl TtsManager {
         Ok(())
     }
 
-    /// Stop current speech (does NOT change current_index position)
+    /// Stop current speech and skip the pending backlog: Stop means "shut
+    /// up about what's queued", not "pause forever" - new lines still
+    /// speak, and skipped entries stay reviewable via previous/next
+    /// (which include read entries). Without the skip, the pump watchdog
+    /// would resume the backlog on the next frame.
     pub fn stop(&mut self) -> Result<()> {
         #[cfg(feature = "tts")]
         if let Some(ref mut engine) = self.engine {
             engine.stop()?;
         }
         self.speaking = false;
+        for entry in self.queue.iter_mut() {
+            entry.spoken = true;
+        }
 
         // Don't change current_index - this preserves position for next/previous navigation
         Ok(())
@@ -725,6 +771,20 @@ mod tests {
         );
         assert_eq!(tts.gags.len(), 1);
         assert!(tts.substitutions.is_empty());
+    }
+
+    #[test]
+    fn stop_skips_backlog_but_new_lines_still_queue_unspoken() {
+        let mut tts = manager();
+        tts.enqueue(entry("one"));
+        tts.enqueue(entry("two"));
+        tts.stop().unwrap();
+        assert!(tts.queue.iter().all(|e| e.spoken));
+        // stop() cleared `speaking`; re-arm the test guard so the new
+        // enqueue stays off the real engine.
+        tts.speaking = true;
+        tts.enqueue(entry("three"));
+        assert!(!tts.queue.back().unwrap().spoken);
     }
 
     #[test]

@@ -1386,6 +1386,9 @@ impl AppCore {
                 }
             }
         }
+        // Watchdog: drains the queue even when the platform never delivers
+        // utterance-end callbacks (observed on Windows).
+        self.tts_manager.pump();
     }
 
     /// Initialize windows based on current layout

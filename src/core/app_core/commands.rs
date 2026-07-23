@@ -383,7 +383,7 @@ impl AppCore {
             }
             "status" => {
                 self.add_system_message(&format!(
-                    "TTS: {} | {} | rate {:.1} | volume {:.1} | voice {} | {} queued",
+                    "TTS: {} | {} | rate {:.1} | volume {:.1} | voice {} | {} queued | {}",
                     if self.tts_manager.is_enabled() {
                         "on"
                     } else {
@@ -398,6 +398,11 @@ impl AppCore {
                     self.tts_manager.volume(),
                     self.tts_manager.voice_name().unwrap_or("default"),
                     self.tts_manager.queue_size(),
+                    if self.tts_manager.is_speaking() {
+                        "speaking"
+                    } else {
+                        "idle"
+                    },
                 ));
             }
             other => {
