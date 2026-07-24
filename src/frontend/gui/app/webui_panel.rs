@@ -579,10 +579,14 @@ impl VellumGuiApp {
                         serde_json::Value::String(buffer.clone()),
                     );
                 }
+                // has_focus() re-enters the egui context; it must be read
+                // BEFORE data_mut takes the context write lock (non-reentrant
+                // -> permanent deadlock, the "Not Responding" setup pages).
+                let focused_now = response.has_focus();
                 ui.data_mut(|d| {
                     d.insert_temp(buf_id, buffer);
                     d.insert_temp(seen_id, server_value.to_string());
-                    d.insert_temp(focus_id, response.has_focus());
+                    d.insert_temp(focus_id, focused_now);
                 });
             }
             "select" => {
@@ -1031,5 +1035,74 @@ impl VellumGuiApp {
             }
             None => render_grid(ui),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::data::webui::{WebUiPanelContent, WebUiServerMessage};
+
+    // Render frames captured from live Lich sessions that hung the GUI
+    // ("Not Responding") when opened as panels. See
+    // lich5-docker/docs/vellum-tabs-crash-report.md.
+    const ECLEANSE: &str =
+        include_str!("../../../../tests/data/vellum-crash-payload-ecleanse.json");
+    const BIGSHOT: &str =
+        include_str!("../../../../tests/data/vellum-crash-payload-bigshot.json");
+
+    fn content_from_capture(raw: &str) -> WebUiPanelContent {
+        let msg: WebUiServerMessage = serde_json::from_str(raw).expect("captured payload parses");
+        let WebUiServerMessage::Render { page, tree, .. } = msg else {
+            panic!("capture is not a render envelope");
+        };
+        let mut content = WebUiPanelContent::new(page, "capture");
+        content.tree = Some(tree);
+        content.connected = true;
+        content
+    }
+
+    /// Renders a captured page for several headless frames on a worker
+    /// thread; the watchdog turns an infinite layout/parse loop into a test
+    /// failure instead of a stuck test process.
+    fn assert_renders_without_hanging(raw: &'static str) {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let content = content_from_capture(raw);
+            let ctx = egui::Context::default();
+            for _ in 0..8 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(420.0, 640.0),
+                    )),
+                    ..Default::default()
+                };
+                ctx.begin_pass(input);
+                let mut root = egui::Ui::new(
+                    ctx.clone(),
+                    egui::Id::new("webui_panel_test_root"),
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(420.0, 640.0),
+                    )),
+                );
+                super::VellumGuiApp::render_webui_content(&mut root, &content);
+                let _ = ctx.end_pass();
+            }
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("webui renderer hung on captured payload");
+    }
+
+    #[test]
+    fn captured_ecleanse_setup_renders_without_hanging() {
+        assert_renders_without_hanging(ECLEANSE);
+    }
+
+    #[test]
+    fn captured_bigshot_setup_renders_without_hanging() {
+        assert_renders_without_hanging(BIGSHOT);
     }
 }
