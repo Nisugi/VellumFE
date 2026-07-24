@@ -46,10 +46,12 @@ pub struct HighlightResult {
 
 /// Character-level style information for highlight processing
 #[derive(Clone)]
+#[derive(Default)]
 struct CharStyle {
     fg: Option<String>,
     bg: Option<String>,
     bold: bool,
+    mono: bool,
     span_type: SpanType,
 }
 
@@ -401,6 +403,7 @@ impl CoreHighlightEngine {
                     fg: segment.fg.clone(),
                     bg: segment.bg.clone(),
                     bold: segment.bold,
+                    mono: segment.mono,
                     span_type: segment.span_type,
                 });
                 char_links.push(segment.link_data.clone());
@@ -470,12 +473,7 @@ impl CoreHighlightEngine {
                 // Copy untouched region
                 for i in last_char_idx..start_char {
                     new_text.push(full_text_chars[i]);
-                    new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                        fg: None,
-                        bg: None,
-                        bold: false,
-                        span_type: SpanType::Normal,
-                    }));
+                    new_styles.push(char_styles.get(i).cloned().unwrap_or_default());
                     new_links.push(char_links.get(i).cloned().unwrap_or(None));
                 }
 
@@ -498,22 +496,12 @@ impl CoreHighlightEngine {
                     // Use original text (colors will still be applied below)
                     for i in start_char..end_char {
                         new_text.push(full_text_chars[i]);
-                        new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                            fg: None,
-                            bg: None,
-                            bold: false,
-                            span_type: SpanType::Normal,
-                        }));
+                        new_styles.push(char_styles.get(i).cloned().unwrap_or_default());
                         new_links.push(char_links.get(i).cloned().unwrap_or(None));
                     }
                 } else if let Some(ref repl) = m.replace {
                     // Immediate replacement (no window filter)
-                    let base_style = char_styles.get(start_char).cloned().unwrap_or(CharStyle {
-                        fg: None,
-                        bg: None,
-                        bold: false,
-                        span_type: SpanType::Normal,
-                    });
+                    let base_style = char_styles.get(start_char).cloned().unwrap_or_default();
                     for ch in repl.chars() {
                         new_text.push(ch);
                         new_styles.push(base_style.clone());
@@ -523,12 +511,7 @@ impl CoreHighlightEngine {
                     // No replacement - use original text
                     for i in start_char..end_char {
                         new_text.push(full_text_chars[i]);
-                        new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                            fg: None,
-                            bg: None,
-                            bold: false,
-                            span_type: SpanType::Normal,
-                        }));
+                        new_styles.push(char_styles.get(i).cloned().unwrap_or_default());
                         new_links.push(char_links.get(i).cloned().unwrap_or(None));
                     }
                 }
@@ -542,12 +525,7 @@ impl CoreHighlightEngine {
             // Tail
             for i in last_char_idx..full_text_chars.len() {
                 new_text.push(full_text_chars[i]);
-                new_styles.push(char_styles.get(i).cloned().unwrap_or(CharStyle {
-                    fg: None,
-                    bg: None,
-                    bold: false,
-                    span_type: SpanType::Normal,
-                }));
+                new_styles.push(char_styles.get(i).cloned().unwrap_or_default());
                 new_links.push(char_links.get(i).cloned().unwrap_or(None));
             }
 
@@ -613,6 +591,7 @@ impl CoreHighlightEngine {
                 if next_style.fg == current_style.fg
                     && next_style.bg == current_style.bg
                     && next_style.bold == current_style.bold
+                    && next_style.mono == current_style.mono
                     && next_style.span_type == current_style.span_type
                     && next_link == current_link
                 {
@@ -628,7 +607,7 @@ impl CoreHighlightEngine {
                 fg: current_style.fg.clone(),
                 bg: current_style.bg.clone(),
                 bold: current_style.bold,
-                mono: false,
+                mono: current_style.mono,
                 span_type: current_style.span_type,
                 link_data: current_link,
             });
@@ -773,7 +752,7 @@ pub fn apply_deferred_for_window(
         fg: first_style.fg,
         bg: first_style.bg,
         bold: first_style.bold,
-        mono: false,
+        mono: first_style.mono,
         span_type: first_style.span_type,
         link_data: None,
     }]

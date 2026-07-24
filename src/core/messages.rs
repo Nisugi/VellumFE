@@ -679,6 +679,7 @@ impl MessageProcessor {
                 fg_color,
                 bg_color,
                 bold,
+                mono,
                 span_type,
                 link_data,
                 stream,
@@ -720,7 +721,7 @@ impl MessageProcessor {
                         fg: fg_color.clone(),
                         bg: bg_color.clone(),
                         bold: *bold,
-                        mono: false,
+                        mono: *mono,
                         span_type: data_span_type,
                         link_data: link_data.clone(),
                     };
@@ -790,7 +791,7 @@ impl MessageProcessor {
                     fg: fg_color.clone(),
                     bg: bg_color.clone(),
                     bold: *bold,
-                    mono: false,
+                    mono: *mono,
                     span_type: data_span_type,
                     link_data: link_data.clone(),
                 });

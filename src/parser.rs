@@ -73,6 +73,8 @@ pub enum ParsedElement {
         fg_color: Option<String>,
         bg_color: Option<String>,
         bold: bool,
+        /// Inside an `<output class="mono"/>` region: render monospace.
+        mono: bool,
         span_type: SpanType,
         link_data: Option<LinkData>,
     },
@@ -315,6 +317,10 @@ pub struct XmlParser {
     pub(crate) preset_stack: Vec<ColorStyle>,
     pub(crate) style_stack: Vec<ColorStyle>,
     pub(crate) bold_stack: Vec<bool>,
+    /// Inside an `<output class="mono"/>` region (game tables/ASCII art);
+    /// cleared by `<output class=""/>`. Stamped onto text so the GUI can
+    /// render these spans in its monospace font.
+    pub(crate) mono_output: bool,
 
     // Semantic type tracking
     pub(crate) link_depth: usize,                   // Track nested links
@@ -378,6 +384,7 @@ impl XmlParser {
             preset_stack: vec![],
             style_stack: vec![],
             bold_stack: vec![],
+            mono_output: false,
             link_depth: 0,
             spell_depth: 0,
             current_link_data: None,
@@ -690,6 +697,8 @@ impl XmlParser {
             self.handle_launch_url(tag, elements);
         } else if tag.starts_with("<LichWebUI ") || tag.starts_with("<LichWebUI/") {
             self.handle_lich_webui(tag, elements);
+        } else if tag.starts_with("<output ") || tag.starts_with("<output/") {
+            self.handle_output(tag);
         }
         // Handle paired inv tags: <inv id='X'>content</inv>
         else if tag.starts_with("<inv ") && tag.contains("</inv>") {
@@ -2182,6 +2191,14 @@ impl XmlParser {
         }
     }
 
+    fn handle_output(&mut self, tag: &str) {
+        // <output class="mono"/> opens a monospace region (tables, ASCII
+        // art - game XML, also emitted by Lich's respond() for script
+        // output); <output class=""/> closes it. The tag itself renders
+        // nothing.
+        self.mono_output = Self::extract_attribute(tag, "class").as_deref() == Some("mono");
+    }
+
     fn handle_push_bold(&mut self) {
         // <pushBold/> - apply monsterbold preset and set bold
         self.bold_stack.push(true);
@@ -2267,6 +2284,7 @@ impl XmlParser {
             fg_color: fg,
             bg_color: bg,
             bold,
+            mono: self.mono_output,
             span_type,
             link_data: self.current_link_data.clone(),
         }
@@ -2790,6 +2808,28 @@ mod tests {
         assert_eq!(content, " attacks!");
         assert!(!*bold);
         assert_eq!(*span_type, SpanType::Normal);
+    }
+
+    #[test]
+    fn test_output_mono_region_marks_text() {
+        let mut parser = test_parser();
+
+        // <output class="mono"/> opens a monospace region; text lines that
+        // follow are stamped mono until <output class=""/> closes it.
+        parser.parse_line(r#"<output class="mono"/>"#);
+        let elements = parser.parse_line("| Script/File      | Author          |");
+        let ParsedElement::Text { content, mono, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", elements[0]);
+        };
+        assert_eq!(content, "| Script/File      | Author          |");
+        assert!(*mono, "text inside a mono output region must be mono");
+
+        parser.parse_line(r#"<output class=""/>"#);
+        let elements = parser.parse_line("You are standing in a field.");
+        let ParsedElement::Text { mono, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", elements[0]);
+        };
+        assert!(!*mono, "text after the region closes must not be mono");
     }
 
     // ==================== GemStone IV Link Parsing (<a> tags) ====================
