@@ -1,0 +1,78 @@
+{
+  "t": "grid",
+  "cid": "grid:demo",
+  "cols": 3,
+  "children": [
+    {
+      "t": "cell",
+      "cid": "grid:demo.g0",
+      "children": [
+        {
+          "t": "text",
+          "cid": "grid:demo.g0.text:0",
+          "text": "hdr"
+        }
+      ]
+    },
+    {
+      "t": "cell",
+      "cid": "grid:demo.g1",
+      "children": [
+        {
+          "t": "checkbox",
+          "cid": "grid:demo.g1.checkbox:c1",
+          "label": "",
+          "checked": false
+        }
+      ]
+    },
+    {
+      "t": "cell",
+      "cid": "grid:demo.g2",
+      "children": [
+        {
+          "t": "checkbox",
+          "cid": "grid:demo.g2.checkbox:c2",
+          "label": "",
+          "checked": true
+        }
+      ]
+    },
+    {
+      "t": "cell",
+      "cid": "grid:demo.g3",
+      "children": [
+        {
+          "t": "checkbox",
+          "cid": "grid:demo.g3.checkbox:c3",
+          "label": "",
+          "checked": false
+        }
+      ]
+    },
+    {
+      "t": "cell",
+      "cid": "grid:demo.g4",
+      "children": [
+        {
+          "t": "checkbox",
+          "cid": "grid:demo.g4.checkbox:c4",
+          "label": "",
+          "checked": true
+        }
+      ]
+    },
+    {
+      "t": "cell",
+      "cid": "grid:demo.g5",
+      "children": [
+        {
+          "t": "checkbox",
+          "cid": "grid:demo.g5.checkbox:c5",
+          "label": "",
+          "checked": false
+        }
+      ]
+    }
+  ]
+}

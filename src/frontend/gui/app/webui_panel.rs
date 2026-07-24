@@ -773,7 +773,46 @@ impl VellumGuiApp {
                     }
                 });
             }
-            "col" | "tab" => Self::render_webui_nodes(ui, page, node.children()),
+            "col" | "tab" | "cell" => Self::render_webui_nodes(ui, page, node.children()),
+            "grid" => {
+                // Aligned matrix (webui-grid-node.md): row-major `cell`
+                // children, uniform column widths across every row (the
+                // browser uses grid-template-columns: repeat(cols, 1fr)).
+                // Empty cells are spacers; a lone unlabeled checkbox is
+                // centered (row/column headers carry its meaning).
+                let cells = node.children();
+                if cells.is_empty() {
+                    return;
+                }
+                let cols = (node.cols.unwrap_or(1).max(1) as usize).min(cells.len().max(1));
+                let compact = node.compact.unwrap_or(false);
+                let spacing = if compact { 2.0 } else { ui.spacing().item_spacing.x };
+                let avail = ui.available_width() - spacing * (cols.saturating_sub(1)) as f32;
+                let cell_width = (avail / cols as f32).max(10.0);
+                for row in cells.chunks(cols) {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = spacing;
+                        for cell in row {
+                            let center = matches!(cell.children(),
+                                [only] if only.t == "checkbox"
+                                    && only.label.as_deref().unwrap_or("").is_empty());
+                            let layout = if center {
+                                egui::Layout::top_down(egui::Align::Center)
+                            } else {
+                                egui::Layout::top_down(egui::Align::Min)
+                            };
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(cell_width, 0.0),
+                                layout,
+                                |ui| {
+                                    ui.set_width(cell_width);
+                                    Self::render_webui_nodes(ui, page, cell.children());
+                                },
+                            );
+                        }
+                    });
+                }
+            }
             "tabs" => {
                 let tabs = node.children();
                 if tabs.is_empty() {
@@ -1064,10 +1103,11 @@ mod tests {
     /// Renders a captured page for several headless frames on a worker
     /// thread; the watchdog turns an infinite layout/parse loop into a test
     /// failure instead of a stuck test process.
-    fn assert_renders_without_hanging(raw: &'static str) {
+    fn assert_renders_without_hanging(raw: impl Into<String>) {
+        let raw = raw.into();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let content = content_from_capture(raw);
+            let content = content_from_capture(&raw);
             let ctx = egui::Context::default();
             for _ in 0..8 {
                 let input = egui::RawInput {
@@ -1104,5 +1144,18 @@ mod tests {
     #[test]
     fn captured_bigshot_setup_renders_without_hanging() {
         assert_renders_without_hanging(BIGSHOT);
+    }
+
+    #[test]
+    fn grid_node_sample_renders_without_hanging() {
+        // Spec sample from lich5-docker/docs/webui-grid-node.md, wrapped in
+        // a minimal render envelope.
+        let grid = include_str!("../../../../tests/data/webui-grid-node-sample.json");
+        let raw = format!(
+            r#"{{"type":"render","page":"grid/demo","seq":1,
+                "tree":{{"t":"page","title":"Grid","children":[{}]}}}}"#,
+            grid
+        );
+        assert_renders_without_hanging(raw);
     }
 }

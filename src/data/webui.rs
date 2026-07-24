@@ -191,6 +191,11 @@ pub struct WebUiNode {
     #[serde(default)]
     pub weights: Option<Vec<f32>>,
 
+    // grid (aligned matrix of `cell` children, row-major)
+    /// Column count; rows = ceil(children / cols)
+    #[serde(default)]
+    pub cols: Option<u32>,
+
     // tabs
     #[serde(default)]
     pub vertical: Option<bool>,
@@ -511,6 +516,23 @@ mod tests {
         assert_eq!(markers[0].kind.as_deref(), Some("current"));
         assert_eq!(markers[0].x2, 54.0);
         assert_eq!(markers[1].label, None);
+    }
+
+    #[test]
+    fn parses_grid_node_sample() {
+        // Spec sample from lich5-docker/docs/webui-grid-node.md: 3-col,
+        // 6-cell matrix of unlabeled checkboxes under a text header cell.
+        let raw = include_str!("../../tests/data/webui-grid-node-sample.json");
+        let node: WebUiNode = serde_json::from_str(raw).unwrap();
+        assert_eq!(node.t, "grid");
+        assert_eq!(node.cols, Some(3));
+        assert_eq!(node.children().len(), 6);
+        assert_eq!(node.children()[0].t, "cell");
+        assert_eq!(node.children()[0].children()[0].t, "text");
+        let checkbox = &node.children()[2].children()[0];
+        assert_eq!(checkbox.t, "checkbox");
+        assert_eq!(checkbox.checked, Some(true));
+        assert_eq!(checkbox.label.as_deref(), Some(""));
     }
 
     #[test]
