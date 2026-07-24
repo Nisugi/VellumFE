@@ -2017,8 +2017,25 @@ impl VellumGuiApp {
                             }
                         }
                     }
+                    // Transient pages registered while we're connected open
+                    // themselves: ";bigshot setup" pops its dialog without a
+                    // .webui round-trip (and the window auto-closes on save,
+                    // completing the dialog lifecycle). Declared panels stay
+                    // opt-in - dock once via .webui, the layout brings them
+                    // back - so a script restart never resurrects a panel
+                    // window the user closed on purpose. The hello baseline
+                    // never auto-opens (connecting must not spawn windows).
+                    let fresh: Vec<String> = pages
+                        .iter()
+                        .filter(|p| p.kind.as_deref() != Some("panel"))
+                        .filter(|p| !self.webui_pages.iter().any(|k| k.id == p.id))
+                        .map(|p| p.id.clone())
+                        .collect();
                     self.webui_pages = pages;
                     self.refresh_webui_window_kinds();
+                    for page in fresh {
+                        self.open_webui_page(&page);
+                    }
                 }
                 crate::webui::WebUiEvent::Render { page, seq, tree } => {
                     self.apply_webui_render(&page, seq, tree);
