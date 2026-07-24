@@ -73,7 +73,7 @@
 # --- Window Defaults ---
 # These values apply to windows that don't specify their own settings.
 #
-# buffer_size = 1000           # Default text buffer size (lines kept per window)
+# buffer_size = 10000          # Default text buffer size (lines kept per window)
 #
 # border_style = "single"      # Default border style:
 #                              #   "single", "double", "rounded", "thick", "none"

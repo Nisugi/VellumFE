@@ -387,7 +387,7 @@ fn default_port() -> u16 {
 }
 
 fn default_buffer_size() -> usize {
-    1000
+    10_000
 }
 
 fn default_command_echo_color() -> String {

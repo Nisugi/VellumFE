@@ -25,7 +25,7 @@ game = "prime"              # prime, platinum, shattered, test, dr, ...
 
 ```toml
 [ui]
-buffer_size = 1000              # Default lines kept per window
+buffer_size = 10000             # Default lines kept per window
 border_style = "single"         # single, double, rounded, thick, none
 countdown_icon = "█"            # Glyph for RT/CT timer blocks
 color_mode = "direct"           # direct, slot, indexed (see below)

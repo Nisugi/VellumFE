@@ -47,7 +47,7 @@ cols = 120
 | `title` | string | - | Custom title |
 | `show_title` | bool | `true` | Show title in border |
 | `title_position` | string | `"top-left"` | Where the title sits on the border |
-| `buffer_size` | integer | 1000 | Lines to keep (text windows) |
+| `buffer_size` | integer | 10000 | Lines to keep (text windows) |
 | `background_color` | string | - | Background color |
 | `text_color` | string | - | Default text color |
 | `transparent_background` | bool | `false` | See-through background |

@@ -929,7 +929,7 @@ impl Config {
                 },
                 data: TextWidgetData {
                     streams: vec!["thoughts".to_string()],
-                    buffer_size: 1000,
+                    buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
@@ -948,7 +948,7 @@ impl Config {
                 },
                 data: TextWidgetData {
                     streams: vec!["speech".to_string()],
-                    buffer_size: 1000,
+                    buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
@@ -1043,7 +1043,7 @@ impl Config {
                 },
                 data: TextWidgetData {
                     streams: vec!["familiar".to_string()],
-                    buffer_size: 1000,
+                    buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
@@ -1119,7 +1119,7 @@ impl Config {
                 },
                 data: TextWidgetData {
                     streams: vec!["custom".to_string()],
-                    buffer_size: 1000,
+                    buffer_size: 10000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,

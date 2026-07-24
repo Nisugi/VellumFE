@@ -122,7 +122,7 @@
 #
 # # Text-specific options:
 # streams = ["main"]           # Stream IDs to subscribe to (required)
-# buffer_size = 1000           # Lines to keep in memory (default: 1000)
+# buffer_size = 10000          # Lines to keep in memory (default: 10000)
 # wordwrap = true              # Enable text wrapping (default: true)
 # show_timestamps = false      # Show timestamps on messages (default: false)
 

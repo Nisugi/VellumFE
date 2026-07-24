@@ -21,7 +21,7 @@ buffer_size = 10000
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `streams` | array | `[]` | Stream IDs to display |
-| `buffer_size` | integer | 1000 | Lines to keep in memory |
+| `buffer_size` | integer | 10000 | Lines to keep in memory |
 | `compact` | bool | false | Remove blank lines |
 | `show_timestamps` | bool | false | Prefix lines with time |
 | `timestamp_position` | string | `"end"` | `"start"` or `"end"` |

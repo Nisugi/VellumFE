@@ -72,7 +72,7 @@ enabled = false
 # These values apply to windows that don't specify their own settings.
 
 # Default text buffer size (lines kept in memory per window)
-buffer_size = 1000
+buffer_size = 10000
 
 # Default window border style: "single", "double", "rounded", "thick", "none"
 border_style = "single"
