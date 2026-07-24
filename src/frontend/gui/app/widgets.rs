@@ -3119,6 +3119,12 @@ impl VellumGuiApp {
     /// Bring the height cache in sync with the rendered slice
     /// `content.lines[start..start + rendered_count]`. Appends measure only
     /// the new lines; width changes or non-monotonic generations rebuild.
+    ///
+    /// Returns the pixel strides (height + `spacing_y`) of rows dropped off
+    /// the front of the rendered window and rows appended at the back this
+    /// frame, so the caller can keep an up-scrolled view anchored while the
+    /// ring buffer trims. Rebuilds report (0, 0): the whole layout changed,
+    /// so there is nothing coherent to anchor to.
     fn update_row_height_cache(
         cache: &mut RowHeightCache,
         ctx: &egui::Context,
@@ -3126,9 +3132,10 @@ impl VellumGuiApp {
         start: usize,
         rendered_count: usize,
         wrap_width: f32,
+        spacing_y: f32,
         visuals: &egui::Visuals,
         font_id: &egui::FontId,
-    ) {
+    ) -> (f32, f32) {
         let timestamps = content.show_timestamps.then_some(content.timestamp_position);
         let width_changed =
             (cache.wrap_width - wrap_width).abs() > 0.5 || cache.font_id != *font_id;
@@ -3138,15 +3145,25 @@ impl VellumGuiApp {
             && delta <= rendered_count
             && cache.heights.len() + delta >= rendered_count;
 
+        let mut dropped_px = 0.0f32;
+        let mut appended_px = 0.0f32;
         if incremental {
             if delta > 0 {
-                let drop_front = (cache.heights.len() + delta).saturating_sub(rendered_count);
-                cache.heights.drain(..drop_front.min(cache.heights.len()));
+                let drop_front = (cache.heights.len() + delta)
+                    .saturating_sub(rendered_count)
+                    .min(cache.heights.len());
+                dropped_px = cache
+                    .heights
+                    .drain(..drop_front)
+                    .map(|h| h + spacing_y)
+                    .sum();
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
-                    cache.heights.push(Self::measure_line_height(
+                    let h = Self::measure_line_height(
                         ctx, line, visuals, wrap_width, font_id, timestamps,
-                    ));
+                    );
+                    appended_px += h + spacing_y;
+                    cache.heights.push(h);
                 }
             }
         } else {
@@ -3162,6 +3179,7 @@ impl VellumGuiApp {
         cache.font_id = font_id.clone();
         cache.generation = content.generation;
         debug_assert_eq!(cache.heights.len(), rendered_count);
+        (dropped_px, appended_px)
     }
 
     pub(super) fn render_text_content(
@@ -3235,16 +3253,33 @@ impl VellumGuiApp {
                         .clone()
                 });
                 let mut cache = cache_handle.lock().expect("row height cache poisoned");
-                Self::update_row_height_cache(
+                let (dropped_px, appended_px) = Self::update_row_height_cache(
                     &mut cache,
                     &ctx,
                     content,
                     start,
                     rendered_count,
                     wrap_width,
+                    spacing_y,
                     &visuals,
                     font_id,
                 );
+
+                // The ring buffer trimming rows off the front shifts every
+                // remaining row up by dropped_px, but the scroll offset is a
+                // pixel value that stays put — an up-scrolled reader would
+                // drift one line per incoming line. Cancel the shift unless
+                // the view was at the bottom, where stick_to_bottom follows
+                // the live text.
+                if dropped_px > 0.0 {
+                    let total_px: f32 =
+                        cache.heights.iter().map(|h| h + spacing_y).sum();
+                    let prev_total_px = total_px + dropped_px - appended_px;
+                    let was_at_bottom = viewport.max.y >= prev_total_px - spacing_y - 1.0;
+                    if !was_at_bottom {
+                        ui.scroll_with_delta(Vec2::new(0.0, dropped_px));
+                    }
+                }
 
                 // ---- Buffer-anchored selection: window-level updates ----
                 let clip = ui.clip_rect();
