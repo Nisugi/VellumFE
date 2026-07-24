@@ -92,6 +92,16 @@ fn paint_marker(painter: &egui::Painter, marker: &WebUiMapMarker, rect: egui::Re
                 egui::Stroke::new(3.0, red),
             );
         }
+        Some("wound1") | Some("wound2") | Some("wound3") => {
+            // CreatureBar silhouette wound dots: small filled circles, no
+            // border; colors match the browser bundle (app.css .c-im-marker).
+            let color = match marker.kind.as_deref() {
+                Some("wound1") => Color32::from_rgba_unmultiplied(230, 200, 30, 230),
+                Some("wound2") => Color32::from_rgba_unmultiplied(230, 130, 30, 230),
+                _ => Color32::from_rgba_unmultiplied(220, 40, 40, 242),
+            };
+            painter.circle_filled(rect.center(), rect.size().min_elem() / 2.0, color);
+        }
         Some("pin") => {
             let warn = Color32::from_rgb(240, 173, 78);
             painter.circle(
@@ -589,6 +599,57 @@ impl VellumGuiApp {
                     d.insert_temp(focus_id, focused_now);
                 });
             }
+            "textarea" => {
+                // Multi-line text field (webui-new-nodes-for-vellum.md).
+                // Same edit-state machine as text_input: keep a local
+                // buffer, never clobber focused in-progress text, commit
+                // the full string on blur only (Enter inserts a newline,
+                // which is TextEdit::multiline's default).
+                let server_value = node.value_str().unwrap_or("");
+                let buf_id = scratch_id("ta_buf");
+                let seen_id = scratch_id("ta_seen");
+                let focus_id = scratch_id("ta_focused");
+
+                let was_focused: bool = ui.data(|d| d.get_temp(focus_id)).unwrap_or(false);
+                let last_seen: String = ui.data(|d| d.get_temp(seen_id)).unwrap_or_default();
+                let mut buffer: String = ui
+                    .data(|d| d.get_temp(buf_id))
+                    .unwrap_or_else(|| server_value.to_string());
+                if server_value != last_seen && !was_focused {
+                    buffer = server_value.to_string();
+                }
+
+                if let Some(label) = node.label.as_deref() {
+                    if !label.is_empty() {
+                        ui.label(label);
+                    }
+                }
+                let rows = node.rows_hint().unwrap_or(4).clamp(2, 40) as usize;
+                let mut edit = egui::TextEdit::multiline(&mut buffer)
+                    .id_salt(scratch_id("ta_edit"))
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(rows);
+                if let Some(hint) = node.placeholder.as_deref() {
+                    edit = edit.hint_text(hint);
+                }
+                let response = ui.add(edit);
+
+                if response.lost_focus() && buffer != server_value {
+                    queue_event(
+                        ui.ctx(),
+                        page,
+                        node.cid.as_deref(),
+                        serde_json::Value::String(buffer.clone()),
+                    );
+                }
+                // has_focus() re-enters the ctx lock: read BEFORE data_mut.
+                let focused_now = response.has_focus();
+                ui.data_mut(|d| {
+                    d.insert_temp(buf_id, buffer);
+                    d.insert_temp(seen_id, server_value.to_string());
+                    d.insert_temp(focus_id, focused_now);
+                });
+            }
             "select" => {
                 let current = node.value_str().unwrap_or("").to_string();
                 let options = node.options.as_deref().unwrap_or(&[]);
@@ -1013,7 +1074,7 @@ impl VellumGuiApp {
     }
 
     fn render_webui_table(ui: &mut egui::Ui, page: &str, node: &WebUiNode, grid_id: egui::Id) {
-        let rows = node.rows.as_deref().unwrap_or(&[]);
+        let rows = node.table_rows();
         let clickable = node.clickable.unwrap_or(false);
         let selected = node.selected.unwrap_or(-1);
 
@@ -1144,6 +1205,23 @@ mod tests {
     #[test]
     fn captured_bigshot_setup_renders_without_hanging() {
         assert_renders_without_hanging(BIGSHOT);
+    }
+
+    #[test]
+    fn textarea_and_wound_markers_render_without_hanging() {
+        // The other webui-new-nodes-for-vellum.md additions: a textarea
+        // (multi-line value + rows hint) and image_map wound marker kinds.
+        let raw = r#"{"type":"render","page":"nodes/demo","seq":1,
+            "tree":{"t":"page","title":"Nodes","children":[
+              {"t":"textarea","cid":"textarea:notes","label":"Notes",
+               "value":"line one\nline two","placeholder":"...","rows":5},
+              {"t":"image_map","cid":"image_map:0","src":"/files/x.png","scale":1.0,
+               "markers":[
+                 {"id":"a","x1":0,"y1":0,"x2":8,"y2":8,"kind":"wound1"},
+                 {"id":"b","x1":10,"y1":0,"x2":18,"y2":8,"kind":"wound2"},
+                 {"id":"c","x1":20,"y1":0,"x2":28,"y2":8,"kind":"wound3"}]}
+            ]}}"#;
+        assert_renders_without_hanging(raw);
     }
 
     #[test]

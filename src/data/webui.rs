@@ -169,11 +169,15 @@ pub struct WebUiNode {
     #[serde(default)]
     pub max_height: Option<f32>,
 
-    // table
+    // table / textarea
     #[serde(default)]
     pub headings: Option<Vec<String>>,
+    /// Polymorphic on the wire: table row data (array of string arrays) or
+    /// a textarea visible-height hint (integer). A typed field would fail
+    /// the whole envelope parse on the other shape, so both live here; use
+    /// `table_rows()` / `rows_hint()`.
     #[serde(default)]
-    pub rows: Option<Vec<Vec<String>>>,
+    pub rows: Option<WebUiRows>,
     #[serde(default)]
     pub sortable: Option<bool>,
     #[serde(default)]
@@ -224,9 +228,35 @@ pub struct WebUiNode {
     pub children: Option<Vec<WebUiNode>>,
 }
 
+/// The two wire shapes of `WebUiNode.rows` (see that field's doc).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum WebUiRows {
+    /// textarea: visible-height hint in text rows
+    Count(u32),
+    /// table: row data
+    Table(Vec<Vec<String>>),
+}
+
 impl WebUiNode {
     pub fn children(&self) -> &[WebUiNode] {
         self.children.as_deref().unwrap_or(&[])
+    }
+
+    /// Table row data (`rows` as arrays); empty for the textarea shape.
+    pub fn table_rows(&self) -> &[Vec<String>] {
+        match &self.rows {
+            Some(WebUiRows::Table(rows)) => rows,
+            _ => &[],
+        }
+    }
+
+    /// Textarea height hint (`rows` as an integer); None for the table shape.
+    pub fn rows_hint(&self) -> Option<u32> {
+        match &self.rows {
+            Some(WebUiRows::Count(n)) => Some(*n),
+            _ => None,
+        }
     }
 
     /// String view of `value` (text/select/radio inputs).
@@ -488,7 +518,7 @@ mod tests {
         assert_eq!(cols.children().len(), 2);
         assert_eq!(cols.children()[0].children()[0].text.as_deref(), Some("left"));
         let table = &tree.children()[4];
-        assert_eq!(table.rows.as_ref().unwrap().len(), 2);
+        assert_eq!(table.table_rows().len(), 2);
         assert_eq!(table.selected, Some(1));
         // unknown component types parse fine, unknown attrs are ignored
         assert_eq!(tree.children()[5].t, "future_widget");
@@ -533,6 +563,28 @@ mod tests {
         assert_eq!(checkbox.t, "checkbox");
         assert_eq!(checkbox.checked, Some(true));
         assert_eq!(checkbox.label.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn rows_field_is_polymorphic() {
+        // textarea: integer height hint (webui-new-nodes-for-vellum.md)
+        let ta: WebUiNode = serde_json::from_str(
+            r#"{ "t": "textarea", "cid": "textarea:notes", "label": "Notes",
+                 "value": "line one\nline two", "placeholder": "...", "rows": 5 }"#,
+        )
+        .unwrap();
+        assert_eq!(ta.rows_hint(), Some(5));
+        assert!(ta.table_rows().is_empty());
+        assert_eq!(ta.value_str(), Some("line one\nline two"));
+
+        // table: array-of-arrays row data (unchanged)
+        let table: WebUiNode = serde_json::from_str(
+            r#"{ "t": "table", "cid": "table:0", "headings": ["A"],
+                 "rows": [["1"],["2"]] }"#,
+        )
+        .unwrap();
+        assert_eq!(table.table_rows().len(), 2);
+        assert_eq!(table.rows_hint(), None);
     }
 
     #[test]
