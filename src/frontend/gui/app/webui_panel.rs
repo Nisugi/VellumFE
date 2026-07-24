@@ -624,7 +624,7 @@ impl VellumGuiApp {
                         ui.label(label);
                     }
                 }
-                let rows = node.rows_hint().unwrap_or(4).clamp(2, 40) as usize;
+                let rows = node.rows_hint.unwrap_or(4).clamp(2, 40) as usize;
                 let mut edit = egui::TextEdit::multiline(&mut buffer)
                     .id_salt(scratch_id("ta_edit"))
                     .desired_width(f32::INFINITY)
@@ -1074,7 +1074,7 @@ impl VellumGuiApp {
     }
 
     fn render_webui_table(ui: &mut egui::Ui, page: &str, node: &WebUiNode, grid_id: egui::Id) {
-        let rows = node.table_rows();
+        let rows = node.rows.as_deref().unwrap_or(&[]);
         let clickable = node.clickable.unwrap_or(false);
         let selected = node.selected.unwrap_or(-1);
 
@@ -1214,7 +1214,7 @@ mod tests {
         let raw = r#"{"type":"render","page":"nodes/demo","seq":1,
             "tree":{"t":"page","title":"Nodes","children":[
               {"t":"textarea","cid":"textarea:notes","label":"Notes",
-               "value":"line one\nline two","placeholder":"...","rows":5},
+               "value":"line one\nline two","placeholder":"...","rows_hint":5},
               {"t":"image_map","cid":"image_map:0","src":"/files/x.png","scale":1.0,
                "markers":[
                  {"id":"a","x1":0,"y1":0,"x2":8,"y2":8,"kind":"wound1"},
