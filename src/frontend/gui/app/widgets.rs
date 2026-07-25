@@ -2703,42 +2703,82 @@ impl VellumGuiApp {
         });
     }
 
-    pub(super) fn render_room_entities(ui: &mut egui::Ui, label: &str, values: &[String]) {
-        if values.is_empty() {
-            return;
-        }
-        ui.separator();
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("{}:", label)).strong());
-            ui.label(values.join(", "));
-        });
-    }
-
-    pub(super) fn render_room_exits(ui: &mut egui::Ui, exits: &[String]) -> Option<GuiLinkClick> {
-        if exits.is_empty() {
-            return None;
-        }
-
+    /// Wrayth-style room window: one flowing block inside a single scroll
+    /// area — the description runs straight into "You also see ...", then
+    /// the players and exits lines follow, links clickable throughout.
+    /// Every section takes its natural height, so a tall enough window
+    /// shows everything without scrolling.
+    pub(super) fn render_room_content(
+        ui: &mut egui::Ui,
+        room: &crate::data::RoomContent,
+        show: (bool, bool, bool, bool), // desc, objs, players, exits
+        scroll_id: &str,
+        text_size: f32,
+        font_id: &egui::FontId,
+    ) -> Option<GuiLinkClick> {
+        // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
+        let style = ui.style().clone();
+        let visuals = &style.visuals;
         let mut clicked_link = None;
-        ui.separator();
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Exits:").strong());
-            for (index, exit) in exits.iter().enumerate() {
-                let response = ui
-                    .add(egui::Label::new(exit.as_str()).sense(egui::Sense::click()))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
-                if response.clicked() && clicked_link.is_none() {
-                    clicked_link = Some(Self::gui_link_click_from_response(
-                        &response,
-                        ui,
-                        Self::direct_command_link(exit.to_string()),
-                    ));
+        let max_height = ui.available_height().max(1.0);
+        let (show_desc, show_objs, show_players, show_exits) = show;
+
+        let mut body: Vec<StyledLine> = Vec::new();
+        if show_desc {
+            body.extend(room.description.iter().cloned());
+        }
+        // Objects continue the description paragraph, as in Wrayth:
+        // "...coats them.  You also see some cuirbouilli leather, ..."
+        if show_objs {
+            let mut objs = room.objects.iter().cloned();
+            if let Some(first) = objs.next() {
+                if let Some(last) = body.last_mut() {
+                    last.segments.push(TextSegment {
+                        text: "  ".to_string(),
+                        ..Default::default()
+                    });
+                    last.segments.extend(first.segments);
+                } else {
+                    body.push(first);
                 }
-                if index + 1 < exits.len() {
-                    ui.label(",");
-                }
+                body.extend(objs);
             }
-        });
+        }
+        if show_players {
+            body.extend(room.players.iter().cloned());
+        }
+        if show_exits {
+            body.extend(room.exits.iter().cloned());
+        }
+
+        egui::ScrollArea::vertical()
+            .id_salt(format!("room_scroll_{}", scroll_id))
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                if !room.name.is_empty() {
+                    // Explicit size: room names track the window's text size,
+                    // not the Heading style (the title-bar size setting owns
+                    // that).
+                    ui.label(
+                        RichText::new(&room.name)
+                            .font(egui::FontId {
+                                size: text_size + 2.0,
+                                family: font_id.family.clone(),
+                            })
+                            .strong(),
+                    );
+                }
+                for line in &body {
+                    if let Some(link) =
+                        Self::render_styled_line(ui, line, visuals, None, font_id, true, None)
+                    {
+                        clicked_link = Some(link);
+                    }
+                }
+            });
+
         clicked_link
     }
 
@@ -3637,36 +3677,6 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(super) fn render_room_description(
-        ui: &mut egui::Ui,
-        lines: &[StyledLine],
-        scroll_id: &str,
-        font_id: &egui::FontId,
-    ) -> Option<GuiLinkClick> {
-        // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
-        let style = ui.style().clone();
-        let visuals = &style.visuals;
-        let mut clicked_link = None;
-        let max_height = ui.available_height().max(1.0);
-
-        egui::ScrollArea::vertical()
-            .id_salt(format!("room_scroll_{}", scroll_id))
-            .auto_shrink([false, false])
-            .min_scrolled_height(max_height)
-            .max_height(max_height)
-            .show(ui, |ui| {
-                for line in lines {
-                    if let Some(link) =
-                        Self::render_styled_line(ui, line, &visuals, None, font_id, true, None)
-                    {
-                        clicked_link = Some(link);
-                    }
-                }
-            });
-
-        clicked_link
-    }
-
     pub(super) fn render_window_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
@@ -3781,7 +3791,7 @@ impl VellumGuiApp {
                 // window editor, shared with the TUI). The room-name heading
                 // is always shown: the def's show_name flag drives the TUI
                 // border title, which has no GUI equivalent.
-                let (show_desc, show_objs, show_players, show_exits) = match app_core
+                let show = match app_core
                     .layout
                     .windows
                     .iter()
@@ -3795,41 +3805,14 @@ impl VellumGuiApp {
                     ),
                     _ => (true, true, true, true),
                 };
-                // Explicit size: room names track the window's text size, not
-                // the Heading style (which the title-bar size setting owns).
-                ui.label(
-                    RichText::new(&room.name)
-                        .font(egui::FontId {
-                            size: text_size + 2.0,
-                            family: font_id.family.clone(),
-                        })
-                        .strong(),
-                );
-                ui.separator();
-                let mut clicked_link = if show_desc {
-                    Self::render_room_description(
-                        ui,
-                        &room.description,
-                        &tab.window_name,
-                        &font_id,
-                    )
-                } else {
-                    None
-                };
-                if show_exits {
-                    if let Some(exit_click) = Self::render_room_exits(ui, &room.exits) {
-                        if clicked_link.is_none() {
-                            clicked_link = Some(exit_click);
-                        }
-                    }
-                }
-                if show_players {
-                    Self::render_room_entities(ui, "Players", &room.players);
-                }
-                if show_objs {
-                    Self::render_room_entities(ui, "Objects", &room.objects);
-                }
-                clicked_link
+                Self::render_room_content(
+                    ui,
+                    room,
+                    show,
+                    &tab.window_name,
+                    text_size,
+                    &font_id,
+                )
             }
             WindowContent::ActiveEffects(content) => {
                 Self::render_active_effects_content(ui, content, settings);

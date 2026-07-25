@@ -746,23 +746,46 @@ impl VellumGuiApp {
             .unwrap_or_default()
     }
 
-    fn room_component_entries(component: Option<&Vec<Vec<TextSegment>>>) -> Vec<String> {
-        component
-            .map(|lines| {
-                lines
-                    .iter()
-                    .map(|segments| {
-                        segments
-                            .iter()
-                            .map(|segment| segment.text.as_str())
-                            .collect::<String>()
-                            .trim()
-                            .to_string()
-                    })
-                    .filter(|value| !value.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// One flowing line like "Also here: Fraemen, Zugu" with each entry a
+    /// clickable link. Fallback for when the styled room component is
+    /// missing (e.g. state fed by Lich rather than the game stream).
+    fn room_line_from_links(
+        label: &str,
+        entries: impl Iterator<Item = (String, Option<crate::data::LinkData>)>,
+    ) -> Vec<StyledLine> {
+        let mut segments = vec![TextSegment {
+            text: label.to_string(),
+            ..Default::default()
+        }];
+        let mut first = true;
+        for (text, link_data) in entries {
+            if !first {
+                segments.push(TextSegment {
+                    text: ", ".to_string(),
+                    ..Default::default()
+                });
+            }
+            first = false;
+            let span_type = if link_data.is_some() {
+                crate::data::SpanType::Link
+            } else {
+                crate::data::SpanType::Normal
+            };
+            segments.push(TextSegment {
+                text,
+                span_type,
+                link_data,
+                ..Default::default()
+            });
+        }
+        if first {
+            return Vec::new();
+        }
+        vec![StyledLine {
+            segments,
+            stream: "room".to_string(),
+            timestamp: None,
+        }]
     }
 
     fn sync_room_windows_from_components(&mut self) {
@@ -781,31 +804,62 @@ impl VellumGuiApp {
             .unwrap_or_default();
         let description =
             Self::room_component_lines(self.app_core.room_components.get("room desc"));
-        let exits = if self.app_core.game_state.exits.is_empty() {
-            Self::room_component_entries(self.app_core.room_components.get("room exits"))
-        } else {
-            self.app_core.game_state.exits.clone()
-        };
-        let players = if self.app_core.game_state.room_players.is_empty() {
-            Self::room_component_entries(self.app_core.room_components.get("room players"))
-        } else {
-            self.app_core
-                .game_state
-                .room_players
-                .iter()
-                .map(|player| player.name.clone())
-                .collect()
-        };
-        let objects = if self.app_core.game_state.room_objects.is_empty() {
-            Self::room_component_entries(self.app_core.room_components.get("room objs"))
-        } else {
-            self.app_core
-                .game_state
-                .room_objects
-                .iter()
-                .map(|object| object.name.clone())
-                .collect()
-        };
+        // Prefer the styled component text verbatim (natural "Obvious
+        // paths:" / "Also here:" phrasing, monsterbold creatures, links);
+        // synthesize an equivalent line from game state only when absent.
+        let mut exits = Self::room_component_lines(self.app_core.room_components.get("room exits"));
+        if exits.is_empty() {
+            exits = Self::room_line_from_links(
+                "Obvious exits: ",
+                self.app_core.game_state.exits.iter().map(|dir| {
+                    (
+                        dir.clone(),
+                        Some(crate::data::LinkData {
+                            exist_id: "_direct_".to_string(),
+                            noun: dir.clone(),
+                            text: dir.clone(),
+                            coord: None,
+                        }),
+                    )
+                }),
+            );
+        }
+        let mut players =
+            Self::room_component_lines(self.app_core.room_components.get("room players"));
+        if players.is_empty() {
+            players = Self::room_line_from_links(
+                "Also here: ",
+                self.app_core.game_state.room_players.iter().map(|player| {
+                    (
+                        player.name.clone(),
+                        Some(crate::data::LinkData {
+                            exist_id: player.id.clone(),
+                            noun: player.name.clone(),
+                            text: player.name.clone(),
+                            coord: None,
+                        }),
+                    )
+                }),
+            );
+        }
+        let mut objects =
+            Self::room_component_lines(self.app_core.room_components.get("room objs"));
+        if objects.is_empty() {
+            objects = Self::room_line_from_links(
+                "You also see ",
+                self.app_core.game_state.room_objects.iter().map(|object| {
+                    (
+                        object.name.clone(),
+                        Some(crate::data::LinkData {
+                            exist_id: object.id.clone(),
+                            noun: object.noun.clone().unwrap_or_else(|| object.name.clone()),
+                            text: object.name.clone(),
+                            coord: None,
+                        }),
+                    )
+                }),
+            );
+        }
 
         for window in self.app_core.ui_state.windows.values_mut() {
             let WindowContent::Room(room) = &mut window.content else {
@@ -4567,16 +4621,41 @@ mod tests {
     }
 
     #[test]
-    fn test_room_component_entries_trims_and_filters_empty() {
-        let component = vec![
-            vec![TextSegment::plain("  north  ")],
-            vec![TextSegment::plain(""), TextSegment::plain(" ")],
-            vec![TextSegment::plain("south")],
-        ];
+    fn test_room_line_from_links_builds_one_labeled_line() {
+        let lines = VellumGuiApp::room_line_from_links(
+            "Obvious exits: ",
+            ["north", "south"].iter().map(|dir| {
+                (
+                    dir.to_string(),
+                    Some(crate::data::LinkData {
+                        exist_id: "_direct_".to_string(),
+                        noun: dir.to_string(),
+                        text: dir.to_string(),
+                        coord: None,
+                    }),
+                )
+            }),
+        );
 
-        let entries = VellumGuiApp::room_component_entries(Some(&component));
+        assert_eq!(lines.len(), 1);
+        let texts: Vec<&str> = lines[0]
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(texts, vec!["Obvious exits: ", "north", ", ", "south"]);
+        assert!(lines[0].segments[1].link_data.is_some());
+        assert_eq!(
+            lines[0].segments[1].span_type,
+            crate::data::SpanType::Link
+        );
+        assert!(lines[0].segments[2].link_data.is_none());
+    }
 
-        assert_eq!(entries, vec!["north".to_string(), "south".to_string()]);
+    #[test]
+    fn test_room_line_from_links_empty_entries_yield_no_line() {
+        let lines = VellumGuiApp::room_line_from_links("Also here: ", std::iter::empty());
+        assert!(lines.is_empty());
     }
 
     #[test]

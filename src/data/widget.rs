@@ -231,14 +231,16 @@ pub struct IndicatorData {
     pub color: Option<String>, // Optional color override
 }
 
-/// Room description content
+/// Room description content. Exits/players/objects keep their styled
+/// segments (with link data) so the GUI can render the component text
+/// verbatim, Wrayth-style, with clickable links.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoomContent {
     pub name: String,
     pub description: Vec<StyledLine>,
-    pub exits: Vec<String>,
-    pub players: Vec<String>,
-    pub objects: Vec<String>,
+    pub exits: Vec<StyledLine>,
+    pub players: Vec<StyledLine>,
+    pub objects: Vec<StyledLine>,
 }
 
 /// Active effect (buff/debuff/cooldown/active spell)
