@@ -1334,10 +1334,20 @@ impl VellumGuiApp {
             .iter()
             .find(|window| window.name() == *window_name)?
             .base();
-        match base.border_color.as_deref() {
+        if let Some(color) = match base.border_color.as_deref() {
             None | Some("-") | Some("") => None,
             Some(color) => widgets::parse_hex_color(color),
+        } {
+            return Some(color);
         }
+        // colors.toml ui.border_color, only when actually changed from the
+        // built-in default (extracted defaults fall through to the theme).
+        self.app_core
+            .config
+            .colors
+            .ui
+            .user_border_color()
+            .and_then(widgets::parse_hex_color)
     }
 
     /// Apply zoom and title-bar sizing. Zoom is pushed to egui once at

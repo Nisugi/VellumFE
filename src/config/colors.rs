@@ -129,6 +129,33 @@ pub struct UiColors {
     pub textarea_background: String, // Background color for input textareas in forms/browsers
 }
 
+impl UiColors {
+    /// The user's chosen value, or None when it still equals the built-in
+    /// default (or the "-" unset sentinel). Extracted colors.toml files
+    /// carry the concrete defaults, so equality with the default is
+    /// indistinguishable from "never touched" — those fall through to the
+    /// theme layer instead of overriding it.
+    fn user_value<'a>(value: &'a str, default: &str) -> Option<&'a str> {
+        if value == default || value == "-" || value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    }
+
+    pub fn user_border_color(&self) -> Option<&str> {
+        Self::user_value(&self.border_color, &super::default_border_color_default())
+    }
+
+    pub fn user_text_color(&self) -> Option<&str> {
+        Self::user_value(&self.text_color, &super::default_text_color_default())
+    }
+
+    pub fn user_background_color(&self) -> Option<&str> {
+        Self::user_value(&self.background_color, &super::default_background_color())
+    }
+}
+
 /// Color configuration - separate file (colors.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorConfig {
@@ -483,5 +510,29 @@ impl Config {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod ui_color_layer_tests {
+    use super::UiColors;
+
+    #[test]
+    fn defaults_and_sentinels_are_not_user_values() {
+        let ui = UiColors::default();
+        assert_eq!(ui.user_border_color(), None);
+        assert_eq!(ui.user_text_color(), None);
+        assert_eq!(ui.user_background_color(), None);
+    }
+
+    #[test]
+    fn changed_values_are_user_values() {
+        let mut ui = UiColors::default();
+        ui.border_color = "#123456".to_string();
+        ui.background_color = "#000011".to_string();
+        assert_eq!(ui.user_border_color(), Some("#123456"));
+        assert_eq!(ui.user_background_color(), Some("#000011"));
+        ui.border_color = "-".to_string();
+        assert_eq!(ui.user_border_color(), None);
     }
 }

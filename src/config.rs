@@ -32,7 +32,7 @@ mod templates;
 mod widgets;
 mod window_def;
 
-pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle};
+pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle, UiColors};
 pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
 pub use hotbars::{
     EffectCategory, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,

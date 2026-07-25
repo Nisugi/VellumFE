@@ -274,20 +274,28 @@ pub struct WindowColors {
     pub text: Option<String>,
 }
 
+/// Per-window color precedence: the window definition, else a colors.toml
+/// ui.* value the user actually changed (defaults fall through — see
+/// UiColors::user_*), else the theme.
 pub fn resolve_window_colors(
     base: &crate::config::WindowBase,
+    ui: &crate::config::UiColors,
     theme: &crate::theme::AppTheme,
 ) -> WindowColors {
-    let border =
-        normalize_color(&base.border_color).or_else(|| color_to_hex_string(&theme.window_border));
+    let ui_layer = |value: Option<&str>| value.and_then(parse_color_flexible);
+    let border = normalize_color(&base.border_color)
+        .or_else(|| ui_layer(ui.user_border_color()))
+        .or_else(|| color_to_hex_string(&theme.window_border));
     let background = if base.transparent_background {
         None
     } else {
         normalize_color(&base.background_color)
+            .or_else(|| ui_layer(ui.user_background_color()))
             .or_else(|| color_to_hex_string(&theme.window_background))
     };
-    let text =
-        normalize_color(&base.text_color).or_else(|| color_to_hex_string(&theme.text_primary));
+    let text = normalize_color(&base.text_color)
+        .or_else(|| ui_layer(ui.user_text_color()))
+        .or_else(|| color_to_hex_string(&theme.text_primary));
 
     WindowColors {
         border,
