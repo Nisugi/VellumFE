@@ -2618,20 +2618,27 @@ document.getElementById("textsize-btn").addEventListener("click", () => {
 // ---- Soft keyboard / viewport --------------------------------------------
 
 // Pin the app to the *visual* viewport so the soft keyboard never covers
-// the input bar (iOS Safari doesn't resize the layout viewport). iOS also
-// *scrolls* the page to reveal the focused input instead of resizing, so
-// --vvt follows the viewport's offset to keep the app under the visible
-// region (stays 0 on platforms that resize).
+// the input bar (iOS Safari doesn't resize the layout viewport). Safari
+// reveals a focused input by moving the viewport rather than resizing,
+// and does it two different ways: iPhones offset the visual viewport
+// inside the layout viewport (vv.offsetTop), iPads scroll the document
+// itself (window.scrollY, offsetTop stays 0). vv.pageTop is the sum of
+// both — the visual viewport's offset from the document origin — so
+// following it keeps the app pinned on either device (stays 0 on
+// platforms that resize instead).
 const vv = window.visualViewport;
 function syncViewport() {
   if (!vv) return;
   document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
-  document.documentElement.style.setProperty("--vvt", `${vv.offsetTop}px`);
+  document.documentElement.style.setProperty("--vvt", `${vv.pageTop}px`);
   if (autoScroll) scrollToBottom();
 }
 if (vv) {
   vv.addEventListener("resize", syncViewport);
   vv.addEventListener("scroll", syncViewport);
+  // Document scrolls (the iPad path) don't reliably fire visualViewport
+  // events — they move pageTop without touching offsetTop.
+  window.addEventListener("scroll", syncViewport);
   syncViewport();
 }
 
