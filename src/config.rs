@@ -22,6 +22,7 @@ mod macros;
 mod paths;
 pub mod profiles;
 pub mod skins;
+mod defaults_refresh;
 mod keybinds;
 mod layout;
 pub mod registry;

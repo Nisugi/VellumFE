@@ -245,6 +245,11 @@ impl Config {
             tracing::info!("Created empty history.txt at {:?}", history_path);
         }
 
+        // Merge newly shipped default highlights/keybinds/hotbars into the
+        // extracted files (tombstoned: user deletions stay deleted), and
+        // refresh managed data files the user never modified.
+        super::defaults_refresh::refresh_shipped_defaults()?;
+
         Ok(())
     }
 
