@@ -1649,7 +1649,7 @@ impl Config {
 
         let contents =
             toml::to_string_pretty(&sorted).context("Failed to serialize indicator templates")?;
-        fs::write(&path, contents)
+        write_atomic(&path, contents)
             .context(format!("Failed to write indicator templates to {:?}", path))?;
         Ok(())
     }
@@ -1700,7 +1700,7 @@ impl Config {
 
         let contents =
             toml::to_string_pretty(&sorted).context("Failed to serialize window templates")?;
-        fs::write(&path, contents)
+        write_atomic(&path, contents)
             .context(format!("Failed to write window templates to {:?}", path))?;
         Ok(())
     }

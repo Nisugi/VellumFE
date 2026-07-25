@@ -5,6 +5,32 @@
 
 use super::*;
 
+/// Write a user config file safely: write to a sibling `.tmp` file, back up
+/// the existing file to `<name>.bak`, then rename over the target. A crash
+/// mid-write can no longer truncate user data, and the previous version is
+/// always one rename away.
+///
+/// Use this for every file a user (or an editor UI) authors. First-run
+/// default extraction and cache files don't need it.
+pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, contents)?;
+    if path.exists() {
+        let mut bak = path.as_os_str().to_owned();
+        bak.push(".bak");
+        // Best-effort backup: a failed copy must not block the save itself.
+        let _ = std::fs::copy(path, PathBuf::from(bak));
+    }
+    std::fs::rename(&tmp, path)
+}
+
 /// Saved dialog position for persistence across sessions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DialogPosition {
@@ -176,7 +202,7 @@ impl Config {
 
         let contents = toml::to_string_pretty(positions)
             .context("Failed to serialize dialog positions")?;
-        fs::write(&path, contents)
+        write_atomic(&path, contents)
             .context(format!("Failed to write widget state to {:?}", path))?;
         Ok(())
     }
@@ -278,7 +304,7 @@ impl Config {
         let keybinds_path = keybinds_dir.join(format!("{}.toml", name));
         let contents =
             toml::to_string_pretty(&self.keybinds).context("Failed to serialize keybinds")?;
-        fs::write(&keybinds_path, contents).context("Failed to write keybinds profile")?;
+        write_atomic(&keybinds_path, contents).context("Failed to write keybinds profile")?;
 
         Ok(keybinds_path)
     }
@@ -300,7 +326,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&path, &token).context("Failed to write web-token")?;
+        write_atomic(&path, &token).context("Failed to write web-token")?;
         tracing::info!("Generated web pairing token at {:?}", path);
         Ok(token)
     }
@@ -320,5 +346,31 @@ impl Config {
             toml::from_str(&contents).context("Failed to parse keybinds profile")?;
 
         Ok(keybinds)
+    }
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::write_atomic;
+
+    #[test]
+    fn write_atomic_creates_file_and_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.toml");
+        write_atomic(&path, "a = 1\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a = 1\n");
+    }
+
+    #[test]
+    fn write_atomic_backs_up_previous_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_atomic(&path, "old\n").unwrap();
+        write_atomic(&path, "new\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        let bak = dir.path().join("config.toml.bak");
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "old\n");
+        // No stray temp file left behind.
+        assert!(!dir.path().join("config.toml.tmp").exists());
     }
 }

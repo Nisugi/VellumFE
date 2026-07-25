@@ -305,7 +305,7 @@ impl ColorConfig {
     pub fn save(&self, character: Option<&str>) -> Result<()> {
         let colors_path = Config::colors_path(character)?;
         let contents = toml::to_string_pretty(self).context("Failed to serialize colors")?;
-        fs::write(&colors_path, contents).context("Failed to write colors.toml")?;
+        write_atomic(&colors_path, contents).context("Failed to write colors.toml")?;
         Ok(())
     }
 
@@ -320,7 +320,7 @@ impl ColorConfig {
         }
 
         let contents = toml::to_string_pretty(self).context("Failed to serialize colors")?;
-        fs::write(&colors_path, contents).context("Failed to write global colors.toml")?;
+        write_atomic(&colors_path, contents).context("Failed to write global colors.toml")?;
         tracing::info!("Saved colors to global file: {:?}", colors_path);
         Ok(())
     }

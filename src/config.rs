@@ -40,7 +40,7 @@ pub use keybinds::{
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
-pub use paths::{DialogPosition, SavedDialogPositions};
+pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
     SoundConfig, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution, UiConfig, WebConfig,

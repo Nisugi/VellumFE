@@ -601,7 +601,7 @@ pub fn save_calibration(
     let contents = std::fs::read_to_string(&manifest_path)
         .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
     let updated = calibration_toml(&contents, anchors, dots)?;
-    std::fs::write(&manifest_path, updated)
+    crate::config::write_atomic(&manifest_path, updated)
         .map_err(|err| anyhow::anyhow!("cannot write {}: {}", manifest_path.display(), err))?;
     Ok(())
 }

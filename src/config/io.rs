@@ -412,7 +412,7 @@ impl Config {
 
         // Save main config (without highlights, keybinds, colors, color_palette - those are skipped)
         let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        fs::write(&config_path, contents).context("Failed to write config file")?;
+        write_atomic(&config_path, contents).context("Failed to write config file")?;
 
         // Save to separate files
         self.colors.save(char_name)?;
@@ -434,7 +434,7 @@ impl Config {
 
         // Save main config
         let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        fs::write(&config_path, contents).context("Failed to write global config file")?;
+        write_atomic(&config_path, contents).context("Failed to write global config file")?;
         tracing::info!("Saved config to global file: {:?}", config_path);
         Ok(())
     }
@@ -488,7 +488,7 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
         let contents = toml::to_string_pretty(&char_config).context("Failed to serialize config")?;
-        fs::write(&config_path, contents).context("Failed to write character config file")?;
+        write_atomic(&config_path, contents).context("Failed to write character config file")?;
         tracing::info!("Saved setting '{}' to character config: {:?}", key, config_path);
         Ok(())
     }
@@ -614,6 +614,27 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shipped defaults/globals/config.toml must parse as a Config and
+    /// agree with the code defaults for the values it states explicitly.
+    /// These have drifted before (port 8001 vs 8000, a stale
+    /// open_dialog_blocklist, and a [ui.focus] header that was commented
+    /// out while its keys were not — silently mis-sectioning everything
+    /// after it).
+    #[test]
+    fn shipped_default_config_matches_code_defaults() {
+        let shipped: Config =
+            toml::from_str(crate::config::DEFAULT_CONFIG).expect("shipped config.toml must parse");
+        let code = Config::default();
+        assert_eq!(shipped.connection.port, code.connection.port);
+        assert_eq!(shipped.ui.buffer_size, code.ui.buffer_size);
+        assert_eq!(shipped.ui.open_dialog_blocklist, code.ui.open_dialog_blocklist);
+        // The [ui.focus] section must actually land in ui.focus (regression
+        // guard for the commented-header bug).
+        assert_eq!(shipped.ui.focus.types, code.ui.focus.types);
+        // Perf keys stay in [ui], not swallowed by a preceding sub-table.
+        assert_eq!(shipped.ui.perf_stats_width, code.ui.perf_stats_width);
+    }
 
     /// Every serialized root field that Config::save writes into the
     /// profile config must survive merge_with — fields missing from the

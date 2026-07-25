@@ -752,7 +752,7 @@ impl Config {
         let keybinds_path = Self::keybinds_path(character)?;
         let contents =
             toml::to_string_pretty(&self.keybinds).context("Failed to serialize keybinds")?;
-        fs::write(&keybinds_path, contents).context("Failed to write keybinds.toml")?;
+        write_atomic(&keybinds_path, contents).context("Failed to write keybinds.toml")?;
         Ok(())
     }
 
@@ -813,7 +813,7 @@ impl Config {
         // Write back to file
         let contents =
             toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        fs::write(&path, contents)
+        write_atomic(&path, contents)
             .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
 
         tracing::info!(
@@ -864,7 +864,7 @@ impl Config {
                 // Write back to file
                 let contents =
                     toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-                fs::write(&path, contents)
+                write_atomic(&path, contents)
                     .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
 
                 tracing::info!(

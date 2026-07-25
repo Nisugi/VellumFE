@@ -56,7 +56,7 @@ pub fn save(character: Option<&str>, config: &WindowPositionConfig) -> Result<()
 
     let content = toml::to_string_pretty(config).context("Failed to serialize window config")?;
 
-    std::fs::write(&path, content)
+    crate::config::write_atomic(&path, content)
         .with_context(|| format!("Failed to write window config to {:?}", path))?;
 
     tracing::debug!("Saved window position to {:?}: {:?}", path, config.window);

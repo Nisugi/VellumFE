@@ -306,7 +306,7 @@ impl Config {
         }
 
         let contents = toml::to_string_pretty(&config).context("Failed to serialize hotbars")?;
-        fs::write(&path, contents)
+        crate::config::write_atomic(&path, contents)
             .with_context(|| format!("Failed to write hotbars file: {:?}", path))?;
 
         tracing::info!(
@@ -338,7 +338,7 @@ impl Config {
         if config.bars.len() != before {
             let contents =
                 toml::to_string_pretty(&config).context("Failed to serialize hotbars")?;
-            fs::write(&path, contents)
+            crate::config::write_atomic(&path, contents)
                 .with_context(|| format!("Failed to write hotbars file: {:?}", path))?;
             tracing::info!("Deleted hotbar '{}' from {:?}", name, path);
         }

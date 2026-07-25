@@ -227,7 +227,7 @@ impl LauncherStore {
             fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self).context("Failed to serialize launcher profiles")?;
-        fs::write(path, text).with_context(|| format!("Failed to write {}", path.display()))
+        crate::config::write_atomic(path, text).with_context(|| format!("Failed to write {}", path.display()))
     }
 
     pub fn find(&self, name: &str) -> Option<&LauncherProfile> {
@@ -343,7 +343,7 @@ fn store_password_map(map: &std::collections::HashMap<String, String>) -> Result
         fs::create_dir_all(parent)?;
     }
     let text = toml::to_string(map).context("Failed to serialize password store")?;
-    fs::write(&path, text).context("Failed to write password store")
+    crate::config::write_atomic(&path, text).context("Failed to write password store")
 }
 
 /// Sealing for stored password values (non-desktop builds). The 32-byte

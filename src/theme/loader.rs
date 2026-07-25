@@ -472,7 +472,7 @@ impl ThemeData {
         let toml_string = toml::to_string_pretty(self)?;
 
         // Write to file
-        fs::write(&filepath, toml_string)?;
+        crate::config::write_atomic(&filepath, toml_string)?;
 
         Ok(filepath)
     }

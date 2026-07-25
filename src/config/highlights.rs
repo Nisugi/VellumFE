@@ -167,7 +167,7 @@ impl Config {
         let highlights_path = Self::highlights_path(character)?;
         let contents =
             toml::to_string_pretty(&self.highlights).context("Failed to serialize highlights")?;
-        fs::write(&highlights_path, contents).context("Failed to write highlights.toml")?;
+        write_atomic(&highlights_path, contents).context("Failed to write highlights.toml")?;
         Ok(())
     }
 
@@ -190,7 +190,7 @@ impl Config {
         let toml =
             toml::to_string_pretty(&highlights).context("Failed to serialize common highlights")?;
 
-        fs::write(&path, toml)
+        write_atomic(&path, toml)
             .with_context(|| format!("Failed to write common highlights: {:?}", path))?;
 
         Ok(())
@@ -205,7 +205,7 @@ impl Config {
         let toml =
             toml::to_string_pretty(&highlights).context("Failed to serialize common highlights")?;
 
-        fs::write(&path, toml)
+        write_atomic(&path, toml)
             .with_context(|| format!("Failed to write common highlights: {:?}", path))?;
 
         Ok(())
@@ -270,7 +270,7 @@ impl Config {
         let toml = toml::to_string_pretty(&highlights)
             .context("Failed to serialize character highlights")?;
 
-        fs::write(&highlights_path, toml)
+        write_atomic(&highlights_path, toml)
             .with_context(|| format!("Failed to write highlights: {:?}", highlights_path))?;
 
         tracing::info!(
@@ -316,7 +316,7 @@ impl Config {
             let toml = toml::to_string_pretty(&highlights)
                 .context("Failed to serialize character highlights")?;
 
-            fs::write(&highlights_path, toml)
+            write_atomic(&highlights_path, toml)
                 .with_context(|| format!("Failed to write highlights: {:?}", highlights_path))?;
 
             tracing::info!(
@@ -361,7 +361,7 @@ impl Config {
         let highlights_path = highlights_dir.join(format!("{}.toml", name));
         let contents =
             toml::to_string_pretty(&self.highlights).context("Failed to serialize highlights")?;
-        fs::write(&highlights_path, contents).context("Failed to write highlights profile")?;
+        write_atomic(&highlights_path, contents).context("Failed to write highlights profile")?;
 
         Ok(highlights_path)
     }

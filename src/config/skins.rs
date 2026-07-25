@@ -437,7 +437,7 @@ pub fn write_scaffold(name: &str) -> anyhow::Result<PathBuf> {
         manifest_path.display()
     );
     std::fs::create_dir_all(&root)?;
-    std::fs::write(&manifest_path, SCAFFOLD_MANIFEST)?;
+    crate::config::write_atomic(&manifest_path, SCAFFOLD_MANIFEST)?;
     Ok(manifest_path)
 }
 

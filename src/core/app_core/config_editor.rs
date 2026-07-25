@@ -96,7 +96,7 @@ impl AppCore {
         }
         let content =
             toml::to_string_pretty(map).map_err(|e| format!("Serialize failed: {e}"))?;
-        std::fs::write(path, content).map_err(|e| format!("Write failed: {e}"))
+        crate::config::write_atomic(path, content).map_err(|e| format!("Write failed: {e}"))
     }
 
     /// Sound files available for highlight rules (the form's dropdown).
@@ -267,7 +267,7 @@ impl AppCore {
             }
             let content =
                 toml::to_string_pretty(&config).map_err(|e| format!("Serialize failed: {e}"))?;
-            std::fs::write(&path, content).map_err(|e| format!("Write failed: {e}"))
+            crate::config::write_atomic(&path, content).map_err(|e| format!("Write failed: {e}"))
         })();
         let (saved, error) = match result {
             Ok(()) => (true, None),
@@ -302,7 +302,7 @@ impl AppCore {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                std::fs::write(&path, &content).map_err(|e| format!("Write failed: {e}"))
+                crate::config::write_atomic(&path, &content).map_err(|e| format!("Write failed: {e}"))
             });
         let (saved, error) = match result {
             Ok(()) => (true, None),

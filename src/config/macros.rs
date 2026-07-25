@@ -131,7 +131,7 @@ impl MacrosConfig {
             .with_context(|| format!("Failed to create {}", dir.display()))?;
         let path = dir.join("macros-local.toml");
         let text = toml::to_string_pretty(self).context("Failed to serialize macros-local")?;
-        fs::write(&path, text).with_context(|| format!("Failed to write {}", path.display()))
+        crate::config::write_atomic(&path, text).with_context(|| format!("Failed to write {}", path.display()))
     }
 
     /// Merge the local overlay onto the base: same-named groups gain the

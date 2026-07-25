@@ -501,7 +501,7 @@ impl Layout {
 
         let layout_path = layouts_dir.join(format!("{}.toml", name));
         let toml_string = self.to_toml_string_preserving()?;
-        fs::write(&layout_path, toml_string).context("Failed to write layout file")?;
+        write_atomic(&layout_path, toml_string).context("Failed to write layout file")?;
 
         tracing::info!("Saved layout '{}' to {:?}", name, layout_path);
         Ok(())
@@ -533,7 +533,7 @@ impl Layout {
 
         let layout_path = profile_dir.join("layout.toml");
         let toml_string = self.to_toml_string_preserving()?;
-        fs::write(&layout_path, toml_string).context("Failed to write auto layout file")?;
+        write_atomic(&layout_path, toml_string).context("Failed to write auto layout file")?;
 
         tracing::info!(
             "Saved auto layout for {} to {:?} (base: {}, terminal: {:?}x{:?})",
